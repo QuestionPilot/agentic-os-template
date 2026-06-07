@@ -1,0 +1,13 @@
+.obsidian/workspace.json
+.trash/
+.DS_Store
+**/.DS_Store
+**/node_modules/
+**/.git/
+**/.venv/
+**/test-results/
+**/*.har
+**/trace.zip
+**/*.log
+**/*.tmp
+99-Cold-Archive/

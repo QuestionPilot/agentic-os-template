@@ -1,0 +1,23 @@
+filters:
+  and:
+    - file.inFolder("04-Lessons")
+    - 'file.ext == "md"'
+    - 'file.basename != "_template"'
+    - 'file.basename != "_index"'
+properties:
+  file.name:
+    displayName: "Lesson"
+  date:
+    displayName: "Date"
+  classification:
+    displayName: "Classification"
+  file.mtime:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Lessons"
+    order:
+      - date
+      - file.name
+      - classification
+      - file.mtime

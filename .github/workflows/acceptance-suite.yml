@@ -1,0 +1,305 @@
+# .github/workflows/acceptance-suite.yml — full acceptance-suite CI gate.
+#
+# Runs the full `bash tests/run.sh` acceptance suite (the same entry developers
+# run locally before push). Coverage includes:
+#   - install-render-stable assertions (claude/codex builds green +
+#     manifest determinism + fixture completeness)
+#   - tests/links.test.sh (markdown link integrity, fence + inline-code
+#     parser, GNU-awk + BSD-awk + mawk portability)
+#   - tests/validate.test.sh (forbidden-roots allowlist, secret scans)
+#   - every other tests/*.test.sh
+#
+# This workflow drives the `tests/` acceptance suite. The suite + this workflow
+# now SHIP to the public template (the snapshot ship-set no longer denies tests/
+# or this file): the acceptance suite was cleaned of internal tracker-ID
+# sentinels, so the public template carries the full suite and runs it on its
+# 3-OS CI alongside the lean install-render-stable.yml gate.
+#
+# Runs on push to main + pull_request so a PR branch trips the gate before
+# review and a forced-push that drops a needed re-render also trips it.
+#
+# Cost shape: on the PRIVATE source repo, macOS runners bill at 10x — the macOS
+# lane there runs ONLY on push to main + manual dispatch (Linux + Windows run on
+# every PR), so PR cost stays low and the post-merge main run is the macOS
+# backstop. On the PUBLIC template (Actions minutes are free for public repos),
+# the macOS lane ALSO runs on PRs so contributors get full 3-OS coverage before
+# merge — see the visibility-conditional on the macOS lane's `if:` below. To
+# force the macOS lane on a private branch before merge, trigger this workflow
+# manually (Actions tab -> Run workflow).
+
+name: acceptance-suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs for the same ref while a PR is being iterated on — a
+# new push to a PR branch cancels the in-flight run instead of letting the full
+# matrix run to completion. cancel-in-progress is scoped to pull_request, so an
+# in-flight run on main is never cancelled mid-flight: the post-merge backstop
+# always completes. (Rapid successive pushes to main can still supersede a
+# *queued* main run — Actions keeps only one pending run per group — but the
+# newest always executes, so the tip of main is always covered.)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least-privilege default for every job. The acceptance suite only checks out
+# the repo and runs read-only tests — it never writes back to the repo, posts
+# PR comments, or cuts releases. `contents: read` is the minimum a job needs to
+# clone the repo; any job that genuinely needs more must widen explicitly at the
+# job level (none do today).
+permissions:
+  contents: read
+
+jobs:
+  acceptance-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # Public-tree cleanliness guard (PUBLIC repos only). Asserts the canonical
+      # public tree carries zero internal tracker IDs, operator home-paths,
+      # emails, or PII. GATED on repo VISIBILITY (private == false): the private
+      # source repo legitimately carries tracker IDs, so the guard would fail
+      # there by design. Keying on visibility (not the repo name) means any public
+      # adopter's fork is guarded too, a rename can't silently drop the guard, and
+      # it screams if the private repo is ever made public. The bash twin runs
+      # here under GNU tools and on the macOS lane under BSD tools.
+      - name: Public-tree cleanliness guard (check-clean.sh)
+        if: github.event.repository.private == false
+        run: bash scripts/check-clean.sh
+
+      # `jq` is required by install.sh (write_manifest, generate_settings).
+      # ubuntu-latest already has bash 5, git, awk, sed, grep, find, mktemp,
+      # shasum — only jq needs an explicit ensure step.
+      - name: Ensure jq is installed
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y jq
+          fi
+          jq --version
+
+      # Install gawk explicitly so the GNU-awk regression tests in
+      # tests/links.test.sh RUN on CI instead of skipping. Ubuntu's default
+      # `awk` is mawk (which the default-lane tests already cover); gawk is
+      # the engine where the framework's awk-portability bugs have
+      # historically appeared, so a guaranteed CI lane against it is the
+      # durable regression pin.
+      - name: Ensure gawk is installed (GNU-awk regression coverage)
+        run: |
+          if ! command -v gawk >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y gawk
+          fi
+          gawk --version | head -1
+
+      # Print awk identification so future CI failures have provenance for
+      # any awk-variant-specific bug. Tracing GNU-vs-BSD-vs-mawk regex
+      # behavior is a common diagnostic; capturing the engine identity in CI
+      # logs makes the next investigation shorter. Use an explicit if/else
+      # (not `cmd1 | head -1 || cmd2`) because head succeeds when cmd1 prints
+      # error output, so the fallback never fires.
+      - name: Identify awk variant on runner
+        run: |
+          printf 'PATH awk: '; command -v awk
+          if awk --version >/dev/null 2>&1; then
+            printf 'awk version: '; awk --version 2>&1 | head -1
+          elif awk -W version >/dev/null 2>&1; then
+            printf 'awk version: '; awk -W version 2>&1 | head -1
+          else
+            printf 'awk version: (no recognized --version / -W version)\n'
+          fi
+          if command -v gawk >/dev/null 2>&1; then
+            printf 'gawk: '; gawk --version 2>&1 | head -1
+          fi
+          if command -v mawk >/dev/null 2>&1; then
+            printf 'mawk: '; mawk -W version 2>&1 | head -1 || true
+          fi
+
+      # Diagnostic — run validate.sh directly so its stderr surfaces in
+      # the CI log when something breaks. assert_exit in the acceptance
+      # suite redirects stderr to /dev/null which hides the actual
+      # failure reason. Keep this step even when green so future CI
+      # failures have a head-start.
+      - name: Diagnostic — bash scripts/validate.sh
+        run: bash scripts/validate.sh
+
+      # Run the full acceptance suite. Same entry developers run locally
+      # before push, so a green local run reproduces CI exactly.
+      - name: Run acceptance suite (tests/run.sh)
+        run: bash tests/run.sh
+
+      # Second lane: explicit GNU awk run. The default-lane suite above runs
+      # whatever Ubuntu's /usr/bin/awk resolves to (typically mawk). This
+      # pass re-runs every test with AWK=gawk so the GNU awk regex engine
+      # is exercised end-to-end — the lane where awk fence + locale bugs
+      # have historically lived. Skipped on macOS local via
+      # tests/links.test.sh's `command -v gawk` guard, but on CI this step
+      # makes the coverage non-conditional.
+      - name: Run acceptance suite under GNU awk
+        run: AWK=gawk bash tests/run.sh
+
+  # ===========================================================================
+  # macOS-native lane (3-OS matrix completion).
+  #
+  # macOS's primary value is BSD-awk coverage — /usr/bin/awk on macos-latest
+  # is BSD awk, the third engine alongside the ubuntu lane's mawk + gawk.
+  # Catches portability bugs that pass on Linux but fail on operator macOS.
+  #
+  # The ubuntu lane handles GNU-awk regression coverage with AWK=gawk; we
+  # do NOT re-run that pass here because:
+  #   (1) GNU awk is the same engine regardless of host filesystem location;
+  #       ubuntu already exercises every awk-using test under gawk.
+  #   (2) tests/fresh-clone-validate.test.sh strips PATH to /usr/bin:/bin to
+  #       simulate a fresh clone; brew-installed gawk lives at /opt/homebrew/bin
+  #       (or /usr/local/bin) which is NOT in the minimal PATH. Running
+  #       `AWK=gawk` would produce exit 127 inside that test (real bug found
+  #       in the first 3-OS PR — bash twin still passes because /usr/bin/gawk
+  #       is in the minimal PATH on ubuntu).
+  #
+  # Tools on macos-latest:
+  #   - bash, git, jq, awk (BSD), sed, grep, find, mktemp, shasum  — pre-installed
+  # ===========================================================================
+
+  acceptance-suite-macos:
+    # macOS runners bill at 10x on private repos — the single largest line item
+    # in the account's Actions usage. On the private source repo, skip on PRs and
+    # run only on push to main + manual dispatch. On the PUBLIC template, where
+    # Actions minutes are free, ALSO run on PRs for full 3-OS pre-merge coverage.
+    # Keyed on repo VISIBILITY (private == false) — agnostic, survives a rename,
+    # and bakes no org/repo name into a tracked file.
+    if: github.event_name != 'pull_request' || github.event.repository.private == false
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # Public-tree cleanliness guard under BSD tools (TEMPLATE ONLY) — the macOS
+      # lane is where the guard's own grep/sed BSD-portability is exercised.
+      - name: Public-tree cleanliness guard (check-clean.sh, BSD tools)
+        if: github.event.repository.private == false
+        run: bash scripts/check-clean.sh
+
+      # Identify the BSD-awk variant on the runner. Future-failures
+      # diagnostic: capture awk engine identity in CI logs.
+      - name: Identify awk variant on macOS runner
+        run: |
+          printf 'PATH awk: '; command -v awk
+          if awk --version >/dev/null 2>&1; then
+            printf 'awk version: '; awk --version 2>&1 | head -1
+          elif awk -W version >/dev/null 2>&1; then
+            printf 'awk version: '; awk -W version 2>&1 | head -1
+          else
+            printf 'awk version: (no recognized --version / -W version)\n'
+          fi
+
+      # Diagnostic — run validate.sh directly so its stderr surfaces in
+      # the CI log when something breaks. Mirrors the ubuntu lane's
+      # "Diagnostic — bash scripts/validate.sh" step.
+      - name: Diagnostic — bash scripts/validate.sh
+        run: bash scripts/validate.sh
+
+      - name: Run acceptance suite (tests/run.sh)
+        run: bash tests/run.sh
+
+  # ===========================================================================
+  # Windows-native prototype lane.
+  #
+  # Verifies the PowerShell port of the claude harness end-to-end:
+  #   - pwsh tests/run.ps1   — runs the *.test.ps1 acceptance subset
+  #                             (install.test.ps1, validate-ps.test.ps1,
+  #                             run-resolve.test.ps1)
+  #   - pwsh scripts/validate.ps1 — runs the ported 8-check validator
+  #
+  # The Windows lane is the CANONICAL source of truth for the prototype's
+  # acceptance — Codex F-1 surfaced that install.sh:244/270-273/337/540
+  # hardcode .sh in the hook command shape, which the Windows lane proves is
+  # fixed end-to-end (install.test.ps1 AC 5: hooks command uses pwsh -File
+  # shape; AC 6: hooks command points at .ps1 script).
+  #
+  # Tools required on the windows-latest runner:
+  #   - pwsh (PowerShell 7+)       — pre-installed
+  #   - git                          — pre-installed
+  #   - jq                           — installed via winget below
+  #
+  # All winget invocations include --accept-source-agreements
+  # AND --accept-package-agreements so first-run hangs on fresh Windows in
+  # non-interactive CI are eliminated.
+  # ===========================================================================
+
+  acceptance-suite-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # Public-tree cleanliness guard, PowerShell twin (TEMPLATE ONLY).
+      - name: Public-tree cleanliness guard (check-clean.ps1)
+        if: github.event.repository.private == false
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/check-clean.ps1
+
+      # jq is required by scripts/install.ps1 (New-Settings, Write-Manifest)
+      # and harnesses/claude/hooks/*.ps1 (gate hooks fail CLOSED without jq).
+      # --accept-source-agreements + --accept-package-agreements are mandatory
+      # for non-interactive winget runs; without them, winget prompts on first
+      # run and hangs in CI.
+      #
+      # Robustness: if winget install succeeds
+      # but jq's binary path isn't refreshed in PATH for the current step, the
+      # next steps will fail with "jq: command not found". This step explicitly
+      # FAILS if Get-Command jq still returns nothing after install. The
+      # GITHUB_PATH append makes jq's dir visible to subsequent steps; the
+      # in-step refresh re-reads PATH from the registry via [Environment].
+      - name: Ensure jq is installed (winget with accept-agreements)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
+            winget install --id jqlang.jq --accept-source-agreements --accept-package-agreements --silent
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "winget install jqlang.jq failed with exit $LASTEXITCODE"
+              exit 1
+            }
+            # Re-read PATH from the system registry — winget updates the
+            # machine PATH, but the current step's $env:PATH was captured at
+            # step start. This refresh makes jq resolvable in the same step.
+            $env:PATH = ([Environment]::GetEnvironmentVariable('PATH','Machine'),
+                         [Environment]::GetEnvironmentVariable('PATH','User')) -join ';'
+          }
+          # Verify jq actually resolves NOW — fail-fast if not.
+          $jqCmd = Get-Command jq -ErrorAction SilentlyContinue
+          if (-not $jqCmd) {
+            Write-Error "jq not on PATH after install attempt — winget step output above for diagnostic"
+            exit 1
+          }
+          Write-Host "jq found at $($jqCmd.Source)"
+          & $jqCmd.Source --version
+          # Persist jq's directory to GITHUB_PATH so subsequent steps see it.
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $jqCmd.Source -Parent)
+
+      # Identify pwsh + git on the runner. Future-failures diagnostic:
+      # capture engine identity in CI logs.
+      - name: Identify pwsh + git on runner
+        shell: pwsh
+        run: |
+          Write-Host "pwsh version: $($PSVersionTable.PSVersion)"
+          Write-Host "git: $(git --version)"
+          Write-Host "OS: $($PSVersionTable.OS)"
+
+      # Diagnostic — run validate.ps1 directly so its stderr surfaces in the
+      # CI log when something breaks. Mirrors the bash lane's
+      # "Diagnostic — bash scripts/validate.sh" step.
+      - name: Diagnostic — pwsh scripts/validate.ps1
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/validate.ps1
+
+      # Run the PS acceptance subset. Same entry the operator runs locally
+      # before push, so a green local run reproduces CI exactly.
+      - name: Run PS acceptance suite (tests/run.ps1)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/run.ps1

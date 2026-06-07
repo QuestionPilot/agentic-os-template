@@ -1,0 +1,56 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+local.env
+
+# Harness-local state: settings.local.json, plugin caches, EnterWorktree
+# linked worktrees, etc. Never synced framework content.
+.claude/
+.codex/
+
+# Per-machine code-intelligence (codegraph) state — index DB and the
+# project-local MCP config that pins an absolute path to the local binary.
+# Both are personal install artifacts, not framework content.
+.codegraph/
+.mcp.json
+
+# Cross-model-review runtime artifacts — per-run dirs under cross-model-out/
+# (codex-review.md, gemini-review.md, reconciled.md, log.md ledger). Codex
+# CLI prepends a `workdir: <abs-path>` metadata header on every `codex exec`
+# capture; absent this gitignore (and the matching --exclude-dir in
+# scripts/check-drift.sh), that header trips the machine-specific-path scan
+# when validate.sh runs from a worktree where a run was captured. Driver-
+# local, never framework content — parallel framing to .codegraph/. (<TEAM>-87.)
+cross-model-out/
+
+# Subagent / parallel-session worktrees — never tracked. Each session creates
+# `worktrees/<issue-slug>/` for its own isolated checkout; these are operator-
+# local state, not framework content.
+worktrees/
+
+# self-audit score history — runtime, per-operator state written by
+# scripts/self-audit-history.{sh,ps1}. The default store lives at
+# $CLAUDE_CONFIG_DIR/self-audit-history.jsonl, but ignore it repo-wide so it
+# can never be staged even when an operator's $CLAUDE_CONFIG_DIR points inside
+# a checkout. Parallel framing to cross-model-out/ + .build-manifest.json.
+#
+self-audit-history.jsonl
+
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.tmp
+*.bak
+*.backup
+*.backup-*
+auth.json
+config.toml
+/vault/
+/codex/
+browser-traces/
+test-results/
+screenshots/
+generated_images/

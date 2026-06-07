@@ -1,0 +1,22 @@
+{
+  "enabledPlugins": {},
+  "extraKnownMarketplaces": {
+    "anthropic-agent-skills": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/skills"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/anthropics/claude-plugins-official.git"
+      }
+    }
+  },
+  "permissions": {
+    "allow": []
+  },
+  "theme": "auto",
+  "effortLevel": "xhigh"
+}

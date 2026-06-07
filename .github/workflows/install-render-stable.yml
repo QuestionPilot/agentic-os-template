@@ -1,0 +1,173 @@
+# .github/workflows/install-render-stable.yml — public template CI gate.
+#
+# Verifies the template INSTALLS, RENDERS, and VALIDATES cleanly on a fresh
+# checkout across Linux, macOS, and Windows — the same paths a new operator
+# walks. It runs ONLY commands that ship in this repository, so it is green on a
+# fresh public clone:
+#   - scripts/install.{sh,ps1} --harness claude --build-only
+#       builds + renders the claude harness config into a temp dir and runs the
+#       internal validate_build sanity check; NO live config dir is touched.
+#   - scripts/validate.{sh,ps1}
+#       repo integrity: forbidden-roots allowlist, secret scan, markdown link
+#       integrity, lifecycle frontmatter, drift + portability.
+#
+# The full `tests/run.sh` acceptance suite is NOT run here: this is the lean,
+# fast PR-blocking lane (install + render + validate only). The full suite runs
+# via the separate acceptance-suite.yml workflow, which ships alongside this one;
+# `make verify` also runs the suite locally where tests/ is present.
+#
+# Runs on push to main + pull_request so a PR branch trips the gate before
+# review and a forced-push that drops a needed re-render also trips it.
+#
+# Cost shape: on the PRIVATE source repo, macOS runners bill at 10x — the macOS
+# lane there runs ONLY on push to main + manual dispatch (Linux + Windows run on
+# every PR). On the PUBLIC template (Actions minutes are free for public repos),
+# the macOS lane ALSO runs on PRs for full 3-OS pre-merge coverage — see the
+# visibility-conditional on the macOS lane's `if:` below. Trigger manually
+# (Actions tab -> Run workflow) to force the macOS lane on a private branch.
+
+name: install-render-stable
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs for the same ref while a PR is being iterated on.
+# cancel-in-progress is scoped to pull_request, so an in-flight run on main is
+# never cancelled mid-flight: the post-merge backstop always completes. (Rapid
+# pushes to main can supersede a *queued* main run — Actions keeps only one
+# pending run per group — but the newest always runs, so the tip of main is
+# always covered.)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least-privilege default for every job. These jobs only check out the repo and
+# run read-only build/validate commands — they never write back to the repo,
+# post PR comments, or cut releases. `contents: read` is the minimum a job needs
+# to clone the repo.
+permissions:
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # Linux lane — bash + GNU userland.
+  # ===========================================================================
+  install-render-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # jq is required by install.sh (write_manifest, generate_settings).
+      - name: Ensure jq is installed
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y jq
+          fi
+          jq --version
+
+      # Build + render smoke. install.sh needs a local.env to exist and to carry
+      # the two required render vars; a fresh public clone has none, so synthesize
+      # a minimal one pointing at temp dirs. --build-only builds + validates the
+      # generated config into a temp dir and never swaps a live config dir, so no
+      # real CLAUDE_CONFIG_DIR / vault is required.
+      - name: Build + render smoke (install.sh --build-only)
+        run: |
+          printf 'CLAUDE_CONFIG_DIR=%s\nOBSIDIAN_VAULT_PATH=%s\n' \
+            "$RUNNER_TEMP/cfg" "$RUNNER_TEMP/vault" > "$RUNNER_TEMP/local.env"
+          AI_CONFIG_LOCAL_ENV="$RUNNER_TEMP/local.env" \
+            bash scripts/install.sh --harness claude --out "$RUNNER_TEMP/build" --build-only
+
+      # Repo integrity validation — runs against the shipped tree itself.
+      - name: Validate repository (scripts/validate.sh)
+        run: bash scripts/validate.sh
+
+  # ===========================================================================
+  # macOS lane — bash + BSD userland.
+  # ===========================================================================
+  install-render-macos:
+    # macOS runners bill at 10x on private repos: on the private source repo skip
+    # on PRs (run only on push to main + manual dispatch). On the PUBLIC template,
+    # where Actions minutes are free, ALSO run on PRs for full 3-OS pre-merge
+    # coverage. Keyed on repo VISIBILITY (private == false) — agnostic, survives a
+    # rename, and bakes no org/repo name into a tracked file.
+    if: github.event_name != 'pull_request' || github.event.repository.private == false
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # macos-latest ships jq, but install if a future image drops it.
+      - name: Ensure jq is installed
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            brew install jq
+          fi
+          jq --version
+
+      - name: Build + render smoke (install.sh --build-only)
+        run: |
+          printf 'CLAUDE_CONFIG_DIR=%s\nOBSIDIAN_VAULT_PATH=%s\n' \
+            "$RUNNER_TEMP/cfg" "$RUNNER_TEMP/vault" > "$RUNNER_TEMP/local.env"
+          AI_CONFIG_LOCAL_ENV="$RUNNER_TEMP/local.env" \
+            bash scripts/install.sh --harness claude --out "$RUNNER_TEMP/build" --build-only
+
+      - name: Validate repository (scripts/validate.sh)
+        run: bash scripts/validate.sh
+
+  # ===========================================================================
+  # Windows lane — native PowerShell 7+ (no WSL / Git Bash).
+  #
+  # jq is installed via winget; --accept-source-agreements AND
+  # --accept-package-agreements are mandatory for non-interactive winget runs
+  # (without them winget prompts on first run and hangs in CI). The GITHUB_PATH
+  # append + in-step registry refresh make jq resolvable for subsequent steps.
+  # ===========================================================================
+  install-render-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Ensure jq is installed (winget with accept-agreements)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
+            winget install --id jqlang.jq --accept-source-agreements --accept-package-agreements --silent
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "winget install jqlang.jq failed with exit $LASTEXITCODE"
+              exit 1
+            }
+            $env:PATH = ([Environment]::GetEnvironmentVariable('PATH','Machine'),
+                         [Environment]::GetEnvironmentVariable('PATH','User')) -join ';'
+          }
+          $jqCmd = Get-Command jq -ErrorAction SilentlyContinue
+          if (-not $jqCmd) {
+            Write-Error "jq not on PATH after install attempt — winget step output above for diagnostic"
+            exit 1
+          }
+          Write-Host "jq found at $($jqCmd.Source)"
+          & $jqCmd.Source --version
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $jqCmd.Source -Parent)
+
+      # Build + render smoke. Synthesize a minimal local.env (LF-terminated, no
+      # BOM) with the two required render vars, then build into a temp dir with
+      # -BuildOnly (builds + validates, never swaps a live config dir).
+      - name: Build + render smoke (install.ps1 -BuildOnly)
+        shell: pwsh
+        run: |
+          $cfg   = Join-Path $env:RUNNER_TEMP 'cfg'
+          $vault = Join-Path $env:RUNNER_TEMP 'vault'
+          $envFile = Join-Path $env:RUNNER_TEMP 'local.env'
+          $body = "CLAUDE_CONFIG_DIR=$cfg`nOBSIDIAN_VAULT_PATH=$vault`n"
+          [System.IO.File]::WriteAllText($envFile, $body, (New-Object System.Text.UTF8Encoding $false))
+          $env:AI_CONFIG_LOCAL_ENV = $envFile
+          pwsh -NoProfile -File scripts/install.ps1 -Harness claude -Out (Join-Path $env:RUNNER_TEMP 'build') -BuildOnly
+
+      - name: Validate repository (scripts/validate.ps1)
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/validate.ps1

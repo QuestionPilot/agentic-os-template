@@ -1,0 +1,3 @@
+{"type":"session_meta","payload":{"cwd":"/tmp"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"hello"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"hi"}]}}

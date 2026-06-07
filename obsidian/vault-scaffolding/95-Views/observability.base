@@ -1,0 +1,15 @@
+filters:
+  and:
+    - file.inFolder("40-Observability")
+    - 'file.ext == "md"'
+properties:
+  file.name:
+    displayName: "Note"
+  file.mtime:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Observability"
+    order:
+      - file.name
+      - file.mtime

@@ -1,0 +1,26 @@
+filters:
+  and:
+    - file.inFolder("03-Decisions")
+    - 'file.ext == "md"'
+    - 'file.basename != "_template"'
+    - 'file.basename != "_index"'
+properties:
+  file.name:
+    displayName: "Decision"
+  date:
+    displayName: "Date"
+  project:
+    displayName: "Project"
+  area:
+    displayName: "Area"
+  file.mtime:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Decisions"
+    order:
+      - date
+      - file.name
+      - project
+      - area
+      - file.mtime

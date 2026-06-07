@@ -1,0 +1,22 @@
+filters:
+  and:
+    - file.inFolder("01-Projects")
+    - 'file.ext == "md"'
+    - 'file.basename != "_template"'
+properties:
+  file.name:
+    displayName: "Project"
+  status:
+    displayName: "Status"
+  linear:
+    displayName: "Linear"
+  file.mtime:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Projects"
+    order:
+      - file.name
+      - status
+      - linear
+      - file.mtime

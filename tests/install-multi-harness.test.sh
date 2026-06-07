@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# tests/install-multi-harness.test.sh — install.sh repeatable --harness.
+#
+# Regression for the scalar-vs-list bug: `--harness` was parsed last-wins, so the
+# DOCUMENTED `bash scripts/install.sh --harness claude --harness codex` (asserted
+# present in the entrypoints by entrypoint-deps.test.sh, and claimed to install
+# "Both harnesses... in one pass") silently built ONLY codex — a half-synced
+# machine with no error. The fix makes --harness repeatable: every requested
+# harness builds in one pass via a per-harness re-exec dispatcher.
+#
+# The bash twin builds BOTH claude and codex. The PowerShell twin's asymmetry
+# (codex WARN-skipped on Windows) is covered by install-multi-harness.test.ps1.
+
+# A local.env that resolves BOTH harness targets + the vault path the entrypoint
+# templates reference. %q quotes the values so a path with a space/'&' round-trips
+# through install.sh's `. local.env`.
+_mh_dual_env() {
+  { printf 'CLAUDE_CONFIG_DIR=%q\n' "$2"
+    printf 'CODEX_HOME=%q\n'        "$3"
+    printf 'OBSIDIAN_VAULT_PATH=%q\n' "${4:-/tmp/test-vault}"
+  } > "$1"
+}
+
+# --- 1. The core fix: `--harness claude --harness codex` builds BOTH ---------
+MH_DIR="$(mktemp -d)"
+MH_CC="$MH_DIR/claude"; MH_CX="$MH_DIR/codex"; mkdir -p "$MH_CC" "$MH_CX"
+MH_ENV="$MH_DIR/local.env"
+_mh_dual_env "$MH_ENV" "$MH_CC" "$MH_CX" "$MH_DIR/vault"
+
+mh_status=0
+AI_CONFIG_LOCAL_ENV="$MH_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --harness codex >/dev/null 2>&1 || mh_status=$?
+assert_eq "install.sh --harness claude --harness codex exits 0" "0" "$mh_status"
+# The regression guard: pre-fix this file was ABSENT (last-wins built only codex).
+assert_file "two-harness install builds the claude entrypoint (regression)" "$MH_CC/CLAUDE.md"
+assert_file "two-harness install builds a claude skill"                      "$MH_CC/skills/session-agent/SKILL.md"
+assert_file "two-harness install builds the codex entrypoint"                "$MH_CX/AGENTS.md"
+assert_file "two-harness install builds a codex skill"                       "$MH_CX/skills/session-agent/SKILL.md"
+# Each harness landed in its OWN target (no cross-contamination).
+[ -e "$MH_CC/AGENTS.md" ] \
+  && _fail "claude target has no codex entrypoint" "AGENTS.md leaked into CLAUDE_CONFIG_DIR" \
+  || _pass "claude target has no codex entrypoint"
+[ -e "$MH_CX/CLAUDE.md" ] \
+  && _fail "codex target has no claude entrypoint" "CLAUDE.md leaked into CODEX_HOME" \
+  || _pass "codex target has no claude entrypoint"
+rm -rf "$MH_DIR"
+
+# --- 2. Order independence: codex first still builds both --------------------
+OI_DIR="$(mktemp -d)"
+OI_CC="$OI_DIR/claude"; OI_CX="$OI_DIR/codex"; mkdir -p "$OI_CC" "$OI_CX"
+OI_ENV="$OI_DIR/local.env"
+_mh_dual_env "$OI_ENV" "$OI_CC" "$OI_CX" "$OI_DIR/vault"
+oi_status=0
+AI_CONFIG_LOCAL_ENV="$OI_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness codex --harness claude >/dev/null 2>&1 || oi_status=$?
+assert_eq "install.sh --harness codex --harness claude exits 0" "0" "$oi_status"
+assert_file "reversed order still builds the claude entrypoint" "$OI_CC/CLAUDE.md"
+assert_file "reversed order still builds the codex entrypoint"  "$OI_CX/AGENTS.md"
+rm -rf "$OI_DIR"
+
+# --- 3. Dedup: a repeated harness builds once, succeeds ----------------------
+DD_DIR="$(mktemp -d)"
+DD_CC="$DD_DIR/claude"; mkdir -p "$DD_CC"
+DD_ENV="$DD_DIR/local.env"
+make_local_env "$DD_ENV" "$DD_CC" "$DD_DIR/vault"
+dd_status=0
+AI_CONFIG_LOCAL_ENV="$DD_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --harness claude >/dev/null 2>&1 || dd_status=$?
+assert_eq "install.sh --harness claude --harness claude (dedup) exits 0" "0" "$dd_status"
+assert_file "deduped repeat builds the claude entrypoint" "$DD_CC/CLAUDE.md"
+rm -rf "$DD_DIR"
+
+# --- 4. --out cannot target multiple harnesses ------------------------------
+# Each harness has its own target dir, so --out (a single override) is ambiguous
+# with >1 harness and must fail loudly rather than build both into one dir.
+OC_DIR="$(mktemp -d)"
+OC_CC="$OC_DIR/claude"; OC_CX="$OC_DIR/codex"; mkdir -p "$OC_CC" "$OC_CX"
+OC_ENV="$OC_DIR/local.env"
+_mh_dual_env "$OC_ENV" "$OC_CC" "$OC_CX" "$OC_DIR/vault"
+oc_status=0
+oc_out="$(AI_CONFIG_LOCAL_ENV="$OC_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --harness codex --out "$OC_DIR/tgt" 2>&1 >/dev/null)" || oc_status=$?
+assert_eq "install.sh --out + multiple --harness exits 1" "1" "$oc_status"
+assert_contains "install.sh --out + multiple --harness names the conflict" "$oc_out" "--out"
+# The conflict must fire BEFORE any build — the --out target stays uncreated.
+[ -e "$OC_DIR/tgt" ] \
+  && _fail "--out + multi-harness conflict makes no partial build" "$OC_DIR/tgt was created" \
+  || _pass "--out + multi-harness conflict makes no partial build"
+rm -rf "$OC_DIR"
+
+# --- 5. Single --harness still builds exactly that harness (no regression) ---
+# Guards against the dispatcher accidentally firing for a single harness.
+SG_DIR="$(mktemp -d)"
+SG_CX="$SG_DIR/codex"; mkdir -p "$SG_CX"
+SG_ENV="$SG_DIR/local.env"
+make_codex_env "$SG_ENV" "$SG_CX" "$SG_DIR/vault"
+sg_status=0
+AI_CONFIG_LOCAL_ENV="$SG_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness codex >/dev/null 2>&1 || sg_status=$?
+assert_eq "single install.sh --harness codex exits 0" "0" "$sg_status"
+assert_file "single --harness codex builds AGENTS.md" "$SG_CX/AGENTS.md"
+[ -e "$SG_CX/CLAUDE.md" ] \
+  && _fail "single codex install builds no claude entrypoint" "CLAUDE.md present in a codex-only install" \
+  || _pass "single codex install builds no claude entrypoint"
+rm -rf "$SG_DIR"
+
+# --- 6. Preflight: a missing second-harness target aborts BEFORE any mutation -
+# The dispatcher must validate every requested harness (name / adapter / target
+# env var) up front. Otherwise harness 1 swaps its live config, harness 2 dies
+# on its unset target, and the operator is left with a half-synced machine + a
+# non-zero exit. CODEX_HOME is deliberately unset here.
+PF_DIR="$(mktemp -d)"
+PF_CC="$PF_DIR/claude"; mkdir -p "$PF_CC"
+PF_ENV="$PF_DIR/local.env"
+make_local_env "$PF_ENV" "$PF_CC" "$PF_DIR/vault"   # CLAUDE_CONFIG_DIR set, CODEX_HOME unset
+pf_status=0
+pf_out="$(AI_CONFIG_LOCAL_ENV="$PF_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --harness codex 2>&1 >/dev/null)" || pf_status=$?
+assert_eq "multi-harness with an unset target exits 1 (preflight)" "1" "$pf_status"
+assert_contains "preflight names the unset target env var" "$pf_out" "CODEX_HOME is not set"
+# The keystone: the FIRST harness must NOT have been built — no partial install.
+[ -e "$PF_CC/CLAUDE.md" ] \
+  && _fail "preflight failure leaves no partial install" "CLAUDE.md built before codex preflight failed" \
+  || _pass "preflight failure leaves no partial install"
+rm -rf "$PF_DIR"
+
+# --- 7. A whitespace/glob harness value is rejected, not split or expanded ----
+# `--harness 'claude codex'` is ONE (invalid) harness name — it must be rejected,
+# not word-split into two valid requests. `--harness '*'` must not glob against
+# the CWD. (Regression for the array vs space-string implementation.)
+WS_DIR="$(mktemp -d)"
+WS_CC="$WS_DIR/claude"; WS_CX="$WS_DIR/codex"; mkdir -p "$WS_CC" "$WS_CX"
+WS_ENV="$WS_DIR/local.env"
+_mh_dual_env "$WS_ENV" "$WS_CC" "$WS_CX" "$WS_DIR/vault"
+ws_status=0
+ws_out="$(AI_CONFIG_LOCAL_ENV="$WS_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness 'claude codex' --build-only 2>&1 >/dev/null)" || ws_status=$?
+assert_eq "install.sh --harness 'claude codex' (space) exits 1" "1" "$ws_status"
+assert_contains "space-valued harness rejected as unknown" "$ws_out" "unknown harness 'claude codex'"
+glob_status=0
+glob_out="$(cd / && AI_CONFIG_LOCAL_ENV="$WS_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness '*' --build-only 2>&1 >/dev/null)" || glob_status=$?
+assert_eq "install.sh --harness '*' (glob) exits 1" "1" "$glob_status"
+assert_contains "glob harness value rejected, not expanded" "$glob_out" "unknown harness '*'"
+rm -rf "$WS_DIR"
+
+# --- 8. Case-insensitive: --harness CLAUDE resolves, and dedupes with claude --
+# Names are lowercased, so a casing variant builds the right harness and a
+# repeat under different case builds once (no duplicate build of the same target).
+CS_DIR="$(mktemp -d)"
+CS_CC="$CS_DIR/claude"; mkdir -p "$CS_CC"
+CS_ENV="$CS_DIR/local.env"
+make_local_env "$CS_ENV" "$CS_CC" "$CS_DIR/vault"
+cs_status=0
+AI_CONFIG_LOCAL_ENV="$CS_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --harness CLAUDE >/dev/null 2>&1 || cs_status=$?
+assert_eq "install.sh --harness claude --harness CLAUDE (case dedup) exits 0" "0" "$cs_status"
+assert_file "case-variant repeat still builds the claude entrypoint" "$CS_CC/CLAUDE.md"
+rm -rf "$CS_DIR"
+
+# --- 9. --build-only cannot be combined with multiple --harness --------------
+# --build-only prints a single build dir, so it is a single-target operation
+# (like --out) and must be rejected with >1 harness rather than print N paths.
+BO_DIR="$(mktemp -d)"
+BO_CC="$BO_DIR/claude"; BO_CX="$BO_DIR/codex"; mkdir -p "$BO_CC" "$BO_CX"
+BO_ENV="$BO_DIR/local.env"
+_mh_dual_env "$BO_ENV" "$BO_CC" "$BO_CX" "$BO_DIR/vault"
+bo_status=0
+bo_out="$(AI_CONFIG_LOCAL_ENV="$BO_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --harness codex --build-only 2>&1 >/dev/null)" || bo_status=$?
+assert_eq "install.sh --build-only + multiple --harness exits 1" "1" "$bo_status"
+assert_contains "install.sh --build-only + multiple --harness names the conflict" "$bo_out" "--build-only"
+rm -rf "$BO_DIR"
