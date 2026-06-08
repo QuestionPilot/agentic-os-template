@@ -299,68 +299,23 @@ if [ -e "$REPO_ROOT/$DR_QUE87_DIR" ]; then
     "fixture collision: $REPO_ROOT/$DR_QUE87_DIR exists"
 else
   mkdir -p "$REPO_ROOT/$DR_QUE87_DIR"
-  # Fixture pins ALL THREE prunes (path scan + retired-project-marker scan
-  # personal-naming scan) so a future regression that drops
-  # --exclude-dir=cross-model-out from any one scan fails this single
-  # assertion. Codex pre-PR strengthen amendment — implementation scope is
-  # 3 prunes, the test pins 3. All sentinels (including the retired-marker
-  # one — scan does NOT exclude drift.test.sh) are runtime-constructed from
-  # non-matching halves so this test source does not self-trip any of the
-  # three scans when drift scans tests/.
+  # Fixture pins the cross-model-out/ prune for the active scans (machine-path,
+  # plus the personal-naming scan when the operator fragment is present) so a
+  # future regression that drops --exclude-dir=cross-model-out fails this single
+  # assertion. The sentinels are runtime-constructed from non-matching halves so
+  # this test source does not self-trip the scans when drift scans tests/.
   cmr_prefix='/U'
   cmr_body='sers/test-que87/Claude - Local/ai-config'
-  qp_a='Question'; qp_b='Pilot'
   hd_a='Hen'; hd_b='do'
   {
     printf 'workdir: %s%s\nmodel: gpt-5.5\n\n' "$cmr_prefix" "$cmr_body"
-    printf '# Review of %s%s repo by %s%s\n' "$qp_a" "$qp_b" "$hd_a" "$hd_b"
+    printf '# Review repo by %s%s\n' "$hd_a" "$hd_b"
   } > "$REPO_ROOT/$DR_QUE87_DIR/codex-review.md"
-  unset cmr_prefix cmr_body qp_a qp_b hd_a hd_b
+  unset cmr_prefix cmr_body hd_a hd_b
   assert_exit "check-drift.sh prunes cross-model-out/ runtime artifacts" 0 -- \
     bash "$REPO_ROOT/scripts/check-drift.sh"
   rm -rf "$REPO_ROOT/$DR_QUE87_DIR"
 fi
-
-# --- retired-marker allowlist exception for the live forward-pointer ---
-# check-drift.sh's retired-marker scan has a SINGLE allowlist exception for
-# one canonical live URL (established by as the public specialty repo).
-# All other retired-marker literals must still trip. Sentinels are runtime-
-# constructed from non-matching halves per [[feedback_self_tripping_test_source]]
-# so this test source does not self-trip the scan when it runs on tests/.
-
-DR_QUE90_FILE="$REPO_ROOT/.que90-drift-fixture.md"
-# Construct the allowed URL at runtime from halves.
-qp90_url_a='https://github.com/'
-qp90_url_b="Quest""ion"
-qp90_url_c="Pi""lot"
-qp90_url_d='/cross-model-review'
-qp90_url="${qp90_url_a}${qp90_url_b}${qp90_url_c}${qp90_url_d}"
-
-# Step 1: file with ONLY the allowed URL — drift should PASS.
-printf '# Sentinel — see %s for the live forward-pointer.\n' "$qp90_url" > "$DR_QUE90_FILE"
-assert_exit "check-drift.sh allows live forward-pointer URL" 0 -- \
-  bash "$REPO_ROOT/scripts/check-drift.sh"
-
-# Step 2: same file, plus an additional NON-allowed literal on a SEPARATE
-# line — drift should FAIL.
-qp90_dis_a="Quest""ion"
-qp90_dis_b="Pi""lot"
-printf '# also: %s%s/some-other-repo should still be blocked.\n' "$qp90_dis_a" "$qp90_dis_b" >> "$DR_QUE90_FILE"
-assert_exit "check-drift.sh blocks other retired-marker literals" 1 -- \
-  bash "$REPO_ROOT/scripts/check-drift.sh"
-
-# Step 3 (Codex F2 follow-up): SAME-LINE bypass. A line containing BOTH the
-# allowed URL AND another disallowed retired-marker literal must FAIL. The
-# naive line-based grep -v would let this through; the per-occurrence strip
-# implementation must catch it.
-: > "$DR_QUE90_FILE"
-printf '# allowed url %s but also %s%s/other-repo on same line should FAIL.\n' \
-  "$qp90_url" "$qp90_dis_a" "$qp90_dis_b" > "$DR_QUE90_FILE"
-assert_exit "check-drift.sh catches same-line allowed-URL + disallowed literal" 1 -- \
-  bash "$REPO_ROOT/scripts/check-drift.sh"
-
-rm -f "$DR_QUE90_FILE"
-unset qp90_url_a qp90_url_b qp90_url_c qp90_url_d qp90_url qp90_dis_a qp90_dis_b
 
 # --- the broad content scans enumerate the COMMITTABLE set
 # (`git ls-files --cached --others --exclude-standard`), so GITIGNORED runtime

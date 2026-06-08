@@ -122,8 +122,8 @@ fi
 
 # --- T10: operator-specific-name guard — runtime-construct sentinels per
 # [[feedback_self_tripping_test_source]] so this test source does NOT itself
-# self-trip check-drift.sh's personal-name scan or retired-marker
-# scan. Constructs are split-and-join from non-matching halves so this file's
+# self-trip check-drift.sh's personal-name scan. Constructs are split-and-join
+# from non-matching halves so this file's
 # raw bytes never spell the forbidden tokens.
 sentinel_personal="$(printf '%s%s' 'Hen' 'do')"
 sentinel_retired="$(printf '%s%s' 'Question' 'Pilot')"
