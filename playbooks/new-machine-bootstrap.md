@@ -113,6 +113,27 @@ what's missing without making any changes.
 - Router skills are installed or recreated before broad leaf-skill installation.
 - A project-local instruction file points back to the framework without duplicating it.
 
+## Restore (resume existing work on a new machine)
+
+The sections above install a *fresh* spine — the right path for someone cloning the framework with no prior state. **Restore** is the other case: you already run this brain on another machine and you want this one to **pick up exactly where you left off**. Because the framework keeps machine state out of the brain, restore is a *connect-don't-recreate* operation across the three layers:
+
+- **Brain** (this framework repo) carries no machine state, so a clean clone is the entire brain — there is nothing to "restore" into it.
+- **Active work** (your tracker — Linear in the canonical example) lives in the cloud. You reconnect the *same* workspace; you do not create a new one.
+- **Durable knowledge** (your vault) lives in your cloud-synced note store. You re-point at the *same* vault; you do not start an empty one.
+
+Local config — operator skills, the skills overlay, any staging memory — is *staging* that is expected not to survive a machine wipe. Restore reconstitutes the working set from the three durable layers above plus whatever operator-local skill backup you keep; it does not try to recover the old machine's local config verbatim.
+
+### Sequence
+
+Order matters: reconnect the durable layers *before* the build, so the compiler renders once against your real paths instead of failing on an empty `local.env` and forcing a repair pass.
+
+1. **Install the harness CLIs and clone the brain.** Install the harness as in *Automated Setup* above and clone this framework repo — the clone is the whole brain. Stop before the full build; `bootstrap.sh --check` (read-only) is fine here, but defer the real compiler run to step 4, after the tracker and vault are reconnected.
+2. **Reconnect the existing tracker — same workspace, not a new board.** Re-supply the credential the tracker surface reads (for the `lineark` CLI: write your existing token to `~/.linear_api_token` and `chmod 600`; for an MCP surface: re-auth the connector), and set the workspace URL in `local.env` to your existing workspace. Confirm it resolves both your real account *and the expected workspace* — `lineark whoami` proves the token authenticates, but a token for the wrong workspace authenticates fine and surfaces an empty board, so also list your work (e.g. `lineark projects list`) and check your in-flight items appear.
+3. **Reconnect the existing vault — same vault, fully synced down first.** Re-add the vault's cloud mount (or sync the note store down) and **wait for the download to finish before relying on it**; a half-synced vault reads as missing or conflicted notes. Set `OBSIDIAN_VAULT_PATH` (or your note system's equivalent) in `local.env` to the synced path, confirm `$OBSIDIAN_VAULT_PATH/START.md` is present, and resolve any sync-conflict copy before the first orient.
+4. **Build from the clone, against the reconnected `local.env`.** With the tracker and vault values written, run the harness compiler **from the clone** (`bootstrap.sh`, or `install.sh` directly). The compiler defaults its source to the repo root, so running it from the cloned brain renders the entrypoint and hooks to point back at that clone — *provided no stale `AI_CONFIG_DIR` from the old machine is still exported or left in `local.env`*. Unset it (or point it at this clone) first; otherwise the rendered hooks silently target the dead path even though you ran the compiler from the new clone.
+5. **Reconstitute operator-local skills, if you use any.** Tool and app skills ship with neither the brain nor the tracker/vault — reinstall the ones this machine needs, and restore your skills overlay from wherever you back it up (the overlay is the one operator-local file with no durable home of its own — keep a copy in the vault or a private repo). The spine capabilities come from the brain clone and need no restore.
+6. **Open a fresh shell, then prove the restore took.** Start a new shell so the config-dir export takes effect, then run the *Resume Verification* live check below. Restore is done when a cold session's kickoff orient reads back your actual in-flight projects, issues, and recent memory and you can resume the next action — that live check is the literal definition of done for this path.
+
 ## Resume Verification
 
 Setup (above) proves the spine *installs*. This step verifies it *orients and resumes* — the literal definition of done for a portable brain: **a clean clone must reconstitute a working, oriented spine that resumes prior work.** Two tiers: the **live check** is the real proof (a fresh session's orient surfaces your actual in-flight work); the **sandboxed dry-run** proves the orient *machinery* is wired, without live credentials.
