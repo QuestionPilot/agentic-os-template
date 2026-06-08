@@ -399,8 +399,14 @@ unset VAL_Q248_DEL
 # so a nested docs/ or package README.md carrying a real token was a blind spot.
 # A nested README with a secret MUST now be scanned -> FAIL. Sentinel constructed
 # at runtime per [[feedback_self_tripping_test_source]]; fixture force-added
-# (committable) then unstaged + removed.
+# (committable) then unstaged + removed. The unstage+remove is ALSO registered on
+# INT/TERM (the bash analog of the PS twin's try/finally) so an interrupted or
+# killed run cannot leave the force-added fixture orphaned in the index + on disk
+# (the orphan-staged-fixture hazard). The trap is INT/TERM only (NOT EXIT — run.sh
+# sources files, so an EXIT trap would persist across siblings per the header
+# note) and is cleared immediately after the inline cleanup.
 VAL_Q248_NEST="tests/fixtures/que248-nested-$$-${RANDOM:-x}"
+trap 'git -C "$REPO_ROOT" reset -q -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1 || true; rm -rf "$REPO_ROOT/$VAL_Q248_NEST"' INT TERM
 mkdir -p "$REPO_ROOT/$VAL_Q248_NEST"
 val_q248_prefix='sk-'
 val_q248_body='fakefake1234567890_abcdefghij_test'
@@ -411,13 +417,21 @@ assert_exit "validate.sh scans a nested README.md for secrets" 1 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
 git -C "$REPO_ROOT" reset -q -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1 || true
 rm -rf "$REPO_ROOT/$VAL_Q248_NEST"
+trap - INT TERM
 unset VAL_Q248_NEST
 
 # --- the ROOT README.md remains excepted (documented example
 # key shapes). Appending a secret-shaped line to the repo-root README must NOT
-# fail the scan. Restored via `git checkout --` immediately; guarded on the file
-# being clean first so a dirty tree is never clobbered. Sentinel runtime-built.
+# fail the scan. The restore is registered on INT/TERM (the bash analog of the PS
+# twin's try/finally) so an interrupted or killed run cannot leak the
+# secret-shaped sentinel into the tracked README.md — a leak would make this test
+# _skip forever, since the guard below requires a clean README.md. The trap is
+# INT/TERM only (NOT EXIT — run.sh sources files, so an EXIT trap would persist
+# across siblings per the header note) and is cleared immediately after the
+# inline restore. Guarded on the file being clean first so a dirty tree is never
+# clobbered. Sentinel runtime-built.
 if git -C "$REPO_ROOT" diff --quiet -- README.md 2>/dev/null; then
+  trap 'git -C "$REPO_ROOT" checkout -- README.md >/dev/null 2>&1 || true' INT TERM
   val_q248r_prefix='sk-'
   val_q248r_body='fakefake1234567890_abcdefghij_test'
   printf 'value: %s%s\n' "$val_q248r_prefix" "$val_q248r_body" >> "$REPO_ROOT/README.md"
@@ -425,6 +439,7 @@ if git -C "$REPO_ROOT" diff --quiet -- README.md 2>/dev/null; then
   assert_exit "validate.sh excepts a secret-shaped line in the ROOT README" 0 -- \
     bash "$REPO_ROOT/scripts/validate.sh"
   git -C "$REPO_ROOT" checkout -- README.md >/dev/null 2>&1 || true
+  trap - INT TERM
 else
   _skip "validate.sh excepts a secret-shaped line in the ROOT README" "README.md not clean"
 fi

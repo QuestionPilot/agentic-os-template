@@ -244,6 +244,13 @@ function Test-SecretPattern {
     # here would fail OPEN on a committable file PS can't read, the worse
     # direction since Windows CI is the gate. Accumulate + FAIL closed.
     $readErrorFiles = @()
+    # Non-git fallback only: directory-traversal errors from the Get-ChildItem
+    # walk (a permission-denied dir). -EA SilentlyContinue still RECORDS into
+    # -ErrorVariable (unlike -EA Ignore), so we fail closed on an unreadable dir
+    # whose files would otherwise silently vanish from the scan — matching the
+    # bash twin's `grep -r` exit-2. Stays @() on the git branch (that branch
+    # enumerates via ls-files, not the walk), so the post-scan check is a no-op there.
+    $gciErr = @()
     # Root README.md (documented example key shapes) is the single tracked
     # exclusion — ROOT-EXACT, not basename, so a nested docs/README.md carrying
     # a real token is still scanned.
@@ -291,7 +298,7 @@ function Test-SecretPattern {
             (Join-Path $repo 'cross-model-out'),
             (Join-Path $repo '.codegraph')
         )
-        Get-ChildItem -LiteralPath $repo -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $repo -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable gciErr |
             Where-Object {
                 $f = $_.FullName
                 $skip = $false
@@ -312,6 +319,21 @@ function Test-SecretPattern {
                     $readErrorFiles += $_.FullName
                 }
             }
+    }
+    # A permission-denied DIRECTORY makes the non-git Get-ChildItem walk error
+    # (captured above via -ErrorVariable); its files are never enumerated, so a
+    # secret inside would hide and the scan would fail OPEN. Fail closed to match
+    # the bash twin (`grep -r` exit 2 -> the `secret_status -gt 1` check). No
+    # exclude-dir filtering here (unlike check-drift.ps1's Test-ScanPath): the bash
+    # twin's grep passes ONLY `--exclude-dir=.git`, post-filtering (not pruning
+    # traversal of) cross-model-out/.codegraph/worktrees — so bash ENTERS those and
+    # ALSO fails closed on an unreadable dir there; matching it means failing on any
+    # error. The lone divergent dir is `.git`, already caught by the embedded-.git
+    # scan (check 2) before this secret scan runs — so the divergence is unreachable.
+    if ($gciErr.Count -gt 0) {
+        [Console]::Error.WriteLine("FAIL secret scan: directory enumeration errored in non-git fallback ($($gciErr.Count) error(s)); not treating as clean")
+        foreach ($e in $gciErr) { [Console]::Error.WriteLine("       $($e.Exception.Message)") }
+        exit 1
     }
     if ($readErrorFiles.Count -gt 0) {
         [Console]::Error.WriteLine("FAIL secret scan: could not read $($readErrorFiles.Count) listed file(s); not treating as pass")

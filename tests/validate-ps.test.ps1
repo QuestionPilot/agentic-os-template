@@ -482,17 +482,23 @@ if (Test-Path -LiteralPath $Q248_DEL) {
 # cut 2: a nested README.md IS scanned (root-exact, not basename). Pre-fix the
 # scan excluded README.md by basename (Split-Path -Leaf / $_.Name), blinding every
 # README anywhere. Sentinel built from non-matching halves per
-# [[feedback_self_tripping_test_source]] so this source doesn't self-trip.
+# [[feedback_self_tripping_test_source]] so this source doesn't self-trip. The
+# force-added fixture's unstage+remove is wrapped in try/finally so it ALWAYS
+# runs — even if validate throws or the run is interrupted — otherwise an
+# interrupted run orphans the fixture in the index + on disk.
 $Q248_NEST_DIR = Join-Path $env:REPO_ROOT (Join-Path 'tests' (Join-Path 'fixtures' ("que248-nested-" + ([Guid]::NewGuid().Guid.Substring(0,8)))))
 $Q248_NEST = Join-Path $Q248_NEST_DIR 'README.md'
-New-Item -ItemType Directory -Path $Q248_NEST_DIR -Force | Out-Null
-$sentinel = 'sk' + '-bCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKl'
-[System.IO.File]::WriteAllText($Q248_NEST, "value: $sentinel`n", [System.Text.UTF8Encoding]::new($false))
-& git -C $env:REPO_ROOT add -f -- $Q248_NEST 2>&1 | Out-Null
-$out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
-$code = $LASTEXITCODE
-& git -C $env:REPO_ROOT reset -q -- $Q248_NEST 2>&1 | Out-Null
-Remove-Item -LiteralPath $Q248_NEST_DIR -Recurse -Force -ErrorAction SilentlyContinue
+try {
+    New-Item -ItemType Directory -Path $Q248_NEST_DIR -Force | Out-Null
+    $sentinel = 'sk' + '-bCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKl'
+    [System.IO.File]::WriteAllText($Q248_NEST, "value: $sentinel`n", [System.Text.UTF8Encoding]::new($false))
+    & git -C $env:REPO_ROOT add -f -- $Q248_NEST 2>&1 | Out-Null
+    $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
+    $code = $LASTEXITCODE
+} finally {
+    & git -C $env:REPO_ROOT reset -q -- $Q248_NEST 2>&1 | Out-Null
+    Remove-Item -LiteralPath $Q248_NEST_DIR -Recurse -Force -ErrorAction SilentlyContinue
+}
 if ($code -eq 1) {
     _Pass 'validate-ps.test: nested README.md is scanned for secrets'
 } else {
@@ -501,14 +507,21 @@ if ($code -eq 1) {
 
 # cut 2: the ROOT README.md remains excepted (documented example key shapes). A
 # secret-shaped line appended to the repo-root README must NOT fail the scan.
-# Restored via `git checkout --` immediately; guarded on the file being clean.
+# The mutate-and-restore is wrapped in try/finally so the `git checkout --`
+# restore ALWAYS runs — even if validate throws or the run is interrupted —
+# because a leaked sentinel in the tracked README.md would make this test _Skip
+# forever (the guard below requires a clean README.md). Guarded on the file being
+# clean first so a dirty tree is never clobbered.
 & git -C $env:REPO_ROOT diff --quiet -- README.md 2>$null
 if ($LASTEXITCODE -eq 0) {
     $sentinel2 = 'sk' + '-cDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkLm'
-    Add-Content -LiteralPath (Join-Path $env:REPO_ROOT 'README.md') -Value "value: $sentinel2"
-    $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
-    $code = $LASTEXITCODE
-    & git -C $env:REPO_ROOT checkout -- README.md 2>&1 | Out-Null
+    try {
+        Add-Content -LiteralPath (Join-Path $env:REPO_ROOT 'README.md') -Value "value: $sentinel2"
+        $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        & git -C $env:REPO_ROOT checkout -- README.md 2>&1 | Out-Null
+    }
     if ($code -eq 0) {
         _Pass 'validate-ps.test: ROOT README secret-shaped example is excepted'
     } else {
@@ -537,3 +550,52 @@ try {
         _Fail 'validate-ps.test: root readme.md case-variant is scanned, not excepted' "expected exit 1, got $($r.Exit)", $r.Output
     }
 } finally { Remove-Item -LiteralPath $q248cs -Recurse -Force -ErrorAction SilentlyContinue }
+
+# ---------------------------------------------------------------------------
+# NON-GIT fallback fails closed on an unreadable DIRECTORY
+#
+# An earlier fix closed the unreadable-FILE gap (Select-String -EA Stop -> read-
+# error flag). Its sibling gap lives in the NON-GIT branch: the
+# `Get-ChildItem -Recurse -Force -EA SilentlyContinue` walk SILENTLY swallows a
+# permission-denied DIRECTORY, so its files are never enumerated -> a secret
+# inside hides and the scan fails OPEN. The bash twin's `grep -r` returns exit 2
+# on such a dir -> fails closed; this restores parity by capturing the
+# enumeration error (-ErrorVariable) and failing closed. Triggers ONLY on a
+# non-git plain-copy staging/export tree (CI/local always take the git ls-files
+# branch).
+#
+# Drive the non-git branch deterministically on EVERY platform by stripping the
+# fixture's .git (no .git -> `git --show-toplevel` fails -> filesystem-walk
+# branch), then planting a 000 subdir. Assert on the DISTINCTIVE fail message,
+# not just the exit code: a non-git fixture can exit 1 for unrelated downstream
+# reasons, so the message is what proves the dir-enumeration fail-closed actually
+# fired. _Skip when the unreadable dir can't be created (running as root; Windows
+# chmod no-op).
+# ---------------------------------------------------------------------------
+$nongit = New-FixtureRepo
+try {
+    Remove-Item -LiteralPath (Join-Path $nongit '.git') -Recurse -Force -ErrorAction SilentlyContinue
+    $nongitLocked = Join-Path $nongit 'locked-sub'
+    New-Item -ItemType Directory -Path $nongitLocked -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $nongitLocked 'would-be-scanned.txt'), "placeholder`n", [System.Text.UTF8Encoding]::new($false))
+    if (-not $IsWindows) { & chmod 000 $nongitLocked 2>$null }
+    # Probe in THIS process (same user as the child pwsh): does a -Recurse walk
+    # actually error on the dir? If not (root / Windows no-op), the gap can't be
+    # exercised -> skip.
+    $nongitProbeErr = $null
+    $null = Get-ChildItem -LiteralPath $nongit -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable nongitProbeErr
+    if (-not $nongitProbeErr -or $nongitProbeErr.Count -eq 0) {
+        _Skip 'validate-ps.test: non-git secret scan fails closed on an unreadable directory' 'could not create an unreadable dir (root or Windows chmod no-op)'
+    } else {
+        $r = Invoke-ValidateFixture -FixtureRoot $nongit
+        if ($r.Exit -eq 1 -and $r.Output -match 'directory enumeration errored') {
+            _Pass 'validate-ps.test: non-git secret scan fails closed on an unreadable directory'
+        } else {
+            _Fail 'validate-ps.test: non-git secret scan fails closed on an unreadable directory' "expected exit 1 + 'directory enumeration errored', got exit $($r.Exit)", $r.Output
+        }
+    }
+} finally {
+    $nongitLocked = Join-Path $nongit 'locked-sub'
+    if (-not $IsWindows -and (Test-Path -LiteralPath $nongitLocked)) { & chmod 755 $nongitLocked 2>$null }
+    Remove-Item -LiteralPath $nongit -Recurse -Force -ErrorAction SilentlyContinue
+}
