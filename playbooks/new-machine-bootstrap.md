@@ -113,6 +113,55 @@ what's missing without making any changes.
 - Router skills are installed or recreated before broad leaf-skill installation.
 - A project-local instruction file points back to the framework without duplicating it.
 
+## Resume Verification
+
+Setup (above) proves the spine *installs*. This step verifies it *orients and resumes* — the literal definition of done for a portable brain: **a clean clone must reconstitute a working, oriented spine that resumes prior work.** Two tiers: the **live check** is the real proof (a fresh session's orient surfaces your actual in-flight work); the **sandboxed dry-run** proves the orient *machinery* is wired, without live credentials.
+
+### Live check (operator machine — the real bar)
+
+After the tracker and vault are connected (Manual Steps 6–7), start a session and let the spine run its kickoff orient. It passes when the orient surfaces in-flight work on its own:
+
+- active tracker projects and their open issues (the projects-first cut),
+- the durable vault's `START.md` and recent project memory,
+- any contradiction between recent framework commits and memory headlines.
+
+If you can read back the current frontier and resume the next action from a cold start, the resume invariant holds.
+
+### Sandboxed dry-run (no live credentials)
+
+To prove the orient *machinery* is wired — the spine renders and a fresh session auto-fires the kickoff-orient directive — without live credentials or mutating the real machine, run the first-run path in a throwaway sandbox: clean clone, fake `HOME`, scratch config and vault. The required CLIs must already be present; the sandbox stops at `--check` rather than installing any globally (Homebrew / `npm -g` are not contained by a fake `HOME`).
+
+```bash
+set -euo pipefail
+SRC=<path-to-your-clone-or-repo-url>          # committed state is cloned — commit local changes first
+S=$(mktemp -d); CLONE=$S/clone; H=$S/home; CFG=$S/config; VLT=$S/vault
+mkdir -p "$H" "$VLT"; printf -- '---\ntitle: START\n---\n# START\n' > "$VLT/START.md"
+git clone --quiet "$SRC" "$CLONE"
+# Drop inherited config-dir / vault / codex env so the scratch flags drive the
+# build — NOT a PATH security boundary (see README "Trust boundaries" for that).
+run() { env -i PATH="$PATH" HOME="$H" TMPDIR="$S" "$@"; }
+
+run bash "$CLONE/scripts/bootstrap.sh" --check                       # read-only; aborts here if a required CLI is missing — never installs one
+run bash "$CLONE/scripts/bootstrap.sh" --dry-run --harness claude \
+    --claude-config-dir "$CFG" --vault-dir "$VLT" || true            # preview; its own smoke step flags the not-yet-built entrypoint — expected
+[ ! -e "$CFG" ] && echo "OK: dry-run built nothing"
+run bash "$CLONE/scripts/bootstrap.sh" --harness claude \
+    --claude-config-dir "$CFG" --vault-dir "$VLT"                    # real build INTO scratch (CLIs already present per --check)
+
+ls "$CFG"/skills/session-agent >/dev/null && echo "OK: session-agent skill rendered"
+grep -q framework-surface "$CFG/settings.json" && echo "OK: orient hook wired into the config"
+printf '%s' '{"source":"startup"}' | run bash "$CFG/hooks/framework-surface.sh" \
+  | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'Mode 1: kickoff orient' \
+  && echo "OK: a fresh session auto-fires the kickoff-orient directive"
+rm -rf "$S"                                                          # the sandbox is disposable
+```
+
+Each `OK:` confirms one piece of the orient *machinery* — the spine renders and a fresh session auto-fires the kickoff-orient directive. It does **not** prove the orient *ran*: no skill invocation, tracker query, or vault read happens here — that is what the live check above proves. (Windows: mirror with `pwsh scripts/bootstrap.ps1 -Check` / `-DryRun`, then assert against `$CFG/hooks/framework-surface.ps1` the same way.)
+
+### What still needs the operator's machine
+
+The sandbox proves the *machinery*; it cannot prove the *content*. Only a real session — with the live tracker token and the synced vault — proves the orient surfaces the actual in-flight projects and issues. That live check is the final, irreducible step, and it is the operator's to run.
+
 ## Closeout
 
 State which harness was configured, which active-work and knowledge systems were chosen, which skills were installed, and whether any setup gap remains.
