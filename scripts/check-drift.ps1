@@ -651,7 +651,11 @@ function Test-ScanPath {
     # Get-ChildItem -Recurse -Force walk so those scans still run. Byte-equivalent
     # to the original Test-ScanPath body.
     if (-not $script:IsGitWorkTree) {
-        Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
+        # Capture directory-traversal errors so an unreadable dir fails closed
+        # (see the post-walk check below). -EA SilentlyContinue still records into
+        # -ErrorVariable (unlike -EA Ignore).
+        $gciErr = @()
+        Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable gciErr |
             ForEach-Object {
                 $f = $_
                 if ($excludeFilesSet.Contains($f.Name)) { return }
@@ -679,6 +683,34 @@ function Test-ScanPath {
                     exit 1
                 }
             }
+        # A permission-denied DIRECTORY makes the walk error (captured above);
+        # its files are never enumerated, so a secret/marker inside would hide and
+        # the scan would fail OPEN. Fail closed to match the bash twin's `grep -r`
+        # exit-2 — but ONLY for dirs bash would actually descend into. The bash twin
+        # passes `--exclude-dir` for .git AND every $ExcludeDirs name, so it never
+        # enters (nor errors on) those; an error from inside an excluded dir is
+        # bash-invisible AND that dir's files are pruned from the scan anyway, so
+        # failing on it would break bash<->PS parity for zero security gain. Prune
+        # those errors via the SAME per-segment exclusion the ForEach-Object above
+        # applies to files; fail closed on the rest. $e.TargetObject is the
+        # offending path (string); an unknown/out-of-root path stays unpruned (fail
+        # closed, conservative).
+        $realErr = @()
+        foreach ($e in $gciErr) {
+            $ep = [string]$e.TargetObject
+            $pruned = $false
+            if (-not [string]::IsNullOrEmpty($ep) -and $ep.StartsWith($Root, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $erel = $ep.Substring($Root.Length).TrimStart([char]'/', [char]'\').Replace([char]'\', '/')
+                foreach ($s in ($erel -split '/')) {
+                    if ($s -eq '.git' -or ($excludeDirsLower -contains $s.ToLowerInvariant())) { $pruned = $true; break }
+                }
+            }
+            if (-not $pruned) { $realErr += $e }
+        }
+        if ($realErr.Count -gt 0) {
+            Write-Fail "directory enumeration errored in non-git fallback ($($realErr.Count) error(s); e.g. $($realErr[0].Exception.Message)); not treating as clean"
+            exit 1
+        }
         return $hits.ToArray()
     }
 
@@ -860,7 +892,6 @@ Assert-Absent `
         'drift.test.sh', 'drift.test.ps1',
         'scripts-ps-parity.test.sh',
         '2026-05-22-que-50-windows-native-port.md',
-        'sanitize-for-publish.sh', 'sanitize-for-publish.ps1',
         'check-clean.sh', 'check-clean.ps1'
     ) `
     -ExcludeDirs @('.claude', '.codex', '.agents', 'cross-model-out') `

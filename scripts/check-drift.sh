@@ -441,8 +441,8 @@ unset _q213_toplevel _q213_tl_phys _q213_rr_phys
 # a file that can never enter git is out of scope by definition, while tracked +
 # untracked-not-ignored content — exactly what CAN be committed — is still
 # scanned. The `--exclude`/`--exclude-dir` flags below remain meaningful for
-# TRACKED self-referential files (check-drift.sh, sanitize-for-publish.sh,
-# drift.test.sh) and the tracked `plans/` dir; entries that named gitignored
+# TRACKED self-referential files (check-drift.sh, drift.test.sh) and the
+# tracked `plans/` dir; entries that named gitignored
 # paths are now redundant but kept as documented defense-in-depth.
 #
 # Newline-delimited (NOT `git ls-files -z`): keeps the bash/PS twins structurally
@@ -688,9 +688,6 @@ done
 # `/Users/<operator>/` inside the worktree's absolute gitdir path; they're
 # pruned by `--exclude-dir=.claude` (etc.) above. The <TEAM>-66 C-1 negative
 # test in tests/drift.test.sh pins that prune behavior.
-# <TEAM>-97: `sanitize-for-publish.{sh,ps1,test.sh}` are private-only scrubber
-# scripts whose source legitimately contains the same denylist patterns they
-# scrub — same exception class as `check-drift.sh` and `drift.test.sh`.
 assert_absent 'machine-specific absolute path found in repository content' \
   --exclude=check-drift.sh --exclude=check-drift.ps1 \
   --exclude=local.env --exclude=.git \
@@ -698,8 +695,6 @@ assert_absent 'machine-specific absolute path found in repository content' \
   --exclude=drift.test.sh \
   --exclude=drift.test.ps1 \
   --exclude=2026-05-22-que-50-windows-native-port.md \
-  --exclude=sanitize-for-publish.sh \
-  --exclude=sanitize-for-publish.ps1 \
   --exclude=scripts-ps-parity.test.sh \
   --exclude=check-clean.sh \
   --exclude=check-clean.ps1 \

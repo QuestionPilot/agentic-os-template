@@ -320,3 +320,100 @@ if (Test-Path -LiteralPath $DR_Q248) {
     Assert-Exit 'drift.test: check-drift.ps1 fails closed on an unreadable listed file' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
     & git -C $env:REPO_ROOT reset -q -- $DR_Q248 2>&1 | Out-Null
 }
+
+# --- NON-GIT fallback fails closed on an unreadable DIRECTORY -----------------
+# Sibling of the unreadable-FILE test above, for the directory-traversal gap. In
+# Test-ScanPath's non-git branch the
+# `Get-ChildItem -Recurse -Force -EA SilentlyContinue` walk silently swallows a
+# permission-denied DIRECTORY, so its files are never scanned and the scan fails
+# OPEN; the bash twin's `grep -r` returns exit 2 -> fails closed. The fix captures
+# the enumeration error (-ErrorVariable) and fails closed to match.
+#
+# check-drift.ps1 has no -RepoRoot override (it derives $repoRoot from
+# $PSScriptRoot's parent), so drive the non-git branch by running a COPY of the
+# WORKING-TREE script from a non-git fixture's scripts/ dir: $PSScriptRoot/.. is
+# then the fixture (no .git) -> Test-ScanPath takes the filesystem-walk fallback.
+# No --manifest -> scans-only mode. The fixture stubs the files check-drift.ps1
+# requires present BEFORE its first scan (the $requiredCore/$requiredPlaybooks/
+# $requiredVerification lists + AGENTS/CLAUDE entrypoints referencing README.md +
+# core/) so execution REACHES the machine-path scan, whose Test-ScanPath walk over
+# the fixture root hits locked-sub and fails closed first (before operator-naming-
+# check.ps1's conditional dot-source, which is absent anyway). If that required
+# set grows, this stub list must grow too — the test then fails LOUDLY with
+# "missing required ...", not silently. Assert the DISTINCTIVE message; _Skip when
+# the unreadable dir can't be made (root / Windows chmod no-op).
+function New-NonGitDriftFixture {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('drift-nongit-' + (Get-DrSuffix))
+    foreach ($f in @(
+        'core/operating-system.md', 'core/self-improvement.md', 'core/memory-model.md',
+        'core/verification.md', 'core/tool-use.md',
+        'playbooks/harness-entrypoints.md', 'playbooks/data-readiness-map.md', 'playbooks/goal-run.md',
+        'verification/process-memory.md', 'verification/data-readiness.md'
+    )) { Write-LfFile (Join-Path $root $f) "# stub`n" }
+    # Entrypoints must reference README.md AND core/ (machine-path-free).
+    Write-LfFile (Join-Path $root 'AGENTS.md')  "# entrypoint`nSee README.md and core/operating-system.md`n"
+    Write-LfFile (Join-Path $root 'CLAUDE.md')  "# entrypoint`nSee README.md and core/operating-system.md`n"
+    New-Item -ItemType Directory -Path (Join-Path $root 'scripts') -Force | Out-Null
+    Copy-Item -LiteralPath $CHECK_DRIFT_PS1 -Destination (Join-Path $root 'scripts' 'check-drift.ps1') -Force
+    return $root
+}
+$DR_NG_ROOT = New-NonGitDriftFixture
+$DR_NG_LOCKED = $null
+try {
+    $DR_NG_LOCKED = Join-Path $DR_NG_ROOT 'locked-sub'
+    New-Item -ItemType Directory -Path $DR_NG_LOCKED -Force | Out-Null
+    Write-LfFile (Join-Path $DR_NG_LOCKED 'would-be-scanned.md') "placeholder`n"
+    if (-not $IsWindows) { & chmod 000 $DR_NG_LOCKED 2>$null }
+    $DR_NG_PROBE = $null
+    $null = Get-ChildItem -LiteralPath $DR_NG_ROOT -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable DR_NG_PROBE
+    if (-not $DR_NG_PROBE -or $DR_NG_PROBE.Count -eq 0) {
+        _Skip 'drift.test: check-drift.ps1 non-git scan fails closed on an unreadable directory' 'could not create an unreadable dir (root or Windows chmod no-op)'
+    } else {
+        $DR_NG_OUT = & pwsh -NoProfile -File (Join-Path $DR_NG_ROOT 'scripts' 'check-drift.ps1') 2>&1
+        $DR_NG_CODE = $LASTEXITCODE
+        $DR_NG_MSG = ($DR_NG_OUT -join "`n")
+        if ($DR_NG_CODE -eq 1 -and $DR_NG_MSG -match 'directory enumeration errored') {
+            _Pass 'drift.test: check-drift.ps1 non-git scan fails closed on an unreadable directory'
+        } else {
+            _Fail 'drift.test: check-drift.ps1 non-git scan fails closed on an unreadable directory' "expected exit 1 + 'directory enumeration errored', got exit $DR_NG_CODE", $DR_NG_MSG
+        }
+    }
+} finally {
+    if ($DR_NG_LOCKED -and -not $IsWindows -and (Test-Path -LiteralPath $DR_NG_LOCKED)) { & chmod 755 $DR_NG_LOCKED 2>$null }
+    Remove-Item -LiteralPath $DR_NG_ROOT -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- parity: unreadable dir UNDER an EXCLUDED dir does NOT fail closed --------
+# The bash twin's scan_path passes `--exclude-dir` for .git + every $ExcludeDirs
+# name, so it never enters (nor errors on) those dirs; the PS fail-closed must
+# prune the same traversal errors or it would fail where bash passes (false
+# positive + parity break) — for zero security gain, since those dirs' files are
+# excluded from the scan anyway. Place the 000 dir under cross-model-out/ (an
+# $ExcludeDirs name for both the machine-path + retired scans) and assert the scan
+# PASSES (exit 0, NO enumeration failure), matching bash. _Skip when the
+# unreadable dir can't be made.
+$DR_NGX_ROOT = New-NonGitDriftFixture
+$DR_NGX_LOCKED = $null
+try {
+    $DR_NGX_LOCKED = Join-Path $DR_NGX_ROOT 'cross-model-out' 'locked'
+    New-Item -ItemType Directory -Path $DR_NGX_LOCKED -Force | Out-Null
+    Write-LfFile (Join-Path $DR_NGX_LOCKED 'hidden.md') "placeholder`n"
+    if (-not $IsWindows) { & chmod 000 $DR_NGX_LOCKED 2>$null }
+    $DR_NGX_PROBE = $null
+    $null = Get-ChildItem -LiteralPath $DR_NGX_ROOT -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable DR_NGX_PROBE
+    if (-not $DR_NGX_PROBE -or $DR_NGX_PROBE.Count -eq 0) {
+        _Skip 'drift.test: check-drift.ps1 non-git scan tolerates an unreadable EXCLUDED dir (bash parity)' 'could not create an unreadable dir (root or Windows chmod no-op)'
+    } else {
+        $DR_NGX_OUT = & pwsh -NoProfile -File (Join-Path $DR_NGX_ROOT 'scripts' 'check-drift.ps1') 2>&1
+        $DR_NGX_CODE = $LASTEXITCODE
+        $DR_NGX_MSG = ($DR_NGX_OUT -join "`n")
+        if ($DR_NGX_CODE -eq 0 -and $DR_NGX_MSG -notmatch 'directory enumeration errored') {
+            _Pass 'drift.test: check-drift.ps1 non-git scan tolerates an unreadable EXCLUDED dir (bash parity)'
+        } else {
+            _Fail 'drift.test: check-drift.ps1 non-git scan tolerates an unreadable EXCLUDED dir (bash parity)' "expected exit 0 (no enumeration failure), got exit $DR_NGX_CODE", $DR_NGX_MSG
+        }
+    }
+} finally {
+    if ($DR_NGX_LOCKED -and -not $IsWindows -and (Test-Path -LiteralPath $DR_NGX_LOCKED)) { & chmod 755 $DR_NGX_LOCKED 2>$null }
+    Remove-Item -LiteralPath $DR_NGX_ROOT -Recurse -Force -ErrorAction SilentlyContinue
+}
