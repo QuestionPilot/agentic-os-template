@@ -131,9 +131,8 @@ fi
 
 # --- T11: operator-specific-name guard — runtime-construct sentinels per
 # [[feedback_self_tripping_test_source]] so this test source does NOT itself
-# self-trip check-drift.sh's personal-name scan or
-# retired-marker scan. Also catches the hyphenated workspace-slug form
-# `question-pilot` that the case-insensitive non-hyphen sentinels miss
+# self-trip check-drift.sh's personal-name scan. Also catches the hyphenated
+# workspace-slug form that the case-insensitive non-hyphen sentinels miss
 # (Codex MT-1 strengthened the guard from concat-only to slug-form-too).
 sentinel_personal="$(printf '%s%s' 'Hen' 'do')"
 sentinel_retired="$(printf '%s%s' 'Question' 'Pilot')"

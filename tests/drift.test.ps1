@@ -213,38 +213,13 @@ if (Test-Path -LiteralPath $DR_QUE87_DIR) {
 } else {
     New-Item -ItemType Directory -Path $DR_QUE87_DIR -Force | Out-Null
     $cmr_prefix = '/U'; $cmr_body = 'sers/test-que87/Claude - Local/ai-config'
-    $qp_a = 'Question'; $qp_b = 'Pilot'
     $hd_a = 'Hen'; $hd_b = 'do'
     $body = ('workdir: ' + $cmr_prefix + $cmr_body + "`nmodel: gpt-5.5`n`n") +
-            ('# Review of ' + $qp_a + $qp_b + ' repo by ' + $hd_a + $hd_b + "`n")
+            ('# Review repo by ' + $hd_a + $hd_b + "`n")
     Write-LfFile (Join-Path $DR_QUE87_DIR 'codex-review.md') $body
     Assert-Exit 'drift.test: check-drift.ps1 prunes cross-model-out/ runtime artifacts' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
     Remove-Item -LiteralPath $DR_QUE87_DIR -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-# --- retired-marker allowlist exception ---
-$DR_QUE90_FILE = Join-Path $env:REPO_ROOT '.que90-drift-fixture.md'
-$qp90_url_a = 'https://github.com/'
-$qp90_url_b = 'Quest' + 'ion'
-$qp90_url_c = 'Pi' + 'lot'
-$qp90_url_d = '/cross-model-review'
-$qp90_url = $qp90_url_a + $qp90_url_b + $qp90_url_c + $qp90_url_d
-
-# Step 1: only allowed URL — drift PASSES.
-Write-LfFile $DR_QUE90_FILE ('# Sentinel — see ' + $qp90_url + " for the live forward-pointer.`n")
-Assert-Exit 'drift.test: check-drift.ps1 allows live forward-pointer URL' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-
-# Step 2: add non-allowed literal on separate line.
-# Codex F-2 (MEDIUM): use AppendAllText + UTF8NoBOM for byte-determinism on Windows.
-$qp90_dis_a = 'Quest' + 'ion'; $qp90_dis_b = 'Pi' + 'lot'
-[System.IO.File]::AppendAllText($DR_QUE90_FILE, ('# also: ' + $qp90_dis_a + $qp90_dis_b + "/some-other-repo should still be blocked.`n"), [System.Text.UTF8Encoding]::new($false))
-Assert-Exit 'drift.test: check-drift.ps1 blocks other retired-marker literals' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-
-# Step 3 (Codex F2): SAME-LINE bypass.
-Write-LfFile $DR_QUE90_FILE ('# allowed url ' + $qp90_url + ' but also ' + $qp90_dis_a + $qp90_dis_b + '/other-repo on same line should FAIL.' + "`n")
-Assert-Exit 'drift.test: check-drift.ps1 catches same-line allowed-URL + disallowed literal' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-
-Remove-Item -LiteralPath $DR_QUE90_FILE -Force -ErrorAction SilentlyContinue
 
 # --- the broad content scans enumerate the COMMITTABLE set
 # (git ls-files --cached --others --exclude-standard), so GITIGNORED runtime

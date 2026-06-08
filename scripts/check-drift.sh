@@ -671,8 +671,8 @@ done
 # (<project-key>) — not concrete personal paths. If a future plan
 # legitimately needs to quote a path REGEX pattern (e.g. documenting "/Users/"
 # as a scanner input), add `--exclude=<filename>.md` to THIS scan call, NOT a
-# blanket dir exclusion. The retired-marker and operator-naming denylist scans
-# below keep --exclude-dir=plans because plans may quote a closed project name
+# blanket dir exclusion. The operator-naming denylist scan below keeps
+# --exclude-dir=plans because plans may quote a closed project name
 # in historical record. `--exclude=drift.test.sh` mirrors the <TEAM>-51
 # operator-naming pattern — the test file deliberately injects sentinel paths to
 # prove this scan fires.
@@ -706,100 +706,6 @@ assert_absent 'machine-specific absolute path found in repository content' \
   --exclude-dir=.claude --exclude-dir=.codex --exclude-dir=.agents \
   --exclude-dir=cross-model-out \
   -e '/(Users|home)/[^/]+/?|[A-Za-z]:\\Users\\[^\\]+\\?' "$repo_root"
-
-# <TEAM>-90: retired-marker scan with a SINGLE allowlist exception for the
-# canonical live URL `https://github.com/QuestionPilot/cross-model-review`
-# established as the forward-pointer to the <TEAM>-91 specialty repo. All other
-# `QuestionPilot` / `Question Pilot` literals remain blocked.
-#
-# Implementation: capture grep hits, then for each matching line, strip ALL
-# occurrences of the allowed exact URL from the line content (per-occurrence,
-# not whole-line) and re-check for any remaining `QuestionPilot` / `Question Pilot`
-# literal. This closes the line-based allowlist bypass where a line could
-# contain BOTH the allowed URL AND another disallowed `QuestionPilot/<repo>`
-# literal and pass naively.
-{
-  if [ "$_IS_GIT_WORKTREE" -eq 0 ]; then
-    # Non-git tree (plain-copy staging/export): pre-<TEAM>-213 filesystem walk.
-    set +e
-    retired_hits="$(grep -rEn --exclude-dir=.git \
-      --exclude=check-drift.sh --exclude=check-drift.ps1 \
-      --exclude=local.env --exclude=.git \
-      --exclude=sanitize-for-publish.sh \
-      --exclude=sanitize-for-publish.ps1 \
-      --exclude=scripts-ps-parity.test.sh \
-      --exclude-dir=.claude --exclude-dir=.codex --exclude-dir=.agents \
-      --exclude-dir=cross-model-out \
-      --exclude-dir=plans \
-      -e 'QuestionPilot|Question Pilot' "$repo_root")"
-    retired_status=$?
-    set -e
-  else
-    # <TEAM>-213: enumerate committable files (gitignored runtime artifacts pruned by
-    # --exclude-standard) instead of a `grep -r` filesystem walk. Excludes kept:
-    # the tracked self-referential script files + the tracked `plans/` dir (plans
-    # may quote a closed project name in historical record). drift.test.{sh,ps1}
-    # is intentionally NOT excluded — its <TEAM>-90 sentinels are assembled at runtime
-    # so the test source does not literally carry the marker. The gitignored
-    # entries the old call excluded (local.env, .git, .claude/.codex/.agents/
-    # cross-model-out) are now pruned by git, so they drop from the explicit
-    # filter. git enumeration failure FAILs the scan, never an empty-list "pass".
-    set +e
-    retired_files_raw="$(git -C "$repo_root" -c core.quotePath=false ls-files --cached --others --exclude-standard -- .)"
-    retired_ls_status=$?
-    set -e
-    if [ "$retired_ls_status" -ne 0 ]; then
-      printf 'FAIL retired-marker scan: git ls-files enumeration errored (exit %s); not treating as clean\n' \
-        "$retired_ls_status" >&2
-      exit 1
-    fi
-    retired_files=()
-    while IFS= read -r _rf; do
-      [ -n "$_rf" ] || continue
-      case "${_rf##*/}" in
-        check-drift.sh|check-drift.ps1|sanitize-for-publish.sh|sanitize-for-publish.ps1|scripts-ps-parity.test.sh) continue ;;
-      esac
-      case "/$_rf/" in */plans/*) continue ;; esac
-      retired_files+=("$repo_root/$_rf")
-    done <<< "$retired_files_raw"
-
-    set +e
-    if [ "${#retired_files[@]}" -eq 0 ]; then
-      retired_hits=""; retired_status=1
-    else
-      retired_hits="$(grep -En -e 'QuestionPilot|Question Pilot' -- "${retired_files[@]}")"
-      retired_status=$?
-    fi
-    set -e
-  fi
-
-  if [ "$retired_status" -gt 1 ]; then
-    printf 'FAIL retired project-specific marker scan errored (grep exit %s); not treating as pass\n' \
-      "$retired_status" >&2
-    exit 1
-  fi
-
-  # Per-occurrence allowlist: strip the exact allowed URL from each line content,
-  # then re-check for any remaining retired-marker literal. Use /usr/bin/grep
-  # for POSIX behavior + per [[reference_shell_grep_overlay]].
-  retired_residue=""
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    # Strip every occurrence of the allowed URL from the line (using sed with
-    # an unusual delimiter to avoid any literal `/` collision in the URL).
-    stripped="$(printf '%s' "$line" | sed 's@https://github.com/QuestionPilot/cross-model-review@@g')"
-    # If anything `QuestionPilot` or `Question Pilot` remains, it's a real leak.
-    if printf '%s' "$stripped" | /usr/bin/grep -qE 'QuestionPilot|Question Pilot'; then
-      retired_residue="${retired_residue}${line}"$'\n'
-    fi
-  done <<< "$retired_hits"
-
-  if [ -n "$retired_residue" ]; then
-    printf 'FAIL retired project-specific marker found (QuestionPilot / Question Pilot)\n' >&2
-    printf '%s' "$retired_residue" >&2
-    exit 1
-  fi
-}
 
 # <TEAM>-51 / <TEAM>-146: operator-PRIVATE personal-naming denylist. The scan lives in
 # a separate sourced fragment (scripts/lib/operator-naming-check.sh) that the
