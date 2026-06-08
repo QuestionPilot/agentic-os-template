@@ -12,5 +12,12 @@ lifecycle: shipped
 - **`skill` lesson class destination:** a new capability is added under
   `CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md` (authored via a skill-creation
   capability).
-- **No side artifact:** the transcript invocation is the marker; do not write a
-  side artifact to record that closeout ran. A `no-action` outcome is complete.
+- **No ran-marker artifact:** the transcript invocation is the marker that closeout
+  ran; do not write a separate marker to record it. (The session-log drain in the
+  shared body is different — it writes durable session *content* to the vault.) A
+  `no-action` outcome is complete.
+- **Session-log drain identity:** `<machine>` = `hostname`; the vault path = the
+  rendered `$OBSIDIAN_VAULT_PATH`; generate `closeout_id` with `openssl rand -hex 4`.
+  Claude Code does not reliably expose the session/transcript id to a skill body, so
+  leave `session_id` empty unless it can be determined — the `closeout_id` carries
+  filename uniqueness.

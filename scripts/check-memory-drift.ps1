@@ -84,6 +84,7 @@
 [CmdletBinding()]
 param(
     [string]$MemoryDir = '',
+    [string]$InjectionScan = '',
     [Alias('h')][switch]$Help,
 
     # Remaining args — POSIX-style --memory-dir / --help so bash-trained
@@ -113,6 +114,14 @@ while ($i -lt $Rest.Count) {
             $MemoryDir = $Rest[$i + 1]
             $i += 2
         }
+        '--injection-scan' {
+            if ($i + 1 -ge $Rest.Count) {
+                [Console]::Error.WriteLine('check-memory-drift.ps1: --injection-scan needs a file path')
+                exit 2
+            }
+            $InjectionScan = $Rest[$i + 1]
+            $i += 2
+        }
         '-h'     { $Help = [switch]$true; $i += 1 }
         '--help' { $Help = [switch]$true; $i += 1 }
         default {
@@ -138,6 +147,8 @@ a follow-on, updated the body, but never updated the headline / index.
 Usage:
   check-memory-drift.ps1 -MemoryDir <path>
   check-memory-drift.ps1                       (derives from CLAUDE_CONFIG_DIR)
+  check-memory-drift.ps1 -InjectionScan <file> (scan ONE file's body for injection
+                                                payloads; standalone, no -MemoryDir)
   check-memory-drift.ps1 -Help
 
 Exit codes:
@@ -152,6 +163,73 @@ enhancement may cross-reference Linear-project status.
 
 if ($Help.IsPresent) {
     Write-Usage
+    exit 0
+}
+
+# Get-InjectionHit <path> — return the prompt-injection payload class if the file
+# carries a BARE, LINE-LEADING directive in a scannable position, else ''. CONSERVATIVE:
+# skips fenced/indented code, blockquotes, and inline-code-led lines (those, plus
+# Unicode-whitespace-obfuscated and heading-embedded payloads, are ACCEPTED
+# false-negatives — it catches the realistic threat: untrusted text pasted VERBATIM as
+# a bare line-leading directive). ReadAllLines strips a UTF-8 BOM. FAIL-SAFE body
+# boundary (standalone mode has no companion frontmatter-safety check): if the file has
+# NO complete frontmatter (< 2 `---` delimiters) the WHOLE file is scanned rather than
+# treated as bodyless. The PAYLOAD PATTERN SET (the return chain) is what stays in
+# lockstep with the class-4 per-note scan + the check-memory-drift.sh twin; the
+# multi-class lockstep test exercises that set through both modes.
+function Get-InjectionHit {
+    param([Parameter(Mandatory)][string]$Path)
+    $allLines = [System.IO.File]::ReadAllLines($Path)
+    $seps = 0
+    $bodyStart = 0
+    for ($i = 0; $i -lt $allLines.Length; $i++) {
+        if ($allLines[$i] -match '^---\s*$') { $seps++; if ($seps -eq 2) { $bodyStart = $i + 1 } }
+    }
+    if ($seps -lt 2) { $bodyStart = 0 }   # no complete frontmatter -> scan whole file
+    $fence = $false
+    for ($i = $bodyStart; $i -lt $allLines.Length; $i++) {
+        $line = $allLines[$i]
+        if ($line -match '^\s*(```|~~~)') { $fence = -not $fence; continue }
+        if ($fence) { continue }
+        if ($line -match '^\s*$') { continue }
+        if ($line -match '^\s*>') { continue }
+        if ($line.StartsWith("`t")) { continue }
+        if ($line.StartsWith('    ')) { continue }
+        $m = $line -replace '^[ \t]+', ''
+        $m = $m -replace '^([*+\-]|\d+\.)[ \t]+', ''
+        $m = $m -replace '^[ \t]+', ''
+        if ($m.StartsWith('`')) { continue }
+        if     ($m -imatch '^<[/|]?(system|developer|assistant|user)[|]?>')                                        { return 'role-tag' }
+        elseif ($m -imatch '^\[?(system|assistant|developer|user)\]?([ \t]+(message|prompt|instructions?))?[ \t]*:') { return 'role-header' }
+        elseif ($m -imatch '^(ignore|forget|override|disregard)[ \t]+(all[ \t]+|the[ \t]+)?(previous|prior|above)') { return 'override' }
+        elseif ($m -imatch '^do not follow[ \t]+(the[ \t]+)?(previous|prior|above)')                               { return 'override' }
+        elseif ($m -imatch '^you are now[ \t]')                                                                    { return 'persona' }
+        elseif ($m -imatch '^from now on,?[ \t]+you[ \t]+(are|will|must)')                                         { return 'persona' }
+        elseif ($m -imatch '^if you are (an?[ \t]+)?(ai|agent|assistant|llm)[ \t]+reading this')                   { return 'future-agent' }
+        elseif ($m -imatch '^when you read this')                                                                  { return 'future-agent' }
+        elseif ($m -imatch '^when loaded into context')                                                            { return 'future-agent' }
+        elseif ($m -imatch '^(remember this|save this to memory|store this in memory|add this to memory|write this into memory|write this to memory)([ \t]+(forever|permanently|always))?[ \t]*:') { return 'memory-directive' }
+        elseif ($m -imatch '^(reveal|print|output|send|exfiltrate|leak).*(system prompt|developer instructions|hidden instructions|hidden prompt|your instructions)') { return 'exfil' }
+    }
+    return ''
+}
+
+# --injection-scan MODE: lint ONE arbitrary file (e.g. a drafted session log) for
+# bare line-leading injection payloads before it is written into the durable vault.
+# Standalone — no -MemoryDir / CLAUDE_CONFIG_DIR needed. Exit 0 clean, 1 found,
+# 2 usage/missing-file.
+if (-not [string]::IsNullOrEmpty($InjectionScan)) {
+    if (-not (Test-Path -LiteralPath $InjectionScan -PathType Leaf)) {
+        [Console]::Error.WriteLine("FAIL --injection-scan: file does not exist: $InjectionScan")
+        exit 2
+    }
+    $injHit = Get-InjectionHit -Path $InjectionScan
+    if ($injHit -ne '') {
+        $bn = Split-Path -Leaf $InjectionScan
+        [Console]::Error.WriteLine("FAIL injection ${bn}: line-leading prompt-injection payload (class: $injHit) — fence/quote it under Raw observations, or remove it (see core/memory-model.md)")
+        exit 1
+    }
+    Write-Host "PASS no injection payloads in $InjectionScan"
     exit 0
 }
 

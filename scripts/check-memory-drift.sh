@@ -54,6 +54,9 @@
 # Usage:
 #   check-memory-drift.sh --memory-dir <path>
 #   check-memory-drift.sh                       (derives from CLAUDE_CONFIG_DIR)
+#   check-memory-drift.sh --injection-scan <file>   (scan ONE file's body for
+#                                                    injection payloads; standalone,
+#                                                    no --memory-dir needed)
 #   check-memory-drift.sh --help
 #
 # Exit codes:
@@ -74,16 +77,93 @@ usage() {
   sed -nE 's|^# ?||p' "$0" | awk '/^check-memory-drift\.sh/,/^A future/' | head -50
 }
 
+# scan_injection_file <file> — echo the prompt-injection payload class if the file
+# carries a BARE, LINE-LEADING directive in a scannable position; empty = clean.
+# CONSERVATIVE: skips fenced/indented code, blockquotes, and inline-code-led lines so
+# a note can safely DISCUSS the patterns by fencing/quoting them — those, plus
+# Unicode-whitespace-obfuscated and heading-embedded payloads, are ACCEPTED
+# false-negatives (it catches the realistic threat: untrusted text pasted VERBATIM as
+# a bare line-leading directive). Used by the --injection-scan single-file mode below.
+#
+# FAIL-SAFE body boundary (hardening over the per-note scan, which is paired with the
+# frontmatter-safety check; standalone mode has no such companion): a leading UTF-8
+# BOM is stripped so a BOM'd first `---` is recognized, and if the file has NO complete
+# frontmatter (< 2 `---` delimiters — malformed or none) the WHOLE file is scanned
+# rather than silently treated as bodyless. The PAYLOAD PATTERN SET (the kind=...
+# chain) is what stays in lockstep with the class-4 per-note scan + the
+# check-memory-drift.ps1 twin; the multi-class lockstep test exercises that set
+# through both modes. Body-boundary handling intentionally differs (see above).
+scan_injection_file() {
+  LC_ALL=C awk '
+    {
+      if (NR==1 && substr($0,1,3) == "\357\273\277") $0 = substr($0,4)   # strip UTF-8 BOM
+      lines[NR] = $0
+      if ($0 ~ /^---[[:space:]]*$/) { seps++; if (seps==2) bodystart = NR+1 }
+    }
+    END {
+      if (seps < 2) bodystart = 1                                        # no complete frontmatter -> scan all
+      fence = 0
+      for (i = bodystart; i <= NR; i++) {
+        line = lines[i]
+        if (line ~ /^[[:space:]]*(```|~~~)/) { fence = 1 - fence; continue }
+        if (fence) continue
+        if (line ~ /^[[:space:]]*$/) continue
+        if (line ~ /^[[:space:]]*>/) continue
+        if (substr(line,1,1) == "\t") continue
+        if (substr(line,1,4) == "    ") continue
+        m = line
+        sub(/^[ \t]+/, "", m)
+        sub(/^([*+-]|[0-9]+\.)[ \t]+/, "", m)
+        sub(/^[ \t]+/, "", m)
+        if (substr(m,1,1) == "`") continue
+        lc = tolower(m)
+        kind = ""
+        if (lc ~ /^<[\/|]?(system|developer|assistant|user)[|]?>/) kind="role-tag"
+        else if (lc ~ /^\[?(system|assistant|developer|user)\]?([ \t]+(message|prompt|instructions?))?[ \t]*:/) kind="role-header"
+        else if (lc ~ /^(ignore|forget|override|disregard)[ \t]+(all[ \t]+|the[ \t]+)?(previous|prior|above)/) kind="override"
+        else if (lc ~ /^do not follow[ \t]+(the[ \t]+)?(previous|prior|above)/) kind="override"
+        else if (lc ~ /^you are now[ \t]/) kind="persona"
+        else if (lc ~ /^from now on,?[ \t]+you[ \t]+(are|will|must)/) kind="persona"
+        else if (lc ~ /^if you are (an?[ \t]+)?(ai|agent|assistant|llm)[ \t]+reading this/) kind="future-agent"
+        else if (lc ~ /^when you read this/) kind="future-agent"
+        else if (lc ~ /^when loaded into context/) kind="future-agent"
+        else if (lc ~ /^(remember this|save this to memory|store this in memory|add this to memory|write this into memory|write this to memory)([ \t]+(forever|permanently|always))?[ \t]*:/) kind="memory-directive"
+        else if (lc ~ /^(reveal|print|output|send|exfiltrate|leak).*(system prompt|developer instructions|hidden instructions|hidden prompt|your instructions)/) kind="exfil"
+        if (kind != "") { print kind; exit }
+      }
+    }
+  ' "$1"
+}
+
 memory_dir=""
+injection_scan_file=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --memory-dir)
       [ $# -ge 2 ] || { printf 'FAIL --memory-dir requires a value\n' >&2; exit 2; }
       memory_dir="$2"; shift 2 ;;
+    --injection-scan)
+      [ $# -ge 2 ] || { printf 'FAIL --injection-scan requires a file path\n' >&2; exit 2; }
+      injection_scan_file="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) printf 'FAIL unknown arg: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
+
+# --injection-scan MODE: lint ONE arbitrary file (e.g. a drafted session log) for
+# bare line-leading injection payloads before it is written into the durable vault.
+# Standalone — does NOT require --memory-dir / CLAUDE_CONFIG_DIR. Exit 0 clean,
+# 1 payload found, 2 usage/missing-file.
+if [ -n "$injection_scan_file" ]; then
+  [ -f "$injection_scan_file" ] || { printf 'FAIL --injection-scan: file does not exist: %s\n' "$injection_scan_file" >&2; exit 2; }
+  inj_hit=$(scan_injection_file "$injection_scan_file")
+  if [ -n "$inj_hit" ]; then
+    printf 'FAIL injection %s: line-leading prompt-injection payload (class: %s) — fence/quote it under Raw observations, or remove it (see core/memory-model.md)\n' "$(basename "$injection_scan_file")" "$inj_hit" >&2
+    exit 1
+  fi
+  printf 'PASS no injection payloads in %s\n' "$injection_scan_file"
+  exit 0
+fi
 
 if [ -z "$memory_dir" ]; then
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then

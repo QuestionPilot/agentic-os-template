@@ -278,3 +278,42 @@ Assert-Contains 'closeout-format.test: closeout.md Q0 preserves mandatory state-
     $CL_CONTENT 'remain mandatory regardless of Q0 outcome'
 Assert-Contains 'closeout-format.test: self-improvement.md Q0 preserves mandatory state-delta handling' `
     $SI_CONTENT 'remain mandatory regardless of Q0 outcome'
+
+# --- 12. Session-log drain — the always-on write-through capture.
+# Mirror of tests/closeout-format.test.sh section 12.
+Assert-Contains 'closeout-format.test: closeout.md has the Session-log drain section' `
+    $CL_CONTENT '## Session-log drain'
+Assert-Contains 'closeout-format.test: closeout.md drain names the Sessions archive path' `
+    $CL_CONTENT '30-Archive/Sessions'
+Assert-Contains 'closeout-format.test: closeout.md drain uses the agnostic vault path var' `
+    $CL_CONTENT '$OBSIDIAN_VAULT_PATH'
+Assert-Contains 'closeout-format.test: closeout.md drain stamps a closeout_id' `
+    $CL_CONTENT 'closeout_id'
+Assert-Contains 'closeout-format.test: closeout.md drain quarantines under Raw observations' `
+    $CL_CONTENT 'Raw observations'
+Assert-Contains 'closeout-format.test: closeout.md drain names provenance labelling' `
+    $CL_CONTENT 'provenance'
+Assert-Contains 'closeout-format.test: closeout.md drain runs the injection scan before writing' `
+    $CL_CONTENT '--injection-scan'
+Assert-Contains 'closeout-format.test: closeout.md drain requires write-verification (FLAG on miss)' `
+    $CL_CONTENT 'FLAG'
+
+# The drain section must sit OUTSIDE the fenced output block (after fence_end).
+$dr_line = Get-HeadingLine $CL_PATH '## Session-log drain — write-through to the durable vault'
+$dr_after = if ($dr_line -gt 0 -and $fence_end -and $dr_line -gt $fence_end) { 'yes' } else { "no(drain:$dr_line fence_end:$fence_end)" }
+Assert-Eq 'closeout-format.test: closeout.md Session-log drain section is after the fenced output block' 'yes' $dr_after
+
+# closeout-format.md ties the comment to a closeout_id.
+Assert-Contains 'closeout-format.test: closeout-format.md ties the comment to a closeout_id' `
+    $LF_CONTENT 'closeout_id'
+
+# vault-guide.md §8: session log is the write-through exception; curated notes stay propose.
+$VG_CONTENT = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'obsidian' 'vault-guide.md') -Raw
+Assert-Contains 'closeout-format.test: vault-guide.md names the session-log write-through exception' `
+    $VG_CONTENT 'write-through'
+Assert-Contains 'closeout-format.test: vault-guide.md keeps curated notes propose-don''t-write' `
+    $VG_CONTENT 'propose-don''t-write'
+
+# core/self-improvement.md notes the always-on drain alongside the lesson classes.
+Assert-Contains 'closeout-format.test: self-improvement.md notes the always-on session-log drain' `
+    $SI_CONTENT 'session log'
