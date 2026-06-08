@@ -2,6 +2,11 @@
 
 Use this format for meaningful issue closeout comments.
 
+Stamp a shared **`closeout_id`** at the top of the comment — the same id the
+session-log drain writes to the vault log's frontmatter (see
+`capabilities/closeout.md` → Session-log drain). It makes the Linear comment ↔ the
+durable vault session log ↔ the commit all linkable from one token.
+
 ## Result
 
 What changed or what was decided.

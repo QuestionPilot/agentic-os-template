@@ -133,7 +133,7 @@ The 13 top-level folders, each with a one-line purpose:
 | `04-Lessons/` | One note per durable lesson; uses `lesson-template.md` shape. |
 | `10-Wiki/` | Cross-cutting reference notes (people, concepts, glossary). |
 | `20-Raw/` | Raw sources awaiting promotion — transcripts, exports, screenshots. Not durable memory yet. |
-| `30-Archive/` | Closed projects, retired decisions, superseded lessons. |
+| `30-Archive/` | Closed projects, retired decisions, superseded lessons. Also holds `Sessions/` — append-only per-session closeout logs (the durable session-narrative tier; see `capabilities/closeout.md` → Session-log drain). |
 | `40-Observability/` | Dashboards, health checks, audit notes. |
 | `50-Outputs/` | Curated artifacts (briefs, reports, data maps). §6 details what belongs. |
 | `80-Templates/` | Operator-authored templates beyond the four shipped in `ai-config/obsidian/`. |
@@ -215,13 +215,15 @@ Four templates ship in `ai-config/obsidian/`. Copy them into your vault's `80-Te
 
 ## 8. How the AI Uses the Vault at Runtime
 
-> **Summary — canonical source is [`capabilities/session-agent.md`](../capabilities/session-agent.md) (session kickoff + routing) and [`capabilities/closeout.md`](../capabilities/closeout.md) (closeout pass).** This section names the durable contract — what an AI agent reads, what it proposes — so a vault author can reason about the agent's behavior without opening capability bodies. For current mechanics (which sub-steps fire when, which tools are called, which hooks enforce), the linked capabilities are the source of truth.
+> **Summary — canonical source is [`capabilities/session-agent.md`](../capabilities/session-agent.md) (session kickoff + routing) and [`capabilities/closeout.md`](../capabilities/closeout.md) (closeout pass).** This section names the durable contract — what an AI agent reads, what it writes, what it proposes — so a vault author can reason about the agent's behavior without opening capability bodies. For current mechanics (which sub-steps fire when, which tools are called, which hooks enforce), the linked capabilities are the source of truth.
 
 **Session kickoff — read.** When the harness is configured with `OBSIDIAN_VAULT_PATH`, the agent's session kickoff reads `$OBSIDIAN_VAULT_PATH/START.md` to ground orient. The agent loads only that file and any system notes `START.md` explicitly points at — never the whole vault. If the vault is unreachable (path missing, network volume offline, sync incomplete), kickoff orient continues without it and warns once.
 
 **Routing — refer.** When the agent routes a task and a relevant project handshake note exists under `01-Projects/`, the agent may read that one note for durable rationale Linear does not capture. Cross-cutting reference notes under `10-Wiki/` are loaded on demand by name.
 
-**Closeout — propose.** At session end, the closeout pass classifies each meaningful lesson into one of 11 classes (`rule`, `check`, `script`, `linear`, `obsidian`, `playbook`, `skill`, `data-readiness`, `goal-run`, `no-action`, `state-delta`). For the `obsidian` class, the agent **proposes** a note path and body to the operator — it does not write to the vault directly. The operator's review-and-paste step preserves the vault as operator-curated durable memory.
+**Closeout — propose (curated notes).** At session end, the closeout pass classifies each meaningful lesson into one of 11 classes (`rule`, `check`, `script`, `linear`, `obsidian`, `playbook`, `skill`, `data-readiness`, `goal-run`, `no-action`, `state-delta`). For the `obsidian` class, the agent **proposes** a note path and body to the operator — it does not write to the vault directly. The operator's review-and-paste step preserves the vault as operator-curated durable memory.
+
+**Closeout — write-through (the session log).** The one exception to propose-don't-write is the durable **per-session log**. On every meaningful close, closeout writes an append-only, uniquely-named file to `30-Archive/Sessions/` (see [`capabilities/closeout.md`](../capabilities/closeout.md) → Session-log drain). Because it is a brand-new file that never edits a curated note, it is safe to write directly — and it is what lets a fresh machine reconstruct the session without the transcript. The log is treated as **untrusted, mixed-origin evidence**: observations carry provenance labels, quoted tool/external text is quarantined under a `## Raw observations` section and is never auto-promoted into a curated note, and the draft is run through the injection scan (`scripts/check-memory-drift.sh --injection-scan`) before it is written. Curated durable memory (decisions, lessons, project notes) still follows propose-don't-write above.
 
 **Decisions and lessons — propose.** Same principle: when a session surfaces a decision worth recording in `03-Decisions/` or a lesson worth recording in `04-Lessons/`, the agent proposes the note shape (using the matching template) and the operator decides whether and how to commit it.
 

@@ -471,9 +471,67 @@ assert_eq "memory-drift inj: heading + NBSP-obfuscated dir exits 0" "0" "$?"
 assert_not_contains "memory-drift inj: markdown heading role label not flagged" "$INJ_NEG_OUT" "reference_inj_heading.md"
 assert_not_contains "memory-drift inj: NBSP-obfuscated payload not flagged (accepted FN, parity)" "$INJ_NEG_OUT" "reference_inj_nbsp.md"
 
+# === --injection-scan single-file mode (the closeout session-log drain pre-write check). ==
+# Standalone mode: lint ONE file's body before it is written to the durable vault.
+# Reuses the class-4 pattern set via scan_injection_file; LOCKSTEP-guarded (test 30)
+# against the per-note scan so the two awk copies can't silently drift.
+
+# --- 26. Clean file → exit 0 + PASS.
+INJ_SCAN_OK=$(bash "$CMD_SCRIPT" --injection-scan "$INJ_SAFE/reference_inj_safe.md" 2>&1)
+assert_eq "memory-drift inj-scan: clean file exits 0" "0" "$?"
+assert_contains "memory-drift inj-scan: clean file reports PASS" "$INJ_SCAN_OK" "no injection payloads"
+
+# --- 27. Bare payload file → exit 1, names basename + class. Standalone (no --memory-dir).
+INJ_SCAN_BAD=$(bash "$CMD_SCRIPT" --injection-scan "$INJ_BAD/reference_inj_bad.md" 2>&1)
+assert_eq "memory-drift inj-scan: bare payload file exits 1" "1" "$?"
+assert_contains "memory-drift inj-scan: names the file" "$INJ_SCAN_BAD" "reference_inj_bad.md"
+assert_contains "memory-drift inj-scan: labels the override class" "$INJ_SCAN_BAD" "override"
+
+# --- 28. Fenced payload file → exit 0 (skips fenced, same as the per-note scan).
+bash "$CMD_SCRIPT" --injection-scan "$INJ_FENCE/reference_inj_fenced.md" >/dev/null 2>&1
+assert_eq "memory-drift inj-scan: fenced file exits 0" "0" "$?"
+
+# --- 29. Missing file / missing arg → exit 2.
+assert_exit "memory-drift inj-scan: missing file exits 2" 2 -- \
+  bash "$CMD_SCRIPT" --injection-scan "/tmp/definitely-no-such-file-$$.md"
+assert_exit "memory-drift inj-scan: missing arg exits 2" 2 -- \
+  bash "$CMD_SCRIPT" --injection-scan
+
+# --- 30. LOCKSTEP across MULTIPLE classes (Codex F6): the per-note (--memory-dir) and
+# single-file (--injection-scan) modes must report the SAME class for the same file,
+# exercised across several distinct classes — so the two scanner copies can't drift on
+# ANY class while CI stays green. (The earlier single-payload check only locked one.)
+for pair in \
+  "$INJ_BAD/reference_inj_bad.md:override" \
+  "$INJ_ROLE/feedback_inj_role.md:role-tag" \
+  "$INJ_VAR/reference_inj_disregard.md:override" \
+  "$INJ_VAR/reference_inj_rolemsg.md:role-header" \
+  "$INJ_VAR/reference_inj_addmem.md:memory-directive"; do
+  f="${pair%%:*}"; want="${pair##*:}"; bn=$(basename "$f")
+  scan_cls=$(bash "$CMD_SCRIPT" --injection-scan "$f" 2>&1 | grep -oE 'class: [a-z-]+' | sed 's/class: //')
+  pernote_cls=$(bash "$CMD_SCRIPT" --memory-dir "$(dirname "$f")" 2>&1 | grep "$bn" | grep -oE 'class: [a-z-]+' | sed 's/class: //')
+  assert_eq "memory-drift inj-scan lockstep: $bn same class in both modes" "$pernote_cls" "$scan_cls"
+  assert_eq "memory-drift inj-scan lockstep: $bn class is $want" "$want" "$scan_cls"
+done
+
+# --- 31. FAIL-SAFE body boundary (Codex F1 + F2): a payload in a file with NO complete
+# frontmatter, or behind a UTF-8 BOM, is CAUGHT (not silently passed); a BOM'd clean
+# file stays clean (no false positive). Closes the standalone-scan fail-open.
+INJ_FS=$(mktemp -d 2>/dev/null) || INJ_FS="/tmp/memory-inj-fs-$$"
+mkdir -p "$INJ_FS"
+printf '## Pick up here\n%s %s now.\n' "$INJ_HALF1" "$INJ_HALF2" > "$INJ_FS/nofm.md"
+bash "$CMD_SCRIPT" --injection-scan "$INJ_FS/nofm.md" >/dev/null 2>&1
+assert_eq "memory-drift inj-scan: no-frontmatter payload is caught (no fail-open)" "1" "$?"
+printf '\357\273\277---\ntitle: x\n---\n\n%s %s now.\n' "$INJ_HALF1" "$INJ_HALF2" > "$INJ_FS/bom.md"
+bash "$CMD_SCRIPT" --injection-scan "$INJ_FS/bom.md" >/dev/null 2>&1
+assert_eq "memory-drift inj-scan: BOM-prefixed payload is caught (bash parity with PS)" "1" "$?"
+printf '\357\273\277---\ntitle: x\n---\n\nclean body, no payload.\n' > "$INJ_FS/bomclean.md"
+bash "$CMD_SCRIPT" --injection-scan "$INJ_FS/bomclean.md" >/dev/null 2>&1
+assert_eq "memory-drift inj-scan: BOM-prefixed clean file stays clean" "0" "$?"
+
 # --- Cleanup.
 rm -rf "$MD_TMP" "$EMPTY_TMP" "$SIZE_TMP" "$LINE_TMP" "$OK_TMP" \
   "$EMDASH_OK_TMP" "$EMDASH_BAD_TMP" "$BND_TMP" "$COMBO_TMP" \
   "$FM_TMP" "$FM_NOOPEN" "$FM_NOCLOSE" "$FM_CRLF" "$FM_CLEAN" \
   "$FM_BOM" "$FM_BOM_BAD" "$FM_NOCLOSE2" \
-  "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG"
+  "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG" "$INJ_FS"

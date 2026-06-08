@@ -567,7 +567,83 @@ Assert-Eq 'memory-drift.test inj: heading + NBSP-obfuscated dir exits 0' '0' "$I
 Assert-NotContains 'memory-drift.test inj: markdown heading role label not flagged' $INJ_NEG_OUT 'reference_inj_heading.md'
 Assert-NotContains 'memory-drift.test inj: NBSP-obfuscated payload not flagged (accepted FN, parity)' $INJ_NEG_OUT 'reference_inj_nbsp.md'
 
+# === --injection-scan single-file mode (the closeout session-log drain pre-write check). ==
+# Twin of memory-drift.test.sh tests 26-30. Reuses the clean/bare/fenced fixtures.
+
+# --- 26. Clean file → exit 0 + PASS.
+$ISCAN_OK = & pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path $INJ_SAFE 'reference_inj_safe.md') 2>&1
+$ISCAN_OK_RC = $LASTEXITCODE
+if ($ISCAN_OK -is [array]) { $ISCAN_OK = $ISCAN_OK -join "`n" }
+Assert-Eq 'memory-drift.test inj-scan: clean file exits 0' '0' "$ISCAN_OK_RC"
+Assert-Contains 'memory-drift.test inj-scan: clean file reports PASS' $ISCAN_OK 'no injection payloads'
+
+# --- 27. Bare payload file → exit 1, names basename + class. Standalone (no -MemoryDir).
+$ISCAN_BAD = & pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path $INJ_BAD 'reference_inj_bad.md') 2>&1
+$ISCAN_BAD_RC = $LASTEXITCODE
+if ($ISCAN_BAD -is [array]) { $ISCAN_BAD = $ISCAN_BAD -join "`n" }
+Assert-Eq 'memory-drift.test inj-scan: bare payload file exits 1' '1' "$ISCAN_BAD_RC"
+Assert-Contains 'memory-drift.test inj-scan: names the file' $ISCAN_BAD 'reference_inj_bad.md'
+Assert-Contains 'memory-drift.test inj-scan: labels the override class' $ISCAN_BAD 'override'
+
+# --- 28. Fenced payload file → exit 0 (skips fenced).
+& pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path $INJ_FENCE 'reference_inj_fenced.md') *>$null
+$ISCAN_FENCE_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test inj-scan: fenced file exits 0' '0' "$ISCAN_FENCE_RC"
+
+# --- 29. Missing file / missing arg → exit 2.
+& pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path ([IO.Path]::GetTempPath()) 'no-such-inj-file.md') 2>$null *>$null
+$ISCAN_MISS_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test inj-scan: missing file exits 2' '2' "$ISCAN_MISS_RC"
+& pwsh -NoProfile -File $CMD_SCRIPT --injection-scan 2>$null *>$null
+$ISCAN_NOARG_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test inj-scan: missing arg exits 2' '2' "$ISCAN_NOARG_RC"
+
+# --- 30. LOCKSTEP across MULTIPLE classes (Codex F6): per-note (--memory-dir) and
+# single-file (--injection-scan) modes must report the SAME class for the same file,
+# across several classes — so the two scanner copies can't drift on ANY class.
+$lockstepCases = @(
+    @{ File = (Join-Path $INJ_BAD 'reference_inj_bad.md');       Dir = $INJ_BAD;  Want = 'override' }
+    @{ File = (Join-Path $INJ_ROLE 'feedback_inj_role.md');      Dir = $INJ_ROLE; Want = 'role-tag' }
+    @{ File = (Join-Path $INJ_VAR 'reference_inj_disregard.md'); Dir = $INJ_VAR;  Want = 'override' }
+    @{ File = (Join-Path $INJ_VAR 'reference_inj_rolemsg.md');   Dir = $INJ_VAR;  Want = 'role-header' }
+    @{ File = (Join-Path $INJ_VAR 'reference_inj_addmem.md');    Dir = $INJ_VAR;  Want = 'memory-directive' }
+)
+foreach ($c in $lockstepCases) {
+    $bn = Split-Path -Leaf $c.File
+    $scanOut = & pwsh -NoProfile -File $CMD_SCRIPT --injection-scan $c.File 2>&1
+    if ($scanOut -is [array]) { $scanOut = $scanOut -join "`n" }
+    $scanCls = if ($scanOut -match 'class: ([a-z-]+)') { $matches[1] } else { '' }
+    $pnOut = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $c.Dir 2>&1
+    if ($pnOut -is [array]) { $pnOut = $pnOut -join "`n" }
+    $pnCls = ''
+    foreach ($ln in ($pnOut -split "`n")) {
+        if ($ln -like "*$bn*" -and $ln -match 'class: ([a-z-]+)') { $pnCls = $matches[1]; break }
+    }
+    Assert-Eq "memory-drift.test inj-scan lockstep: $bn same class in both modes" $pnCls $scanCls
+    Assert-Eq "memory-drift.test inj-scan lockstep: $bn class is $($c.Want)" $c.Want $scanCls
+}
+
+# --- 31. FAIL-SAFE body boundary (Codex F1 + F2): payload with NO complete frontmatter,
+# or behind a UTF-8 BOM, is CAUGHT; a BOM'd clean file stays clean (no false positive).
+$INJ_FS = Join-Path ([IO.Path]::GetTempPath()) ("memory-inj-fs-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $INJ_FS -Force | Out-Null
+$utf8NoBomFS = [System.Text.UTF8Encoding]::new($false)
+$utf8BomFS   = [System.Text.UTF8Encoding]::new($true)
+[System.IO.File]::WriteAllText((Join-Path $INJ_FS 'nofm.md'), "## Pick up here`n$INJ_H1 $INJ_H2 now.`n", $utf8NoBomFS)
+& pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path $INJ_FS 'nofm.md') *>$null
+$FS_NOFM_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test inj-scan: no-frontmatter payload is caught (no fail-open)' '1' "$FS_NOFM_RC"
+[System.IO.File]::WriteAllText((Join-Path $INJ_FS 'bom.md'), "---`ntitle: x`n---`n`n$INJ_H1 $INJ_H2 now.`n", $utf8BomFS)
+& pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path $INJ_FS 'bom.md') *>$null
+$FS_BOM_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test inj-scan: BOM-prefixed payload is caught (parity with bash)' '1' "$FS_BOM_RC"
+[System.IO.File]::WriteAllText((Join-Path $INJ_FS 'bomclean.md'), "---`ntitle: x`n---`n`nclean body, no payload.`n", $utf8BomFS)
+& pwsh -NoProfile -File $CMD_SCRIPT --injection-scan (Join-Path $INJ_FS 'bomclean.md') *>$null
+$FS_BOMCLEAN_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test inj-scan: BOM-prefixed clean file stays clean' '0' "$FS_BOMCLEAN_RC"
+
 # --- Cleanup.
+Remove-Item -LiteralPath $INJ_FS -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_VAR -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_NEG -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_BAD -Recurse -Force -ErrorAction SilentlyContinue

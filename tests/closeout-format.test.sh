@@ -312,3 +312,50 @@ assert_contains "self-improvement.md Q0 preserves mandatory state-delta handling
 # F-3 hook blocked-reason positive assertions moved to
 # tests/closeout-file-sweep.test.sh under the count migration; the
 # negative-stale-substring guard below catches any backslide.
+
+# --- 12. Session-log drain — the always-on write-through capture.
+# capabilities/closeout.md carries the drain step + its invariants; closeout-format.md
+# carries the closeout_id tie; vault-guide.md carries the propose-vs-write-through
+# split. Assert the durable substrings, not a tracker token (shipped files carry none).
+assert_contains "closeout.md has the Session-log drain section" \
+  "$CL_CONTENT" "## Session-log drain"
+assert_contains "closeout.md drain names the Sessions archive path" \
+  "$CL_CONTENT" "30-Archive/Sessions"
+assert_contains "closeout.md drain uses the agnostic vault path var" \
+  "$CL_CONTENT" "\$OBSIDIAN_VAULT_PATH"
+assert_contains "closeout.md drain stamps a closeout_id" \
+  "$CL_CONTENT" "closeout_id"
+assert_contains "closeout.md drain quarantines untrusted text under Raw observations" \
+  "$CL_CONTENT" "Raw observations"
+assert_contains "closeout.md drain names provenance labelling" \
+  "$CL_CONTENT" "provenance"
+assert_contains "closeout.md drain runs the injection scan before writing" \
+  "$CL_CONTENT" "--injection-scan"
+assert_contains "closeout.md drain requires write-verification (FLAG on miss)" \
+  "$CL_CONTENT" "FLAG"
+
+# The drain section must sit OUTSIDE the fenced output block, so it can't break the
+# "Pick up here is the last heading in the fenced block" invariant (section 8).
+dr_line=$(heading_line "$CL_PATH" "## Session-log drain — write-through to the durable vault")
+if [ "$dr_line" -gt 0 ] && [ -n "$fence_end" ] && [ "$dr_line" -gt "$fence_end" ]; then
+  _pass "closeout.md Session-log drain section is after the fenced output block"
+else
+  _fail "closeout.md Session-log drain section is after the fenced output block" \
+        "drain:$dr_line fence_end:$fence_end"
+fi
+
+# closeout-format.md ties the comment to a closeout_id.
+assert_contains "closeout-format.md ties the comment to a closeout_id" \
+  "$LF_CONTENT" "closeout_id"
+
+# vault-guide.md §8: the session log is the write-through exception; curated notes
+# still propose-don't-write.
+VG_CONTENT="$(cat "$REPO_ROOT/obsidian/vault-guide.md")"
+assert_contains "vault-guide.md names the session-log write-through exception" \
+  "$VG_CONTENT" "write-through"
+assert_contains "vault-guide.md keeps curated notes propose-don't-write" \
+  "$VG_CONTENT" "propose-don't-write"
+
+# core/self-improvement.md notes the always-on drain alongside the lesson classes.
+assert_contains "self-improvement.md notes the always-on session-log drain" \
+  "$SI_CONTENT" "session log"
