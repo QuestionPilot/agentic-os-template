@@ -71,6 +71,8 @@ jobs:
       # here under GNU tools and on the macOS lane under BSD tools.
       - name: Public-tree cleanliness guard (check-clean.sh)
         if: github.event.repository.private == false
+        env:
+          OPERATOR_PII_TOKENS: ${{ secrets.OPERATOR_PII_TOKENS }}
         run: bash scripts/check-clean.sh
 
       # `jq` is required by install.sh (write_manifest, generate_settings).
@@ -183,6 +185,8 @@ jobs:
       # lane is where the guard's own grep/sed BSD-portability is exercised.
       - name: Public-tree cleanliness guard (check-clean.sh, BSD tools)
         if: github.event.repository.private == false
+        env:
+          OPERATOR_PII_TOKENS: ${{ secrets.OPERATOR_PII_TOKENS }}
         run: bash scripts/check-clean.sh
 
       # Identify the BSD-awk variant on the runner. Future-failures
@@ -241,6 +245,8 @@ jobs:
       # Public-tree cleanliness guard, PowerShell twin (TEMPLATE ONLY).
       - name: Public-tree cleanliness guard (check-clean.ps1)
         if: github.event.repository.private == false
+        env:
+          OPERATOR_PII_TOKENS: ${{ secrets.OPERATOR_PII_TOKENS }}
         shell: pwsh
         run: pwsh -NoProfile -File scripts/check-clean.ps1
 
