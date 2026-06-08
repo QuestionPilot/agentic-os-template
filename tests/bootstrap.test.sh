@@ -518,7 +518,7 @@ rm -rf "$Q133E_HOME" "$Q133E_STUBS" "$Q133E_REPO" 2>/dev/null || true
 # bootstrap.sh --check must exit 0 with the four required CLIs present and
 # firecrawl ABSENT from PATH. firecrawl powers the advisory firecrawl skill; its
 # key is checked non-fatally in check_auth. Keeps the bootstrap loop in lockstep
-# with the entrypoint prose (codex, gh, jq, rg) and connectors.md (firecrawl Optional).
+# with the entrypoint prose (codex, gh, jq, rg).
 Q137_STUBS="$(mktemp -d)"
 q133_stubs "$Q137_STUBS"   # codex, gh, jq, rg — NO firecrawl
 q137_check=0
