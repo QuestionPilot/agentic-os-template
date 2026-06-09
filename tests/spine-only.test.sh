@@ -56,6 +56,15 @@ _so_plugins="$(cd "$_so_root" && tr -d ' \n\t' < harnesses/claude/settings.base.
 assert_eq "spine-only: settings.base.json enables zero plugins" \
   '"enabledPlugins":{}' "$_so_plugins"
 
+# --- structural: shipped settings.base.json ships no cost/behavior preference ---
+# theme + effortLevel are operator-local (carried across re-renders by install.sh
+# preserve-live); the shared base must not ship them downstream — effortLevel in
+# particular is a cost setting.
+_so_prefs="$(cd "$_so_root" && tr -d ' \n\t' < harnesses/claude/settings.base.json \
+  | grep -oE '"(theme|effortLevel)"' | tr '\n' ',' || true)"
+assert_eq "spine-only: settings.base.json ships no theme/effortLevel preference" \
+  "" "$_so_prefs"
+
 # --- audit: forbidden tool identifiers appear ONLY in allowlisted DATA lines ---
 # The audit targets brain CONTENT (capabilities, core, skills, harness adapters/
 # templates, playbooks) + the installer + the architectural-contract dirs

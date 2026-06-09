@@ -48,6 +48,14 @@ $m = [regex]::Match($raw, '"enabledPlugins":\{[^}]*\}')
 $plugins = if ($m.Success) { $m.Value } else { '' }
 Assert-Eq 'spine-only: settings.base.json enables zero plugins' '"enabledPlugins":{}' $plugins
 
+# --- structural: shipped settings.base.json ships no cost/behavior preference ---
+# theme + effortLevel are operator-local (carried across re-renders by install.ps1
+# preserve-live); the shared base must not ship them downstream — effortLevel in
+# particular is a cost setting.
+$prefsMatch = [regex]::Match($raw, '"(theme|effortLevel)"')
+$prefs = if ($prefsMatch.Success) { $prefsMatch.Value } else { '' }
+Assert-Eq 'spine-only: settings.base.json ships no theme/effortLevel preference' '' $prefs
+
 # --- audit: forbidden tool identifiers appear ONLY in allowlisted DATA lines ---
 # Twin of the.sh audit. ctx7/context7 join the forbidden set;
 # only docs/ + tests/ stay file-excluded. The allowlist is per-OCCURRENCE (Codex
