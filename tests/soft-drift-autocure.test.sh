@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # tests/soft-drift-autocure.test.sh — check-drift.sh --cure-soft-drift behavior.
 #
-# Claude Code's app process strips `theme` / `effortLevel` from
-# settings.json and reorders `enabledPlugins` / `extraKnownMarketplaces` between
-# sessions, tripping the recurring "settings.json was hand-edited" drift error.
-# This test pins:
+# `theme` / `effortLevel` are operator-local preference keys. The spine-only base
+# (settings.base.json) ships NEITHER — they are carried across re-renders by
+# install.sh preserve-live, not shipped downstream. So the live settings.json may
+# carry operator-set theme/effortLevel that the opinion-free canonical base lacks
+# (the soft envelope simulated below by ADDING them), and the Claude Code app may
+# additionally strip/reorder them between sessions. Both directions are tolerated
+# as soft drift. This test pins:
 #
 # 1. Default behavior unchanged — drift on soft keys still errors without the flag.
 # 2. Opt-in --cure-soft-drift recognizes the soft-key envelope + auto-cures via
@@ -31,9 +34,11 @@ Q106_ENV="$(mktemp -d)/local.env"
 make_local_env "$Q106_ENV" "$Q106_OUT"
 AI_CONFIG_LOCAL_ENV="$Q106_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Strip soft keys (`theme`, `effortLevel`) — simulates the recurring harness
-# mutation.
-jq 'del(.theme, .effortLevel)' "$Q106_OUT/settings.json" > "$Q106_OUT/settings.json.tmp"
+# Add operator-set soft keys (`theme`, `effortLevel`) to the live settings.json.
+# The spine-only base ships neither, so a fresh render lacks them; an operator
+# setting them (or preserve-live carrying them) makes the live file differ from
+# the recorded manifest on soft keys only — the soft-drift envelope.
+jq '. + {theme: "auto", effortLevel: "xhigh"}' "$Q106_OUT/settings.json" > "$Q106_OUT/settings.json.tmp"
 mv "$Q106_OUT/settings.json.tmp" "$Q106_OUT/settings.json"
 
 assert_exit "default behavior unchanged: soft-drift still fails without --cure-soft-drift" 1 -- \
@@ -41,24 +46,66 @@ assert_exit "default behavior unchanged: soft-drift still fails without --cure-s
 
 # ---------- Test 2: --cure-soft-drift cures the soft-drift case --------------
 #
-# Same fixture (soft keys missing) — adding the flag MUST cure via install.sh
+# Same fixture (operator-set soft keys) — adding the flag MUST cure via install.sh
 # re-render and exit 0.
 
-AI_CONFIG_LOCAL_ENV="$Q106_ENV" assert_exit "--cure-soft-drift cures missing soft keys (theme + effortLevel)" 0 -- \
+AI_CONFIG_LOCAL_ENV="$Q106_ENV" assert_exit "--cure-soft-drift cures soft keys (theme + effortLevel)" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106_OUT" --cure-soft-drift
 
-# Verify the cure restored the canonical settings.json — soft keys present again.
+# Verify the cure CARRIED the operator's soft keys via preserve-live: the cure
+# re-render reads the live settings.json as the overlay source, so the operator's
+# theme/effortLevel survive — they are preserved from the live file, NOT restored
+# from base (the spine-only base no longer ships them).
 Q106_THEME_AFTER="$(jq -r '.theme // "MISSING"' "$Q106_OUT/settings.json")"
-assert_eq "post-cure: theme restored to canonical 'auto'" "auto" "$Q106_THEME_AFTER"
+assert_eq "post-cure: operator theme preserved as 'auto'" "auto" "$Q106_THEME_AFTER"
 
 Q106_EFFORT_AFTER="$(jq -r '.effortLevel // "MISSING"' "$Q106_OUT/settings.json")"
-assert_eq "post-cure: effortLevel restored to canonical 'xhigh'" "xhigh" "$Q106_EFFORT_AFTER"
+assert_eq "post-cure: operator effortLevel preserved as 'xhigh'" "xhigh" "$Q106_EFFORT_AFTER"
 
 # Final state: clean drift check now passes (post-cure verification).
 assert_exit "post-cure: drift check passes from scratch" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106_OUT"
 
 rm -rf "$Q106_OUT"
+
+# ---------- Test 2b: app-strip of operator soft keys cures to converged state -
+#
+# The companion to Test 2 (operator SET soft keys). Here the operator's soft keys
+# were preserved into a prior render (recorded in the manifest via preserve-live),
+# then the Claude Code app STRIPS them from the live settings.json. Because the
+# spine-only base ships neither key, the cure's opinion-free canonical also lacks
+# them — so the cure converges the manifest to the stripped state rather than
+# resurrecting the values from a base default (there is none). This pins the
+# post-spine-only contract: theme/effortLevel are operator-local (live-config is
+# their only source), so a stripped soft key is NOT restored by the cure — the
+# same semantics as a deleted operator plugin. Added because the del→add rewrite
+# of the cure tests would otherwise have dropped strip-direction coverage.
+
+Q106M_OUT="$(mktemp -d)/target"; mkdir -p "$Q106M_OUT"
+Q106M_ENV="$(mktemp -d)/local.env"
+make_local_env "$Q106M_ENV" "$Q106M_OUT"
+AI_CONFIG_LOCAL_ENV="$Q106M_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+# Operator sets soft keys, then re-render so the manifest records them (preserve-live).
+jq '. + {theme: "dark", effortLevel: "xhigh"}' "$Q106M_OUT/settings.json" > "$Q106M_OUT/settings.json.tmp"
+mv "$Q106M_OUT/settings.json.tmp" "$Q106M_OUT/settings.json"
+AI_CONFIG_LOCAL_ENV="$Q106M_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+assert_eq "preserve-live recorded operator effortLevel before strip" "xhigh" \
+  "$(jq -r '.effortLevel // "MISSING"' "$Q106M_OUT/settings.json")"
+# The Claude Code app strips both soft keys from the live file.
+jq 'del(.theme, .effortLevel)' "$Q106M_OUT/settings.json" > "$Q106M_OUT/settings.json.tmp"
+mv "$Q106M_OUT/settings.json.tmp" "$Q106M_OUT/settings.json"
+# Cure: soft envelope matches (canonical also lacks the keys); cure converges.
+AI_CONFIG_LOCAL_ENV="$Q106M_ENV" assert_exit "app-strip of operator soft keys cures (soft envelope)" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106M_OUT" --cure-soft-drift
+# Post-cure: the stripped keys are NOT resurrected (operator-local, no base source).
+assert_eq "post-cure: stripped theme not resurrected (operator-local)" "MISSING" \
+  "$(jq -r '.theme // "MISSING"' "$Q106M_OUT/settings.json")"
+assert_eq "post-cure: stripped effortLevel not resurrected (operator-local)" "MISSING" \
+  "$(jq -r '.effortLevel // "MISSING"' "$Q106M_OUT/settings.json")"
+# And the drift check now passes (manifest converged to the stripped render).
+assert_exit "post-cure: drift check passes after app-strip cure" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106M_OUT"
+rm -rf "$Q106M_OUT"
 
 # ---------- Test 3: Real drift still errors even with --cure-soft-drift ------
 #
@@ -100,8 +147,9 @@ Q106C_ENV="$(mktemp -d)/local.env"
 make_local_env "$Q106C_ENV" "$Q106C_OUT"
 AI_CONFIG_LOCAL_ENV="$Q106C_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Mutate settings.json (soft drift) AND a skill file (real drift).
-jq 'del(.theme)' "$Q106C_OUT/settings.json" > "$Q106C_OUT/settings.json.tmp"
+# Mutate settings.json (soft drift: add an operator soft key) AND a skill file
+# (real drift).
+jq '. + {theme: "auto"}' "$Q106C_OUT/settings.json" > "$Q106C_OUT/settings.json.tmp"
 mv "$Q106C_OUT/settings.json.tmp" "$Q106C_OUT/settings.json"
 printf '\nHAND EDIT\n' >> "$Q106C_OUT/skills/session-agent/SKILL.md"
 
@@ -145,7 +193,7 @@ Q106E_ENV="$(mktemp -d)/local.env"
 make_local_env "$Q106E_ENV" "$Q106E_OUT"
 AI_CONFIG_LOCAL_ENV="$Q106E_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-jq 'del(.theme, .effortLevel)' "$Q106E_OUT/settings.json" > "$Q106E_OUT/settings.json.tmp"
+jq '. + {theme: "auto", effortLevel: "xhigh"}' "$Q106E_OUT/settings.json" > "$Q106E_OUT/settings.json.tmp"
 mv "$Q106E_OUT/settings.json.tmp" "$Q106E_OUT/settings.json"
 
 # Flag BEFORE --manifest.
@@ -313,7 +361,7 @@ if [ -d "$REPO_ROOT/.git" ] || [ -f "$REPO_ROOT/.git" ]; then
     Q106I_ENV="$(mktemp -d)/local.env"
     make_local_env "$Q106I_ENV" "$Q106I_OUT"
     AI_CONFIG_LOCAL_ENV="$Q106I_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
-    jq 'del(.theme, .effortLevel)' "$Q106I_OUT/settings.json" > "$Q106I_OUT/settings.json.tmp"
+    jq '. + {theme: "auto", effortLevel: "xhigh"}' "$Q106I_OUT/settings.json" > "$Q106I_OUT/settings.json.tmp"
     mv "$Q106I_OUT/settings.json.tmp" "$Q106I_OUT/settings.json"
 
     AI_CONFIG_LOCAL_ENV="$Q106I_ENV" assert_exit \
@@ -344,8 +392,8 @@ AI_CONFIG_LOCAL_ENV="$Q106J_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null
 jq '.harness = "codex"' "$Q106J_OUT/.build-manifest.json" > "$Q106J_OUT/.build-manifest.json.tmp"
 mv "$Q106J_OUT/.build-manifest.json.tmp" "$Q106J_OUT/.build-manifest.json"
 
-# Mutate settings.json to trigger soft-drift envelope.
-jq 'del(.theme)' "$Q106J_OUT/settings.json" > "$Q106J_OUT/settings.json.tmp"
+# Mutate settings.json to trigger soft-drift envelope (add an operator soft key).
+jq '. + {theme: "auto"}' "$Q106J_OUT/settings.json" > "$Q106J_OUT/settings.json.tmp"
 mv "$Q106J_OUT/settings.json.tmp" "$Q106J_OUT/settings.json"
 
 assert_exit "adversarial A-1: forged harness=codex on Claude-shaped target rejects cure" 1 -- \
@@ -366,9 +414,9 @@ AI_CONFIG_LOCAL_ENV="$Q106K_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null
 
 # Construct a settings.json with duplicate top-level keys. Hand-craft via
 # string append since jq normalizes keys away — we need the RAW duplicate.
-# Strip theme + effortLevel (to trigger soft envelope), then inject a
+# Add operator soft keys theme + effortLevel (the soft envelope), then inject a
 # duplicate hooks key with malicious content.
-ORIG="$(jq 'del(.theme, .effortLevel)' "$Q106K_OUT/settings.json")"
+ORIG="$(jq '. + {theme: "auto", effortLevel: "xhigh"}' "$Q106K_OUT/settings.json")"
 # Build a JSON document with duplicate `hooks` keys: the canonical one, then
 # a malicious sibling. Real JSON parsers handle this differently; we want
 # the cure to refuse the file regardless.

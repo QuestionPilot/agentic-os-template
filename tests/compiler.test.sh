@@ -187,8 +187,11 @@ if [ -f "$st" ]; then
     has="$(jq -r --arg e "$ev" '.hooks[$e] != null' "$st")"
     assert_eq "settings.json wires $ev" "true" "$has"
   done
-  # base keys preserved
-  assert_eq "settings.json preserves theme"  "auto" "$(jq -r '.theme' "$st")"
+  # spine-only base: NO cost/behavior preferences ship in a fresh render. theme +
+  # effortLevel are operator-local, carried by preserve-live (proven in the
+  # round-trip section below) — a fresh build must not ship them downstream.
+  assert_eq "fresh build ships no theme (spine-only base)" "null" "$(jq -r '.theme // "null"' "$st")"
+  assert_eq "fresh build ships no effortLevel (spine-only base)" "null" "$(jq -r '.effortLevel // "null"' "$st")"
   # The brain is spine-only: settings.base.json ships ZERO plugin opinions, so a
   # fresh build (no live settings.json) enables NO plugins. Plugin choices are
   # operator-local and carried across re-renders by generate_settings
@@ -224,9 +227,18 @@ AI_CONFIG_LOCAL_ENV="$pl_env" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 if [ -f "$pl_out/settings.json" ]; then
   assert_eq "fresh install enables no plugins (spine-only base)" \
     "0" "$(jq -r '.enabledPlugins | length' "$pl_out/settings.json")"
-  # Operator enables a plugin + sets a notif preference in their LOCAL config.
+  assert_eq "fresh install ships no theme (spine-only base)" "null" \
+    "$(jq -r '.theme // "null"' "$pl_out/settings.json")"
+  assert_eq "fresh install ships no effortLevel (spine-only base)" "null" \
+    "$(jq -r '.effortLevel // "null"' "$pl_out/settings.json")"
+  # Operator enables a plugin, sets a notif preference, and sets cost/UI
+  # preferences (theme, effortLevel) in their LOCAL config. theme uses a
+  # non-default value ("dark") so the assertion proves the OPERATOR's value is
+  # carried, not a base default re-asserted.
   jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true
-      | .agentPushNotifEnabled = false' \
+      | .agentPushNotifEnabled = false
+      | .theme = "dark"
+      | .effortLevel = "xhigh"' \
     "$pl_out/settings.json" > "$pl_out/settings.json.tmp"
   mv "$pl_out/settings.json.tmp" "$pl_out/settings.json"
   # Re-render: generate_settings must carry the local choices forward.
@@ -237,6 +249,10 @@ if [ -f "$pl_out/settings.json" ]; then
   # as DROPPED (jq's // treats false as empty).
   assert_eq "re-render preserves agentPushNotifEnabled (preserve-live)" "false" \
     "$(jq -r 'if has("agentPushNotifEnabled") then .agentPushNotifEnabled else "DROPPED" end' "$pl_out/settings.json")"
+  assert_eq "re-render preserves operator theme (preserve-live)" "dark" \
+    "$(jq -r '.theme // "DROPPED"' "$pl_out/settings.json")"
+  assert_eq "re-render preserves operator effortLevel (preserve-live)" "xhigh" \
+    "$(jq -r '.effortLevel // "DROPPED"' "$pl_out/settings.json")"
   # Hooks remain wired after the preserve-live re-render.
   assert_eq "re-render still wires PreToolUse hook" "true" \
     "$(jq -r '.hooks.PreToolUse != null' "$pl_out/settings.json")"

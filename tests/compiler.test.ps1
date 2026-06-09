@@ -209,9 +209,14 @@ if (Test-Path -LiteralPath $st) {
         if ($has -is [array]) { $has = $has -join '' }
         Assert-Eq "compiler.test: settings.json wires $ev" 'true' "$has"
     }
-    $theme = & jq -r '.theme' $st 2>$null
+    # spine-only base: NO cost/behavior preferences ship in a fresh render. theme +
+    # effortLevel are operator-local, carried by preserve-live (proven below).
+    $theme = & jq -r '.theme // "null"' $st 2>$null
     if ($theme -is [array]) { $theme = $theme -join '' }
-    Assert-Eq 'compiler.test: settings.json preserves theme' 'auto' "$theme"
+    Assert-Eq 'compiler.test: fresh build ships no theme (spine-only base)' 'null' "$theme"
+    $effort = & jq -r '.effortLevel // "null"' $st 2>$null
+    if ($effort -is [array]) { $effort = $effort -join '' }
+    Assert-Eq 'compiler.test: fresh build ships no effortLevel (spine-only base)' 'null' "$effort"
     $supKey = & jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // null' $st 2>$null
     if ($supKey -is [array]) { $supKey = $supKey -join '' }
     Assert-Eq 'compiler.test: settings.json does NOT auto-enable any plugin' 'null' "$supKey"
@@ -275,8 +280,16 @@ if (Test-Path -LiteralPath $plSettings -PathType Leaf) {
     $plCount = & jq -r '.enabledPlugins | length' $plSettings 2>$null
     if ($plCount -is [array]) { $plCount = $plCount -join '' }
     Assert-Eq 'compiler.test: fresh install enables no plugins (spine-only base)' '0' "$plCount"
-    # Operator enables a plugin + sets a notif preference in their LOCAL config.
-    $plMutated = & jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true | .agentPushNotifEnabled = false' $plSettings 2>$null
+    $plTheme = & jq -r '.theme // "null"' $plSettings 2>$null
+    if ($plTheme -is [array]) { $plTheme = $plTheme -join '' }
+    Assert-Eq 'compiler.test: fresh install ships no theme (spine-only base)' 'null' "$plTheme"
+    $plEffort = & jq -r '.effortLevel // "null"' $plSettings 2>$null
+    if ($plEffort -is [array]) { $plEffort = $plEffort -join '' }
+    Assert-Eq 'compiler.test: fresh install ships no effortLevel (spine-only base)' 'null' "$plEffort"
+    # Operator enables a plugin, sets a notif preference, and sets cost/UI
+    # preferences (theme, effortLevel). theme uses a non-default ("dark") so the
+    # assertion proves the OPERATOR's value is carried, not a base default.
+    $plMutated = & jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true | .agentPushNotifEnabled = false | .theme = "dark" | .effortLevel = "xhigh"' $plSettings 2>$null
     if ($plMutated -is [array]) { $plMutated = $plMutated -join "`n" }
     Write-LfFile -Path $plSettings -Content $plMutated
     # Re-render: New-Settings must carry the local choices forward.
@@ -289,6 +302,12 @@ if (Test-Path -LiteralPath $plSettings -PathType Leaf) {
     $plNotif = & jq -r 'if has("agentPushNotifEnabled") then .agentPushNotifEnabled else "DROPPED" end' $plSettings 2>$null
     if ($plNotif -is [array]) { $plNotif = $plNotif -join '' }
     Assert-Eq 'compiler.test: re-render preserves agentPushNotifEnabled (preserve-live)' 'false' "$plNotif"
+    $plThemeAfter = & jq -r '.theme // "DROPPED"' $plSettings 2>$null
+    if ($plThemeAfter -is [array]) { $plThemeAfter = $plThemeAfter -join '' }
+    Assert-Eq 'compiler.test: re-render preserves operator theme (preserve-live)' 'dark' "$plThemeAfter"
+    $plEffortAfter = & jq -r '.effortLevel // "DROPPED"' $plSettings 2>$null
+    if ($plEffortAfter -is [array]) { $plEffortAfter = $plEffortAfter -join '' }
+    Assert-Eq 'compiler.test: re-render preserves operator effortLevel (preserve-live)' 'xhigh' "$plEffortAfter"
     $plHook = & jq -r '.hooks.PreToolUse != null' $plSettings 2>$null
     if ($plHook -is [array]) { $plHook = $plHook -join '' }
     Assert-Eq 'compiler.test: re-render still wires PreToolUse hook' 'true' "$plHook"

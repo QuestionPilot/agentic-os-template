@@ -390,12 +390,17 @@ generate_settings() {
 
   # Preserve operator-owned preference keys across re-renders. settings.base.json
   # ships spine-only defaults — it carries ZERO plugin opinions (enabledPlugins is
-  # empty). Once an operator has a live settings.json, THEIR plugin choices
-  # (enabledPlugins) and notification preference (agentPushNotifEnabled) must
-  # survive a re-render; otherwise every install reverts them to base — re-enabling
-  # plugins the operator disabled and dropping agentPushNotifEnabled. Mirrors the
-  # tracker/vault model: the brain stays opinion-free, the operator's choices live
-  # in their local config, and the renderer bridges them without overwriting.
+  # empty) and NO cost/behavior preferences (no theme, no effortLevel — those would
+  # otherwise ship the authoring operator's xhigh cost setting to every downstream
+  # user). Once an operator has a live settings.json, THEIR plugin choices
+  # (enabledPlugins), notification preference (agentPushNotifEnabled), and UI/cost
+  # preferences (theme, effortLevel) must survive a re-render; otherwise every
+  # install reverts them to base — re-enabling plugins the operator disabled,
+  # dropping agentPushNotifEnabled, and discarding the operator's theme/effortLevel.
+  # Mirrors the tracker/vault model: the brain stays opinion-free, the operator's
+  # choices live in their local config, and the renderer bridges them without
+  # overwriting. theme/effortLevel join the overlay on the same spine-only
+  # precedent as enabledPlugins — a preference must not ship in the shared base.
   #
   # AI_CONFIG_SKIP_PRESERVE_LIVE: check-drift.sh sets this when it builds the
   # canonical comparison artifact for soft-drift classification. That baseline
@@ -409,12 +414,16 @@ generate_settings() {
   if [ -z "${AI_CONFIG_SKIP_PRESERVE_LIVE:-}" ] && [ -f "$live" ] \
      && jq -e 'type == "object"' "$live" >/dev/null 2>&1; then
     # enabledPlugins is plugin-id -> boolean; keep only boolean-valued entries so
-    # a malformed/hostile nested value can't ride through into the render.
+    # a malformed/hostile nested value can't ride through into the render. theme +
+    # effortLevel are scalar string preferences; preserve only when they parse as
+    # strings so a hostile non-string value can't ride through.
     overlay="$(jq -c '
         (if (has("enabledPlugins") and (.enabledPlugins | type == "object"))
            then {enabledPlugins: (.enabledPlugins | with_entries(select(.value | type == "boolean")))}
            else {} end)
       + (if has("agentPushNotifEnabled") then {agentPushNotifEnabled} else {} end)
+      + (if (has("theme") and (.theme | type == "string")) then {theme} else {} end)
+      + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)
     ' "$live")" || overlay='{}'
   fi
 

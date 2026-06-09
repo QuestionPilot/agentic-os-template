@@ -2,8 +2,11 @@
 # tests/soft-drift-autocure.test.ps1 — Windows-native twin of
 # tests/soft-drift-autocure.test.sh.
 #
-# check-drift.ps1 --cure-soft-drift behavior. Tests the opt-in
-# auto-cure for recurring settings.json soft drift.
+# check-drift.ps1 --cure-soft-drift behavior. Tests the opt-in auto-cure for
+# settings.json soft drift. theme/effortLevel are operator-local preference keys
+# the spine-only base does NOT ship (carried by install.ps1 preserve-live); the
+# soft envelope is simulated by ADDING operator-set soft keys the opinion-free
+# canonical base lacks.
 #
 # Mirrors tests/soft-drift-autocure.test.sh 1:1, using pwsh install.ps1
 # check-drift.ps1 instead of bash counterparts.
@@ -44,7 +47,8 @@ function Invoke-Jq-File {
 # ---------- Test 1: Default behavior unchanged on soft drift -----------------
 $Q106 = New-Q106Target
 $settingsPath = Join-Path $Q106.Out 'settings.json'
-Invoke-Jq-File -Path $settingsPath -Filter 'del(.theme, .effortLevel)'
+# Add operator-set soft keys (spine-only base ships neither) — the soft envelope.
+Invoke-Jq-File -Path $settingsPath -Filter '. + {theme: "auto", effortLevel: "xhigh"}'
 
 Assert-Exit 'que-106.test: default behavior unchanged: soft-drift still fails without --cure-soft-drift' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $Q106.Out
 
@@ -57,10 +61,20 @@ Assert-Exit 'que-106.test: default behavior unchanged: soft-drift still fails wi
 # Per [[feedback_port_parity_vs_regression_split]] — the parity-correct
 # behavior is that the cure WORKS; the PS-script bug is a separate follow-on.
 $reason106cure = 'check-drift.ps1 CRLF line endings break jq classifier here-string on macOS/Linux pwsh — spawned follow-on filed'
-_Skip 'que-106.test: --cure-soft-drift cures missing soft keys (theme + effortLevel)' $reason106cure
-_Skip "que-106.test: post-cure: theme restored to canonical 'auto'" $reason106cure
-_Skip "que-106.test: post-cure: effortLevel restored to canonical 'xhigh'" $reason106cure
+_Skip 'que-106.test: --cure-soft-drift cures soft keys (theme + effortLevel)' $reason106cure
+_Skip "que-106.test: post-cure: operator theme preserved as 'auto'" $reason106cure
+_Skip "que-106.test: post-cure: operator effortLevel preserved as 'xhigh'" $reason106cure
 _Skip 'que-106.test: post-cure: drift check passes from scratch' $reason106cure
+
+# ---------- Test 2b: app-strip of operator soft keys cures to converged state -
+# Pins the post-spine-only contract: a stripped operator soft key is NOT
+# resurrected by the cure (operator-local, no base source). DEFERRED on the PS
+# lane — cure path, same CRLF cause as Test 2 above.
+_Skip 'que-106.test: preserve-live recorded operator effortLevel before strip' $reason106cure
+_Skip 'que-106.test: app-strip of operator soft keys cures (soft envelope)' $reason106cure
+_Skip 'que-106.test: post-cure: stripped theme not resurrected (operator-local)' $reason106cure
+_Skip 'que-106.test: post-cure: stripped effortLevel not resurrected (operator-local)' $reason106cure
+_Skip 'que-106.test: post-cure: drift check passes after app-strip cure' $reason106cure
 
 Remove-Item -LiteralPath $Q106.Root -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -82,7 +96,7 @@ Remove-Item -LiteralPath $Q106B.Root -Recurse -Force -ErrorAction SilentlyContin
 # ---------- Test 4: Multi-file drift envelope rejects auto-cure --------------
 $Q106C = New-Q106Target
 $settingsPath = Join-Path $Q106C.Out 'settings.json'
-Invoke-Jq-File -Path $settingsPath -Filter 'del(.theme)'
+Invoke-Jq-File -Path $settingsPath -Filter '. + {theme: "auto"}'
 # Codex F-2 (MEDIUM): AppendAllText + UTF8NoBOM for byte-determinism on Windows.
 [System.IO.File]::AppendAllText((Join-Path $Q106C.Out 'skills' 'session-agent' 'SKILL.md'), "`nHAND EDIT`n", [System.Text.UTF8Encoding]::new($false))
 
@@ -183,7 +197,7 @@ $Q106J = New-Q106Target
 $manifestPath = Join-Path $Q106J.Out '.build-manifest.json'
 $settingsPath = Join-Path $Q106J.Out 'settings.json'
 Invoke-Jq-File -Path $manifestPath -Filter '.harness = "codex"'
-Invoke-Jq-File -Path $settingsPath -Filter 'del(.theme)'
+Invoke-Jq-File -Path $settingsPath -Filter '. + {theme: "auto"}'
 
 Assert-Exit 'que-106.test: adversarial A-1: forged harness=codex on Claude-shaped target rejects cure' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $Q106J.Out --cure-soft-drift
 
@@ -192,8 +206,8 @@ Remove-Item -LiteralPath $Q106J.Root -Recurse -Force -ErrorAction SilentlyContin
 # ---------- Test 13: Adversarial A-3 duplicate JSON keys rejected ------------
 $Q106K = New-Q106Target
 $settingsPath = Join-Path $Q106K.Out 'settings.json'
-# Strip theme + effortLevel via jq, then craft a duplicate-key file via string ops.
-$origObj = & jq 'del(.theme, .effortLevel)' $settingsPath 2>$null
+# Add operator soft keys theme + effortLevel, then craft a duplicate-key file via string ops.
+$origObj = & jq '. + {theme: "auto", effortLevel: "xhigh"}' $settingsPath 2>$null
 if ($origObj -is [array]) { $origObj = $origObj -join "`n" }
 $compact = & jq -c '.' --argjson placeholder 0 -n --slurpfile slurp /dev/null 2>$null  # noop
 $compact = $origObj | & jq -c '.' 2>$null
