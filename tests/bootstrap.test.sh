@@ -396,8 +396,9 @@ rm -rf "$PSEED_HOME" "$PSEED_STUBS" "$PSEED_REPO" 2>/dev/null || true
 
 # --- T-90C: bootstrap.sh --check parity ---
 # After, bootstrap.sh --check must NOT hard-fail on missing operator
-# tools (lineark, codegraph, superpowers, agy). The only TRUE framework-required
-# CLIs are codex, gh, jq, rg. Missing-tool warnings are advisory, not errors.
+# tools (lineark, codegraph, superpowers, agy). The universal framework-required
+# CLIs are gh, jq, rg (codex is required only for the codex harness). Missing-tool
+# warnings are advisory, not errors.
 # Runtime-construct the tool sentinels per [[feedback_self_tripping_test_source]].
 T90C_LINEARK="line""ark"
 T90C_CODEGRAPH="code""graph"
@@ -407,7 +408,8 @@ T90C_AGY="a""gy"
 T90C_TMP="$(mktemp -d)"
 PARITY_STUBS="$T90C_TMP/parity-stubs"
 mkdir -p "$PARITY_STUBS"
-# Frame stubs for the true-required four.
+# Frame stubs for gh/jq/rg (+ codex; harmless here — codex is not required for
+# the default claude --check, but its presence does not hurt this parity check).
 make_stub_cli "$PARITY_STUBS" codex "codex 0.132.0"
 make_stub_cli "$PARITY_STUBS" gh    "gh version 2.50.0 (2026-01-01)"
 make_stub_cli "$PARITY_STUBS" jq    "jq-1.7.0"
@@ -431,6 +433,62 @@ for absent in "$T90C_LINEARK" "$T90C_CODEGRAPH" "$T90C_SUPERPOWERS" "$T90C_AGY";
 done
 
 rm -rf "$T90C_TMP" 2>/dev/null || true
+
+# --- T-90D: codex is harness-conditional, not universally required ---
+# Regression for the codex-required-for-claude fix: a claude-only bootstrap (the
+# default) must pass --check with the codex CLI ABSENT; only --harness codex
+# requires it. gh/jq/rg stay universally required.
+T90D_TMP="$(mktemp -d)"
+T90D_STUBS="$T90D_TMP/stubs"
+mkdir -p "$T90D_STUBS"
+# Stub only the universal three — codex is deliberately absent.
+make_stub_cli "$T90D_STUBS" gh "gh version 2.50.0 (2026-01-01)"
+make_stub_cli "$T90D_STUBS" jq "jq-1.7.0"
+make_stub_cli "$T90D_STUBS" rg "ripgrep 14.0.0"
+
+# Default harness (claude): codex absent must NOT be flagged as a missing requirement.
+t90d_claude_out="$(PATH="$T90D_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/scripts/bootstrap.sh" --check 2>&1 || true)"
+if printf '%s' "$t90d_claude_out" | grep -qiE "codex: not found"; then
+  _fail "bootstrap.sh --check (claude) requires codex" \
+    "codex must not be required for the claude harness"
+else
+  _pass "bootstrap.sh --check (claude) does not require codex"
+fi
+
+# Codex harness: codex absent MUST be flagged as a missing requirement.
+t90d_codex_out="$(PATH="$T90D_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/scripts/bootstrap.sh" --harness codex --check 2>&1 || true)"
+if printf '%s' "$t90d_codex_out" | grep -qiE "codex: not found"; then
+  _pass "bootstrap.sh --check --harness codex flags absent codex as required"
+else
+  _fail "bootstrap.sh --check --harness codex did not flag absent codex" \
+    "codex is required when the codex harness is targeted"
+fi
+
+# Case-folded: install.sh lowercases harness names, so --harness CODEX is the
+# codex harness and MUST require codex.
+t90d_upper_out="$(PATH="$T90D_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/scripts/bootstrap.sh" --harness CODEX --check 2>&1 || true)"
+if printf '%s' "$t90d_upper_out" | grep -qiE "codex: not found"; then
+  _pass "bootstrap.sh --check --harness CODEX (case-folded) flags absent codex"
+else
+  _fail "bootstrap.sh --check --harness CODEX did not flag absent codex" \
+    "harness match must be case-insensitive (install.sh lowercases harness names)"
+fi
+
+# Exact per-element match: a non-codex token that merely contains 'codex' as a
+# substring (e.g. codex2) must NOT pull in the codex requirement.
+t90d_substr_out="$(PATH="$T90D_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
+  bash "$REPO_ROOT/scripts/bootstrap.sh" --harness codex2 --check 2>&1 || true)"
+if printf '%s' "$t90d_substr_out" | grep -qiE "codex: not found"; then
+  _fail "bootstrap.sh --check --harness codex2 wrongly requires codex" \
+    "membership must be exact-match, not substring"
+else
+  _pass "bootstrap.sh --check --harness codex2 does not require codex (exact match)"
+fi
+
+rm -rf "$T90D_TMP" 2>/dev/null || true
 
 # --- first-run seed-empty install must succeed (bash) ---
 # Regression: a fresh clone with NO pre-existing local.env, run as

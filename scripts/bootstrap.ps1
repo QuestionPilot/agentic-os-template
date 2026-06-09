@@ -52,10 +52,13 @@ function would_mutate([string]$desc) {
 # <TEAM>-115: `bash` is NO LONGER required. Invoke-RunInstall + Invoke-SmokeTest
 # now route through native `install.ps1` / `validate.ps1` via `pwsh -File`.
 # A Windows operator with no Git Bash / WSL can run bootstrap.ps1 end-to-end.
-# The framework-REQUIRED CLI set is codex, gh, jq, rg (4). The framework wires no
-# operator tools, so nothing else belongs in this required map. Keep in lockstep
-# with bootstrap.sh check_clis + the entrypoint prose in CLAUDE.md/AGENTS.md
-# (inventory-coupling rule).
+# The CLIs checked on this (Windows) path are gh, jq, rg. `codex` is NOT required:
+# only the claude harness is supported on Windows (install.ps1 rejects codex), so
+# a claude-only operator must not need a second AI harness installed — and the
+# codex CLI would only be installed for a harness this path cannot build. The
+# codex version + npm entries below remain for when Windows codex-harness support
+# lands. Keep the universal set in lockstep with bootstrap.sh check_clis + the
+# README / new-machine-bootstrap.md prose (inventory-coupling rule).
 $cliMin = @{
   codex     = "0.132.0"
   gh        = "2.40.0"
@@ -97,7 +100,12 @@ $outdatedClis = @()
 
 function Invoke-CheckClis {
   $ok = $true
-  foreach ($name in $cliMin.Keys) {
+  # gh/jq/rg are the universal requirements. codex is intentionally NOT checked on
+  # Windows — the codex harness is unsupported here (install.ps1 rejects it), so a
+  # claude-only operator never needs the codex CLI. Re-add codex conditionally on
+  # $Harness when Windows codex-harness support lands.
+  $required = @('gh','jq','rg')
+  foreach ($name in $required) {
     $min = $cliMin[$name]
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
       bs_warn "${name}: not found (required)"; $script:missingClis += $name; $ok = $false

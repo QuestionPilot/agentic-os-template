@@ -27,6 +27,7 @@ Install the required CLIs (macOS shown; Windows: use `winget` / `npm` — see
 ```bash
 brew install gh jq
 brew install --formula ripgrep   # provides rg
+# Only if you target the Codex harness (bootstrap --harness codex):
 npm install -g @openai/codex     # codex installs via npm, not brew
 ```
 

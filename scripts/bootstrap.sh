@@ -95,12 +95,24 @@ MISSING_CLIS=""
 OUTDATED_CLIS=""
 
 check_clis() {
-  # The framework-REQUIRED CLI set is codex, gh, jq, rg (4). The framework wires
-  # no operator tools, so nothing else belongs in this hard-requirement loop — a
-  # fresh machine bootstraps with just these four. (Keep this list in lockstep
-  # with the entrypoint prose in CLAUDE.md/AGENTS.md per the inventory-coupling rule.)
-  local name min got rc=0
-  for name in codex gh jq rg; do
+  # Universal framework-REQUIRED CLIs are gh, jq, rg. `codex` is required ONLY
+  # when the codex harness is a build target — a claude-only operator must not
+  # need a second AI harness installed to bootstrap. The framework wires no
+  # operator tools, so nothing else belongs in this hard-requirement loop. (Keep
+  # this list in lockstep with bootstrap.ps1 Invoke-CheckClis + the README /
+  # new-machine-bootstrap.md prose per the inventory-coupling rule.)
+  local name min got rc=0 h
+  local clis="gh jq rg"
+  # codex only when the codex harness is targeted. Match per-element and
+  # case-folded: install.sh lowercases harness names (CODEX == codex), and an
+  # exact per-element test avoids false matches on tokens like `codex2` or on a
+  # single array element that happens to contain a space.
+  for h in ${HARNESSES[@]+"${HARNESSES[@]}"}; do
+    case "$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')" in
+      codex) clis="codex $clis"; break ;;
+    esac
+  done
+  for name in $clis; do
     min="$(cli_min_version "$name")"
     if ! command -v "$name" >/dev/null 2>&1; then
       warn "$name: not found (required)"

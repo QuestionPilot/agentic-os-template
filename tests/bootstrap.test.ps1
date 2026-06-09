@@ -53,6 +53,11 @@ _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent lineark
 _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent codegraph' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent superpowers' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent agy' $reason
+# T-90D twin: codex is harness-conditional (bootstrap.sh runs these on macOS/Linux).
+_Skip 'bootstrap.test: bootstrap.sh --check (claude) does not require codex' $reason
+_Skip 'bootstrap.test: bootstrap.sh --check --harness codex flags absent codex as required' $reason
+_Skip 'bootstrap.test: bootstrap.sh --check --harness CODEX (case-folded) flags absent codex' $reason
+_Skip 'bootstrap.test: bootstrap.sh --check --harness codex2 does not require codex (exact match)' $reason
 
 # no-bash assertions — mirror tests/bootstrap.test.sh's added block.
 $qreason = 'bootstrap.test.sh runs these end-to-end on macOS/Linux; Windows lane covers PS-only behavior via tests/install.test.ps1 + tests/validate-ps.test.ps1 indirectly'
