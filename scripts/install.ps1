@@ -571,15 +571,44 @@ function Compile-Entrypoint {
         if ($overlayPath) {
             if (Test-Path -LiteralPath $overlayPath -PathType Leaf) {
                 $overlay = (Get-RawText -Path $overlayPath) -replace '(\r?\n)+\z', ''
-                # Never let the overlay re-introduce the marker (single-pass splice
-                # would leave it in the output and break the @@VAR@@ loop) — Codex F3.
+                # Never let the overlay re-introduce ANY overlay marker (single-pass
+                # splice). Strip BOTH: a surviving marker would either make the later
+                # codex branch fire on post-splice content (leak) or hit the @@VAR@@
+                # loop and die "resolves empty" — Codex F3 + cross-overlay composition.
                 $overlay = $overlay.Replace('@@OPERATOR_SKILLS_OVERLAY@@', '')
+                $overlay = $overlay.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', '')
             } else {
                 # SET-but-missing — warn loudly, still render spine-only (Codex F2).
                 [Console]::Error.WriteLine("warning: SKILLS_OVERLAY_PATH=$overlayPath is set but the file does not exist — rendering a spine-only $OutName")
             }
         }
         $content = $content.Replace('@@OPERATOR_SKILLS_OVERLAY@@', $overlay)
+    }
+
+    # Operator codex-rules overlay — twin of install.sh compile_entrypoint. Splice
+    # the local overlay file (named by CODEX_RULES_OVERLAY_PATH) at the
+    # @@OPERATOR_CODEX_RULES_OVERLAY@@ marker, or empty for a spine-only render.
+    # Codex has no auto-loaded rules/ dir, so operator tool-policy rules must land
+    # in the rendered AGENTS.md rather than a sidecar. Strip the overlay's trailing
+    # newlines so this matches bash's $(cat) and both twins render byte-identically.
+    # Done before token enumeration so any path tokens inside the overlay resolve.
+    if ($content.Contains('@@OPERATOR_CODEX_RULES_OVERLAY@@')) {
+        $overlay = ''
+        $overlayPath = [Environment]::GetEnvironmentVariable('CODEX_RULES_OVERLAY_PATH')
+        if ($overlayPath) {
+            if (Test-Path -LiteralPath $overlayPath -PathType Leaf) {
+                $overlay = (Get-RawText -Path $overlayPath) -replace '(\r?\n)+\z', ''
+                # Never let the overlay re-introduce ANY overlay marker (single-pass
+                # splice). Strip BOTH — symmetric cross-overlay neutralization (see
+                # the skills branch above); a surviving skills marker would hit the
+                # @@VAR@@ loop and die "resolves empty".
+                $overlay = $overlay.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', '')
+                $overlay = $overlay.Replace('@@OPERATOR_SKILLS_OVERLAY@@', '')
+            } else {
+                [Console]::Error.WriteLine("warning: CODEX_RULES_OVERLAY_PATH=$overlayPath is set but the file does not exist — rendering a spine-only $OutName")
+            }
+        }
+        $content = $content.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', $overlay)
     }
 
     # Find every @@VAR@@ token. Mirrors install.sh's `[A-Z_]+` shape — keeping

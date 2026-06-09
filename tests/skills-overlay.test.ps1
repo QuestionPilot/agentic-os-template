@@ -94,4 +94,38 @@ if (Test-Path -LiteralPath $skills -PathType Leaf) {
 }
 if ($r.BuildDir) { Remove-Item -LiteralPath $r.BuildDir -Recurse -Force -ErrorAction SilentlyContinue }
 
+# 5. Cross-overlay collision (the SEVERE leak case): a claude render with the skills
+# overlay carrying the codex-rules marker AND CODEX_RULES_OVERLAY_PATH set must NOT
+# splice codex rules into this claude SKILLS.md (before the cross-overlay fix the
+# surviving marker made the codex-rules branch fire on post-splice content and leak).
+# Marker from halves (not a stray copy). Bespoke env (Invoke-SoBuild sets only SKILLS).
+$SO_CXMARK = '@@OPERATOR_CODEX_RULES' + '_OVERLAY@@'
+$SO_OV5 = Join-Path $SO_DIR 'overlay-codex-marker.md'
+Set-Content -LiteralPath $SO_OV5 -Value "operator note mentioning the $SO_CXMARK marker." -Encoding utf8
+$SO_CXPAY = Join-Path $SO_DIR 'codex-payload.md'
+Set-Content -LiteralPath $SO_CXPAY -Value 'CODEX_LEAK_SENTINEL must never reach a claude SKILLS.md' -Encoding utf8
+$SO_ENV5 = Join-Path $SO_DIR 'local.env'
+$lines5 = @(Get-Content -LiteralPath $SO_FIXTURE)
+$lines5 += "CLAUDE_CONFIG_DIR=`"$SO_TGT`""
+$lines5 += "SKILLS_OVERLAY_PATH=`"$SO_OV5`""
+$lines5 += "CODEX_RULES_OVERLAY_PATH=`"$SO_CXPAY`""
+Set-Content -LiteralPath $SO_ENV5 -Value $lines5 -Encoding utf8
+$env:AI_CONFIG_LOCAL_ENV = $SO_ENV5
+try {
+    $out5 = & pwsh -NoProfile -File $SO_INSTALL --harness claude --build-only 2>$null
+    $st5 = $LASTEXITCODE
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+Assert-Eq 'overlay: claude render with cross-overlay marker + codex path set exits 0' '0' "$st5"
+$bd5 = @($out5 | Where-Object { $_ -ne '' }) | Select-Object -Last 1
+$skills = Join-Path $bd5 'SKILLS.md'
+if (Test-Path -LiteralPath $skills -PathType Leaf) {
+    $txt5 = [System.IO.File]::ReadAllText($skills)
+    Assert-NotContains 'overlay: codex rules do NOT leak into claude SKILLS.md (cross-overlay)' $txt5 'CODEX_LEAK_SENTINEL'
+    $n5 = ([regex]::Matches($txt5, [regex]::Escape($SO_CXMARK))).Count
+    Assert-Eq 'overlay: cross-overlay codex-rules marker neutralized (0 left in SKILLS.md)' '0' "$n5"
+}
+if ($bd5) { Remove-Item -LiteralPath $bd5 -Recurse -Force -ErrorAction SilentlyContinue }
+
 Remove-Item -LiteralPath $SO_DIR -Recurse -Force -ErrorAction SilentlyContinue

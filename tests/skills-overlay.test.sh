@@ -73,4 +73,33 @@ if [ -f "$_bd/SKILLS.md" ]; then
 fi
 [ -n "$_bd" ] && rm -rf "$_bd"
 
+# 5. Cross-overlay collision (the SEVERE leak case): a claude render with the skills
+# overlay carrying the codex-rules marker AND CODEX_RULES_OVERLAY_PATH set must NOT
+# splice codex rules into this claude SKILLS.md. Before the cross-overlay fix the
+# surviving marker made the later codex-rules branch fire on post-splice content and
+# leak the codex payload here. Marker built from halves so this source isn't a stray
+# copy. Build a bespoke env (the _so_build helper sets only SKILLS_OVERLAY_PATH).
+SO_CXMARK="@@OPERATOR_CODEX_RULES""_OVERLAY@@"
+SO_OV5="$SO_DIR/overlay-codex-marker.md"
+printf 'operator note mentioning the %s marker.\n' "$SO_CXMARK" > "$SO_OV5"
+SO_CXPAY="$SO_DIR/codex-payload.md"
+printf 'CODEX_LEAK_SENTINEL must never reach a claude SKILLS.md\n' > "$SO_CXPAY"
+SO_ENV5="$SO_DIR/local.env"
+{ cat "$SO_FIXTURE"
+  printf '\nCLAUDE_CONFIG_DIR=%q\n' "$SO_TGT"
+  printf 'SKILLS_OVERLAY_PATH=%q\n' "$SO_OV5"
+  printf 'CODEX_RULES_OVERLAY_PATH=%q\n' "$SO_CXPAY"
+} > "$SO_ENV5"
+_st5=0
+_bd="$(AI_CONFIG_LOCAL_ENV="$SO_ENV5" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --build-only 2>/dev/null)" || _st5=$?
+assert_eq "overlay: claude render with cross-overlay marker + codex path set exits 0" "0" "$_st5"
+if [ -f "$_bd/SKILLS.md" ]; then
+  assert_not_contains "overlay: codex rules do NOT leak into claude SKILLS.md (cross-overlay)" \
+    "$(cat "$_bd/SKILLS.md")" "CODEX_LEAK_SENTINEL"
+  assert_eq "overlay: cross-overlay codex-rules marker neutralized (0 left in SKILLS.md)" \
+    "0" "$(grep -cF "$SO_CXMARK" "$_bd/SKILLS.md" 2>/dev/null || true)"
+fi
+[ -n "$_bd" ] && rm -rf "$_bd"
+
 rm -rf "$SO_DIR"

@@ -298,11 +298,15 @@ compile_entrypoint() {
       if [ -n "${SKILLS_OVERLAY_PATH:-}" ]; then
         if [ -f "$SKILLS_OVERLAY_PATH" ]; then
           overlay="$(cat "$SKILLS_OVERLAY_PATH")"
-          # An operator overlay must never re-introduce the marker: the splice is
-          # a single non-recursive pass, so a stray marker in the overlay would
-          # survive into the output and then die in (or mis-resolve through) the
-          # @@VAR@@ loop below. Neutralize it defensively (Codex F3).
+          # An operator overlay must never re-introduce ANY overlay marker: the
+          # two overlay branches run sequentially on the same $content, so a
+          # stray marker in this payload would (a) survive into $content and make
+          # the LATER codex branch fire on post-splice content — leaking codex
+          # rules into a claude SKILLS.md — or (b) hit the @@VAR@@ loop and die
+          # "resolves empty". Neutralize BOTH markers defensively (Codex F3 +
+          # cross-overlay composition).
           overlay="${overlay//@@OPERATOR_SKILLS_OVERLAY@@/}"
+          overlay="${overlay//@@OPERATOR_CODEX_RULES_OVERLAY@@/}"
         else
           # SET-but-missing is explicit operator intent gone wrong (typo, moved /
           # unmounted path) — warn loudly rather than silently dropping the whole
@@ -312,6 +316,37 @@ compile_entrypoint() {
         fi
       fi
       content="${content//@@OPERATOR_SKILLS_OVERLAY@@/$overlay}"
+      ;;
+  esac
+
+  # Operator codex-rules overlay. The shipped codex AGENTS template is spine-only
+  # and carries a single @@OPERATOR_CODEX_RULES_OVERLAY@@ marker. An operator's
+  # codex tool-policy rules (e.g. a doc-fetch CLI block) live in a local overlay
+  # file named by CODEX_RULES_OVERLAY_PATH; splice its contents at the marker (or
+  # empty, for a spine-only render). Twin of the SKILLS overlay above — Codex has
+  # no auto-loaded rules/ dir, so operator rules must land in the rendered
+  # AGENTS.md rather than a sidecar. Done BEFORE the @@VAR@@ loop so any path
+  # tokens inside the overlay also resolve. Only runs for a template that carries
+  # the marker (AGENTS.md, not CLAUDE/SKILLS) so the warning fires at most once.
+  case "$content" in
+    *@@OPERATOR_CODEX_RULES_OVERLAY@@*)
+      overlay=""
+      if [ -n "${CODEX_RULES_OVERLAY_PATH:-}" ]; then
+        if [ -f "$CODEX_RULES_OVERLAY_PATH" ]; then
+          overlay="$(cat "$CODEX_RULES_OVERLAY_PATH")"
+          # Never let the overlay re-introduce ANY overlay marker (single-pass
+          # splice). Strip BOTH: a surviving skills marker here would hit the
+          # @@VAR@@ loop below and die "resolves empty" (the skills branch already
+          # ran for this template, so it cannot consume it). See the skills
+          # branch above — symmetric cross-overlay neutralization.
+          overlay="${overlay//@@OPERATOR_CODEX_RULES_OVERLAY@@/}"
+          overlay="${overlay//@@OPERATOR_SKILLS_OVERLAY@@/}"
+        else
+          printf 'warning: CODEX_RULES_OVERLAY_PATH=%s is set but the file does not exist — rendering a spine-only %s\n' \
+            "$CODEX_RULES_OVERLAY_PATH" "$out" >&2
+        fi
+      fi
+      content="${content//@@OPERATOR_CODEX_RULES_OVERLAY@@/$overlay}"
       ;;
   esac
 

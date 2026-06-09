@@ -4,10 +4,11 @@
 # Guards the spine-only invariant: ai-config (and the public template) ship ONLY
 # the OS spine (session-agent, closeout, self-audit) + their machinery + the
 # linear/ and obsidian/ contracts. Zero operator tool opinions. See the.sh twin's
-# header for the full rationale, the F1 ctx7 audit, the F4 line-
-# scoped allowlist (scripts/validate.* + build-public-snapshot.* + linear/ +
-# obsidian/ are now SCANNED, not file-excluded), and the deferred codex-ctx7-block
-# .codegraph carve-outs.
+# header for the full rationale, the ctx7/context7 audit (now with NO template
+# exception — the former codex ctx7-managed block moved to an operator overlay),
+# the F4 line-scoped allowlist (scripts/validate.* + build-public-snapshot.* +
+# linear/ + obsidian/ are now SCANNED, not file-excluded), and the .codegraph
+# carve-outs.
 #
 # Enumeration is via git (ls-files / grep), never filesystem globs. The forbidden-
 # identifier pattern is built from halves so this file never trips its own audit
@@ -64,19 +65,17 @@ Assert-Eq 'spine-only: settings.base.json ships no theme/effortLevel preference'
 # trips. -replace / -match are case-insensitive by default; the lowercased line +
 # lowercase pattern keep parity with the bash `tr | sed | grep`. Built from halves.
 $soPat = 'play' + 'wright|sup' + 'abase|net' + 'lify|str' + 'ipe|fire' + 'crawl|web-design-' + 'guidelines|frontend-' + 'design|con' + 'text7|ct' + 'x7'
-$soStr = 'str' + 'ipe'; $soSup = 'sup' + 'abase'; $soC7 = 'con' + 'text7'; $soCx = 'ct' + 'x7'
+$soStr = 'str' + 'ipe'; $soSup = 'sup' + 'abase'
 function Test-SpineResidual {
     # Strip the per-file allowed token(s) from a (lowercased) git-grep hit line.
     # validate.ps1 names Stripe; memory-vault-audit.js names Stripe AND Supabase
-    # (its secret-scan key prefixes); the codex AGENTS block names ctx7/context7.
+    # (its secret-scan key prefixes). No shipped template carries a tool as data.
     param([string]$Line)
     $lc = $Line.ToLowerInvariant()
     if ($lc -match '^scripts/validate\.ps1:') {
         $lc = $lc -replace $soStr, ''
     } elseif ($lc -match '^obsidian/vault-scaffolding/bin/memory-vault-audit\.js:') {
         $lc = ($lc -replace $soStr, '') -replace $soSup, ''
-    } elseif ($lc -match '^harnesses/codex/agents\.template\.md:') {
-        $lc = ($lc -replace $soC7, '') -replace $soCx, ''
     }
     return ($lc -match $soPat)
 }
@@ -84,12 +83,13 @@ $soRaw = @(& git -C $soRoot grep -niIE $soPat -- ':!tests/' ':!docs/' 2>$null)
 $hits = (@($soRaw | Where-Object { Test-SpineResidual $_ }) -join "`n")
 Assert-Eq 'spine-only: no operator tool identifiers outside the allowlisted DATA lines' '' $hits
 
-# F1 regression (self-trip): a real opinion sharing an allowed line still trips.
-# Parenthesize each element — in PowerShell the `,` array separator binds tighter
-# than `+`, so unparenthesized `'a'+'b', 'c'+'d'` collapses into ONE element.
+# Self-trip regression: a real opinion sharing an allowed line still trips. Build
+# adversarial lines over the SAME two allowlisted files. Parenthesize each element
+# — in PowerShell the `,` array separator binds tighter than `+`, so unparenthesized
+# `'a'+'b', 'c'+'d'` collapses into ONE element.
 $soEvil = @(
-    ('harnesses/codex/agents.template.md:120:use ct' + 'x7 and install play' + 'wright'),
-    ('scripts/validate.ps1:210:stripe scanner; also wire fire' + 'crawl')
+    ('scripts/validate.ps1:210:stripe scanner; also wire fire' + 'crawl'),
+    ('obsidian/vault-scaffolding/bin/memory-vault-audit.js:42:sup' + 'abase + str' + 'ipe scan; plus play' + 'wright')
 )
 $soEvilN = @($soEvil | Where-Object { Test-SpineResidual $_ }).Count
 Assert-Eq 'spine-only: allowlist is per-occurrence (a real opinion sharing an allowed line still trips)' '2' "$soEvilN"

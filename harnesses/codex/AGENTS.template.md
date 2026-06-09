@@ -104,32 +104,10 @@ an inline tracker identifier — framework files carry no private tracker IDs.
   command before its hooks will run; the trust step is a harness mechanic, not a
   Linear-tracked rule.
 
-<!-- ctx7-managed: the HTML-comment-bracketed block below is what
-     `npx ctx7 setup --universal --cli -y` writes to a Codex harness AGENTS.md
-     (the ctx7 setup integration). Preserve the marker pair and the in-block
-     structure verbatim so a future ctx7 re-run finds and updates this block
-     in place instead of appending a duplicate; the trailing "outside Codex's
-     default sandbox" sentence is ctx7's Codex-specific sandbox-retry advice
-     and is what makes this Codex-only (Claude harness gets a sidecar at
-     $CLAUDE_CONFIG_DIR/rules/context7.md instead). Do not echo the marker
-     string itself anywhere outside the pair — ctx7's re-detection greps for
-     it and a stray third occurrence corrupts the round-trip. -->
-<!-- context7 -->
-Use the `ctx7` CLI to fetch current documentation whenever the user asks about a library, framework, SDK, API, CLI tool, or cloud service -- even well-known ones like React, Next.js, Prisma, Express, Tailwind, Django, or Spring Boot. This includes API syntax, configuration, version migration, library-specific debugging, setup instructions, and CLI tool usage. Use even when you think you know the answer -- your training data may not reflect recent changes. Prefer this over web search for library docs.
-
-Do not use for: refactoring, writing scripts from scratch, debugging business logic, code review, or general programming concepts.
-
-## Steps
-
-1. Resolve library: `npx ctx7@latest library <name> "<user's question>"` — use the official library name with proper punctuation (e.g., "Next.js" not "nextjs", "Customer.io" not "customerio", "Three.js" not "threejs")
-2. Pick the best match (ID format: `/org/project`) by: exact name match, description relevance, code snippet count, source reputation (High/Medium preferred), and benchmark score (higher is better). If results don't look right, try alternate names or queries (e.g., "next.js" not "nextjs", or rephrase the question)
-3. Fetch docs: `npx ctx7@latest docs <libraryId> "<user's question>"`
-4. Answer using the fetched documentation
-
-You MUST call `library` first to get a valid ID unless the user provides one directly in `/org/project` format. Use the user's full question as the query -- specific and detailed queries return better results than vague single words. Do not run more than 3 commands per question. Do not include sensitive information (API keys, passwords, credentials) in queries.
-
-For version-specific docs, use `/org/project/version` from the `library` output (e.g., `/vercel/next.js/v14.3.0`).
-
-If a command fails with a quota error, inform the user and suggest `npx ctx7@latest login` or setting `CONTEXT7_API_KEY` env var for higher limits. Do not silently fall back to training data.
-Run Context7 CLI requests outside Codex's default sandbox. If a Context7 CLI command fails with DNS or network errors such as ENOTFOUND, host resolution failures, or fetch failed, rerun it outside the sandbox instead of retrying inside the sandbox.
-<!-- context7 -->
+<!-- Operator rules overlay. The shipped template is spine-only; install.sh
+     splices an operator-local file (named by CODEX_RULES_OVERLAY_PATH) here at
+     render time, reproducing any operator tool-policy rules in the rendered
+     AGENTS.md. Empty for a spine-only render — the framework default, which is
+     what a fresh clone gets. The overlay file is operator-local and is never
+     shipped. Mirrors the claude SKILLS overlay. -->
+@@OPERATOR_CODEX_RULES_OVERLAY@@

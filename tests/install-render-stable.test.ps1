@@ -20,11 +20,11 @@ $IRS_CI_FIXTURE = Join-Path $env:REPO_ROOT 'tests' 'fixtures' 'ci.local.env'
 New-Item -ItemType Directory -Path $IRS_DIR -Force | Out-Null
 
 # --- Assertion 0: fixture is provably complete vs active templates ----------
-# OPERATOR_SKILLS_OVERLAY is an injection marker consumed before the
-# @@VAR@@ loop (install.{sh,ps1} splice the operator overlay at it, or empty for
-# a spine-only render) — not an env-sourced path var, so it skips the fixture
-# completeness check like CAPABILITY_CATALOG. See the.sh twin for detail.
-$irs_special_tokens = @('CAPABILITY_CATALOG', 'OPERATOR_SKILLS_OVERLAY')
+# OPERATOR_SKILLS_OVERLAY + OPERATOR_CODEX_RULES_OVERLAY are injection markers
+# consumed before the @@VAR@@ loop (install.{sh,ps1} splice the operator overlay
+# at each, or empty for a spine-only render) — not env-sourced path vars, so they
+# skip the fixture completeness check like CAPABILITY_CATALOG. See the.sh twin.
+$irs_special_tokens = @('CAPABILITY_CATALOG', 'OPERATOR_SKILLS_OVERLAY', 'OPERATOR_CODEX_RULES_OVERLAY')
 $irs_active_surfaces = @(
     (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'CLAUDE.template.md'),
     (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'SKILLS.template.md'),
@@ -97,6 +97,31 @@ if ($irs_claude_status -ne 0) {
 # install.sh --harness codex; the PS twin SKIPs with rationale.
 _Skip 'install-render-stable.test: install.ps1 --harness codex --build-only exits 0 with CI fixture' `
     'install.ps1 codex harness not implemented'
+
+# --- Assertion 2b: no overlay marker survives into the rendered claude surface ---
+# Twin of the .sh assertion 2b: assertion 0 exempts the @@OPERATOR_*_OVERLAY@@
+# injection markers from the completeness check globally; this asserts directly
+# that the BUILT tree carries zero residual overlay markers, so a marker leaked
+# into a non-consuming surface (e.g. a hook) is caught. PS covers the claude build;
+# the codex build is bash-only (assertion 2), so the .sh twin covers codex.
+# Pattern from halves so this source isn't a stray literal copy of either marker.
+$irsOvlRe = '@@OPERATOR_[A-Z_]*' + '_OVERLAY@@'
+$env:AI_CONFIG_LOCAL_ENV = $IRS_ENV_CLAUDE
+try {
+    $irsOvlOut = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --build-only 2>$null
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+$irsOvlBd = @($irsOvlOut | Where-Object { $_ -ne '' }) | Select-Object -Last 1
+$irsOvlHits = @()
+if ($irsOvlBd -and (Test-Path -LiteralPath $irsOvlBd)) {
+    $irsOvlHits = @(Get-ChildItem -LiteralPath $irsOvlBd -Recurse -File |
+        Where-Object { (Get-Content -Raw -LiteralPath $_.FullName) -match $irsOvlRe } |
+        ForEach-Object { $_.FullName })
+}
+Assert-Eq 'install-render-stable.test: no @@OPERATOR_*_OVERLAY@@ marker survives into the rendered claude surface' `
+    '' ($irsOvlHits -join "`n")
+if ($irsOvlBd) { Remove-Item -LiteralPath $irsOvlBd -Recurse -Force -ErrorAction SilentlyContinue }
 
 # --- Assertion 3: re-render is byte-deterministic ---------------------------
 $IRS_DET_TGT = Join-Path $IRS_DIR 'det_shared'

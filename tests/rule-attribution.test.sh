@@ -44,9 +44,9 @@ FORBIDDEN_RE="${TRACKER_ID_RE}|${LEGACY_TOKEN_RE}"
 
 # section_rule_content <file> <section-header> — emit a governed rule section's
 # body: every line from the section header to the next `## ` header. The WHOLE
-# section is in scope, including any managed sub-blocks (e.g. the ctx7-managed
-# block in the Codex Ground Rules) — the new convention forbids private tracker
-# IDs anywhere in a shipped framework rule section, so nothing is comment-exempt.
+# section is in scope, including any managed sub-blocks (e.g. the operator-rules
+# overlay marker in the Codex Ground Rules) — the new convention forbids private
+# tracker IDs anywhere in a shipped framework rule section, so nothing is comment-exempt.
 section_rule_content() {
   local file="$1" section="$2"
   LC_ALL=C awk -v section="$section" '
