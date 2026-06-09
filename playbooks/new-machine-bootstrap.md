@@ -69,13 +69,15 @@ pwsh scripts/bootstrap.ps1 [-Check] [-DryRun] [-Harness claude]
 
 `bootstrap.ps1` is fully native — it does NOT require `bash` (Git Bash, WSL,
 MSYS2). It routes `install` + smoke-test through `install.ps1` + `validate.ps1`
-via `pwsh -NoProfile -File`. Required CLIs (all platforms): `codex`, `gh`, `jq`,
-`rg`. Tool and app skills are operator-local — install whatever this machine
-needs at operator discretion; the framework wires none of them.
+via `pwsh -NoProfile -File`. Required CLIs (all platforms): `gh`, `jq`, `rg` —
+plus `codex` only when you target the Codex harness (`--harness codex`). Tool and
+app skills are operator-local — install whatever this machine needs at operator
+discretion; the framework wires none of them.
 
 The script: sets the chosen harness's config-dir env var in your shell environment
 (`CLAUDE_CONFIG_DIR` for the claude harness, `CODEX_HOME` for codex), checks the
-required CLIs (codex, gh, jq, rg) and installs missing ones (via
+required CLIs (gh, jq, rg; plus codex when the codex harness is targeted) and
+installs missing ones (via
 `brew` on macOS / `npm` for codex / `winget` on Windows — pre-install via `apt` on
 Linux before running), seeds `local.env` from the template, runs the harness
 compiler (`install.sh` on macOS/Linux, `install.ps1` on Windows), and prints the
