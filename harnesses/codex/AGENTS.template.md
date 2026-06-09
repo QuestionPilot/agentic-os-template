@@ -69,7 +69,7 @@ Before opening a PR or pushing a branch with framework changes, run
 `make verify` from the repo root. It runs the verification gates in order,
 failing fast on first non-zero exit: the acceptance suite (`tests/run.sh`)
 when present, static validation (`scripts/validate.sh`), and the manifest-based
-drift check (`scripts/check-drift.sh --manifest "$CLAUDE_CONFIG_DIR"`). These
+drift check (`scripts/check-drift.sh --manifest "$CODEX_HOME"`). These
 are the same gates a future-Codex or future-operator runs when picking up the
 change.
 
