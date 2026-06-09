@@ -16,14 +16,14 @@
 # guard file never trips its own audit (defense-in-depth: tests/ is excluded
 # from the audit anyway).
 #
-# ctx7/context7 ARE now audited. The ONE deferred exception is the
-# codex ctx7-managed block in harnesses/codex/AGENTS.template.md (a block the
-# `ctx7 setup` integration writes + greps; it needs a codex rules/ sidecar before
-# it can move operator-local, ~) — line-allowlisted in the audit below,
-# ctx7-only, so a non-ctx7 opinion in that template still trips. Bare.codegraph/
-# runtime-dir references in scripts remain out of scope (legitimate infra, not a
-# tool opinion). F4 replaced the former file-wide exclusions with the
-# line-scoped allowlist documented at the audit block.
+# ctx7/context7 ARE audited with NO template exception. The former codex
+# ctx7-managed block in harnesses/codex/AGENTS.template.md was relocated to an
+# operator-local overlay (spliced at @@OPERATOR_CODEX_RULES_OVERLAY@@ by
+# install.sh), so the shipped template is spine-only and ANY ctx7/context7
+# reference in it is now a hard regression. Bare codegraph/runtime-dir references
+# in scripts remain out of scope (legitimate infra, not a tool opinion). F4
+# replaced the former file-wide exclusions with the line-scoped allowlist
+# documented at the audit block.
 
 _so_root="${REPO_ROOT:?REPO_ROOT not set}"
 
@@ -71,9 +71,9 @@ assert_eq "spine-only: settings.base.json ships no theme/effortLevel preference"
 # (linear/, obsidian/) + the publish/scan machinery (scripts/validate.*,
 # build-public-snapshot.*, core/tool-use.md).
 #
-# F1: ctx7/context7 join the forbidden set — the SKILLS overlay split
-# removed the last shipped ctx7 routing, so a stray ctx7 reference is now a
-# regression (the codex AGENTS ctx7 block is the sole deferred exception, below).
+# ctx7/context7 are in the forbidden set — the SKILLS overlay split plus the
+# codex rules-overlay relocation removed all shipped ctx7 routing, so a stray
+# ctx7 reference anywhere in shipped content is now a regression (no exception).
 #
 # F4: this previously EXCLUDED whole files (validate.*, build-public-
 # snapshot.*, linear/, obsidian/, core/tool-use.md) — a tool opinion sneaking
@@ -85,10 +85,6 @@ assert_eq "spine-only: settings.base.json ships no theme/effortLevel preference"
 # opinion added to the same file still trips:
 # - scripts/validate.ps1 — the Stripe live-key secret-scan regex
 # - obsidian/.../memory-vault-audit.js — the STRIPE_SECRET_KEY secret scan
-# - harnesses/codex/AGENTS.template.md — the ctx7-managed block (a block the
-# `ctx7 setup` integration writes + greps; deferred to a codex rules/ sidecar,
-# ~). Allowlisted ONLY for ctx7/context7, so a non-ctx7 opinion in that
-# template still trips.
 # Pattern + allowlist are built from halves so this file is not self-matching.
 # Case-insensitive: brand names appear both lowercased (CLI identifiers) and
 # capitalized (prose / "Stripe — billing. Connected.").
@@ -96,38 +92,36 @@ _so_pat="play""wright|sup""abase|net""lify|str""ipe|fire""crawl|web-design-""gui
 # The allowlist is per-OCCURRENCE, not per-line (Codex F1): for each hit, strip
 # ONLY the name-as-data token that is legitimate FOR ITS FILE, then rescan the
 # residual for any forbidden identifier. So a real tool opinion sharing a line
-# with an allowed token (e.g. "use ctx7 and install playwright") still trips —
-# a per-line drop would have swallowed the whole line. Strip tokens are built
-# from halves; we lowercase first (BSD sed has no `I` flag) and the pattern is
-# already lowercase, so the residual grep needs no `-i`. Address-scoped sed subs
-# keep each allow confined to its own file:
+# with an allowed token (e.g. "wire supabase and install playwright") still
+# trips — a per-line drop would have swallowed the whole line. Strip tokens are
+# built from halves; we lowercase first (BSD sed has no `I` flag) and the pattern
+# is already lowercase, so the residual grep needs no `-i`. Address-scoped sed
+# subs keep each allow confined to its own file:
 # - scripts/validate.ps1 — the Stripe brand inside its secret-scan regex
 # - obsidian/.../memory-vault-audit.js — the Stripe AND Supabase brands inside
 # its secret-scan key-prefix regex (SUPABASE_SERVICE_ROLE_KEY / STRIPE_SECRET_KEY)
-# - harnesses/codex/AGENTS.template.md — ctx7/context7 (the deferred codex block)
-_so_str="str""ipe"; _so_sup="sup""abase"; _so_c7="con""text7"; _so_cx="ct""x7"
+_so_str="str""ipe"; _so_sup="sup""abase"
 _so_hits="$(cd "$_so_root" && git grep -niIE "$_so_pat" -- ':!tests/' ':!docs/' 2>/dev/null \
   | tr '[:upper:]' '[:lower:]' \
   | sed -E \
       -e "/^scripts\/validate\.ps1:/ s/$_so_str//g" \
       -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_str//g" \
       -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_sup//g" \
-      -e "/^harnesses\/codex\/agents\.template\.md:/ s/$_so_c7//g" \
-      -e "/^harnesses\/codex\/agents\.template\.md:/ s/$_so_cx//g" \
   | grep -E "$_so_pat" || true)"
 assert_eq "spine-only: no operator tool identifiers outside the allowlisted DATA lines" "" "$_so_hits"
 
-# F1 regression (self-trip): a real tool opinion sharing a line with an allowed
-# token MUST still trip. Build adversarial lines at runtime (split tokens so this
-# source isn't self-listing) and run them through the SAME strip+rescan pipeline.
+# Self-trip regression: a real tool opinion sharing a line with an allowed token
+# MUST still trip. Build adversarial lines at runtime (split tokens so this
+# source isn't self-listing) over the SAME two allowlisted files and run them
+# through the SAME strip+rescan pipeline.
 _so_evil="$(printf '%s\n%s\n' \
-  "harnesses/codex/agents.template.md:120:use ct""x7 and install play""wright" \
-  "scripts/validate.ps1:210:stripe scanner; also wire fire""crawl")"
+  "scripts/validate.ps1:210:stripe scanner; also wire fire""crawl" \
+  "obsidian/vault-scaffolding/bin/memory-vault-audit.js:42:sup""abase + str""ipe scan; plus play""wright")"
 _so_evil_residual="$(printf '%s\n' "$_so_evil" \
   | sed -E \
       -e "/^scripts\/validate\.ps1:/ s/$_so_str//g" \
-      -e "/^harnesses\/codex\/agents\.template\.md:/ s/$_so_c7//g" \
-      -e "/^harnesses\/codex\/agents\.template\.md:/ s/$_so_cx//g" \
+      -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_str//g" \
+      -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_sup//g" \
   | grep -cE "$_so_pat" || true)"
 assert_eq "spine-only: allowlist is per-occurrence (a real opinion sharing an allowed line still trips)" \
   "2" "$_so_evil_residual"
