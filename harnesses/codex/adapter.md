@@ -16,7 +16,7 @@ by the `CODEX_HOME` environment variable. Codex itself defaults `CODEX_HOME` to
 build does not assume the default.
 
 > **Scope note (<TEAM>-39 / M5.4, updated <TEAM>-68 + <TEAM>-71 + <TEAM>-75).** This adapter
-> ships the **2 native** capabilities (`session-agent`, `closeout`) — the spine
+> ships the **3 native** capabilities (`session-agent`, `closeout`, `self-audit`) — the spine
 > per <TEAM>-55 closure (3-shape
 > skill model). `route` + `skill-orchestrator` were consolidated into
 > `session-agent` in <TEAM>-71.
