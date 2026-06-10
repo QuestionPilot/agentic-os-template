@@ -36,8 +36,11 @@ command -v jq >/dev/null 2>&1 || exit 0
 AI_CONFIG_DIR="@@AI_CONFIG_DIR@@"
 DAYS="${CLAUDE_FRAMEWORK_SINCE_DAYS:-10}"
 
-# Drain stdin (event JSON is unused; we only inspect agentic-os-template git state).
-cat >/dev/null
+# Read stdin — the event JSON carries session_id, which the model cannot see
+# anywhere else and needs to name its per-session gate file (the edit-gate's
+# declaration channel — see hooks/session-agent.sh).
+EVENT_JSON="$(cat)"
+SESSION_ID="$(printf '%s' "$EVENT_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)"
 
 # --- 1. agentic-os-template git-log block ---------------------------------
 # Use -e (not -d) on .git: inside a linked git worktree it's a regular file
@@ -115,6 +118,19 @@ route only — Mode 1's orient outputs are still live in context).
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
+
+  # Surface the per-session gate path: the edit-gate hook keys on session_id,
+  # which the model cannot discover on its own.
+  if [[ -n "$SESSION_ID" ]]; then
+    INSTALL_DIR_SA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+    if [[ -n "$INSTALL_DIR_SA" ]]; then
+      SA_BLOCK="${SA_BLOCK}
+
+After the R5 routing declaration, open the edit-gate by writing the file
+\`${INSTALL_DIR_SA}/agentic-os/gate-${SESSION_ID}\` via the write_file tool with
+the full declaration (including the \`Linear gate:\` line) as its content."
+    fi
+  fi
 fi
 
 # Nothing to surface from any block → quiet exit.

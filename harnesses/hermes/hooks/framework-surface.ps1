@@ -19,8 +19,12 @@ if ($env:CLAUDE_SKIP_FRAMEWORK_SURFACE -eq '1') { exit 0 }
 $AI_CONFIG_DIR = '@@AI_CONFIG_DIR@@'
 $days = if ($env:CLAUDE_FRAMEWORK_SINCE_DAYS) { $env:CLAUDE_FRAMEWORK_SINCE_DAYS } else { '10' }
 
-# Drain stdin (event JSON unused).
-[void][Console]::In.ReadToEnd()
+# Read stdin — the event JSON carries session_id, which the model cannot see
+# anywhere else and needs to name its per-session gate file (the edit-gate's
+# declaration channel — see hooks/session-agent.ps1).
+$inputRaw = [Console]::In.ReadToEnd()
+$sessionId = ''
+try { $sessionId = [string](($inputRaw | ConvertFrom-Json).session_id) } catch { }
 
 # --- 1. agentic-os-template git-log block ---------------------------------
 $gitBlock = ''
@@ -94,6 +98,21 @@ route only — Mode 1's orient outputs are still live in context).
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
 "@
+    # Surface the per-session gate path: the edit-gate hook keys on session_id,
+    # which the model cannot discover on its own.
+    if ($sessionId) {
+        $installDirSa = Split-Path -Parent $PSScriptRoot
+        if ($installDirSa) {
+            $gatePath = Join-Path $installDirSa 'agentic-os' "gate-$sessionId"
+            $saBlock += @"
+
+
+After the R5 routing declaration, open the edit-gate by writing the file
+``$gatePath`` via the write_file tool with the full declaration (including the
+``Linear gate:`` line) as its content.
+"@
+        }
+    }
 }
 
 if (-not $gitBlock -and -not $freshBlock -and -not $saBlock) { exit 0 }
