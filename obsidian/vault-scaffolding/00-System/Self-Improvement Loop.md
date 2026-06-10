@@ -13,13 +13,13 @@ A lesson is not learned until it changes a future behavior, check, task, script,
 
 | Class | Use when | Destination |
 |---|---|---|
-| rule | future agents should behave differently | `ai-config` or a project manual |
+| rule | future agents should behave differently | `agentic-os-template` or a project manual |
 | check | a failure can be detected mechanically | project/local validation |
 | script | repeated manual work should be automated | project or system helper |
 | linear | active follow-up remains | Linear |
 | obsidian | durable knowledge should be remembered | Memory Vault |
-| playbook | a repeatable workflow changed | `ai-config` playbook or vault workflow |
-| skill | capability guidance changed | `ai-config` skills or local skill file |
+| playbook | a repeatable workflow changed | `agentic-os-template` playbook or vault workflow |
+| skill | capability guidance changed | `agentic-os-template` skills or local skill file |
 | data-readiness | repeated work needs cleaner source plumbing | [[00-System/Data Readiness]] or [[40-Observability/data-readiness]] |
 | goal-run | autonomous or recurring work needs clearer bounds | [[00-System/Goal Run Standard]] |
 | no-action | transient or already covered | closeout only |

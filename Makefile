@@ -1,4 +1,4 @@
-# Makefile — ai-config verification + render aggregator.
+# Makefile — agentic-os-template verification + render aggregator.
 #
 # One verb for the framework verification surface. `make verify` runs the same
 # three gates a future-AI or future-operator will run when they pick up the

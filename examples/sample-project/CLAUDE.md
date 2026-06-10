@@ -1,7 +1,7 @@
 # Sample Project — Claude Code Entrypoint
 
 This is a minimal project-local harness entrypoint for a Claude Code session.
-It demonstrates the pattern described in the ai-config framework's
+It demonstrates the pattern described in the agentic-os-template framework's
 `playbooks/harness-entrypoints.md`.
 
 ## What this file does
@@ -16,12 +16,12 @@ repo and are compiled into `$CLAUDE_CONFIG_DIR/CLAUDE.md` by `scripts/install.sh
 
 ## Framework orientation
 
-The ai-config framework compiler writes a generated entrypoint to
+The agentic-os-template framework compiler writes a generated entrypoint to
 `$CLAUDE_CONFIG_DIR/CLAUDE.md`. That compiled entrypoint is the
 steady-state entry point for Claude Code sessions — start there.
 
 The canonical framework source files (`core/`, `playbooks/`, `skills/`, etc.)
-live in the ai-config checkout, accessible at `$AI_CONFIG_DIR` (set by
+live in the agentic-os-template checkout, accessible at `$AI_CONFIG_DIR` (set by
 `scripts/bootstrap.sh`). Load those source files from there, not from
 `$CLAUDE_CONFIG_DIR`, which holds only the compiled harness output.
 
@@ -51,5 +51,5 @@ link outward to Linear or the vault rather than duplicating details here.
 - Do not commit `.env`, auth files, local tool config, or machine-specific
   absolute paths to this repository.
 - Keep active work in your tracker and durable knowledge in your vault.
-- Run `bash scripts/validate.sh` from the ai-config checkout before commits
+- Run `bash scripts/validate.sh` from the agentic-os-template checkout before commits
   (or `pwsh -NoProfile -File scripts/validate.ps1` on Windows).

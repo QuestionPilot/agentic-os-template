@@ -8,7 +8,7 @@ status: <mirror of Linear state at last sync — informational only>
 
 # {{Project or Issue Name}}
 
-Handshake note for a Linear project or issue. See `ai-config/obsidian/vault-guide.md` §5 (Linear Handshake) + §8 (runtime contract) for the bidirectional-link pattern and ownership rule.
+Handshake note for a Linear project or issue. See `agentic-os-template/obsidian/vault-guide.md` §5 (Linear Handshake) + §8 (runtime contract) for the bidirectional-link pattern and ownership rule.
 
 **Ownership rule:** Linear owns status (acceptance criteria, blockers, current state). This note owns durable rationale, decisions, and lessons. The `status:` frontmatter is a stale-by-design mirror — query Linear for current state.
 

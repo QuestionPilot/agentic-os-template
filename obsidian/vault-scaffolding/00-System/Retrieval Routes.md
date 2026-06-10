@@ -21,7 +21,7 @@ Use this before broad vault search.
 | Querying knowledge | [[10-Wiki/index]], [[00-System/Query Workflow]] | Search only relevant wiki folders |
 | Ingesting a source | [[00-System/Ingest Workflow]], [[20-Raw/sources]] | [[10-Wiki/log]], relevant templates |
 | Linting/improving memory | [[00-System/Lint Workflow]], [[40-Observability/recommendations]] | [[40-Observability/stale-memory]], [[40-Observability/repeated-work]] |
-| Dream Review | [[00-System/Dream Review]], [[40-Observability/dream-reviews]] | Linear, `ai-config`, project manuals, health check output |
+| Dream Review | [[00-System/Dream Review]], [[40-Observability/dream-reviews]] | Linear, `agentic-os-template`, project manuals, health check output |
 | End of meaningful work | [[00-System/Wrap-Up Workflow]], [[00-System/Self-Improvement Loop]] | Relevant project, decision, lesson, archive, or Linear destination |
 
 ## Rule

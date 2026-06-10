@@ -184,7 +184,7 @@ if (-not (Test-Path -LiteralPath $fsh -PathType Leaf)) {
 if (Test-Path -LiteralPath $fsh) {
     $fs_content = Get-Content -LiteralPath $fsh -Raw
     Assert-NotContains 'compiler.test: framework-surface.sh placeholder resolved' $fs_content '@@AI_CONFIG_DIR@@'
-    Assert-Contains 'compiler.test: framework-surface.sh has the resolved ai-config path' $fs_content $env:REPO_ROOT
+    Assert-Contains 'compiler.test: framework-surface.sh has the resolved agentic-os-template path' $fs_content $env:REPO_ROOT
 }
 # Hook executability is a Unix concept — install.ps1 emits.ps1 hooks (no exec bit needed).
 _Skip 'compiler.test: compiled hook is executable' `

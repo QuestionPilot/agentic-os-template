@@ -36,7 +36,7 @@ A maintainer will review when time permits. Expect requests for changes — the 
 - Bash scripts: target Bash 3.2 (macOS default). Avoid `declare -A`, `mapfile`, and other Bash 4+ features unless the script is explicitly platform-gated.
 - PowerShell scripts: target PowerShell 7+ cross-platform.
 - Markdown: use ATX headers (`#`, `##`), fenced code blocks, and prefer concise sentences over long paragraphs.
-- Filenames: kebab-case for `ai-config/` content (`memory-model.md`); title-case for vault notes (`Memory Core.md`).
+- Filenames: kebab-case for `agentic-os-template/` content (`memory-model.md`); title-case for vault notes (`Memory Core.md`).
 - Do not add operator-local paths, secrets, or machine-specific configuration to tracked files.
 
 ## Code of Conduct

@@ -8,7 +8,7 @@
     <TEAM>-113 Windows-native port of harnesses/codex/hooks/framework-surface.sh.
 
     Two independent blocks emitted in one additionalContext payload:
-      1. ai-config git log (last N days) — picks up improvements from prior
+      1. agentic-os-template git log (last N days) — picks up improvements from prior
          sessions
       2. session-agent invocation directive
 
@@ -19,7 +19,7 @@
     install when the codex Windows lane lands).
 
     @@AI_CONFIG_DIR@@ is a build placeholder — install.ps1 (Issue 5B-d)
-    will substitute the absolute path to the ai-config checkout from
+    will substitute the absolute path to the agentic-os-template checkout from
     local.env at install time, identical to install.sh's bash-twin
     substitution.
 
@@ -66,10 +66,10 @@ if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
 $AI_CONFIG_DIR = '@@AI_CONFIG_DIR@@'
 $DAYS = if ($env:CLAUDE_FRAMEWORK_SINCE_DAYS) { $env:CLAUDE_FRAMEWORK_SINCE_DAYS } else { '10' }
 
-# Drain stdin (event JSON unused; we only inspect ai-config git state).
+# Drain stdin (event JSON unused; we only inspect agentic-os-template git state).
 $null = [Console]::In.ReadToEnd()
 
-# --- 1. ai-config git-log block --------------------------------------------
+# --- 1. agentic-os-template git-log block --------------------------------------------
 # Use Test-Path on .git (file OR directory): inside a linked git worktree
 # .git is a regular file (gitlink) pointing at the main repo's
 # .git/worktrees/<name>, not a directory. Test-Path with no -PathType
@@ -82,7 +82,7 @@ if (Test-Path -LiteralPath (Join-Path $AI_CONFIG_DIR '.git')) {
         # via | is array-of-lines. Collapse explicitly before interpolation.
         $changesText = if ($changes -is [array]) { $changes -join "`n" } else { $changes }
         $GIT_BLOCK = @"
-# Recent ai-config (framework) changes — last $DAYS days
+# Recent agentic-os-template (framework) changes — last $DAYS days
 
 The agentic OS framework has had the following commits recently. Use this to pick
 up improvements from prior sessions and know what changed in the operating-system

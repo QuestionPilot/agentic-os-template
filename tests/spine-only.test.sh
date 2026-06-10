@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/spine-only.test.sh — guards the spine-only invariant.
 #
-# ai-config (and, post-migration, the public template) ships ONLY the OS
+# agentic-os-template (and, post-migration, the public template) ships ONLY the OS
 # spine: the three homegrown self-improving capabilities (session-agent,
 # closeout, self-audit) + their machinery + the two architectural-layer
 # CONTRACTS (linear/, obsidian/) which are documented-not-installed. It ships

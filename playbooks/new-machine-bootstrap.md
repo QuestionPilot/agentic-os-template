@@ -40,8 +40,8 @@ sudo apt-get update && sudo apt-get install -y gh
 **Step 2 — clone and run bootstrap:**
 
 ```bash
-git clone <your-fork-or-org-repo-url> ~/ai-config
-cd ~/ai-config
+git clone <your-fork-or-org-repo-url> ~/agentic-os-template
+cd ~/agentic-os-template
 
 bash scripts/bootstrap.sh --check                  # preview what is missing
 bash scripts/bootstrap.sh [--harness claude]        # full run

@@ -51,7 +51,7 @@ if (Test-Path -LiteralPath $claudeMd) {
     Assert-Contains 'entrypoint.test: generated CLAUDE.md keeps the broad quick-reference' $cmd 'security-review'
     Assert-NotContains 'entrypoint.test: generated CLAUDE.md has no unresolved placeholders' $cmd '@@'
     Assert-Contains 'entrypoint.test: generated CLAUDE.md substitutes the vault path' $cmd $EP_VAULT
-    Assert-Contains 'entrypoint.test: generated CLAUDE.md substitutes the ai-config path' $cmd $env:REPO_ROOT
+    Assert-Contains 'entrypoint.test: generated CLAUDE.md substitutes the agentic-os-template path' $cmd $env:REPO_ROOT
     Assert-Contains 'entrypoint.test: generated CLAUDE.md has the OS capability subsection' $cmd 'OS capability skills'
 
     # capability catalog rows — install.ps1's catalog generator emits one
@@ -87,7 +87,7 @@ if (Test-Path -LiteralPath $skillsMd) {
     $skm = Get-Content -LiteralPath $skillsMd -Raw
     Assert-NotContains 'entrypoint.test: generated SKILLS.md has no unresolved placeholders' $skm '@@'
     Assert-Contains 'entrypoint.test: generated SKILLS.md keeps the live inventory' $skm 'Live Inventory'
-    Assert-Contains 'entrypoint.test: generated SKILLS.md substitutes the ai-config path' $skm $env:REPO_ROOT
+    Assert-Contains 'entrypoint.test: generated SKILLS.md substitutes the agentic-os-template path' $skm $env:REPO_ROOT
 }
 
 # --- the build manifest tracks the generated + source files ----------------

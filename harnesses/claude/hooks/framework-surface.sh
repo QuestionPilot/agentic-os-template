@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Framework-changes + MCP-health surfacing hook (Claude Code SessionStart event).
 # Two independent blocks emitted in one additionalContext payload:
-#   1. ai-config git log (last N days) — picks up improvements from prior sessions
+#   1. agentic-os-template git log (last N days) — picks up improvements from prior sessions
 #   2. `claude mcp list` ✓ Connected MCPs — surfaces the <TEAM>-59 silent-empty-tools
 #      failure mode (CLI reports Connected while the deferred-tool catalog is empty)
 # Filtered to startup/clear/compact via the settings.json matcher. Not tied to any
 # capability — wired unconditionally by the build.
 #
 # @@AI_CONFIG_DIR@@ is a build placeholder: install.sh substitutes the absolute
-# path to the ai-config checkout from local.env (see harnesses/claude/adapter.md).
+# path to the agentic-os-template checkout from local.env (see harnesses/claude/adapter.md).
 #
 # Kill switches:
 #   CLAUDE_SKIP_FRAMEWORK_SURFACE=1         disables the whole hook
@@ -51,14 +51,14 @@ EVENT_JSON="$(cat)"
 # lowercase; this just keeps the twins provably identical. tr is bash-3.2 safe.
 SESSION_SOURCE="$(printf '%s' "$EVENT_JSON" | jq -r '.source // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
 
-# --- 1. ai-config git-log block -----------------------------------------
+# --- 1. agentic-os-template git-log block -----------------------------------------
 # Use -e (not -d) on .git: inside a linked git worktree it's a regular file
 # (gitlink) pointing at the main repo's .git/worktrees/<name>, not a directory.
 GIT_BLOCK=""
 if [[ -e "$AI_CONFIG_DIR/.git" ]]; then
   CHANGES="$(git -C "$AI_CONFIG_DIR" log --since="${DAYS}.days.ago" --pretty=format:'- %ad %s (%h)' --date=short 2>/dev/null)"
   if [[ -n "$CHANGES" ]]; then
-    GIT_BLOCK="# Recent ai-config (framework) changes — last ${DAYS} days
+    GIT_BLOCK="# Recent agentic-os-template (framework) changes — last ${DAYS} days
 
 The agentic OS framework has had the following commits recently. Use this to pick
 up improvements from prior sessions and know what changed in the operating-system

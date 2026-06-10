@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/linear-setup.test.sh — linear/linear-setup.md +
 # stub-collapse on linear/README.md + inbound references from
-# ai-config/README.md + templates/local.env.example.
+# agentic-os-template/README.md + templates/local.env.example.
 #
 # Mirrors the tests/vault-guide.test.sh shape. Sourced by tests/run.sh;
 # uses assert_* helpers from tests/lib.sh. Never call `exit` — failures bubble
@@ -108,7 +108,7 @@ assert_contains "linear/README.md references linear-setup.md" \
 # --- T8: inbound references from the fresh-clone path ---
 root_readme="$(cat "$REPO_ROOT/README.md" 2>/dev/null || printf '')"
 env_body="$(cat "$REPO_ROOT/templates/local.env.example" 2>/dev/null || printf '')"
-assert_contains "ai-config/README.md Layout table references linear/linear-setup.md" \
+assert_contains "agentic-os-template/README.md Layout table references linear/linear-setup.md" \
   "$root_readme" "linear/linear-setup.md"
 assert_contains "templates/local.env.example references linear/linear-setup.md" \
   "$env_body" "linear/linear-setup.md"

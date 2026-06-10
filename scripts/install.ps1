@@ -755,7 +755,7 @@ function Write-Manifest {
         Add-SrcPair -AbsPath (Join-Path $harnessRoot $pair.tmpl)
     }
 
-    # Vendored snapshots — recurse (none in current ai-config after <TEAM>-75
+    # Vendored snapshots — recurse (none in current agentic-os-template after <TEAM>-75
     # but the loop is preserved for forward-compat).
     $vendored = Join-Path $harnessRoot 'vendored'
     if (Test-Path -LiteralPath $vendored -PathType Container) {

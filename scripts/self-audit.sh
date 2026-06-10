@@ -16,13 +16,13 @@
 #   5. Closeout / spine discipline (spine symmetry, recent state-deltas)
 #
 # Default inputs:
-#   --repo-root    parent dir of this script (i.e. the ai-config checkout)
+#   --repo-root    parent dir of this script (i.e. the agentic-os-template checkout)
 #   --memory-dir   the first matching $CLAUDE_CONFIG_DIR/projects/*/memory/
 #                  if --config-dir or $CLAUDE_CONFIG_DIR resolves; else skipped
 #   --vault-dir    $OBSIDIAN_VAULT_PATH if set; else skipped
 #   --config-dir   $CLAUDE_CONFIG_DIR if set; else skipped
 #
-# `lineark` (the Linear CLI per ai-config/linear/linear-setup.md) is optional;
+# `lineark` (the Linear CLI per agentic-os-template/linear/linear-setup.md) is optional;
 # Linear-side checks degrade with a "skipped: lineark not configured" note.
 #
 # Output: markdown by default. `--json` emits a structured object for tests:

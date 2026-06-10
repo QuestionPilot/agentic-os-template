@@ -29,7 +29,7 @@ Adapted from the session-agent orchestration sub-routine (`@@AI_CONFIG_DIR@@/cap
 2. Pick **one** primary skill.
 3. Add secondary skills only for evidence, risk, or output format.
 4. Name the verification gate before claiming completion.
-5. Default route: see `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the Linear surface (lineark CLI or Linear MCP); Obsidian (see `@@AI_CONFIG_DIR@@/obsidian/vault-guide.md`) for durable knowledge; ai-config for operating rules.
+5. Default route: see `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the Linear surface (lineark CLI or Linear MCP); Obsidian (see `@@AI_CONFIG_DIR@@/obsidian/vault-guide.md`) for durable knowledge; agentic-os-template for operating rules.
 
 ### Routing table
 
@@ -120,10 +120,10 @@ CLI-first rule: before reaching for an MCP tool, check `gh`, `git`, `curl`, `rg`
 - Collapse a family to a one-line summary if the leaves are rarely used.
 - Don't dump every interesting Anthropic Marketplace plugin — install with intent.
 
-**Relationship to ai-config:**
+**Relationship to agentic-os-template:**
 
 - `@@AI_CONFIG_DIR@@/skills/registry.md` — the shipped spine capabilities + the baseline rule (stay spine-only). Travels to any harness.
 - `@@AI_CONFIG_DIR@@/skills/skill-authoring.md` — how to design and author a skill well.
 - **`claude-config/SKILLS.md` (this file)** — what's actually installed in **this** harness right now. Day-to-day routing source.
 
-If a skill in the routing table goes stale, fix this file first. If a portable pattern needs updating, propose a change to `@@AI_CONFIG_DIR@@/skills/` and get user approval (per ai-config governance rule).
+If a skill in the routing table goes stale, fix this file first. If a portable pattern needs updating, propose a change to `@@AI_CONFIG_DIR@@/skills/` and get user approval (per agentic-os-template governance rule).

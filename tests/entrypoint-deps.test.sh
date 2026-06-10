@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/entrypoint-deps.test.sh — ai-config's root CLAUDE.md + AGENTS.md
+# tests/entrypoint-deps.test.sh — agentic-os-template's root CLAUDE.md + AGENTS.md
 # carry an Active-Work + Durable-Knowledge layers section plus the First-Time
 # Setup Check, so fresh-clone sessions see Linear/Obsidian + install one-liner
 # without needing to dig elsewhere first. These are hand-edited source files
@@ -18,38 +18,38 @@ AGENTS_ENTRY="$(cat "$REPO_ROOT/AGENTS.md")"
 
 # --- 1. CLAUDE.md entrypoint stub --------------------------------------------
 
-assert_contains "ai-config/CLAUDE.md has '## Active-Work and Durable-Knowledge Layers' section" \
+assert_contains "agentic-os-template/CLAUDE.md has '## Active-Work and Durable-Knowledge Layers' section" \
   "$CLAUDE_ENTRY" "## Active-Work and Durable-Knowledge Layers"
-assert_contains "ai-config/CLAUDE.md layers section references linear/linear-setup.md" \
+assert_contains "agentic-os-template/CLAUDE.md layers section references linear/linear-setup.md" \
   "$CLAUDE_ENTRY" "linear/linear-setup.md"
-assert_contains "ai-config/CLAUDE.md layers section names Obsidian as canonical example" \
+assert_contains "agentic-os-template/CLAUDE.md layers section names Obsidian as canonical example" \
   "$CLAUDE_ENTRY" "Obsidian"
-assert_contains "ai-config/CLAUDE.md has '## First-Time Setup Check' section" \
+assert_contains "agentic-os-template/CLAUDE.md has '## First-Time Setup Check' section" \
   "$CLAUDE_ENTRY" "## First-Time Setup Check"
-assert_contains "ai-config/CLAUDE.md Setup Check probes \$CLAUDE_CONFIG_DIR" \
+assert_contains "agentic-os-template/CLAUDE.md Setup Check probes \$CLAUDE_CONFIG_DIR" \
   "$CLAUDE_ENTRY" "\$CLAUDE_CONFIG_DIR/skills/closeout/SKILL.md"
-assert_contains "ai-config/CLAUDE.md Setup Check names install command" \
+assert_contains "agentic-os-template/CLAUDE.md Setup Check names install command" \
   "$CLAUDE_ENTRY" "bash scripts/install.sh --harness claude --harness codex"
 # Fresh-clone prerequisite: install.sh exits if local.env is missing; the
 # canonical fresh-clone entry is bootstrap.sh.
-assert_contains "ai-config/CLAUDE.md Setup Check names bootstrap.sh as fresh-clone entry" \
+assert_contains "agentic-os-template/CLAUDE.md Setup Check names bootstrap.sh as fresh-clone entry" \
   "$CLAUDE_ENTRY" "bash scripts/bootstrap.sh"
 
 # --- 2. AGENTS.md entrypoint stub (Codex parity) ----------------------------
 
-assert_contains "ai-config/AGENTS.md has '## Active-Work and Durable-Knowledge Layers' section" \
+assert_contains "agentic-os-template/AGENTS.md has '## Active-Work and Durable-Knowledge Layers' section" \
   "$AGENTS_ENTRY" "## Active-Work and Durable-Knowledge Layers"
-assert_contains "ai-config/AGENTS.md layers section references linear/linear-setup.md" \
+assert_contains "agentic-os-template/AGENTS.md layers section references linear/linear-setup.md" \
   "$AGENTS_ENTRY" "linear/linear-setup.md"
-assert_contains "ai-config/AGENTS.md layers section names Obsidian as canonical example" \
+assert_contains "agentic-os-template/AGENTS.md layers section names Obsidian as canonical example" \
   "$AGENTS_ENTRY" "Obsidian"
-assert_contains "ai-config/AGENTS.md has '## First-Time Setup Check' section" \
+assert_contains "agentic-os-template/AGENTS.md has '## First-Time Setup Check' section" \
   "$AGENTS_ENTRY" "## First-Time Setup Check"
 # Codex variant probes $CODEX_HOME (not $CLAUDE_CONFIG_DIR).
-assert_contains "ai-config/AGENTS.md Setup Check probes \$CODEX_HOME" \
+assert_contains "agentic-os-template/AGENTS.md Setup Check probes \$CODEX_HOME" \
   "$AGENTS_ENTRY" "\$CODEX_HOME/skills/closeout/SKILL.md"
-assert_contains "ai-config/AGENTS.md Setup Check names install command" \
+assert_contains "agentic-os-template/AGENTS.md Setup Check names install command" \
   "$AGENTS_ENTRY" "bash scripts/install.sh --harness claude --harness codex"
 # Fresh-clone prerequisite parity with CLAUDE.md.
-assert_contains "ai-config/AGENTS.md Setup Check names bootstrap.sh as fresh-clone entry" \
+assert_contains "agentic-os-template/AGENTS.md Setup Check names bootstrap.sh as fresh-clone entry" \
   "$AGENTS_ENTRY" "bash scripts/bootstrap.sh"

@@ -116,7 +116,7 @@ rm -rf "$BROKENJQ_BIN"
 
 # ---------------------------------------------------------------------------
 # framework-surface.sh (SessionStart)
-# ai-config has commits in window -> exit 0, emits additionalContext JSON
+# agentic-os-template has commits in window -> exit 0, emits additionalContext JSON
 # CLAUDE_SKIP_FRAMEWORK_SURFACE=1 -> exit 0, silent
 # ---------------------------------------------------------------------------
 f1="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"

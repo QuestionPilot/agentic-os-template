@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-printf 'ai-config validation\n'
+printf 'agentic-os-template validation\n'
 printf 'Repo: %s\n\n' "$repo_root"
 
 # Harness-managed worktrees (.claude/worktrees/, and the parallel .codex/ and
@@ -67,10 +67,10 @@ for forbidden in \
   fi
 done
 
-# Harness-config dirs (.claude/, .codex/, .agents/) at ai-config repo root
+# Harness-config dirs (.claude/, .codex/, .agents/) at agentic-os-template repo root
 # may contain ONLY framework-development workflow state:
 #   worktrees/             — operator's parallel-branch workspaces when
-#                           working on ai-config PRs (Claude Code's
+#                           working on agentic-os-template PRs (Claude Code's
 #                           EnterWorktree default destination)
 #   settings.local.json    — operator-local permission tweaks for the dev
 #                           session
@@ -501,7 +501,7 @@ check_harness_adapters
 #   - harnesses/*/vendored/** — per <TEAM>-42 vendored snapshots are immutable,
 #     so broken links inside them point to upstream-only artifacts (editing
 #     would create drift from upstream). <TEAM>-75 removed all 4 vendored
-#     snapshots from the framework — ai-config now authors zero vendored
+#     snapshots from the framework — agentic-os-template now authors zero vendored
 #     capabilities. The
 #     allowlist is preserved for forward-compat with future Tier 3
 #     re-introduction per <TEAM>-55 closure; it is a no-op today.
@@ -732,4 +732,4 @@ check_internal_links
 
 "$repo_root/scripts/check-drift.sh"
 
-printf '\nPASS ai-config validation complete\n'
+printf '\nPASS agentic-os-template validation complete\n'

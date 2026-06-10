@@ -18,7 +18,7 @@ Use three tiers plus a data-readiness layer. Keep their responsibilities separat
 
 ## Tier 1: AI Config
 
-`ai-config` is the operating framework. It stores:
+`agentic-os-template` is the operating framework. It stores:
 
 - global rules
 - self-improvement standards
@@ -272,19 +272,19 @@ Write to the layer that owns the fact:
 
 | Change | Destination |
 | --- | --- |
-| Operating rule, verification pattern, skill guidance | `ai-config` |
+| Operating rule, verification pattern, skill guidance | `agentic-os-template` |
 | Active task, blocker, acceptance criteria, follow-up | Linear |
 | Durable lesson, decision, project memory, source-derived note | Obsidian or equivalent |
 | Source code, product docs, deploy config | Project repo |
 | Raw export, transcript, source file | Raw source area until promoted |
 
-If a write would fit multiple layers, split it. For example: put the active follow-up in Linear, the durable lesson in Obsidian, and the reusable operating rule in `ai-config`.
+If a write would fit multiple layers, split it. For example: put the active follow-up in Linear, the durable lesson in Obsidian, and the reusable operating rule in `agentic-os-template`.
 
 ## Failure Modes
 
 These anti-patterns are founding. Avoid them.
 
-- Treating `ai-config` as project memory.
+- Treating `agentic-os-template` as project memory.
 - Treating Linear as a knowledge base.
 - Treating the durable vault as an active task tracker.
 - Copying raw transcripts into durable memory.

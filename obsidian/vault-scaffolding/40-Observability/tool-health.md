@@ -6,7 +6,7 @@ tags:
 
 # Tool Health
 
-Track durable tool health notes. Exact installed versions should generally live in the relevant toolchain or `ai-config` only when they are portable.
+Track durable tool health notes. Exact installed versions should generally live in the relevant toolchain or `agentic-os-template` only when they are portable.
 
 ## Log
 

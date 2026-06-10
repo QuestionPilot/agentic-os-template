@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Framework-changes surfacing hook (Codex SessionStart event).
-# Runs `git log` over the ai-config checkout and surfaces recent framework changes
+# Runs `git log` over the agentic-os-template checkout and surfaces recent framework changes
 # as additional context. Filtered to startup/clear/compact via the hooks.json
 # matcher. Not tied to any capability — wired unconditionally by the build.
 #
 # @@AI_CONFIG_DIR@@ is a build placeholder: install.sh substitutes the absolute
-# path to the ai-config checkout from local.env (see harnesses/codex/adapter.md).
+# path to the agentic-os-template checkout from local.env (see harnesses/codex/adapter.md).
 #
 # Kill switches:
 #   CLAUDE_SKIP_FRAMEWORK_SURFACE=1         disables the whole hook (same env
@@ -34,17 +34,17 @@ command -v jq >/dev/null 2>&1 || exit 0
 AI_CONFIG_DIR="@@AI_CONFIG_DIR@@"
 DAYS="${CLAUDE_FRAMEWORK_SINCE_DAYS:-10}"
 
-# Drain stdin (event JSON is unused; we only inspect ai-config git state).
+# Drain stdin (event JSON is unused; we only inspect agentic-os-template git state).
 cat >/dev/null
 
-# --- 1. ai-config git-log block -----------------------------------------
+# --- 1. agentic-os-template git-log block -----------------------------------------
 # Use -e (not -d) on .git: inside a linked git worktree it's a regular file
 # (gitlink) pointing at the main repo's .git/worktrees/<name>, not a directory.
 GIT_BLOCK=""
 if [[ -e "$AI_CONFIG_DIR/.git" ]]; then
   CHANGES="$(git -C "$AI_CONFIG_DIR" log --since="${DAYS}.days.ago" --pretty=format:'- %ad %s (%h)' --date=short 2>/dev/null)"
   if [[ -n "$CHANGES" ]]; then
-    GIT_BLOCK="# Recent ai-config (framework) changes — last ${DAYS} days
+    GIT_BLOCK="# Recent agentic-os-template (framework) changes — last ${DAYS} days
 
 The agentic OS framework has had the following commits recently. Use this to pick
 up improvements from prior sessions and know what changed in the operating-system

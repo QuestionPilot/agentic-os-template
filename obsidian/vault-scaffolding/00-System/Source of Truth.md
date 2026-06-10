@@ -10,7 +10,7 @@ Use the right layer for the right job.
 
 | Information | Source of truth |
 |---|---|
-| Agent operating rules, verification standards, tool-use hierarchy | `ai-config` |
+| Agent operating rules, verification standards, tool-use hierarchy | `agentic-os-template` |
 | Active work, owners, status, blockers, acceptance criteria, next actions | Linear |
 | Durable project memory, decisions, lessons, source summaries | Memory Vault |
 | Source code, deploy scripts, product docs that ship with the product | Project repos |

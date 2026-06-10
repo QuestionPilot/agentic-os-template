@@ -57,7 +57,7 @@ if ($RepoRoot) {
     $repo = (Resolve-Path "$PWD/..").Path
 }
 
-Write-Host "ai-config validation"
+Write-Host "agentic-os-template validation"
 Write-Host "Repo: $repo"
 Write-Host ""
 
@@ -844,5 +844,5 @@ function Test-InternalLinks {
 Test-InternalLinks
 
 Write-Host ""
-Pass-Line "PASS ai-config validation complete"
+Pass-Line "PASS agentic-os-template validation complete"
 exit 0

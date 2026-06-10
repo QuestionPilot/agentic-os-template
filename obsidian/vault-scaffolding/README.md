@@ -13,7 +13,7 @@ It is not the active task tracker and not the operating-framework repo. Use it f
 
 ## Source Boundaries
 
-- [[00-System/Source of Truth|Source of Truth]] defines what belongs here versus `ai-config`, Linear, project repos, and local harness files.
+- [[00-System/Source of Truth|Source of Truth]] defines what belongs here versus `agentic-os-template`, Linear, project repos, and local harness files.
 - [[00-System/Fresh Start Policy|Fresh Start Policy]] protects this vault from outside-memory sprawl.
 - [[START|START]] is the first note for any agent or human using this vault.
 - [[90-Indexes/Vault Map|Vault Map]] is the navigation hub.

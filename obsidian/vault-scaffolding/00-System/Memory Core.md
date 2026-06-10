@@ -13,7 +13,7 @@ Memory Vault is the file-first Memory Core for the Agentic OS.
 
 | Layer | Job | Location |
 |---|---|---|
-| Operating framework | Harness-neutral SOPs and verification standards | `ai-config` |
+| Operating framework | Harness-neutral SOPs and verification standards | `agentic-os-template` |
 | Active execution | Current tasks, status, blockers, acceptance criteria | Linear |
 | Durable memory | Projects, areas, decisions, lessons, archive summaries | Memory Vault |
 | Source-derived knowledge | Karpathy-style LLM wiki built from raw sources | [[10-Wiki/README]] |
@@ -30,7 +30,7 @@ Memory Vault is the file-first Memory Core for the Agentic OS.
 
 ## Rule
 
-Do not mix the buckets. Current work belongs in Linear, durable memory belongs here, and SOP changes belong in `ai-config`.
+Do not mix the buckets. Current work belongs in Linear, durable memory belongs here, and SOP changes belong in `agentic-os-template`.
 
 Outside material stays outside the system until it passes [[00-System/Fresh Start Policy]].
 

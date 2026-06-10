@@ -101,7 +101,7 @@ if [ -f "$cx_build/AGENTS.md" ]; then
   assert_contains "codex AGENTS.md carries the session-agent spine rule"  "$cx_agents" "session-agent\` is the spine"
   assert_not_contains "codex AGENTS.md has no unresolved placeholders" "$cx_agents" "@@"
   assert_contains "codex AGENTS.md substitutes the vault path"     "$cx_agents" "$CX_VAULT"
-  assert_contains "codex AGENTS.md substitutes the ai-config path" "$cx_agents" "$REPO_ROOT"
+  assert_contains "codex AGENTS.md substitutes the agentic-os-template path" "$cx_agents" "$REPO_ROOT"
   for capn in session-agent closeout; do
     assert_contains "codex AGENTS.md catalog has a row for $capn" "$cx_agents" "| \`$capn\` |"
   done

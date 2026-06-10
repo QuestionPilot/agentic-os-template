@@ -1,4 +1,4 @@
-# ai-config
+# agentic-os-template
 
 Lightweight operating framework for AI agents.
 
@@ -13,7 +13,7 @@ without hand-wiring each session from scratch.
 
 **What problem it solves:** without a shared operating framework, every session
 starts cold. The agent has no memory of past decisions, no standard way to
-track work, and no consistent process for learning from mistakes. ai-config
+track work, and no consistent process for learning from mistakes. agentic-os-template
 gives every agent session a common operating layer: orient → work → close out →
 learn.
 

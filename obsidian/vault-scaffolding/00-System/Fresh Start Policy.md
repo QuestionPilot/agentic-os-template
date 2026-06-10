@@ -28,7 +28,7 @@ Promote outside content only when all are true:
 - It is still true.
 - It will help future work.
 - It is durable, not just historical.
-- It belongs in Memory Vault rather than Linear, `ai-config`, a project repo, or local secure config.
+- It belongs in Memory Vault rather than Linear, `agentic-os-template`, a project repo, or local secure config.
 - It can be summarized cleanly instead of copied wholesale.
 - The user approves the promotion, or the need is obvious during an active workstream.
 
@@ -37,7 +37,7 @@ Promote outside content only when all are true:
 | Outside content | Destination |
 |---|---|
 | Active task, blocker, acceptance criteria, next action | Linear |
-| Reusable operating rule | `ai-config` |
+| Reusable operating rule | `agentic-os-template` |
 | Project memory | `01-Projects/` |
 | Area memory | `02-Areas/` |
 | Decision and rationale | `03-Decisions/` |

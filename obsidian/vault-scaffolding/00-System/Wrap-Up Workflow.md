@@ -27,7 +27,7 @@ Do not wrap up trivial chats.
 - Decision: [[03-Decisions/_index]]
 - Lesson: [[04-Lessons/_index]]
 - Active follow-up: Linear
-- SOP change: `ai-config`
+- SOP change: `agentic-os-template`
 
 ## Summary Shape
 
