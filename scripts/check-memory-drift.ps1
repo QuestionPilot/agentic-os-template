@@ -336,6 +336,11 @@ function Get-FmBody {
 # bash-side change. Filed as TODO for post-Wave-3 cleanup.
 $drift   = 0
 $scanned = 0
+# Counts the FULL note set (feedback_/reference_/project_/runtime_*.md) walked by
+# the frontmatter + injection scans below — $scanned counts only the project_*.md
+# headline-drift subset. Reported separately in the PASS line: a single
+# project-only count on a large mixed dir reads as a coverage gap that isn't there.
+$notesScanned = 0
 
 # Bash side uses `find -maxdepth 1 -type f -name 'project_*.md'`. Mirror with
 # -File + -Filter at depth 1.
@@ -434,6 +439,7 @@ $noteFiles = @(
 
 foreach ($nf in $noteFiles) {
     $base = $nf.Name
+    $notesScanned++
     $lines = [System.IO.File]::ReadAllLines($nf.FullName)
     $issues = New-Object System.Collections.Generic.List[string]
 
@@ -535,7 +541,7 @@ foreach ($nf in $noteFiles) {
 }
 
 if ($drift -eq 0 -and $indexFail -eq 0 -and $fmFail -eq 0 -and $injFail -eq 0) {
-    Write-Host "PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads ($scanned files scanned in $MemoryDir)"
+    Write-Host "PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads ($scanned project files headline-checked, $notesScanned notes frontmatter+injection-scanned in $MemoryDir)"
     exit 0
 }
 
