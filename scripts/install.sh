@@ -393,6 +393,30 @@ install_hook() {
   esac
 }
 
+# install_hook_script_only <script> — copies + substitutes a hook script into
+# the build WITHOUT registering any event wiring (no HOOK_BLOCKS record, so it
+# never lands in the generated hook config). For tooling shipped alongside the
+# hooks whose scheduling/registration is a deliberate operator act (the hermes
+# steward).
+install_hook_script_only() {
+  local script="$1"
+  local src="$repo_root/harnesses/$HARNESS/hooks/$script"
+  [ -f "$src" ] || die "hook script not found: $src"
+  if [ ! -f "$BUILD/hooks/$script" ]; then
+    local content
+    content="$(cat "$src")"
+    content="${content//@@AI_CONFIG_DIR@@/$AI_CONFIG_DIR}"
+    # Substitute the vault path only when set — an empty value would silently
+    # bake a broken path, so leave the token in place and let validate_build's
+    # unresolved-placeholder gate fail the build loudly instead.
+    if [ -n "${OBSIDIAN_VAULT_PATH:-}" ]; then
+      content="${content//@@OBSIDIAN_VAULT_PATH@@/$OBSIDIAN_VAULT_PATH}"
+    fi
+    printf '%s\n' "$content" > "$BUILD/hooks/$script"
+    chmod +x "$BUILD/hooks/$script"
+  fi
+}
+
 # enforcement-class -> "script event matcher"  (mirrors each harness adapter's
 # Fact 2). Only the pre-edit matcher differs — claude intercepts
 # Write|Edit|NotebookEdit, codex apply_patch.
@@ -517,15 +541,23 @@ generate_hermes_hooks() {
     printf '# Merge this block into %s/config.yaml (hooks: + plugins.enabled),\n' "$TARGET"
     printf '# then approve the hooks on first use (TTY prompt or --accept-hooks).\n'
     printf 'hooks:\n'
+    # Group records by event — YAML forbids duplicate mapping keys, so each
+    # event header is emitted once with every matching entry under it.
+    local seen_events="" ev2 m2 s2
     while IFS="$HOOK_REC_SEP" read -r event matcher script; do
       [ -n "$event" ] || continue
+      case "$seen_events" in *" $event "*) continue ;; esac
+      seen_events="$seen_events $event "
       printf '  %s:\n' "$event"
-      if [ -n "$matcher" ]; then
-        printf '    - matcher: "%s"\n' "$matcher"
-        printf '      command: "%s/hooks/%s"\n' "$TARGET" "$script"
-      else
-        printf '    - command: "%s/hooks/%s"\n' "$TARGET" "$script"
-      fi
+      while IFS="$HOOK_REC_SEP" read -r ev2 m2 s2; do
+        [ "$ev2" = "$event" ] || continue
+        if [ -n "$m2" ]; then
+          printf '    - matcher: "%s"\n' "$m2"
+          printf '      command: "%s/hooks/%s"\n' "$TARGET" "$s2"
+        else
+          printf '    - command: "%s/hooks/%s"\n' "$TARGET" "$s2"
+        fi
+      done <<< "$HOOK_BLOCKS"
     done <<< "$HOOK_BLOCKS"
     printf 'plugins:\n'
     printf '  enabled:\n'
@@ -914,7 +946,19 @@ main() {
   # with a source matcher; hermes fires on_session_start (first turn only, no
   # matcher — matchers apply to pre/post_tool_call events only).
   case "$HARNESS" in
-    hermes) install_hook "framework-surface.sh" "on_session_start" "" ;;
+    hermes)
+      install_hook "framework-surface.sh" "on_session_start" ""
+      # Autonomy-governance hooks (hermes-only). All wired DISABLED-BY-DEFAULT
+      # or hard-gated: the drain is inert without its enablement flag file, the
+      # skill gate blocks mutations pending a consumed per-use approval marker,
+      # and the memory sanitize only refuses hostile injection shapes. The
+      # steward is copied but NEVER scheduled — cron registration is a
+      # deliberate operator act (same enablement gate as the drain).
+      install_hook "autonomy-drain.sh" "on_session_end" ""
+      install_hook "memory-sanitize.sh" "pre_tool_call" "memory"
+      install_hook "skill-gate.sh" "pre_tool_call" "skill_manage"
+      install_hook_script_only "steward.sh"
+      ;;
     *)      install_hook "framework-surface.sh" "SessionStart" "startup|clear|compact" ;;
   esac
 
