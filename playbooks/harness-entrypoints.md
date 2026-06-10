@@ -10,6 +10,9 @@ Make the active harness follow this repository's shared framework without copyin
 
 - Codex: `AGENTS.md`
 - Claude Code: `CLAUDE.md`
+- Hermes Agent: `SOUL.md` (the global identity file in the Hermes home /
+  profile dir; per-project `CLAUDE.md`/`AGENTS.md` files are auto-discovered
+  from the working directory and compose with it)
 
 These files are front doors into the framework. Keep them thin. Shared operating rules belong in `core/`, proof patterns in `verification/`, workflows in `playbooks/`, and tool guidance in `skills/`.
 
