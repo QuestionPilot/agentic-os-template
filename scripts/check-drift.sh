@@ -77,6 +77,11 @@ if [ "${1:-}" = "--manifest" ]; then
     # e.g. `skills/rogue.md`) stay subject to the manifest gate — Codex F-2
     # in the <TEAM>-68 review.
     case "$rel" in
+      # Hermes writes its own bundled-skills bookkeeping file directly into
+      # the managed skills/ tree at runtime — app-written state, not a hand
+      # edit (same class as the app-written settings.json keys absorbed into
+      # the soft-drift allowlist). Exempt it by exact name.
+      skills/.bundled_manifest) continue ;;
       skills/*/*)
         sub="${rel#skills/}"; sub="${sub%%/*}"
         printf '%s\n' "$managed_skills" | grep -qxF "$sub" || continue

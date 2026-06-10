@@ -46,6 +46,12 @@ assert_contains "hooks.yaml enables the agentic-os-hook-bridge plugin" \
 assert_exit "check-drift passes the fresh hermes build" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
 
+# Hermes writes skills/.bundled_manifest into the managed tree at runtime —
+# app-written state must not register as drift (exact-name exemption).
+printf '{}' > "$IH_OUT/skills/.bundled_manifest"
+assert_exit "check-drift exempts the hermes-app-written skills/.bundled_manifest" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
+
 # --- T4: SOUL.md has the capability catalog and no unresolved placeholders ---
 ih_soul="$(cat "$IH_OUT/SOUL.md" 2>/dev/null || printf '')"
 assert_contains "SOUL.md carries the session-agent spine directive" \

@@ -31,6 +31,7 @@ _Skip 'install-hermes.test: hooks.yaml wires the pre_tool_call edit-gate matcher
 _Skip 'install-hermes.test: hooks.yaml wires on_session_start to framework-surface' $reason
 _Skip 'install-hermes.test: hooks.yaml enables the agentic-os-hook-bridge plugin' $reason
 _Skip 'install-hermes.test: check-drift passes the fresh hermes build' $reason
+_Skip 'install-hermes.test: check-drift exempts the hermes-app-written skills/.bundled_manifest' $reason
 _Skip 'install-hermes.test: SOUL.md carries the session-agent spine directive' $reason
 _Skip 'install-hermes.test: SOUL.md has no unresolved placeholders' $reason
 _Skip 'install-hermes.test: gate blocks a write_file before the gate is open' $reason

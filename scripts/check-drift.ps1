@@ -316,6 +316,10 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
         # of whether the user's input was relative or absolute. Forward-slash
         # normalization matches bash output.
         $rel = [System.IO.Path]::GetRelativePath($targetAbs, $full).Replace([char]'\', [char]'/')
+        # Hermes writes its own bundled-skills bookkeeping file directly into
+        # the managed skills/ tree at runtime — app-written state, not a hand
+        # edit. Exempt by exact name (twin of the bash exemption).
+        if ($rel -eq 'skills/.bundled_manifest') { continue }
         # Shape C exemption: unmanaged skills/<sub>/... are operator-local
         # and ALLOWED. Subdir-structured only; bare files under skills/
         # remain subject to the manifest gate.
