@@ -11,7 +11,7 @@ lifecycle: shipped
 # Closeout — Session Self-Improvement Pass
 
 Wraps a session by running the canonical closeout protocol from
-`agentic-os-template/core/self-improvement.md` and routing every meaningful lesson to its
+`$AI_CONFIG_DIR/core/self-improvement.md` and routing every meaningful lesson to its
 source of truth. A lesson is not learned until it changes a future behavior,
 check, task, script, decision, or durable note.
 
@@ -41,11 +41,11 @@ That is a valid, complete outcome.
    `cross-model-out/<YYYY-MM-DD>-<slug>/` run dir, a new `docs/plans/<name>.md`).
    If any exist, each becomes a mandatory `state-delta` lesson with a memory
    write performed BEFORE session exit — never deferred to a future session.
-   See `agentic-os-template/core/self-improvement.md` for the canonical taxonomy.
+   See `$AI_CONFIG_DIR/core/self-improvement.md` for the canonical taxonomy.
 
 ## The 8 closeout questions
 
-From `agentic-os-template/core/self-improvement.md` — answer each in 1–2 sentences. Q0 is
+From `$AI_CONFIG_DIR/core/self-improvement.md` — answer each in 1–2 sentences. Q0 is
 the EAD gate; it runs first because if the answer is "we should have eliminated
 this", the right outcome is `no-action` with rationale, and walking the
 classification machinery for work that should never have shipped is wasted.
@@ -71,7 +71,7 @@ classification machinery for work that should never have shipped is wasted.
 3. Can the lesson become a check or script instead of prose? **And — did this
    session run a successful, repeatable flow worth promoting to a permanent
    skill?** If so, classify it `skill` and route it through the seven-step
-   promotion trust contract in `agentic-os-template/skills/skill-authoring.md`
+   promotion trust contract in `$AI_CONFIG_DIR/skills/skill-authoring.md`
    (principle 11) — provenance → synthesize a script → fixture test → temp
    staging → test must pass → **explicit user approval** → atomic commit. The
    fixture-test and explicit-approval steps are non-optional; never auto-promote
@@ -138,17 +138,17 @@ on a `no-action` close.)
 ## Lesson classification
 
 For each lesson, pick exactly one class and route it. The classes are defined in
-`agentic-os-template/core/self-improvement.md`:
+`$AI_CONFIG_DIR/core/self-improvement.md`:
 
 | Class | Destination | How |
 | --- | --- | --- |
-| `rule` | `agentic-os-template/core/*.md` or the harness entrypoint | Propose the edit, get explicit user approval before writing — shared framework content requires explicit user direction. |
-| `check` | `agentic-os-template/scripts/` or project-local | Small deterministic validator. |
-| `script` | `agentic-os-template/scripts/` or project-local | Automation for repeated manual work. |
+| `rule` | `$AI_CONFIG_DIR/core/*.md` or the harness entrypoint | Propose the edit, get explicit user approval before writing — shared framework content requires explicit user direction. |
+| `check` | `$AI_CONFIG_DIR/scripts/` or project-local | Small deterministic validator. |
+| `script` | `$AI_CONFIG_DIR/scripts/` or project-local | Automation for repeated manual work. |
 | `linear` | A Linear issue | Create or comment; reference the closeout summary. |
 | `obsidian` | The durable knowledge base | Propose path + body to the user; do not write directly. |
-| `playbook` | `agentic-os-template/playbooks/*.md` | New or updated workflow file (requires user approval). |
-| `skill` | The harness's capability/skill set | Use a skill-creation capability for new ones. When a *successful repeatable flow* this session is worth keeping, promote it via the seven-step trust contract in `agentic-os-template/skills/skill-authoring.md` (principle 11): provenance → synthesize a deterministic script → fixture test → temp staging → test must pass → **explicit user approval** → atomic commit. The fixture-test and explicit-approval steps are non-optional — an unvetted auto-promoted skill is the failure mode. |
+| `playbook` | `$AI_CONFIG_DIR/playbooks/*.md` | New or updated workflow file (requires user approval). |
+| `skill` | The harness's capability/skill set | Use a skill-creation capability for new ones. When a *successful repeatable flow* this session is worth keeping, promote it via the seven-step trust contract in `$AI_CONFIG_DIR/skills/skill-authoring.md` (principle 11): provenance → synthesize a deterministic script → fixture test → temp staging → test must pass → **explicit user approval** → atomic commit. The fixture-test and explicit-approval steps are non-optional — an unvetted auto-promoted skill is the failure mode. |
 | `data-readiness` | `playbooks/data-readiness-map.md`, verification, or Obsidian | Use when repeated work needs better source plumbing or summaries. |
 | `goal-run` | `playbooks/goal-run.md` | Use when autonomous or recurring work needs clearer bounds. |
 | `no-action` | Transcript only | Note it and move on. |
@@ -159,7 +159,7 @@ For each lesson, pick exactly one class and route it. The classes are defined in
 Closeout is where memory writes happen, so it is also where the memory store is
 kept healthy. When this session writes or updates a memory note — a `state-delta`
 write, or any other memory-file change — apply the contracts from
-`agentic-os-template/core/memory-model.md` (canonical definitions there; this is the
+`$AI_CONFIG_DIR/core/memory-model.md` (canonical definitions there; this is the
 write-side enforcement point):
 
 1. **Refresh, don't blindly append.** Before adding a new note, classify the
@@ -183,7 +183,7 @@ closeout the scope is the notes the session actually wrote.
 
 ## Output
 
-End with a single block in the shape from `agentic-os-template/linear/closeout-format.md`:
+End with a single block in the shape from `$AI_CONFIG_DIR/linear/closeout-format.md`:
 
 ```
 ## Result

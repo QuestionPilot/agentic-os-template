@@ -76,8 +76,8 @@ The manifest-based `scripts/install.sh` handles boundary migration on re-render;
 
 The framework composes in two explicit layers.
 
-1. **Spine** — capabilities `agentic-os-template/capabilities/*.md` authors and `install.sh` auto-installs into the operator harness config dir (currently `session-agent`, `closeout`, `self-audit`). The framework's spine works standalone — no operator-installed tools required.
-2. **Setup pages** — `agentic-os-template/{obsidian,linear}/*.md` document the two infrastructure layers the framework references (durable knowledge + active-work tracking). Operator installs per the page. Framework references these pages from `CLAUDE.md` / `AGENTS.md` but does not enforce installation — `validate.sh` exits 0 on a fresh clone whether or not either surface is installed.
+1. **Spine** — capabilities `capabilities/*.md` authors and `install.sh` auto-installs into the operator harness config dir (currently `session-agent`, `closeout`, `self-audit`). The framework's spine works standalone — no operator-installed tools required.
+2. **Setup pages** — `{obsidian,linear}/*.md` document the two infrastructure layers the framework references (durable knowledge + active-work tracking). Operator installs per the page. Framework references these pages from `CLAUDE.md` / `AGENTS.md` but does not enforce installation — `validate.sh` exits 0 on a fresh clone whether or not either surface is installed.
 
 Tool choices — plugins, CLIs, MCP connectors, recommended tool-skills — are **operator-local** and are not shipped by the framework, the same way the Linear and Obsidian surfaces are documented as contracts but never auto-installed. The general CLI-over-MCP principle lives in [`core/tool-use.md`](tool-use.md); concrete tool inventories live in the operator's own harness config, not here.
 
@@ -89,6 +89,15 @@ Tool choices — plugins, CLIs, MCP connectors, recommended tool-skills — are 
 The framework never hard-fails on an operator-installed tool's absence. Spine capabilities gracefully degrade when their accelerant (Linear surface, code-intelligence MCP, engineering-workflow skill plugin, etc.) is not installed — a one-line warning surfaces the gap; the work continues.
 
 Historical context: this composition replaced an earlier "Tier 2" formal layer that conflated "framework opinionated about" with "framework requires installed." Dissolving the Tier 2 framing removed roughly thirty hard-wiring sites across templates, settings, and scripts; the framework now references its preferred tools in the Setup pages and Catalog without enforcing their presence.
+
+## Referencing framework files
+
+When framework content points at another file in this repo, use one of two forms — never the name-prefixed `agentic-os-template/<path>`, which reads like a literal nested checkout subdirectory and invites a doubling misread (`<checkout>/agentic-os-template/core/...`).
+
+- **In-repo docs** — content read in place from the repo (`core/`, `linear/`, `obsidian/` guides, the READMEs) — reference repo-root-relative: `` `core/memory-model.md` ``, the dominant form. A Markdown link may use the ordinary relative path (`../core/memory-model.md`).
+- **Content rendered or copied into a live location outside the repo** — capability bodies that `install.sh` compiles into harness skills, and the vault templates copied into the operator's vault — anchor to the framework clone with `$AI_CONFIG_DIR/<path>`: `` `$AI_CONFIG_DIR/core/self-improvement.md` ``. `$AI_CONFIG_DIR` resolves to this repo's checkout (the value the framework-surface hook git-logs), so the pointer still resolves once the content lives under `$CLAUDE_CONFIG_DIR/skills/...` or in the vault, where a bare repo-relative path would not.
+
+Naming the repository or a tier as a concept — no file path — keeps the bare repo name with no subpath: "operating rules live in `agentic-os-template`".
 
 ## Closeout Flow
 

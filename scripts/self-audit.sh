@@ -22,7 +22,7 @@
 #   --vault-dir    $OBSIDIAN_VAULT_PATH if set; else skipped
 #   --config-dir   $CLAUDE_CONFIG_DIR if set; else skipped
 #
-# `lineark` (the Linear CLI per agentic-os-template/linear/linear-setup.md) is optional;
+# `lineark` (the Linear CLI per linear/linear-setup.md) is optional;
 # Linear-side checks degrade with a "skipped: lineark not configured" note.
 #
 # Output: markdown by default. `--json` emits a structured object for tests:

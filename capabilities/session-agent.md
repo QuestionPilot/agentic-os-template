@@ -63,7 +63,7 @@ read in O1.
 
 ### O3. Kickoff Linear query — projects-first ordered cut
 
-Use whichever Linear surface the operator installed per `agentic-os-template/linear/linear-setup.md` —
+Use whichever Linear surface the operator installed per `$AI_CONFIG_DIR/linear/linear-setup.md` —
 `lineark` CLI or Linear MCP. Both are first-class; the framework prefers `lineark`
 for token cost but does not require it.
 
@@ -80,14 +80,14 @@ for token cost but does not require it.
 **Always run the project sweep first.** The assignee+In-Progress cut alone misses
 fresh-spawned projects entirely — see [[feedback_session_kickoff_cut]].
 
-**Per-surface commands:** see `agentic-os-template/linear/linear-setup.md` §4 for the actual command
+**Per-surface commands:** see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the actual command
 shapes (lineark CLI flags or Linear MCP tool names + arguments). The same query
 order applies to both surfaces.
 
 **Surface-absent fallback:** if neither `lineark` nor a Linear MCP connector is
 installed, the framework gracefully degrades — orient continues with memory + vault
 only; a one-line warning surfaces the missing surface. Document the install in the
-next session per `agentic-os-template/linear/linear-setup.md`.
+next session per `$AI_CONFIG_DIR/linear/linear-setup.md`.
 
 **MCP edge case:** if the Linear MCP reports ✓ Connected but `list_projects`
 returns an empty array, this is the [[reference_mcp_silent_empty_tools]] pattern —
@@ -113,7 +113,7 @@ at the body-read step.
 **Tool calls:**
 - For each cross-issue claim with a concrete `QUE-\d+` identifier: query the
   Linear surface for the issue and compare the `state` field against the memory
-  body's claim (see `agentic-os-template/linear/linear-setup.md` §4 for the per-surface read command).
+  body's claim (see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the per-surface read command).
   Flag mismatches in the orient summary.
 
 ### Mode 1 output
@@ -163,7 +163,7 @@ If genuinely no capability fits, declare `ad-hoc — no specific capability`.
 
 ### R3. Name the verification gate
 
-Choose the matching gate from `agentic-os-template/verification/` — e.g. `code-change`,
+Choose the matching gate from `$AI_CONFIG_DIR/verification/` — e.g. `code-change`,
 `audit-systems`, `data-readiness`, `ui-browser`, `docs-framework`, `high-risk`,
 `process-memory`, `tool-freshness`, `deploy-live`.
 
@@ -171,9 +171,9 @@ Choose the matching gate from `agentic-os-template/verification/` — e.g. `code
 
 If the task is multi-step or spans more than one session, a Linear issue or
 project must exist **before execution**. Draft into the issue shape from
-`agentic-os-template/linear/tool-agnostic-linear.md` (outcome, scope, AC, verification,
+`$AI_CONFIG_DIR/linear/tool-agnostic-linear.md` (outcome, scope, AC, verification,
 links) and create it via the operator's installed Linear surface (see
-`agentic-os-template/linear/linear-setup.md` §4 for the per-surface create command).
+`$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the per-surface create command).
 
 Single-file fixes, trivial edits, and questions stay as session todos. If no
 write-capable Linear access exists, produce a Linear-ready markdown draft.
@@ -183,7 +183,7 @@ write-capable Linear access exists, produce a Linear-ready markdown draft.
 ```
 Routing: <one-sentence task surface>
 Primary skill: <capability name, or "ad-hoc — no specific capability">
-Verification: <gate name from agentic-os-template/verification/>
+Verification: <gate name from $AI_CONFIG_DIR/verification/>
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted
 ```
 
@@ -216,7 +216,7 @@ quick-reference does not resolve a clean primary, the user explicitly asks
 - **CO3. Consult** the installed capability catalog and find the row matching
   the primary surface.
 - **CO4. Compose** the chain: one primary; secondaries only for evidence, risk,
-  or output format; a verification recipe from `agentic-os-template/verification/`.
+  or output format; a verification recipe from `$AI_CONFIG_DIR/verification/`.
 - **CO5. Confirm** with the user only if routing is non-obvious or risk is high.
   Otherwise state the chain and proceed.
 

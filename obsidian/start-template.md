@@ -7,7 +7,7 @@ tags:
 
 # START
 
-This is the kickoff entry point — AI agents read this every session to ground orient. See `agentic-os-template/obsidian/vault-guide.md` §7 for the minimum-contract shape.
+This is the kickoff entry point — AI agents read this every session to ground orient. See `$AI_CONFIG_DIR/obsidian/vault-guide.md` §7 for the minimum-contract shape.
 
 ## Read Order
 
