@@ -5,6 +5,8 @@ tags:
 status: template
 date:
 classification:
+harness: all
+learned_by:
 ---
 
 # {{YYYY-MM-DD}} - {{Lesson}}

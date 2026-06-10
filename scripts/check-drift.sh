@@ -729,9 +729,12 @@ assert_absent 'device-dependent review lane found in baseline skills catalog' \
 # Harness-agnostic guard: shared dirs carry no single-harness tool/hook/plugin
 # names or harness-specific paths. Symmetric AGENTS.md/CLAUDE.md mentions are NOT
 # denied; harness-entrypoints.md is the one playbook allowed to discuss setup.
+# The trailing alternation group is the Hermes token set (hook event names, the
+# Hermes home dir, Hermes-specific tool names) — harnesses/hermes/ is the only
+# home for those, same rule as the Claude/Codex tokens before it.
 assert_absent 'single-harness token found in shared framework content' \
   --exclude=harness-entrypoints.md \
-  -e 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/' \
+  -e 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/|on_session_start|on_session_end|pre_tool_call|post_tool_call|pre_llm_call|\.hermes/|SOUL\.md|skill_manage|delegate_task' \
   "$repo_root/core" "$repo_root/playbooks" "$repo_root/verification" \
   "$repo_root/skills" "$repo_root/capabilities" "$repo_root/linear" "$repo_root/obsidian"
 

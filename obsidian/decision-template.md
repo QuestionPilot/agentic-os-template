@@ -6,6 +6,8 @@ status: template
 date:
 project:
 area:
+harness: all
+learned_by:
 ---
 
 # {{YYYY-MM-DD}} - {{Decision}}

@@ -78,6 +78,48 @@ Rules in the harness entrypoint); the originating issue link lives here. Any
 tracker and any vault that supports frontmatter works — `linear:` is the default
 example, not a requirement.
 
+### Harness-Neutral Note Schema — Scope as a Retrieval Filter
+
+When more than one harness reads the same vault, two frontmatter keys carry
+audience and provenance:
+
+```yaml
+---
+title: <note title>
+harness: all            # audience scope: all | <one harness name>
+learned_by: <harness>   # provenance: which harness's session produced the note
+linear: https://<tracker>/issue/ABC-123
+---
+```
+
+- **`harness:` is an audience scope, enforced as a retrieval filter.** At
+  orient, a harness loads only notes carrying `harness: all` or its own name.
+  A missing `harness:` key means `all` (back-compatible default). The filter
+  exists because a label alone does not stop a model that has already read a
+  note from following it — scope must be enforced mechanically at the
+  retrieval layer, before the note enters context, not by the label.
+- **The mechanical enforcement point is the generated index.** Each harness's
+  index view of the vault is *generated* from note frontmatter —
+  deterministically (stable sort, stable format), never hand-edited. A note
+  scoped to one harness simply does not appear in another harness's view, so
+  an orient that starts from the view cannot load it. Generating the index
+  also removes the shared-index write hot-spot: regeneration replaces
+  append-and-consolidate. The generator and the audit check that re-derives
+  the views and fails on drift ship in the vault scaffolding's `bin/`
+  (`obsidian/vault-scaffolding/bin/`).
+- **`learned_by:` is cheap provenance, never a filter.** It records which
+  harness's session produced the note so a future reader can weigh
+  harness-specific advice; it has no retrieval effect.
+- **The scope filter applies to vault notes only.** Harness-native memory
+  stores and per-machine memory are local caches outside the shared-memory
+  surface (see the Cache Contract below) — the schema, the filter, and the
+  vault audit never reach them.
+
+The per-harness index views are vault-level retrieval surfaces; the
+harness-native autoloaded index keeps its own caps and enforcement (see Index
+Size + Per-Entry Caps below) — the two indexes are different layers and do not
+share tooling.
+
 ## Data Readiness Layer
 
 Data readiness sits between raw sources and agent reasoning.
