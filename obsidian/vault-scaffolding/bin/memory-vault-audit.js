@@ -66,7 +66,12 @@ function checkNoiseAndSecrets() {
   });
   noisy.length ? noisy.forEach((f) => fail(`noisy artifact: ${rel(f)}`)) : pass("no noisy artifacts");
 
-  const secretPattern = /(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|(?:PINECONE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE_KEY|STRIPE_SECRET_KEY)\s*[:=]\s*\S+)/;
+  // Vault-content secret scan. The vault is durable, cloud-synced, and read
+  // by every harness, so a leaked credential here outlives any one machine.
+  // Covers key-prefix shapes (OpenAI/Anthropic sk-, GitHub ghp_/github_pat_,
+  // GitLab glpat-, npm npm_, AWS AKIA, Slack xox*), PEM private-key blocks,
+  // and assignments to well-known secret env names.
+  const secretPattern = /(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:PINECONE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|SUPABASE_SERVICE_ROLE_KEY|STRIPE_SECRET_KEY|OPENROUTER_API_KEY|NOUS_API_KEY|LINEAR_API_TOKEN)\s*[:=]\s*\S+)/;
   let hits = 0;
   for (const f of mdFiles) {
     const text = fs.readFileSync(f, "utf8");
@@ -106,7 +111,7 @@ require 'yaml'
 require 'date'
 root = ARGV[0]
 Dir.glob(File.join(root, '**/*.md')).each do |f|
-  text = File.read(f)
+  text = File.read(f, encoding: 'utf-8')
   if text.start_with?("---\\n")
     match = text.match(/\\A---\\s*\\n(.*?)\\n---\\s*\\n/m)
     raise "frontmatter closing delimiter missing in #{f}" unless match
@@ -170,6 +175,28 @@ function checkActiveTaskMarkers() {
   pass("active-task marker scan complete");
 }
 
+function checkHarnessIndexViews() {
+  // The per-harness index views under 90-Indexes/ are GENERATED from note
+  // frontmatter (core/memory-model.md § Harness-Neutral Note Schema). They are
+  // the mechanical scope-filter surface, so hand edits or staleness silently
+  // break the filter. Re-derive and fail on drift.
+  const generator = path.join(__dirname, "generate-harness-index.js");
+  if (!fs.existsSync(generator)) {
+    fail("harness index generator missing: bin/generate-harness-index.js");
+    return;
+  }
+  const res = spawnSync("node", [generator, "--check"], { encoding: "utf8" });
+  if (res.status === 0) {
+    pass("harness index views match regeneration");
+  } else {
+    (res.stderr || res.stdout)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .forEach((line) => fail(`harness index drift: ${line}`));
+  }
+}
+
 checkRequired();
 checkNoiseAndSecrets();
 checkWikilinks();
@@ -178,6 +205,7 @@ checkRawManifest();
 checkWikiSourceRefs();
 checkIndexes();
 checkActiveTaskMarkers();
+checkHarnessIndexViews();
 
 for (const p of passes) console.log(`PASS ${p}`);
 for (const w of warnings) console.log(`WARN ${w}`);

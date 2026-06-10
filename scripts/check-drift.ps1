@@ -925,10 +925,13 @@ Assert-Absent `
 
 # ---------------------------------------------------------------------------
 # Harness-agnostic guard: shared dirs may not carry single-harness tokens.
+# The trailing alternation group is the Hermes token set (hook event names, the
+# Hermes home dir, Hermes-specific tool names) — harnesses/hermes/ is the only
+# home for those, same rule as the Claude/Codex tokens before it.
 # ---------------------------------------------------------------------------
 Assert-Absent `
     -Label 'single-harness token found in shared framework content' `
-    -Pattern 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/' `
+    -Pattern 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/|on_session_start|on_session_end|pre_tool_call|post_tool_call|pre_llm_call|\.hermes/|SOUL\.md|skill_manage|delegate_task' `
     -ExcludeFiles @('harness-entrypoints.md') `
     -Roots @(
         (Join-Path $repoRoot 'core'),

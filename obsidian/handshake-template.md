@@ -4,6 +4,8 @@ tags:
   - linear-handshake
 linear: https://linear.app/<workspace>/project/<slug>
 status: <mirror of Linear state at last sync — informational only>
+harness: all
+learned_by:
 ---
 
 # {{Project or Issue Name}}
