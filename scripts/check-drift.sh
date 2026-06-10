@@ -5,7 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- arg parse: --cure-soft-drift is optional + position-insensitive --------
 # The flag opts into soft-drift auto-cure. When set, a drift case
-# limited to settings.json's user-preference keys (theme, effortLevel, key
+# limited to settings.json's user-preference keys (theme, effortLevel,
+# agentPushNotifEnabled, inputNeededNotifEnabled, key
 # reordering inside enabledPlugins/extraKnownMarketplaces) triggers a
 # transparent re-render via install.sh instead of erroring. ANY drift outside
 # that envelope still errors as before — default behavior is unchanged.
@@ -95,7 +96,9 @@ if [ "${1:-}" = "--manifest" ]; then
     # re-rendered canonical copy is in the soft-key allowlist OR is just
     # key-reordering within tolerated objects.
     #
-    # Why: Claude Code's app process strips `theme` / `effortLevel` and reorders
+    # Why: Claude Code's app process strips `theme` / `effortLevel`, writes the
+    # notification preferences `agentPushNotifEnabled` / `inputNeededNotifEnabled`
+    # on its own, and reorders
     # `enabledPlugins` / `extraKnownMarketplaces` between renders, so every
     # session opens with a drift trip even though the framework content hasn't
     # changed. Operator's pre-dispatch baseline currently pays a 3-step
@@ -245,7 +248,9 @@ with open(sys.argv[1]) as f:
       # differs MUST be in the soft-key allowlist; any key present in one but
       # not the other MUST also be in the allowlist.
       #
-      # Soft-key allowlist (top-level): theme, effortLevel. PLUS we tolerate
+      # Soft-key allowlist (top-level): theme, effortLevel, plus the app-written
+      # notification preferences agentPushNotifEnabled and
+      # inputNeededNotifEnabled. PLUS we tolerate
       # any RE-ORDERING (but not value change) inside `enabledPlugins` and
       # `extraKnownMarketplaces` — install.sh's `jq` serialization may emit a
       # different key order than the harness app's pretty-printer.
@@ -306,7 +311,7 @@ with open(sys.argv[1]) as f:
         done
       done
       # Compute the soft-key allowlist as a JSON array for jq.
-      soft_keys='["theme","effortLevel"]'
+      soft_keys='["theme","effortLevel","agentPushNotifEnabled","inputNeededNotifEnabled"]'
       reorder_tolerant='["enabledPlugins","extraKnownMarketplaces"]'
       # jq script: for each top-level key in the union of both objects,
       # categorize. Output the set of NON-soft drifted keys; empty = soft.

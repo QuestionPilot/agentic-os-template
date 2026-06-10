@@ -76,6 +76,16 @@ _Skip 'que-106.test: post-cure: stripped theme not resurrected (operator-local)'
 _Skip 'que-106.test: post-cure: stripped effortLevel not resurrected (operator-local)' $reason106cure
 _Skip 'que-106.test: post-cure: drift check passes after app-strip cure' $reason106cure
 
+# ---------- Test 2c: app-written notification keys cure as soft drift --------
+# Mirrors the .sh twin: agentPushNotifEnabled + inputNeededNotifEnabled are
+# app-written operator-local preference keys; the cure must absorb them and the
+# cure re-render must carry both via preserve-live. DEFERRED on the PS lane —
+# cure path, same CRLF cause as Test 2 above.
+_Skip 'que-106.test: --cure-soft-drift absorbs app-written notification keys' $reason106cure
+_Skip 'que-106.test: post-cure: agentPushNotifEnabled preserved through cure re-render' $reason106cure
+_Skip 'que-106.test: post-cure: inputNeededNotifEnabled preserved through cure re-render' $reason106cure
+_Skip 'que-106.test: post-cure: drift check passes after notification-key cure' $reason106cure
+
 Remove-Item -LiteralPath $Q106.Root -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---------- Test 3: Real drift still errors even with --cure-soft-drift ------
