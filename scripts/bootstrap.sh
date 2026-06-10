@@ -62,8 +62,8 @@ validate_harnesses() {
   for h in ${HARNESSES[@]+"${HARNESSES[@]}"}; do
     folded="$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')"
     case "$folded" in
-      claude|codex) ;;
-      *) die "unknown harness '$h' (known: claude, codex)" ;;
+      claude|codex|hermes) ;;
+      *) die "unknown harness '$h' (known: claude, codex, hermes)" ;;
     esac
   done
 }

@@ -67,8 +67,8 @@ function would_mutate([string]$desc) {
 # install.ps1.
 function Confirm-HarnessNames {
   foreach ($h in $Harness) {
-    if ($h.ToLower() -notin @('claude','codex')) {
-      bs_die "unknown harness '$h' (known: claude, codex)"
+    if ($h.ToLower() -notin @('claude','codex','hermes')) {
+      bs_die "unknown harness '$h' (known: claude, codex, hermes)"
     }
   }
 }

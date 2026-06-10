@@ -443,8 +443,8 @@ assert_contains "self-audit capability declares name: self-audit" \
   "$SA_CONTENT" "name: self-audit"
 assert_contains "self-audit capability declares kind: native" \
   "$SA_CONTENT" "kind: native"
-assert_contains "self-audit capability ships to both Claude and Codex" \
-  "$SA_CONTENT" "harnesses: [claude, codex]"
+assert_contains "self-audit capability ships to every spine harness" \
+  "$SA_CONTENT" "harnesses: [claude, codex, hermes]"
 assert_contains "self-audit capability declares verification: self-audit" \
   "$SA_CONTENT" "verification: self-audit"
 

@@ -3,7 +3,7 @@ name: closeout
 summary: Wrap a session — walk the 8 closeout questions, classify each lesson into one of 11 classes, and route it to its source of truth.
 triggers: [end of a session with meaningful work, user says wrap up or close out or we are done, a session summary is requested after real work]
 verification: process-memory
-harnesses: [claude, codex]
+harnesses: [claude, codex, hermes]
 kind: native
 lifecycle: shipped
 ---

@@ -3,7 +3,7 @@ name: self-audit
 summary: Score the agentic OS on five leverage-weighted pillars (cross-layer handoffs / memory hygiene / folder hygiene / verification coverage / closeout + spine discipline), surface the top-3 gaps with concrete fixes. Read-only diagnostic — never auto-remediates. The third native spine capability after session-agent + closeout.
 triggers: [user says /self-audit or "audit the framework", periodic framework-hygiene checks, before claiming the framework is "in good shape", after a wave of merges to confirm nothing thinned out, debugging "why does this still feel rough"]
 verification: self-audit
-harnesses: [claude, codex]
+harnesses: [claude, codex, hermes]
 kind: native
 lifecycle: shipped
 ---
