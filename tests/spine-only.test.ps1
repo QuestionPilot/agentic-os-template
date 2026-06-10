@@ -58,24 +58,29 @@ $prefs = if ($prefsMatch.Success) { $prefsMatch.Value } else { '' }
 Assert-Eq 'spine-only: settings.base.json ships no theme/effortLevel preference' '' $prefs
 
 # --- audit: forbidden tool identifiers appear ONLY in allowlisted DATA lines ---
-# Twin of the.sh audit. ctx7/context7 join the forbidden set;
-# only docs/ + tests/ stay file-excluded. The allowlist is per-OCCURRENCE (Codex
-# F1): lowercase each hit, strip ONLY the name-as-data token legitimate FOR ITS
-# FILE, then rescan the residual — so a real opinion sharing an allowed line still
-# trips. -replace / -match are case-insensitive by default; the lowercased line +
-# lowercase pattern keep parity with the bash `tr | sed | grep`. Built from halves.
+# Twin of the.sh audit. ctx7/context7 join the forbidden set; only docs/ + tests/
+# stay file-excluded. The allowlist is per-OCCURRENCE (Codex F1) AND anchored to the
+# secret-scan CONTENT SIGNATURE — a brand-free token from the surrounding secret-scan
+# construct (`_live_` / `bgnpriv` in validate.ps1, `secretpattern` in the js scan),
+# NOT just the file path. The bare brand is stripped ONLY on lines carrying that
+# signature, so a tool opinion elsewhere in the file trips even if it embeds the brand
+# inside a variable/key name. -replace / -match are case-insensitive by default; the
+# lowercased line + lowercase pattern keep parity with the bash `tr|sed|grep`. Built
+# from halves.
 $soPat = 'play' + 'wright|sup' + 'abase|net' + 'lify|str' + 'ipe|fire' + 'crawl|web-design-' + 'guidelines|frontend-' + 'design|con' + 'text7|ct' + 'x7'
 $soStr = 'str' + 'ipe'; $soSup = 'sup' + 'abase'
 function Test-SpineResidual {
-    # Strip the per-file allowed token(s) from a (lowercased) git-grep hit line.
-    # validate.ps1 names Stripe; memory-vault-audit.js names Stripe AND Supabase
-    # (its secret-scan key prefixes). No shipped template carries a tool as data.
+    # Strip the bare brand from a (lowercased) git-grep hit line ONLY when the line
+    # carries the secret-scan signature for its file (brand-free anchors): validate.ps1
+    # `_live_` / `bgnpriv` bracket the two $stripeLive uses; memory-vault-audit.js
+    # `secretpattern` brackets the env-var keys. A tool opinion lacking the anchor is
+    # left intact and trips.
     param([string]$Line)
     $lc = $Line.ToLowerInvariant()
     if ($lc -match '^scripts/validate\.ps1:') {
-        $lc = $lc -replace $soStr, ''
+        if ($lc -match '_live_' -or $lc -match 'bgnpriv') { $lc = $lc -replace $soStr, '' }
     } elseif ($lc -match '^obsidian/vault-scaffolding/bin/memory-vault-audit\.js:') {
-        $lc = ($lc -replace $soStr, '') -replace $soSup, ''
+        if ($lc -match 'secretpattern') { $lc = ($lc -replace $soStr, '') -replace $soSup, '' }
     }
     return ($lc -match $soPat)
 }
@@ -83,16 +88,35 @@ $soRaw = @(& git -C $soRoot grep -niIE $soPat -- ':!tests/' ':!docs/' 2>$null)
 $hits = (@($soRaw | Where-Object { Test-SpineResidual $_ }) -join "`n")
 Assert-Eq 'spine-only: no operator tool identifiers outside the allowlisted DATA lines' '' $hits
 
-# Self-trip regression: a real opinion sharing an allowed line still trips. Build
-# adversarial lines over the SAME two allowlisted files. Parenthesize each element
-# — in PowerShell the `,` array separator binds tighter than `+`, so unparenthesized
-# `'a'+'b', 'c'+'d'` collapses into ONE element.
+# Self-trip regression A — per-occurrence: a forbidden identifier sharing a real
+# secret-scan line still trips (brand stripped, co-located identifier survives).
+# Parenthesize each element — in PowerShell the `,` array separator binds tighter than
+# `+`, so unparenthesized `'a'+'b', 'c'+'d'` collapses into ONE element.
 $soEvil = @(
-    ('scripts/validate.ps1:210:stripe scanner; also wire fire' + 'crawl'),
-    ('obsidian/vault-scaffolding/bin/memory-vault-audit.js:42:sup' + 'abase + str' + 'ipe scan; plus play' + 'wright')
+    ('scripts/validate.ps1:210:' + $soStr + "live = '_live_' regex; also wire fire" + 'crawl'),
+    ('obsidian/vault-scaffolding/bin/memory-vault-audit.js:69:const secretpattern ' + $soStr + '_secret_key|' + $soSup + '_service_role_key; plus play' + 'wright')
 )
 $soEvilN = @($soEvil | Where-Object { Test-SpineResidual $_ }).Count
-Assert-Eq 'spine-only: allowlist is per-occurrence (a real opinion sharing an allowed line still trips)' '2' "$soEvilN"
+Assert-Eq 'spine-only: a forbidden identifier on a real secret-scan line still trips' '2' "$soEvilN"
+
+# Self-trip regression B — pure opinion: a bare-brand tool opinion in an allowlisted
+# file (no secret-scan signature) MUST trip. Brands split so this source isn't self-listing.
+$soPure = @(
+    ('scripts/validate.ps1:99:# use the ' + $soStr + ' cli for billing checks'),
+    ('obsidian/vault-scaffolding/bin/memory-vault-audit.js:99:# wire ' + $soSup + ' and ' + $soStr + ' here')
+)
+$soPureN = @($soPure | Where-Object { Test-SpineResidual $_ }).Count
+Assert-Eq 'spine-only: a pure bare-brand opinion in an allowlisted file still trips' '2' "$soPureN"
+
+# Self-trip regression C — signature-form prose: a tool opinion embedding the brand
+# inside the secret-scan variable/key NAME but lacking the surrounding signature MUST
+# still trip — the file-scoped signature-token strip masked these (Codex pass).
+$soEvade = @(
+    ('scripts/validate.ps1:99:# use ' + $soStr + 'live for billing checks'),
+    ('obsidian/vault-scaffolding/bin/memory-vault-audit.js:99:# wire ' + $soSup + '_service_role_key and ' + $soStr + '_secret_key here')
+)
+$soEvadeN = @($soEvade | Where-Object { Test-SpineResidual $_ }).Count
+Assert-Eq 'spine-only: brand in a signature name without the secret-scan context still trips' '2' "$soEvadeN"
 
 # --- structural: the SHIPPED claude SKILLS template is spine-only ---
 # Twin of the.sh assertion — see it for the rationale and the overlay model. The
