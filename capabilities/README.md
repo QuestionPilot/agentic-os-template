@@ -2,7 +2,7 @@
 
 This directory is the **compiler input** for the agentic OS. Each `<name>.md` is one
 capability: a small YAML header plus a harness-neutral body. A build script
-(`scripts/install.sh`, added in a later phase) compiles these specs into each
+(`scripts/install.sh`) compiles these specs into each
 harness's native skill format, merging in the per-harness realization from
 `harnesses/<harness>/capabilities/<name>.md`.
 
@@ -15,7 +15,7 @@ describes *how that harness runs it*.
 
 | `kind` | What it is | Body |
 | --- | --- | --- |
-| `native` | A capability authored for this OS (session-agent, closeout). | Full harness-neutral protocol body. |
+| `native` | A capability authored for this OS (session-agent, closeout, self-audit). | Full harness-neutral protocol body. |
 | `vendored` | An externally-maintained, asset-heavy skill (ships scripts/reference libraries/binaries). | Thin manifest only — provenance + how to install. The skill is **not re-authored here**; re-authoring would fork it from upstream and drop bundled logic. |
 
 ## Header schema

@@ -428,10 +428,11 @@ generate_settings() {
   # empty) and NO cost/behavior preferences (no theme, no effortLevel — those would
   # otherwise ship the authoring operator's xhigh cost setting to every downstream
   # user). Once an operator has a live settings.json, THEIR plugin choices
-  # (enabledPlugins), notification preference (agentPushNotifEnabled), and UI/cost
+  # (enabledPlugins), notification preferences (agentPushNotifEnabled,
+  # inputNeededNotifEnabled — both app-written), and UI/cost
   # preferences (theme, effortLevel) must survive a re-render; otherwise every
   # install reverts them to base — re-enabling plugins the operator disabled,
-  # dropping agentPushNotifEnabled, and discarding the operator's theme/effortLevel.
+  # dropping the notification keys, and discarding the operator's theme/effortLevel.
   # Mirrors the tracker/vault model: the brain stays opinion-free, the operator's
   # choices live in their local config, and the renderer bridges them without
   # overwriting. theme/effortLevel join the overlay on the same spine-only
@@ -457,6 +458,7 @@ generate_settings() {
            then {enabledPlugins: (.enabledPlugins | with_entries(select(.value | type == "boolean")))}
            else {} end)
       + (if has("agentPushNotifEnabled") then {agentPushNotifEnabled} else {} end)
+      + (if has("inputNeededNotifEnabled") then {inputNeededNotifEnabled} else {} end)
       + (if (has("theme") and (.theme | type == "string")) then {theme} else {} end)
       + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)
     ' "$live")" || overlay='{}'

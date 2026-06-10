@@ -28,7 +28,8 @@
 
 .PARAMETER CureSoftDrift
     <TEAM>-106 opt-in: if manifest drift is limited to settings.json's
-    user-preference keys (theme, effortLevel, reorderings inside
+    user-preference keys (theme, effortLevel, agentPushNotifEnabled,
+    inputNeededNotifEnabled, reorderings inside
     enabledPlugins / extraKnownMarketplaces), trigger a transparent
     install.ps1 re-render instead of erroring out. ANY drift outside that
     envelope still errors. Default behavior unchanged.
@@ -512,7 +513,7 @@ with open(sys.argv[1]) as f:
                 }
 
                 # Compute non-soft keys via jq classifier (same expression as bash).
-                $softKeys = '["theme","effortLevel"]'
+                $softKeys = '["theme","effortLevel","agentPushNotifEnabled","inputNeededNotifEnabled"]'
                 $reorderTolerant = '["enabledPlugins","extraKnownMarketplaces"]'
                 $jqExpr = @'
   ($cur[0] // {}) as $C

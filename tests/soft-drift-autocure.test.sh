@@ -107,6 +107,43 @@ assert_exit "post-cure: drift check passes after app-strip cure" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106M_OUT"
 rm -rf "$Q106M_OUT"
 
+# ---------- Test 2c: app-written notification keys cure as soft drift --------
+#
+# The Claude Code app writes agentPushNotifEnabled + inputNeededNotifEnabled
+# into the live settings.json on its own (notification preferences). The
+# spine-only base ships neither and the classifier's canonical baseline is
+# opinion-free, so every real-world machine drifts on exactly these two keys.
+# They are operator-local preference keys — the same class as theme/effortLevel
+# — so --cure-soft-drift must absorb them. RED on the old
+# ["theme","effortLevel"] allowlist; GREEN once the notification keys join it.
+
+Q106P_OUT="$(mktemp -d)/target"; mkdir -p "$Q106P_OUT"
+Q106P_ENV="$(mktemp -d)/local.env"
+make_local_env "$Q106P_ENV" "$Q106P_OUT"
+AI_CONFIG_LOCAL_ENV="$Q106P_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+
+# The app writes both notification keys into the live settings.json.
+jq '. + {agentPushNotifEnabled: false, inputNeededNotifEnabled: true}' \
+  "$Q106P_OUT/settings.json" > "$Q106P_OUT/settings.json.tmp"
+mv "$Q106P_OUT/settings.json.tmp" "$Q106P_OUT/settings.json"
+
+AI_CONFIG_LOCAL_ENV="$Q106P_ENV" assert_exit \
+  "--cure-soft-drift absorbs app-written notification keys" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106P_OUT" --cure-soft-drift
+
+# The cure re-render must CARRY both keys via preserve-live — if either were
+# dropped, the app would just re-write it and the drift cycle would restart on
+# the next check.
+assert_eq "post-cure: agentPushNotifEnabled preserved through cure re-render" "false" \
+  "$(jq -r 'if has("agentPushNotifEnabled") then (.agentPushNotifEnabled | tostring) else "DROPPED" end' "$Q106P_OUT/settings.json")"
+assert_eq "post-cure: inputNeededNotifEnabled preserved through cure re-render" "true" \
+  "$(jq -r 'if has("inputNeededNotifEnabled") then (.inputNeededNotifEnabled | tostring) else "DROPPED" end' "$Q106P_OUT/settings.json")"
+
+assert_exit "post-cure: drift check passes after notification-key cure" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106P_OUT"
+
+rm -rf "$Q106P_OUT"
+
 # ---------- Test 3: Real drift still errors even with --cure-soft-drift ------
 #
 # Add a non-soft-key mutation (mutate a hook command) — adding the flag must

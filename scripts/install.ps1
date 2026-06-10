@@ -684,8 +684,8 @@ function New-Settings {
     # defaults with ZERO plugin opinions and NO cost/behavior preferences (no
     # theme, no effortLevel — those would otherwise ship the authoring operator's
     # xhigh cost setting downstream); the operator's LIVE enabledPlugins,
-    # agentPushNotifEnabled, theme, and effortLevel must survive a re-render, else
-    # every install reverts them to base.
+    # agentPushNotifEnabled, inputNeededNotifEnabled, theme, and effortLevel must
+    # survive a re-render, else every install reverts them to base.
     #
     # AI_CONFIG_SKIP_PRESERVE_LIVE: check-drift.ps1 sets this when building the
     # canonical comparison artifact, so the soft-drift classifier baseline stays
@@ -706,6 +706,7 @@ function New-Settings {
             $overlayOut = $liveRaw | & $script:JqBin -c '
                 (if (has("enabledPlugins") and (.enabledPlugins | type == "object")) then {enabledPlugins: (.enabledPlugins | with_entries(select(.value | type == "boolean")))} else {} end)
               + (if has("agentPushNotifEnabled") then {agentPushNotifEnabled} else {} end)
+              + (if has("inputNeededNotifEnabled") then {inputNeededNotifEnabled} else {} end)
               + (if (has("theme") and (.theme | type == "string")) then {theme} else {} end)
               + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)'
             if ($LASTEXITCODE -eq 0) {
