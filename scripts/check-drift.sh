@@ -450,7 +450,7 @@ unset _q213_toplevel _q213_tl_phys _q213_rr_phys
 # because the framework tree has no embedded-newline filenames (git would quote
 # such a path via core.quotePath, so it would not match the path filters anyway).
 # Submodule note: ls-files lists only a submodule's gitlink, not its internals —
-# correct for "parent-repo committable content"; ai-config has no submodules.
+# correct for "parent-repo committable content"; agentic-os-template has no submodules.
 # ARG_MAX: ~200 short tracked paths (a single grep invocation, ≈10 KB argv ≪
 # ARG_MAX) — kept as one grep so the 0/1/>1 tri-state survives (xargs would
 # collapse grep's exit-1 "no match" into an error).

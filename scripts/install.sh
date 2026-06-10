@@ -389,7 +389,7 @@ install_hook() {
 # Write|Edit|NotebookEdit, codex apply_patch.
 # Two enforcement classes were removed and intentionally have no rows here:
 #   - `prompt-scan` — the cross-model-review capability moved out of
-#     ai-config to Shape C; no capability declares it.
+#     agentic-os-template to Shape C; no capability declares it.
 #   - `session-end-gate` — the closeout `Stop` hook was removed because
 #     it re-fired on closeout's own writes; closeout is now manual-fire. No
 #     capability declares it.

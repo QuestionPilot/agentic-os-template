@@ -305,7 +305,7 @@ else
   # assertion. The sentinels are runtime-constructed from non-matching halves so
   # this test source does not self-trip the scans when drift scans tests/.
   cmr_prefix='/U'
-  cmr_body='sers/test-que87/Claude - Local/ai-config'
+  cmr_body='sers/test-que87/Claude - Local/agentic-os-template'
   hd_a='Hen'; hd_b='do'
   {
     printf 'workdir: %s%s\nmodel: gpt-5.5\n\n' "$cmr_prefix" "$cmr_body"

@@ -28,7 +28,7 @@
 #
 #   --manifest <dir>  directory containing .build-manifest.json — the install,
 #                     e.g. $CLAUDE_CONFIG_DIR or $CODEX_HOME. REQUIRED.
-#   --repo <dir>      the ai-config source checkout to hash against. Defaults to
+#   --repo <dir>      the agentic-os-template source checkout to hash against. Defaults to
 #                     this script's own repo root (scripts/..), which is the
 #                     checkout the install was rendered from.
 #   --list            machine mode: print ONLY the stale source paths, one per
@@ -70,7 +70,7 @@ skip() {
 }
 
 # Source repo: explicit --repo wins; else derive from this script's location.
-# scripts/check-freshness.sh → scripts/.. = the ai-config checkout root.
+# scripts/check-freshness.sh → scripts/.. = the agentic-os-template checkout root.
 if [ -n "$REPO" ]; then
   repo_root="$REPO"
 else

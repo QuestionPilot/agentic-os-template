@@ -67,7 +67,7 @@ fi
 # --- Tests 4a-4f: per-project Claude Code convention files must FAIL ---
 # narrows the allowlist back from 4 entries to 2: only worktrees/ and
 # settings.local.json (framework-development workflow state) are permitted at
-# the ai-config repo root. Per-project Claude Code conventions like CLAUDE.md
+# the agentic-os-template repo root. Per-project Claude Code conventions like CLAUDE.md
 # and settings.json represent OPERATOR state — they belong in
 # $CLAUDE_CONFIG_DIR (or $CODEX_HOME for.codex/), never in a framework repo
 # root. PR #10's widening (which allowed them) was a workaround for an

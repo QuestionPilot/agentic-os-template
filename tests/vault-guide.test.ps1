@@ -3,7 +3,7 @@
 #
 # acceptance: obsidian/vault-guide.md + start-template.md +
 # handshake-template.md + stub-collapse on README + vault-structure +
-# inbound references from ai-config/README.md +
+# inbound references from agentic-os-template/README.md +
 # playbooks/new-machine-bootstrap.md + templates/local.env.example.
 #
 # Mirrors tests/vault-guide.test.sh 1:1. Pure content-only; no script
@@ -92,7 +92,7 @@ $root_readme = if (Test-Path -LiteralPath $root_readme_path) { Get-Content -Lite
 $playbook_body = if (Test-Path -LiteralPath $playbook_path) { Get-Content -LiteralPath $playbook_path -Raw } else { '' }
 $env_body = if (Test-Path -LiteralPath $env_path) { Get-Content -LiteralPath $env_path -Raw } else { '' }
 
-Assert-Contains 'vault-guide.test: ai-config/README.md Layout table references vault-guide.md' $root_readme 'obsidian/vault-guide.md'
+Assert-Contains 'vault-guide.test: agentic-os-template/README.md Layout table references vault-guide.md' $root_readme 'obsidian/vault-guide.md'
 Assert-Contains 'vault-guide.test: playbooks/new-machine-bootstrap.md references vault-guide.md' $playbook_body 'vault-guide.md'
 Assert-Contains 'vault-guide.test: templates/local.env.example references vault-guide.md' $env_body 'vault-guide.md'
 

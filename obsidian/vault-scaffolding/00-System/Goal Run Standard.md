@@ -28,7 +28,7 @@ Every goal-run needs six anchors:
 
 - Active follow-up goes to Linear.
 - Durable knowledge goes to Memory Vault.
-- Operating standards go to `ai-config`.
+- Operating standards go to `agentic-os-template`.
 - Raw source evidence stays in [[20-Raw/sources]] or the source system.
 
 ## Before Running

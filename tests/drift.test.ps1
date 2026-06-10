@@ -212,7 +212,7 @@ if (Test-Path -LiteralPath $DR_QUE87_DIR) {
         "fixture collision: $DR_QUE87_DIR exists"
 } else {
     New-Item -ItemType Directory -Path $DR_QUE87_DIR -Force | Out-Null
-    $cmr_prefix = '/U'; $cmr_body = 'sers/test-que87/Claude - Local/ai-config'
+    $cmr_prefix = '/U'; $cmr_body = 'sers/test-que87/Claude - Local/agentic-os-template'
     $hd_a = 'Hen'; $hd_b = 'do'
     $body = ('workdir: ' + $cmr_prefix + $cmr_body + "`nmodel: gpt-5.5`n`n") +
             ('# Review repo by ' + $hd_a + $hd_b + "`n")

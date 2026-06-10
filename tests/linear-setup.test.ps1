@@ -2,7 +2,7 @@
 # tests/linear-setup.test.ps1 — Windows-native twin of tests/linear-setup.test.sh.
 #
 # acceptance: linear/linear-setup.md + stub-collapse on
-# linear/README.md + inbound references from ai-config/README.md +
+# linear/README.md + inbound references from agentic-os-template/README.md +
 # templates/local.env.example.
 #
 # Mirrors tests/linear-setup.test.sh 1:1. Pure content-only; no script
@@ -82,7 +82,7 @@ $env_path = Join-Path $env:REPO_ROOT 'templates' 'local.env.example'
 $root_readme = if (Test-Path -LiteralPath $root_readme_path) { Get-Content -LiteralPath $root_readme_path -Raw } else { '' }
 $env_body = if (Test-Path -LiteralPath $env_path) { Get-Content -LiteralPath $env_path -Raw } else { '' }
 
-Assert-Contains 'linear-setup.test: ai-config/README.md Layout table references linear/linear-setup.md' $root_readme 'linear/linear-setup.md'
+Assert-Contains 'linear-setup.test: agentic-os-template/README.md Layout table references linear/linear-setup.md' $root_readme 'linear/linear-setup.md'
 Assert-Contains 'linear-setup.test: templates/local.env.example references linear/linear-setup.md' $env_body 'linear/linear-setup.md'
 
 # --- T10: harness-leak guard — no.claude/skills/ etc. in shared content ---

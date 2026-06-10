@@ -1,7 +1,7 @@
 #Requires -Version 7
 # tests/spine-only.test.ps1 — Windows-native twin of tests/spine-only.test.sh.
 #
-# Guards the spine-only invariant: ai-config (and the public template) ship ONLY
+# Guards the spine-only invariant: agentic-os-template (and the public template) ship ONLY
 # the OS spine (session-agent, closeout, self-audit) + their machinery + the
 # linear/ and obsidian/ contracts. Zero operator tool opinions. See the.sh twin's
 # header for the full rationale, the ctx7/context7 audit (now with NO template

@@ -25,5 +25,5 @@ lifecycle: shipped
   name must stay in sync with both hook scripts.
 - **Catalog inputs (R2):** the orchestration sub-routine consults the OS
   capability catalog in `$CODEX_HOME/AGENTS.md` and the capability specs under
-  `ai-config/capabilities/`. The capabilities the sub-routine routes to are the
+  `agentic-os-template/capabilities/`. The capabilities the sub-routine routes to are the
   compiled skills under `$CODEX_HOME/skills/`.

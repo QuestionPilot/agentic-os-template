@@ -49,7 +49,7 @@ At closeout, classify each item:
 |---|---|
 | Still needs action | Linear |
 | Explains why the work exists | Memory project or area note |
-| Changes future behavior | `ai-config`, project manual, or lesson |
+| Changes future behavior | `agentic-os-template`, project manual, or lesson |
 | Is source-derived knowledge | `10-Wiki/` |
 | Is only historical but useful | `30-Archive/` |
 | Is transient | no action |

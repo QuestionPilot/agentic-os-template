@@ -3,7 +3,7 @@
 # score history so the point-in-time scorecard gains a trend view.
 #
 # self-audit.sh is a READ-ONLY framework diagnostic: it never writes into the
-# ai-config tree. Score history is RUNTIME, PER-OPERATOR state, so it lives in
+# agentic-os-template tree. Score history is RUNTIME, PER-OPERATOR state, so it lives in
 # an operator-local JSONL store keyed off $CLAUDE_CONFIG_DIR — never committed
 # to the repo (matching cross-model-out/ and .build-manifest.json, which are
 # also operator-local). One record per run, one JSON object per line:

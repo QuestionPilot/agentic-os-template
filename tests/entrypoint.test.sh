@@ -34,7 +34,7 @@ if [ -f "$ep_build/CLAUDE.md" ]; then
   # Path placeholders are resolved against local.env.
   assert_not_contains "generated CLAUDE.md has no unresolved placeholders" "$cmd" "@@"
   assert_contains "generated CLAUDE.md substitutes the vault path"  "$cmd" "$EP_VAULT"
-  assert_contains "generated CLAUDE.md substitutes the ai-config path" "$cmd" "$REPO_ROOT"
+  assert_contains "generated CLAUDE.md substitutes the agentic-os-template path" "$cmd" "$REPO_ROOT"
   # The generated capability catalog has one row per capability spec — check
   # each real capability name appears as a catalog row.
   assert_contains "generated CLAUDE.md has the OS capability subsection" "$cmd" "OS capability skills"
@@ -56,7 +56,7 @@ if [ -f "$ep_build/SKILLS.md" ]; then
   skm="$(cat "$ep_build/SKILLS.md")"
   assert_not_contains "generated SKILLS.md has no unresolved placeholders" "$skm" "@@"
   assert_contains "generated SKILLS.md keeps the live inventory"  "$skm" "Live Inventory"
-  assert_contains "generated SKILLS.md substitutes the ai-config path" "$skm" "$REPO_ROOT"
+  assert_contains "generated SKILLS.md substitutes the agentic-os-template path" "$skm" "$REPO_ROOT"
 fi
 
 # --- the build manifest tracks the new generated + source files -----------
@@ -71,7 +71,7 @@ if [ -f "$ep_build/.build-manifest.json" ]; then
   assert_eq "manifest tracks SKILLS.template.md as a source" "true" \
     "$(jq -r '.sources["harnesses/claude/SKILLS.template.md"] != null' "$mf")"
   # vendored-skill snapshots are first-class build inputs.
-  # ai-config no longer authors vendored skills (harnesses/claude/vendored/
+  # agentic-os-template no longer authors vendored skills (harnesses/claude/vendored/
   # was removed); the compile_vendored function survives for forward-compat per
   # closure. Make the contract conditional on vendored/ presence so
   # future Tier 3 re-introduction is still protected, while today's no-vendored

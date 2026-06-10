@@ -17,7 +17,7 @@
 # PATH-CLASS tokens (`@@AI_CONFIG_DIR@@`, `@@OBSIDIAN_VAULT_PATH@@`) are
 # DELIBERATELY EXCLUDED: install.sh resolves them to a single-line path value
 # and they legitimately recur many times across a template (every reference to
-# the ai-config root / vault path). Asserting one-occurrence on those would be
+# the agentic-os-template root / vault path). Asserting one-occurrence on those would be
 # a false constraint. The clobber trap only bites the marker class, where a
 # stray prose copy injects a whole block.
 #

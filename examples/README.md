@@ -1,6 +1,6 @@
 # Examples
 
-This directory contains a minimal sample project that demonstrates the ai-config
+This directory contains a minimal sample project that demonstrates the agentic-os-template
 operating framework end-to-end.
 
 ## Contents
@@ -23,7 +23,7 @@ configuring your own project.
    root, fill in the placeholder values, then run the framework bootstrap:
 
    ```bash
-   bash /path/to/ai-config/scripts/bootstrap.sh
+   bash /path/to/agentic-os-template/scripts/bootstrap.sh
    ```
 
 3. Once bootstrap completes, open a Claude Code session in your project. The

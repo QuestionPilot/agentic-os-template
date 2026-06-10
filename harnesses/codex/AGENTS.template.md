@@ -82,9 +82,9 @@ an inline tracker identifier — framework files carry no private tracker IDs.
 
 - CLI over MCP when both can do the job — CLI burns fewer tokens.
 - Keep active work in Linear, durable knowledge in the vault, operating rules in
-  ai-config.
+  agentic-os-template.
 - Do not write local paths, auth state, secrets, or project history into
-  ai-config.
+  agentic-os-template.
 - The framework SessionStart hook directs `$session-agent` invocation as the
   first action of every session (Mode 1: orient + route). A `PreToolUse` hook
   on `apply_patch` enforces this as a safety net before any file edit.

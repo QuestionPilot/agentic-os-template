@@ -16,7 +16,7 @@ upstream acceptance suite is present — `bash tests/run.sh`. They answer "is
 anything broken?" — they do not answer
 "where are we thinning out?" Self-audit closes that gap with a five-pillar
 leverage-weighted scorecard against the framework's own state across all three
-layers (ai-config / Linear / vault).
+layers (agentic-os-template / Linear / vault).
 
 The capability is **read-only**. It never auto-fixes. The output is a scorecard
 + a ranked list of gaps + concrete next steps; gap closure is the operator's
@@ -88,7 +88,7 @@ script's penalty rules are the canonical scoring.
    `CLAUDE_PRIMARY_MEMORY_DIR` in `local.env` to pin it explicitly. Each surface
    is optional — the script degrades gracefully and notes "skipped: <surface> not
    configured" in the output. Pass `--repo-root <path>` to point at a different
-   ai-config checkout (the test suite uses this).
+   agentic-os-template checkout (the test suite uses this).
 
 2. **Read the scorecard.** The script's default output is human-readable
    markdown. The top-of-output total + per-pillar scores are the answer; the
@@ -123,7 +123,7 @@ The scorecard above is point-in-time. To see whether the framework is
 a trend view across the last N runs.
 
 History is **runtime, per-operator state**, so it is NOT committed to the
-ai-config repo (no repo churn; portable across operators). It persists in an
+agentic-os-template repo (no repo churn; portable across operators). It persists in an
 operator-local JSONL store keyed off `$CLAUDE_CONFIG_DIR`, defaulting to:
 
 ```
@@ -258,7 +258,7 @@ specific scores.
   scores what it can see and tells you what it could not.
 - **Operator-local state.** The scorecard reflects the operator's local
   installed state (memory files, vault notes, Linear). Two operators of the
-  same ai-config repo will see different scores.
+  same agentic-os-template repo will see different scores.
 
 ## Notes
 

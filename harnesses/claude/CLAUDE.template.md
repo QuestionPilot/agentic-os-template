@@ -64,8 +64,8 @@ Before opening a PR or pushing a branch with framework changes, run `make verify
 Each rule states its rationale in prose, so it is self-justifying without an external lookup. The originating issue or decision lives out-of-line in the durable vault note's `linear:` frontmatter (see `core/memory-model.md`), not as an inline tracker identifier — framework files carry no private tracker IDs.
 
 - CLI over MCP when both can do the job — CLI burns fewer tokens
-- Keep active work in Linear, durable knowledge in Obsidian, operating rules in ai-config
-- Do not write local paths, auth state, secrets, or project history into ai-config
+- Keep active work in Linear, durable knowledge in Obsidian, operating rules in agentic-os-template
+- Do not write local paths, auth state, secrets, or project history into agentic-os-template
 - The framework SessionStart hook directs `session-agent` invocation as the first action of every session (Mode 1: orient + route). A PreToolUse hook on Write/Edit/NotebookEdit enforces this as a safety net before any file edit.
 - Multi-step or multi-session work goes into Linear before execution (routing protocol step 4); session todos (TodoWrite) track only the steps *within* an issue being actively executed.
 - Before closing any meaningful session, classify lessons through `core/self-improvement.md`. Invoke the `closeout` skill manually to walk this — it is manual-fire; no hook enforces it (the Stop-hook gate was removed because it re-fired on closeout's own writes).

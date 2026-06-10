@@ -97,7 +97,7 @@ block. Enforcement is **never code-generated** — the scripts are real files.
 **Non-capability hook.** One hook is a standalone harness feature, not tied to any
 capability: `hooks/framework-surface.sh` runs on `SessionStart`
 (`matcher: "startup|clear|compact"`) and surfaces three context blocks as
-`additionalContext`: (a) recent `ai-config` framework commits, (b) the
+`additionalContext`: (a) recent `agentic-os-template` framework commits, (b) the
 <TEAM>-59 MCP-health probe, and (c) the <TEAM>-71 session-agent invocation directive
 (the auto-fire mechanism for the spine capability — see
 `capabilities/session-agent.md` Mode 1). The build wires it unconditionally.
@@ -164,7 +164,7 @@ generated entrypoint must never carry an empty path.
 
 | Placeholder | Substituted with |
 | --- | --- |
-| `@@AI_CONFIG_DIR@@` | Absolute path to this `ai-config` checkout. |
+| `@@AI_CONFIG_DIR@@` | Absolute path to this `agentic-os-template` checkout. |
 | `@@CLAUDE_CONFIG_DIR@@` | Absolute path to the harness config dir (build target). |
 | `@@OBSIDIAN_VAULT_PATH@@` | Absolute path to the durable-knowledge vault. |
 | `@@CAPABILITY_CATALOG@@` | Generated markdown table of the `capabilities/` specs (entrypoint templates only). |

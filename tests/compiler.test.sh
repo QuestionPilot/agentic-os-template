@@ -95,7 +95,7 @@ rm -rf "$nat_build"
 # --- install.sh: vendored capability with a snapshot is copied as-is ---
 # Synthesize a fixture vendored capability inside a throwaway repo copy so the
 # test exercises compile_vendored independently of which (if any) vendored
-# capabilities the real ai-config currently authors. Names are chosen to not
+# capabilities the real agentic-os-template currently authors. Names are chosen to not
 # collide with any real or historical capability.
 VREPO="$(mktemp -d)"
 cp -R "$REPO_ROOT/." "$VREPO/"
@@ -168,7 +168,7 @@ done
 if [ -f "$hk_build/hooks/framework-surface.sh" ]; then
   fs_content="$(cat "$hk_build/hooks/framework-surface.sh")"
   assert_not_contains "framework-surface.sh placeholder resolved" "$fs_content" "@@AI_CONFIG_DIR@@"
-  assert_contains "framework-surface.sh has the resolved ai-config path" "$fs_content" "$REPO_ROOT"
+  assert_contains "framework-surface.sh has the resolved agentic-os-template path" "$fs_content" "$REPO_ROOT"
 fi
 [ -x "$hk_build/hooks/session-agent.sh" ] && _pass "compiled hook is executable" \
   || _fail "compiled hook is executable"

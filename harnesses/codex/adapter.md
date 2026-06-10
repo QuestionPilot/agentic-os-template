@@ -20,11 +20,11 @@ build does not assume the default.
 > per <TEAM>-55 closure (3-shape
 > skill model). `route` + `skill-orchestrator` were consolidated into
 > `session-agent` in <TEAM>-71.
-> `cross-model-review` was removed from ai-config in
+> `cross-model-review` was removed from agentic-os-template in
 > <TEAM>-68 and now lives as a
 > Shape C operator-local skill in each operator's harness config dir, never in
 > the framework. Any ex-vendored tool capabilities are operator-managed Shape C if retained at `$CLAUDE_CONFIG_DIR/skills/<name>/`.
-> ai-config now authors exactly 3 spine capabilities × 2 harnesses
+> agentic-os-template now authors exactly 3 spine capabilities × 2 harnesses
 > (symmetric 3/3).
 
 ---
@@ -135,7 +135,7 @@ injection uses `hookSpecificOutput.additionalContext`, or plain stdout for
 **Non-capability hook.** One hook is a standalone harness feature, not tied to
 any capability: `hooks/framework-surface.sh` runs on `SessionStart`
 (`matcher: "startup|clear|compact"`) and surfaces two context blocks as
-`additionalContext`: (a) recent `ai-config` framework commits, and (b) the
+`additionalContext`: (a) recent `agentic-os-template` framework commits, and (b) the
 <TEAM>-71 session-agent invocation directive (the auto-fire mechanism for the
 spine capability — see `capabilities/session-agent.md` Mode 1). The build
 wires it unconditionally.
@@ -253,7 +253,7 @@ generated entrypoint must never carry an empty path.
 
 | Placeholder | Substituted with |
 | --- | --- |
-| `@@AI_CONFIG_DIR@@` | Absolute path to this `ai-config` checkout. |
+| `@@AI_CONFIG_DIR@@` | Absolute path to this `agentic-os-template` checkout. |
 | `@@CODEX_HOME@@` | Absolute path to the Codex config dir (build target). |
 | `@@OBSIDIAN_VAULT_PATH@@` | Absolute path to the durable-knowledge vault. |
 | `@@CAPABILITY_CATALOG@@` | Generated markdown table of the `capabilities/` specs (entrypoint template only). |

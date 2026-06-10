@@ -8,7 +8,7 @@
     <TEAM>-100 Windows-native prototype port of harnesses/claude/hooks/framework-surface.sh.
 
     Three independent blocks emitted in one additionalContext payload:
-      1. ai-config git log (last N days) — picks up improvements from prior
+      1. agentic-os-template git log (last N days) — picks up improvements from prior
          sessions
       2. `claude mcp list` ✓ Connected MCPs — surfaces the <TEAM>-59 silent-
          empty-tools failure mode
@@ -17,7 +17,7 @@
     Filtered to startup/clear/compact via the settings.json matcher.
 
     @@AI_CONFIG_DIR@@ is a build placeholder — install.ps1 substitutes the
-    absolute path to the ai-config checkout from local.env.
+    absolute path to the agentic-os-template checkout from local.env.
 
     Kill switches:
       CLAUDE_SKIP_FRAMEWORK_SURFACE=1           disables the whole hook
@@ -62,14 +62,14 @@ if ($EVENT_JSON) {
     $SESSION_SOURCE = "$($EVENT_JSON | & jq -r '.source // empty' 2>$null)".Trim().ToLowerInvariant()
 }
 
-# --- 1. ai-config git-log block --------------------------------------------
+# --- 1. agentic-os-template git-log block --------------------------------------------
 $GIT_BLOCK = ''
 if (Test-Path -LiteralPath (Join-Path $AI_CONFIG_DIR '.git')) {
     $changes = & git -C $AI_CONFIG_DIR log --since="${DAYS}.days.ago" --pretty=format:'- %ad %s (%h)' --date=short 2>$null
     if ($changes) {
         $changesText = if ($changes -is [array]) { $changes -join "`n" } else { $changes }
         $GIT_BLOCK = @"
-# Recent ai-config (framework) changes — last $DAYS days
+# Recent agentic-os-template (framework) changes — last $DAYS days
 
 The agentic OS framework has had the following commits recently. Use this to pick
 up improvements from prior sessions and know what changed in the operating-system

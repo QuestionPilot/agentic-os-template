@@ -29,7 +29,7 @@
     $CLAUDE_CONFIG_DIR or $CODEX_HOME). REQUIRED.
 
 .PARAMETER Repo
-    The ai-config source checkout to hash against. Defaults to this script's own
+    The agentic-os-template source checkout to hash against. Defaults to this script's own
     repo root (scripts/..), the checkout the install was rendered from.
 
 .PARAMETER List
@@ -104,7 +104,7 @@ function Skip-Fresh([string]$reason) {
 }
 
 # Source repo: explicit -Repo / --repo wins; else derive from this script's
-# location. scripts/check-freshness.ps1 → scripts/.. = the ai-config checkout.
+# location. scripts/check-freshness.ps1 → scripts/.. = the agentic-os-template checkout.
 if ($Repo) {
     $repoRoot = $Repo
 } else {

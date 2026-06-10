@@ -40,7 +40,7 @@ Write findings to [[40-Observability/dream-reviews]] and promote each recommenda
 
 - Linear task
 - Memory Vault note
-- `ai-config` SOP change
+- `agentic-os-template` SOP change
 - project manual update
 - script/check
 - no action

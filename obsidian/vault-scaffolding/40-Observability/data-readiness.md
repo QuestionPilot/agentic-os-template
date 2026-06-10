@@ -27,4 +27,4 @@ Use this note during Dream Review or project closeout to spot where the Agentic 
 - Proposed prep artifact:
 - Consumer:
 - Approval gate:
-- Destination: Linear, Memory Vault, `ai-config`, project helper, or no-action
+- Destination: Linear, Memory Vault, `agentic-os-template`, project helper, or no-action

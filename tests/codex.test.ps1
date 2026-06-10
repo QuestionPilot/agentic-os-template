@@ -50,7 +50,7 @@ _Skip 'codex.test: codex AGENTS.md references core/' $reason
 _Skip 'codex.test: codex AGENTS.md carries the session-agent spine rule' $reason
 _Skip 'codex.test: codex AGENTS.md has no unresolved placeholders' $reason
 _Skip 'codex.test: codex AGENTS.md substitutes the vault path' $reason
-_Skip 'codex.test: codex AGENTS.md substitutes the ai-config path' $reason
+_Skip 'codex.test: codex AGENTS.md substitutes the agentic-os-template path' $reason
 _Skip 'codex.test: codex AGENTS.md catalog has a row for session-agent' $reason
 _Skip 'codex.test: codex AGENTS.md catalog has a row for closeout' $reason
 _Skip 'codex.test: codex AGENTS.md catalog omits deleted route' $reason

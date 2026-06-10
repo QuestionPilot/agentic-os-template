@@ -68,7 +68,7 @@ This serves Boring is Beautiful — it does not override it. Search to find the 
 
 ## Internal vs Boundary
 
-ai-config's own source files (`capabilities/`, `core/`, `harnesses/<h>/*` pre-render) are **internal** — refactor freely, no compat shims for internal callers. The rendered output that lands at `$CLAUDE_CONFIG_DIR` (and `$CODEX_HOME` for the codex harness) is a **boundary** — older installs may carry stale hooks, settings, or skill files until the operator next re-renders.
+agentic-os-template's own source files (`capabilities/`, `core/`, `harnesses/<h>/*` pre-render) are **internal** — refactor freely, no compat shims for internal callers. The rendered output that lands at `$CLAUDE_CONFIG_DIR` (and `$CODEX_HOME` for the codex harness) is a **boundary** — older installs may carry stale hooks, settings, or skill files until the operator next re-renders.
 
 The manifest-based `scripts/install.sh` handles boundary migration on re-render; don't hand-roll compat shims in capability bodies. Concretely: renaming a capability's body file in `capabilities/` is an internal refactor that `make render` propagates automatically. Changing a hook script's filename or argv contract is a boundary change because some operator's `$CLAUDE_CONFIG_DIR/hooks/` may still reference the old name until they next `make render` — those changes need a transition plan (rename-and-symlink, or a manifest-driven cleanup pass).
 
@@ -76,8 +76,8 @@ The manifest-based `scripts/install.sh` handles boundary migration on re-render;
 
 The framework composes in two explicit layers.
 
-1. **Spine** — capabilities `ai-config/capabilities/*.md` authors and `install.sh` auto-installs into the operator harness config dir (currently `session-agent`, `closeout`, `self-audit`). The framework's spine works standalone — no operator-installed tools required.
-2. **Setup pages** — `ai-config/{obsidian,linear}/*.md` document the two infrastructure layers the framework references (durable knowledge + active-work tracking). Operator installs per the page. Framework references these pages from `CLAUDE.md` / `AGENTS.md` but does not enforce installation — `validate.sh` exits 0 on a fresh clone whether or not either surface is installed.
+1. **Spine** — capabilities `agentic-os-template/capabilities/*.md` authors and `install.sh` auto-installs into the operator harness config dir (currently `session-agent`, `closeout`, `self-audit`). The framework's spine works standalone — no operator-installed tools required.
+2. **Setup pages** — `agentic-os-template/{obsidian,linear}/*.md` document the two infrastructure layers the framework references (durable knowledge + active-work tracking). Operator installs per the page. Framework references these pages from `CLAUDE.md` / `AGENTS.md` but does not enforce installation — `validate.sh` exits 0 on a fresh clone whether or not either surface is installed.
 
 Tool choices — plugins, CLIs, MCP connectors, recommended tool-skills — are **operator-local** and are not shipped by the framework, the same way the Linear and Obsidian surfaces are documented as contracts but never auto-installed. The general CLI-over-MCP principle lives in [`core/tool-use.md`](tool-use.md); concrete tool inventories live in the operator's own harness config, not here.
 
