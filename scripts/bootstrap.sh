@@ -49,6 +49,25 @@ done
 
 [ "${#HARNESSES[@]}" -eq 0 ] && HARNESSES=("claude")
 
+# validate_harnesses — reject unknown harness names up front, in EVERY mode
+# (including --check). The known set mirrors install.sh's harness_target_env
+# (claude, codex); keep the two in lockstep per the inventory-coupling rule.
+# Case-folded because install.sh resolves CLAUDE == claude. Without this,
+# `--harness typo --check` passes — an unknown name merely suppresses the codex
+# CLI requirement in check_clis — and only a real run dies, deep in install.sh.
+# Fail fast with a clear message here, the same way install.sh rejects an unknown
+# harness before any mutation.
+validate_harnesses() {
+  local h folded
+  for h in ${HARNESSES[@]+"${HARNESSES[@]}"}; do
+    folded="$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')"
+    case "$folded" in
+      claude|codex) ;;
+      *) die "unknown harness '$h' (known: claude, codex)" ;;
+    esac
+  done
+}
+
 # cli_min_version <name> — returns the pinned minimum, or "presence" for any version.
 cli_min_version() {
   case "$1" in
@@ -359,6 +378,10 @@ main() {
   info "Harnesses: ${HARNESSES[*]}"
   [ "$CHECK" -eq 1 ] && info "(check mode — no mutations)"
   [ "$DRY_RUN" -eq 1 ] && info "(dry-run mode — mutations printed only)"
+
+  # Reject unknown harness names before any check or mutation, so --check catches
+  # a typo too (not just a real run dying later in install.sh).
+  validate_harnesses
 
   # Load local.env if present (machine may be partially set up).
   local local_env="$repo_root/local.env"
