@@ -71,6 +71,17 @@ make_codex_env() {
   } > "$1"
 }
 
+# make_hermes_env <env-file> <hermes-home> [vault-dir]
+# Writes a minimal local.env for `install.sh --harness hermes` test builds.
+# install.sh resolves the hermes build target from HERMES_HOME; the generated
+# SOUL.md references OBSIDIAN_VAULT_PATH, so a fixture must supply it or the
+# build fails on the empty-placeholder gate.
+make_hermes_env() {
+  { printf 'HERMES_HOME=%q\n' "$2"
+    printf 'OBSIDIAN_VAULT_PATH=%q\n' "${3:-/tmp/test-vault}"
+  } > "$1"
+}
+
 # _skip <label> [<reason>]
 _skip() { TESTS_RUN=$((TESTS_RUN + 1)); printf '  SKIP %s (%s)\n' "$1" "${2:-not applicable}"; }
 

@@ -1,0 +1,4 @@
+name: agentic-os-hook-bridge
+version: 0.1.0
+description: "Registers config.yaml shell hooks in entrypoints that skip register_from_config (desktop dashboard / web_server). Idempotent: CLI and gateway double-calls are no-ops; consent still flows through the shell-hooks allowlist."
+author: "agentic-os"

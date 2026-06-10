@@ -429,7 +429,7 @@ Assert-File 'self-audit.test: capabilities/self-audit.md exists' $SA_PATH
 $SA_CONTENT = if (Test-Path -LiteralPath $SA_PATH) { Get-Content -LiteralPath $SA_PATH -Raw } else { '' }
 Assert-Contains 'self-audit.test: capability declares name: self-audit' $SA_CONTENT 'name: self-audit'
 Assert-Contains 'self-audit.test: capability declares kind: native' $SA_CONTENT 'kind: native'
-Assert-Contains 'self-audit.test: capability ships to both Claude and Codex' $SA_CONTENT 'harnesses: [claude, codex]'
+Assert-Contains 'self-audit.test: capability ships to every spine harness' $SA_CONTENT 'harnesses: [claude, codex, hermes]'
 Assert-Contains 'self-audit.test: capability declares verification: self-audit' $SA_CONTENT 'verification: self-audit'
 
 # Both harness realizations exist.

@@ -176,7 +176,7 @@ if ($harnessList.Count -gt 1) {
     if (-not $pwshExe) { $pwshExe = 'pwsh' }
     $built = 0
     foreach ($h in $harnessList) {
-        if ($h -eq 'codex') {
+        if ($h -in @('codex', 'hermes')) {
             # CONTRACT (deliberate bash↔PS asymmetry): the Windows-native twin
             # builds claude only. In a multi-harness run codex is WARN-skipped —
             # NOT a hard failure — so the documented `--harness claude --harness
@@ -188,7 +188,7 @@ if ($harnessList.Count -gt 1) {
             # reason). A SINGLE `-Harness codex` still hard-rejects (exit 1) at
             # the resolution block below. The macOS/Linux bash twin builds codex;
             # full Windows codex parity is a tracked follow-on.
-            Warn "codex harness is not yet supported on Windows; skipping it (claude still builds — the macOS/Linux install.sh supports codex; full Windows codex parity is a tracked follow-on)"
+            Warn "$h harness is not yet supported on Windows; skipping it (claude still builds — the macOS/Linux install.sh supports codex and hermes; full Windows parity is a tracked follow-on)"
             continue
         }
         $childArgs = @('-NoProfile', '-File', $PSCommandPath, '--harness', $h)
@@ -329,8 +329,8 @@ if (-not $env:AI_CONFIG_DIR) {
 # Windows parity is tracked as a follow-on. Reject BEFORE resolving the target
 # env var so a fresh Windows operator who passes -Harness codex gets a clear
 # "use claude" instruction, not a confusing CODEX_HOME-not-set failure.
-if ($Harness -eq 'codex') {
-    Die "codex harness is not yet supported on Windows; re-run with -Harness claude (the macOS/Linux install.sh supports codex — full Windows codex parity is a tracked follow-on)"
+if ($Harness -in @('codex', 'hermes')) {
+    Die "$Harness harness is not yet supported on Windows; re-run with -Harness claude (the macOS/Linux install.sh supports codex and hermes — full Windows parity is a tracked follow-on)"
 }
 
 $targetEnvVar = switch ($Harness) {
