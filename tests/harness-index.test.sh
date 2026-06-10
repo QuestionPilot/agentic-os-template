@@ -3,7 +3,7 @@
 # (obsidian/vault-scaffolding/bin/generate-harness-index.js) + the vault
 # secret scan extension in memory-vault-audit.js.
 #
-# Pins the QUE-231-class contract from core/memory-model.md § Harness-Neutral
+# Pins the contract from core/memory-model.md § Harness-Neutral
 # Note Schema:
 #   1. scope filter — a note scoped to one harness never appears in another
 #      harness's generated view (the mechanical "orient cannot load it" proof);
