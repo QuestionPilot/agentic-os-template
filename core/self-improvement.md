@@ -69,6 +69,9 @@ outcome is `no-action` with rationale and the rest of the walk is wasted.
 1. Did we learn anything that should change future behavior?
 2. Is the lesson already represented in the right source of truth?
 3. Can the lesson become a check or script instead of prose?
+
+   **Q3a — skill-candidate capture.** Did this session repeat a multi-step procedure worth capturing as a skill, but not (yet) worth the full seven-step promotion (`skills/skill-authoring.md` principle 11)? Add a CANDIDATE row to the harness's skill catalog (the catalog's candidates section) — name, one-line trigger, where the procedure ran — for manual triage. No autonomous skill creation: the candidate row is the entire write; promotion stays manual via the trust contract.
+
 4. Does Linear need a follow-up issue?
 5. Does Obsidian need a durable note?
 6. Did the work reveal a missing silver platter, unclear data path, or unbounded goal-run?
