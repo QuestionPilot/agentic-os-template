@@ -89,42 +89,73 @@ assert_eq "spine-only: settings.base.json ships no theme/effortLevel preference"
 # Case-insensitive: brand names appear both lowercased (CLI identifiers) and
 # capitalized (prose / "Stripe — billing. Connected.").
 _so_pat="play""wright|sup""abase|net""lify|str""ipe|fire""crawl|web-design-""guidelines|frontend-""design|con""text7|ct""x7"
-# The allowlist is per-OCCURRENCE, not per-line (Codex F1): for each hit, strip
-# ONLY the name-as-data token that is legitimate FOR ITS FILE, then rescan the
-# residual for any forbidden identifier. So a real tool opinion sharing a line
-# with an allowed token (e.g. "wire supabase and install playwright") still
-# trips — a per-line drop would have swallowed the whole line. Strip tokens are
-# built from halves; we lowercase first (BSD sed has no `I` flag) and the pattern
-# is already lowercase, so the residual grep needs no `-i`. Address-scoped sed
-# subs keep each allow confined to its own file:
-# - scripts/validate.ps1 — the Stripe brand inside its secret-scan regex
-# - obsidian/.../memory-vault-audit.js — the Stripe AND Supabase brands inside
-# its secret-scan key-prefix regex (SUPABASE_SERVICE_ROLE_KEY / STRIPE_SECRET_KEY)
+# The allowlist is per-OCCURRENCE, not per-line (Codex F1), AND each strip is
+# anchored to the secret-scan CONTENT SIGNATURE — a brand-free token from the
+# surrounding secret-scan construct — NOT just the file path. The bare brand is
+# removed ONLY on lines that carry that signature, then the residual is rescanned.
+# Two properties fall out:
+#  - a forbidden identifier sharing a real secret-scan line still trips — only the
+#    brand is removed, a co-located identifier survives;
+#  - a tool opinion ANYWHERE ELSE in the file trips, even one that embeds the brand
+#    inside a variable/key name (e.g. "use stripelive"), because such a line lacks
+#    the secret-scan signature so nothing is stripped. A file-scoped token strip —
+#    even of the signature form — masked these (Codex adversarial pass on this
+#    change); content anchoring is the gap this closes.
+# Anchors (post-lowercase), brand-free + metachar-free so the sed addresses need no
+# escaping and the PS twin matches the same substrings:
+# - scripts/validate.ps1 — `_live_` (the Stripe live-key regex on the def line) and
+#   `bgnpriv` (the $bgnPriv sibling on the assembled-$pattern line) bracket the two
+#   $stripeLive occurrences; strip the Stripe brand on each.
+# - obsidian/.../memory-vault-audit.js — `secretpattern` (the const secretPattern
+#   regex) brackets the STRIPE_SECRET_KEY + SUPABASE_SERVICE_ROLE_KEY occurrences;
+#   strip both brands.
+# Brands are built from halves; we lowercase first (BSD sed has no `I` flag) and the
+# pattern is already lowercase, so the residual grep needs no `-i`.
 _so_str="str""ipe"; _so_sup="sup""abase"
+# Shared strip pipeline (reads stdin) — one definition feeds the live audit and
+# each regression so the four copies cannot drift.
+_so_strip() {
+  sed -E \
+    -e "/^scripts\/validate\.ps1:.*_live_/ s/$_so_str//g" \
+    -e "/^scripts\/validate\.ps1:.*bgnpriv/ s/$_so_str//g" \
+    -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:.*secretpattern/ s/$_so_str//g" \
+    -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:.*secretpattern/ s/$_so_sup//g"
+}
 _so_hits="$(cd "$_so_root" && git grep -niIE "$_so_pat" -- ':!tests/' ':!docs/' 2>/dev/null \
-  | tr '[:upper:]' '[:lower:]' \
-  | sed -E \
-      -e "/^scripts\/validate\.ps1:/ s/$_so_str//g" \
-      -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_str//g" \
-      -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_sup//g" \
-  | grep -E "$_so_pat" || true)"
+  | tr '[:upper:]' '[:lower:]' | _so_strip | grep -E "$_so_pat" || true)"
 assert_eq "spine-only: no operator tool identifiers outside the allowlisted DATA lines" "" "$_so_hits"
 
-# Self-trip regression: a real tool opinion sharing a line with an allowed token
-# MUST still trip. Build adversarial lines at runtime (split tokens so this
-# source isn't self-listing) over the SAME two allowlisted files and run them
-# through the SAME strip+rescan pipeline.
+# Self-trip regression A — per-occurrence: a forbidden identifier sharing a real
+# secret-scan line MUST still trip. The brand on the anchored line is stripped; the
+# co-located identifier survives. Tokens split so this source isn't self-listing.
 _so_evil="$(printf '%s\n%s\n' \
-  "scripts/validate.ps1:210:stripe scanner; also wire fire""crawl" \
-  "obsidian/vault-scaffolding/bin/memory-vault-audit.js:42:sup""abase + str""ipe scan; plus play""wright")"
-_so_evil_residual="$(printf '%s\n' "$_so_evil" \
-  | sed -E \
-      -e "/^scripts\/validate\.ps1:/ s/$_so_str//g" \
-      -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_str//g" \
-      -e "/^obsidian\/vault-scaffolding\/bin\/memory-vault-audit\.js:/ s/$_so_sup//g" \
-  | grep -cE "$_so_pat" || true)"
-assert_eq "spine-only: allowlist is per-occurrence (a real opinion sharing an allowed line still trips)" \
+  "scripts/validate.ps1:210:${_so_str}live = '_live_' regex; also wire fire""crawl" \
+  "obsidian/vault-scaffolding/bin/memory-vault-audit.js:69:const secretpattern ${_so_str}_secret_key|${_so_sup}_service_role_key; plus play""wright")"
+_so_evil_residual="$(printf '%s\n' "$_so_evil" | _so_strip | grep -cE "$_so_pat" || true)"
+assert_eq "spine-only: a forbidden identifier on a real secret-scan line still trips" \
   "2" "$_so_evil_residual"
+
+# Self-trip regression B — pure opinion: a bare-brand tool opinion in an allowlisted
+# file (no secret-scan signature) MUST trip. Brands split so this source isn't
+# self-listing.
+_so_pure="$(printf '%s\n%s\n' \
+  "scripts/validate.ps1:99:# use the ${_so_str} cli for billing checks" \
+  "obsidian/vault-scaffolding/bin/memory-vault-audit.js:99:# wire ${_so_sup} and ${_so_str} here")"
+_so_pure_residual="$(printf '%s\n' "$_so_pure" | _so_strip | grep -cE "$_so_pat" || true)"
+assert_eq "spine-only: a pure bare-brand opinion in an allowlisted file still trips" \
+  "2" "$_so_pure_residual"
+
+# Self-trip regression C — signature-form prose: a tool opinion that embeds the
+# brand inside the secret-scan variable/key NAME (e.g. "use stripelive", "wire
+# stripe_secret_key") but lacks the surrounding secret-scan signature MUST still
+# trip. A file-scoped strip of the signature token alone masked these; content
+# anchoring catches them.
+_so_evade="$(printf '%s\n%s\n' \
+  "scripts/validate.ps1:99:# use ${_so_str}live for billing checks" \
+  "obsidian/vault-scaffolding/bin/memory-vault-audit.js:99:# wire ${_so_sup}_service_role_key and ${_so_str}_secret_key here")"
+_so_evade_residual="$(printf '%s\n' "$_so_evade" | _so_strip | grep -cE "$_so_pat" || true)"
+assert_eq "spine-only: brand in a signature name without the secret-scan context still trips" \
+  "2" "$_so_evade_residual"
 
 # --- structural: the SHIPPED claude SKILLS template is spine-only ---
 # After the overlay split, harnesses/claude/SKILLS.template.md ships ONLY the
