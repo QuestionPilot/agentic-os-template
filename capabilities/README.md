@@ -25,7 +25,7 @@ describes *how that harness runs it*.
 name: <kebab-case — must equal the filename without .md>
 summary: <one line — used to regenerate the harness skill catalog>
 triggers: [<phrase>, <phrase>, ...]   # non-empty list
-verification: <gate>                  # a gate name from agentic-os-template/verification/ (without .md), or "none"
+verification: <gate>                  # a gate name from verification/ (without .md), or "none"
 harnesses: [<harness>, ...]           # non-empty; each must have a harnesses/<harness>/ adapter dir
 kind: native | vendored
 enforcement: <class>                  # OPTIONAL — a named enforcement class the harness adapter maps to a gate/hook
