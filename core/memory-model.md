@@ -131,6 +131,24 @@ When such an index exists:
   contradict. Memory captures what was true when written; signal captures what
   is true now.
 
+### Cache Contract — Harness-Native Stores Are Local Caches
+
+Harness-native memory stores (a harness's autoloaded memory directory and
+index, its native per-agent memory files, any per-machine memory) are **local
+caches**, not durable storage. Three rules keep the tiers from bleeding into
+each other:
+
+- **Durability flows only through the vault.** Cross-machine and cross-harness
+  durability is achieved by promoting lessons, decisions, and project memory
+  through closeout into the durable vault (Tier 3) — never by treating a
+  harness's local store as the long-term record.
+- **Never sync caches machine-to-machine.** A cache is rebuilt from the vault,
+  the active-work tracker, and the repo; syncing one machine's cache to another
+  creates a second source of truth and invites split-brain.
+- **Never impose vault schema or protocols on a native store.** Each harness's
+  native memory keeps its own format, size caps, and conventions; the vault's
+  note schema, frontmatter contracts, and audit apply to vault notes only.
+
 ### Index Size + Per-Entry Caps (enforced)
 
 The index autoloads into context at session start, so it competes for the same

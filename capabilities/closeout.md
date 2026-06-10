@@ -76,6 +76,14 @@ classification machinery for work that should never have shipped is wasted.
    staging → test must pass → **explicit user approval** → atomic commit. The
    fixture-test and explicit-approval steps are non-optional; never auto-promote
    an unvetted flow into the trusted skill set.
+
+   **Q3a — skill-candidate capture.** Did this session repeat a multi-step
+   procedure worth capturing as a skill, but not (yet) worth the full
+   seven-step promotion? Route it as a CANDIDATE row in the harness's skill
+   catalog (the catalog's candidates section) — name, one-line trigger, where
+   the procedure ran — for manual triage. No autonomous skill creation: the
+   candidate row is the entire write; promotion stays manual via the trust
+   contract above.
 4. Does Linear need updating — a completed issue moved to Done, a status
    corrected, or a follow-up issue created?
 5. Does the durable knowledge base need a note?
@@ -322,6 +330,15 @@ Reuse the vault's `80-Templates/session-summary.md` shape, extended with a
 - `## Raw observations` — see the trust model below.
 - `## Pick up here` — one sentence: the next concrete action.
 - `## Links` — project note · Linear · decisions/lessons.
+
+**No cross-layer wikilinks.** A session log may `[[wikilink]]` only notes that
+exist in the vault itself. References to harness memory-layer files (e.g.
+`project_*` / `feedback_*` / `reference_*` notes in a harness's local memory
+store) are written as backticked plain names, never wikilinks — the vault
+audit resolves every wikilink against the vault, and a memory-store filename
+is a guaranteed broken link there. When a memory-store reference has a vault
+counterpart (e.g. a project note), wikilink the vault note and backtick the
+memory-store name alongside it.
 
 ### 5. Trust model — the session log is UNTRUSTED, mixed-origin evidence
 
