@@ -109,6 +109,13 @@ if ($CL_OUT -is [array]) { $CL_OUT = $CL_OUT -join "`n" }
 Assert-Eq 'memory-drift.test: clean dir exit 0' '0' "$CL_RC"
 Assert-Contains 'memory-drift.test: clean dir reports PASS' $CL_OUT 'PASS'
 
+# The PASS line must report BOTH coverage counts: the project_*.md headline-drift
+# subset AND the full note set the frontmatter+injection scans walk. Fixture at
+# this point: 3 project files (alpha/gamma/delta) + 1 reference note = 4 notes.
+# A project-only count on a mixed dir misreads as a coverage gap.
+Assert-Contains 'memory-drift.test: PASS reports project headline-check count' $CL_OUT '3 project files headline-checked'
+Assert-Contains 'memory-drift.test: PASS reports full note scan count' $CL_OUT '4 notes frontmatter+injection-scanned'
+
 # --- 3. Empty memory dir: still exit 0.
 $EMPTY_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-drift-empty-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $EMPTY_TMP -Force | Out-Null

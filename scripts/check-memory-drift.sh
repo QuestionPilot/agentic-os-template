@@ -191,6 +191,11 @@ fi
 
 drift=0
 scanned=0
+# Counts the FULL note set (feedback_/reference_/project_/runtime_*.md) walked by
+# the frontmatter + injection scans below — `scanned` counts only the project_*.md
+# headline-drift subset. Reported separately in the PASS line: a single
+# project-only count on a large mixed dir reads as a coverage gap that isn't there.
+notes_scanned=0
 
 # Use NUL-delimited find for paths with spaces; process_substitution + while-read
 # is bash-3.2-safe (no mapfile).
@@ -301,6 +306,7 @@ fi
 fm_fail=0
 while IFS= read -r -d '' f; do
   base=$(basename "$f")
+  notes_scanned=$((notes_scanned + 1))
   issues=$(LC_ALL=C awk '
     BEGIN { infm=0; saw_open=0; closed=0; buf="" }
     NR==1 {
@@ -415,7 +421,7 @@ while IFS= read -r -d '' f; do
 done < <(find "$memory_dir" -maxdepth 1 -type f \( -name 'feedback_*.md' -o -name 'reference_*.md' -o -name 'project_*.md' -o -name 'runtime_*.md' \) -print0)
 
 if [ "$drift" -eq 0 ] && [ "$index_fail" -eq 0 ] && [ "$fm_fail" -eq 0 ] && [ "$inj_fail" -eq 0 ]; then
-  printf 'PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads (%s files scanned in %s)\n' "$scanned" "$memory_dir"
+  printf 'PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads (%s project files headline-checked, %s notes frontmatter+injection-scanned in %s)\n' "$scanned" "$notes_scanned" "$memory_dir"
   exit 0
 fi
 

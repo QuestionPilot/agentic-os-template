@@ -86,6 +86,13 @@ CL_RC=$?
 assert_eq "memory-drift: clean dir exit 0" "0" "$CL_RC"
 assert_contains "memory-drift: clean dir reports PASS" "$CL_OUT" "PASS"
 
+# The PASS line must report BOTH coverage counts: the project_*.md headline-drift
+# subset AND the full note set the frontmatter+injection scans walk. Fixture at
+# this point: 3 project files (alpha/gamma/delta) + 1 reference note = 4 notes.
+# A project-only count on a mixed dir misreads as a coverage gap.
+assert_contains "memory-drift: PASS reports project headline-check count" "$CL_OUT" "3 project files headline-checked"
+assert_contains "memory-drift: PASS reports full note scan count" "$CL_OUT" "4 notes frontmatter+injection-scanned"
+
 # --- 3. Empty memory dir: still exit 0 (no project_*.md to scan).
 EMPTY_TMP=$(mktemp -d 2>/dev/null) || EMPTY_TMP="/tmp/memory-drift-empty-$$"
 mkdir -p "$EMPTY_TMP"
