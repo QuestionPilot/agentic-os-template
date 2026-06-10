@@ -7,7 +7,7 @@ This repository defines the shared AI operating system: how agents should work, 
 ## Quickstart
 
 **Who this is for:** operators who want to run an AI agent — Claude Code
-(this quickstart) or Codex (adapt `--harness codex` and use `AGENTS.md`) —
+(this quickstart), Codex (adapt `--harness codex` and use `AGENTS.md`), or Hermes Agent (`--harness hermes`, `SOUL.md` entrypoint) —
 with structured memory, active-work tracking, and a self-improvement loop,
 without hand-wiring each session from scratch.
 
@@ -83,7 +83,7 @@ classify lessons and route them to the right source of truth
 Do not modify shared framework content unless the user explicitly asks for it. Routine harness-specific edits are allowed only in the relevant root entrypoint file.
 
 - Shared framework: `core/`, `capabilities/`, `playbooks/`, `verification/`, `linear/`, `obsidian/`, `skills/`, `templates/`, and `scripts/`.
-- Harness entrypoints: `AGENTS.md` for Codex and `CLAUDE.md` for Claude Code.
+- Harness entrypoints: `AGENTS.md` for Codex, `CLAUDE.md` for Claude Code, and `SOUL.md` (generated into the Hermes home) for Hermes Agent.
 - Per-harness adapters: `harnesses/<h>/adapter.md` (contract) + `harnesses/<h>/capabilities/` (harness-native realizations emitted by the compiler). Edits here are scoped to a single harness and do not cross into shared content.
 
 ## Layout
@@ -112,7 +112,7 @@ Do not modify shared framework content unless the user explicitly asks for it. R
 1. **Capability specs** in `capabilities/*.md` — each spec declares its `kind` (`native` or `vendored`), `triggers`, target `harnesses`, and `verification` gate.
 2. **Harness realizations** in `harnesses/<h>/capabilities/` — emit the harness-native artifacts (skills, hooks, settings) for the capabilities that target `<h>`.
 
-The compiler enforces capability ↔ harness consistency (every listed harness has an `adapter.md`; every required capability key is present) before writing into the target dir (e.g. `$CLAUDE_CONFIG_DIR` for Claude Code, `$CODEX_HOME` for Codex). A drift gate (`scripts/check-drift.sh --manifest`) detects hand-edits to compiled output.
+The compiler enforces capability ↔ harness consistency (every listed harness has an `adapter.md`; every required capability key is present) before writing into the target dir (e.g. `$CLAUDE_CONFIG_DIR` for Claude Code, `$CODEX_HOME` for Codex, `$HERMES_HOME` for Hermes). A drift gate (`scripts/check-drift.sh --manifest`) detects hand-edits to compiled output.
 
 ## Security model
 
