@@ -22,6 +22,10 @@ _Skip 'install-hermes.test: hermes build produced skills/closeout/SKILL.md' $rea
 _Skip 'install-hermes.test: hermes build produced skills/self-audit/SKILL.md' $reason
 _Skip 'install-hermes.test: hermes build produced hooks/framework-surface.sh' $reason
 _Skip 'install-hermes.test: hermes build produced hooks/session-agent.sh' $reason
+_Skip 'install-hermes.test: hermes build produced hooks/autonomy-drain.sh' $reason
+_Skip 'install-hermes.test: hermes build produced hooks/memory-sanitize.sh' $reason
+_Skip 'install-hermes.test: hermes build produced hooks/skill-gate.sh' $reason
+_Skip 'install-hermes.test: hermes build produced hooks/steward.sh' $reason
 _Skip 'install-hermes.test: hermes build produced hooks/hooks.yaml' $reason
 _Skip 'install-hermes.test: hermes build produced plugins/agentic-os-hook-bridge/plugin.yaml' $reason
 _Skip 'install-hermes.test: hermes build produced plugins/agentic-os-hook-bridge/__init__.py' $reason
@@ -41,3 +45,16 @@ _Skip 'install-hermes.test: writes pass once the session gate file is declared' 
 _Skip 'install-hermes.test: CLAUDE_SKIP_SESSION_AGENT=1 bypasses the gate' $reason
 _Skip 'install-hermes.test: a payload without session_id stays silent' $reason
 _Skip 'install-hermes.test: framework-surface output is valid JSON' $reason
+_Skip 'install-hermes.test: unattended drain is OFF by default (silent)' $reason
+_Skip 'install-hermes.test: unattended drain default-off leaves no log' $reason
+_Skip 'install-hermes.test: enabled drain skips a telegram session (propose-only)' $reason
+_Skip 'install-hermes.test: telegram session is never drained' $reason
+_Skip 'install-hermes.test: skill_manage create is blocked pending approval' $reason
+_Skip 'install-hermes.test: skill_manage read-only ops pass the gate' $reason
+_Skip 'install-hermes.test: an operator approval marker allows ONE mutation' $reason
+_Skip 'install-hermes.test: the approval marker is consumed on use' $reason
+_Skip 'install-hermes.test: memory-sanitize blocks an injection payload shape' $reason
+_Skip 'install-hermes.test: memory-sanitize passes benign content' $reason
+_Skip 'install-hermes.test: steward is NOT scheduled in hooks.yaml (operator act)' $reason
+_Skip 'install-hermes.test: steward skips when views match regeneration (no-delta)' $reason
+_Skip 'install-hermes.test: steward enforces the daily run cap' $reason
