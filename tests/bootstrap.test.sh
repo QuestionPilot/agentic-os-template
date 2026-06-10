@@ -12,6 +12,24 @@ assert_exit "bootstrap.sh --help exits 0" 0 -- bash "$BS" --help
 # Unknown arg exits 2
 assert_exit "bootstrap.sh unknown arg exits 2" 2 -- bash "$BS" --bogus-flag
 
+# --- <TEAM>-260: unknown harness names are rejected up front (in --check too) ---
+# Pre-fix, `--harness <typo> --check` exited 0 — an unknown name only suppressed
+# the codex CLI requirement in check_clis, and only a real run died, deep in
+# install.sh. validate_harnesses now rejects unknown names in every mode,
+# mirroring install.sh's pre-mutation harness-name check.
+assert_exit "bootstrap.sh --harness typo --check rejects unknown harness" 1 -- \
+  bash "$BS" --harness typo --check
+assert_exit "bootstrap.sh --harness typo (real run) rejects unknown harness" 1 -- \
+  bash "$BS" --harness typo
+bs_badharness_out="$(bash "$BS" --harness typo --check 2>&1 || true)"
+assert_contains "bootstrap.sh unknown-harness error lists the known set" \
+  "$bs_badharness_out" "claude, codex"
+# A substring of a known name (codex2) is still unknown — exact membership, not
+# substring. Replaces the old check_clis substring test below: codex2 no longer
+# reaches check_clis because validate_harnesses rejects it first.
+assert_exit "bootstrap.sh --harness codex2 (substring of a known name) rejected as unknown" 1 -- \
+  bash "$BS" --harness codex2 --check
+
 # --check exits 0 when all CLIs present and stub env clean
 # (requires stubs — built in Task 3; placeholder until then)
 
@@ -280,6 +298,30 @@ if command -v pwsh >/dev/null 2>&1; then
   assert_contains "bootstrap.ps1 Invoke-SmokeTest calls check-drift.ps1" \
     "$ps_src" 'check-drift.ps1'
 
+  # --- <TEAM>-260: bootstrap.ps1 rejects unknown harness names + honest -Harness doc ---
+  # Confirm-HarnessNames rejects a typo up front (in -Check too). The -Harness doc
+  # drops the wrong "repeatable" claim AND must NOT recommend `-Harness claude,codex`
+  # — under the documented `pwsh -File` invocation a comma value binds as a single
+  # literal (no array split) and is rejected as unknown. A known-but-Windows-
+  # unsupported `codex` still passes -Check; install.ps1 owns the unsupported
+  # message on a real/dry-run install path.
+  ps_badharness_exit=0
+  PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness typo -Check >/dev/null 2>&1 \
+    || ps_badharness_exit=$?
+  assert_eq "bootstrap.ps1 -Harness typo -Check rejects unknown harness" "1" "$ps_badharness_exit"
+  ps_badharness_out="$(PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness typo -Check 2>&1 || true)"
+  assert_contains "bootstrap.ps1 unknown-harness error lists the known set" \
+    "$ps_badharness_out" "claude, codex"
+  assert_not_contains "bootstrap.ps1 -Harness doc drops the wrong 'repeatable' claim" \
+    "$ps_src" "(repeatable; default: claude)"
+  assert_contains "bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile" \
+    "$ps_src" "does NOT split"
+  ps_codex_check_exit=0
+  PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness codex -Check >/dev/null 2>&1 \
+    || ps_codex_check_exit=$?
+  assert_eq "bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)" \
+    "0" "$ps_codex_check_exit"
+
   # The -DryRun mode should show the install action routed through pwsh, not
   # bash. With all CLIs present, -DryRun on full mode (not just -Check) lists
   # the install step. We need to stub install.ps1 to no-op so the script
@@ -365,6 +407,11 @@ else
   _skip "bootstrap.ps1 seeded local.env carries the config dir" "pwsh not available on this machine"
   _skip "bootstrap.ps1 \$cliMin does not list firecrawl" "pwsh not available on this machine"
   _skip "bootstrap.ps1 -Check exits 0 with firecrawl absent" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Harness typo -Check rejects unknown harness" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 unknown-harness error lists the known set" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Harness doc drops the wrong 'repeatable' claim" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)" "pwsh not available on this machine"
 fi
 
 # --- CLAUDE_CONFIG_DIR persisted after a fresh seed (no --claude-config-dir) ---
@@ -477,16 +524,10 @@ else
     "harness match must be case-insensitive (install.sh lowercases harness names)"
 fi
 
-# Exact per-element match: a non-codex token that merely contains 'codex' as a
-# substring (e.g. codex2) must NOT pull in the codex requirement.
-t90d_substr_out="$(PATH="$T90D_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
-  bash "$REPO_ROOT/scripts/bootstrap.sh" --harness codex2 --check 2>&1 || true)"
-if printf '%s' "$t90d_substr_out" | grep -qiE "codex: not found"; then
-  _fail "bootstrap.sh --check --harness codex2 wrongly requires codex" \
-    "membership must be exact-match, not substring"
-else
-  _pass "bootstrap.sh --check --harness codex2 does not require codex (exact match)"
-fi
+# NOTE: the codex-substring case (e.g. `--harness codex2` must not pull the codex
+# requirement) is now covered up front by validate_harnesses — codex2 is rejected
+# as an unknown harness before check_clis runs. See the <TEAM>-260 block near the top
+# of this file ("substring of a known name ... rejected as unknown").
 
 rm -rf "$T90D_TMP" 2>/dev/null || true
 

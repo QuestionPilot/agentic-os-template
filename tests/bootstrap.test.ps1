@@ -23,6 +23,12 @@ $reason = 'bootstrap.sh is bash-only (no bootstrap.ps1) — out of scope for the
 
 _Skip 'bootstrap.test: bootstrap.sh --help exits 0' $reason
 _Skip 'bootstrap.test: bootstrap.sh unknown arg exits 2' $reason
+# <TEAM>-260 twin: validate_harnesses rejects unknown harness names (bootstrap.sh
+# runs these end-to-end on macOS/Linux).
+_Skip 'bootstrap.test: bootstrap.sh --harness typo --check rejects unknown harness' $reason
+_Skip 'bootstrap.test: bootstrap.sh --harness typo (real run) rejects unknown harness' $reason
+_Skip 'bootstrap.test: bootstrap.sh unknown-harness error lists the known set' $reason
+_Skip 'bootstrap.test: bootstrap.sh --harness codex2 (substring of a known name) rejected as unknown' $reason
 _Skip 'bootstrap.test: bootstrap --check exits 0 when all CLIs present' $reason
 _Skip 'bootstrap.test: bootstrap --check reports missing rg' $reason
 _Skip 'bootstrap.test: bootstrap --check says not found' $reason
@@ -57,7 +63,6 @@ _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent agy' $r
 _Skip 'bootstrap.test: bootstrap.sh --check (claude) does not require codex' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check --harness codex flags absent codex as required' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check --harness CODEX (case-folded) flags absent codex' $reason
-_Skip 'bootstrap.test: bootstrap.sh --check --harness codex2 does not require codex (exact match)' $reason
 
 # no-bash assertions — mirror tests/bootstrap.test.sh's added block.
 $qreason = 'bootstrap.test.sh runs these end-to-end on macOS/Linux; Windows lane covers PS-only behavior via tests/install.test.ps1 + tests/validate-ps.test.ps1 indirectly'
@@ -85,3 +90,10 @@ _Skip 'bootstrap.test: --check exits 0 with firecrawl absent (firecrawl is optio
 _Skip 'bootstrap.test: --check does not flag firecrawl as required (not found)' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 $cliMin does not list firecrawl' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Check exits 0 with firecrawl absent' $q133reason
+# <TEAM>-260 twin: Confirm-HarnessNames + honest -Harness doc (bootstrap.test.sh
+# runs these end-to-end via pwsh on macOS/Linux).
+_Skip 'bootstrap.test: bootstrap.ps1 -Harness typo -Check rejects unknown harness' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 unknown-harness error lists the known set' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Harness doc drops the wrong ''repeatable'' claim' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)' $q133reason

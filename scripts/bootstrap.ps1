@@ -5,11 +5,20 @@
 #   bootstrap.ps1 [-Harness <name>] [-Check] [-DryRun]
 #                 [-ClaudeConfigDir <dir>] [-VaultDir <dir>] [-CodexHome <dir>]
 #
-#   -Harness <name>        target harness (repeatable; default: claude). On
-#                          Windows only `claude` is supported — install.ps1
-#                          gracefully rejects `codex`. The macOS/Linux
-#                          bootstrap.sh supports both; full Windows codex parity
-#                          is a tracked follow-on.
+#   -Harness <name>        target harness. Default: claude. On Windows only
+#                          `claude` is supported (install.ps1 rejects `codex`), so
+#                          pass a single `-Harness claude` — you never need more
+#                          than one here. Do NOT repeat the flag: PowerShell
+#                          rejects `-Harness claude -Harness codex` with
+#                          "specified more than once". (A comma value like
+#                          `-Harness claude,codex` does NOT split into two under
+#                          the documented `pwsh -File` invocation — it binds as a
+#                          single literal and is rejected as an unknown harness.
+#                          The macOS/Linux bootstrap.sh builds both via the
+#                          repeatable POSIX `--harness claude --harness codex`
+#                          form; full Windows codex parity — including proper
+#                          multi-harness arg handling here — is a tracked
+#                          follow-on.)
 #   -Check                 read-only — detect requirements, report, exit 1 on failures
 #   -DryRun                print mutations without executing them
 #   -ClaudeConfigDir <d>   override CLAUDE_CONFIG_DIR
@@ -46,6 +55,22 @@ function would_mutate([string]$desc) {
   if ($Check) { return $true }
   if ($DryRun) { bs_info "DRY-RUN: $desc"; return $true }
   return $false
+}
+
+# Confirm-HarnessNames — twin of bootstrap.sh validate_harnesses. Reject unknown
+# harness names up front, in -Check too. The known set mirrors install.ps1's
+# resolution (claude, codex); keep in lockstep per the inventory-coupling rule.
+# Case-insensitive — install.ps1 lowercases names (CLAUDE == claude). codex is a
+# KNOWN name here: install.ps1 owns the Windows-codex-unsupported message, so this
+# guard only catches genuine typos. Without it, `-Harness typo -Check` passes
+# (Invoke-CheckClis never validates names) and only a real run dies, deep in
+# install.ps1.
+function Confirm-HarnessNames {
+  foreach ($h in $Harness) {
+    if ($h.ToLower() -notin @('claude','codex')) {
+      bs_die "unknown harness '$h' (known: claude, codex)"
+    }
+  }
 }
 
 # CLI spec: minimum version, or "presence" for any version.
@@ -316,6 +341,10 @@ bs_info "bootstrap.ps1 — agentic OS machine setup (Windows)"
 bs_info "Harnesses: $($Harness -join ', ')"
 if ($Check)  { bs_info "(check mode — no mutations)" }
 if ($DryRun) { bs_info "(dry-run mode — mutations printed only)" }
+
+# Reject unknown harness names before any check or mutation, so -Check catches a
+# typo too (not just a real run dying later in install.ps1).
+Confirm-HarnessNames
 
 # Load local.env if present (<TEAM>-115 — via the shared parser).
 $localEnv = Join-Path $repoRoot "local.env"
