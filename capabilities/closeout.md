@@ -81,8 +81,12 @@ classification machinery for work that should never have shipped is wasted.
    procedure worth capturing as a skill, but not (yet) worth the full
    seven-step promotion? Route it as a CANDIDATE row in the harness's skill
    catalog (the catalog's candidates section) — name, one-line trigger, where
-   the procedure ran — for manual triage. No autonomous skill creation: the
-   candidate row is the entire write; promotion stays manual via the trust
+   the procedure ran — for manual triage. Write the row at the catalog's
+   SOURCE: on harnesses whose rendered catalog is build-manifest-managed, that
+   is the operator-local catalog overlay (re-render after writing) — a hand
+   edit to the rendered catalog itself trips the drift gate. Each harness
+   realization names its concrete destination. No autonomous skill creation:
+   the candidate row is the entire write; promotion stays manual via the trust
    contract above.
 4. Does Linear need updating — a completed issue moved to Done, a status
    corrected, or a follow-up issue created?
