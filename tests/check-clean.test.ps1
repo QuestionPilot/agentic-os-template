@@ -320,6 +320,32 @@ $ccIdLenvRc = $LASTEXITCODE
 Assert-Eq 'commit-identity: allowlist picked up from target local.env' '1' "$ccIdLenvRc"
 Assert-Contains 'commit-identity: local.env-sourced check flags the rogue commit' $ccIdLenvOut 'author not allowlisted'
 
+# Adversarial regression: a local TAG named origin/main resolves BEFORE the
+# remote-tracking ref (gitrevisions order) — with bare refnames it would shadow
+# the no-base fallback and empty the range. Full refs/remotes/ names are
+# immune: the remoteless rogue repo is still fully checked and FAILS.
+$env:COMMIT_IDENTITY_ALLOWLIST = $CC_BOT_ID
+try {
+    $ccIdTag = Join-Path $CC_TMP 'id-tagshadow'; New-Item -ItemType Directory -Path $ccIdTag -Force | Out-Null
+    & git -C $ccIdTag init -q *>$null
+    Set-Content -LiteralPath (Join-Path $ccIdTag 'a.md') -Value 'clean prose'
+    & git -C $ccIdTag add -A *>$null
+    & git -C $ccIdTag -c user.name="$CC_ROGUE_NAME" -c user.email="$CC_ROGUE_MAIL" commit -qm one *>$null
+    & git -C $ccIdTag tag origin/main *>$null
+    Assert-Exit 'commit-identity: tag named origin/main cannot shadow the fallback range' 1 -- pwsh -NoProfile -File $CC_SUT $ccIdTag
+
+    # Adversarial regression: the no-commits skip is benign ONLY for an unborn
+    # repo (zero commits anywhere) — that path passes with the explicit note.
+    $ccIdUnborn = Join-Path $CC_TMP 'id-unborn'; New-Item -ItemType Directory -Path $ccIdUnborn -Force | Out-Null
+    & git -C $ccIdUnborn init -q *>$null
+    $ccIdUnbornOut = (& pwsh -NoProfile -File $CC_SUT $ccIdUnborn 2>&1 | Out-String)
+    $ccIdUnbornRc = $LASTEXITCODE
+    Assert-Eq 'commit-identity: unborn repo passes with the no-commits note' '0' "$ccIdUnbornRc"
+    Assert-Contains 'commit-identity: unborn repo names the no-commits path' $ccIdUnbornOut 'no commits to check'
+} finally {
+    Remove-Item Env:\COMMIT_IDENTITY_ALLOWLIST -ErrorAction SilentlyContinue
+}
+
 # --- Scanner-integrity: a non-directory target is an error, not a pass --------
 Assert-Exit 'non-directory target is an error (exit 2)' 2 -- pwsh -NoProfile -File $CC_SUT (Join-Path $CC_TMP 'does-not-exist')
 

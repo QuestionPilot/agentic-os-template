@@ -321,10 +321,15 @@ fi
 # OPERATOR_PII_TOKENS, so the shipped guard carries zero operator identity),
 # every commit the current branch would publish — the range ahead of the
 # published default branch — must carry an allowlisted author AND committer.
-# Entries are comma-separated, matched EXACTLY as `Name <email>`. Unset, the
-# check is a documented no-op (downstream operators opt in); the PASS line
-# reports which way it went so coverage is never overstated. Git mode only —
-# a non-git tree has no commit metadata.
+# Entries are comma-separated, matched EXACTLY as `Name <email>` (an identity
+# CONTAINING a comma cannot be expressed — a documented format limit that fails
+# closed, never open). Unset, the check is a documented no-op (downstream
+# operators opt in); the PASS line reports which way it went so coverage is
+# never overstated. Git mode only — a non-git tree has no commit metadata.
+# Trust boundary: the base is the LOCAL view of the remote (refs/remotes/*).
+# A stale-behind ref only widens the checked range; a deliberately mutated
+# local ref implies a local adversary who could equally unset the variable —
+# the guard defends against accidents, not a hostile local environment.
 identity_note=""
 if [ "$is_git" -eq 1 ]; then
   if [ -z "${COMMIT_IDENTITY_ALLOWLIST:-}" ] && [ -f "$target/local.env" ]; then
@@ -335,7 +340,15 @@ if [ "$is_git" -eq 1 ]; then
   if [ -z "${COMMIT_IDENTITY_ALLOWLIST:-}" ]; then
     identity_note="; commit-identity check skipped (COMMIT_IDENTITY_ALLOWLIST unset)"
   elif ! git -C "$target" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
-    identity_note="; commit-identity: no commits to check"
+    # HEAD does not resolve. That is benign ONLY for an unborn repo (zero
+    # commits anywhere) — verify that explicitly; any other git state FAILS
+    # closed per the guard's erroring-scanner contract.
+    if _all_tip="$(git -C "$target" rev-list -n 1 --all 2>/dev/null)" && [ -z "$_all_tip" ]; then
+      identity_note="; commit-identity: no commits to check"
+    else
+      printf 'FAIL commit-identity: HEAD does not resolve but the repo is not empty (fail-closed)\n' >&2
+      fail=1
+    fi
   else
     # Parse the allowlist into exact identities. A set-but-empty-after-parsing
     # allowlist is a misconfiguration — fail closed rather than skip silently.
@@ -351,10 +364,14 @@ if [ "$is_git" -eq 1 ]; then
       fail=1
     else
       # Base = the published default branch; the range ahead of it is exactly
-      # the commit set a push/PR would publish. No resolvable base (a fixture
-      # repo with no remote) => check every commit reachable from HEAD.
+      # the commit set a push/PR would publish. FULL refnames only: a bare
+      # `origin/main` resolves through refs/tags/ FIRST (gitrevisions order),
+      # so a local tag named "origin/main" at HEAD would silently empty the
+      # range — the full refs/remotes/ form cannot be shadowed. No resolvable
+      # base (a fixture repo with no remote) => check every commit reachable
+      # from HEAD.
       _base=""
-      for _ref in origin/HEAD origin/main origin/master; do
+      for _ref in refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master; do
         if git -C "$target" rev-parse --verify --quiet "$_ref" >/dev/null 2>&1; then _base="$_ref"; break; fi
       done
       if [ -n "$_base" ]; then _range="$_base..HEAD"; else _range="HEAD"; fi

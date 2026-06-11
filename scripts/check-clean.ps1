@@ -293,8 +293,12 @@ if ($script:isGit) {
 # local.env — the same opt-in pattern as OPERATOR_PII_TOKENS, so the shipped
 # guard carries zero operator identity), every ahead-of-default branch commit
 # must carry an allowlisted author AND committer (comma-separated exact
-# `Name <email>` entries). Unset => documented no-op; the PASS line reports
-# which way it went so coverage is never overstated. Git mode only.
+# `Name <email>` entries — an identity CONTAINING a comma cannot be expressed,
+# a documented format limit that fails closed, never open). Unset => documented
+# no-op; the PASS line reports which way it went so coverage is never
+# overstated. Git mode only. Trust boundary: the base is the LOCAL view of the
+# remote (refs/remotes/*) — the guard defends against accidents, not a hostile
+# local environment (see the bash twin's section comment).
 $identityNote = ''
 if ($script:isGit) {
     $allowRaw = $env:COMMIT_IDENTITY_ALLOWLIST
@@ -316,7 +320,16 @@ if ($script:isGit) {
     } else {
         & git -C $Target rev-parse --verify --quiet HEAD *> $null
         if ($LASTEXITCODE -ne 0) {
-            $identityNote = '; commit-identity: no commits to check'
+            # HEAD does not resolve. Benign ONLY for an unborn repo (zero
+            # commits anywhere) — verify explicitly; any other git state FAILS
+            # closed per the guard's erroring-scanner contract.
+            $allTip = & git -C $Target rev-list -n 1 --all 2>$null
+            if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrEmpty(($allTip -join ''))) {
+                $identityNote = '; commit-identity: no commits to check'
+            } else {
+                [Console]::Error.WriteLine('FAIL commit-identity: HEAD does not resolve but the repo is not empty (fail-closed)')
+                $script:fail = 1
+            }
         } else {
             # Parse the allowlist into exact identities. Set-but-empty-after-
             # parsing is a misconfiguration — fail closed, never skip silently.
@@ -330,11 +343,14 @@ if ($script:isGit) {
                 $script:fail = 1
             } else {
                 # Base = the published default branch; the range ahead of it is
-                # exactly the commit set a push/PR would publish. No resolvable
-                # base (a fixture repo with no remote) => check every commit
-                # reachable from HEAD.
+                # exactly the commit set a push/PR would publish. FULL refnames
+                # only: a bare `origin/main` resolves through refs/tags/ FIRST
+                # (gitrevisions order), so a local tag named "origin/main" at
+                # HEAD would silently empty the range — the full refs/remotes/
+                # form cannot be shadowed. No resolvable base (a fixture repo
+                # with no remote) => check every commit reachable from HEAD.
                 $base = ''
-                foreach ($ref in @('origin/HEAD', 'origin/main', 'origin/master')) {
+                foreach ($ref in @('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master')) {
                     & git -C $Target rev-parse --verify --quiet $ref *> $null
                     if ($LASTEXITCODE -eq 0) { $base = $ref; break }
                 }
@@ -348,7 +364,13 @@ if ($script:isGit) {
                     foreach ($row in @($meta)) {
                         if ([string]::IsNullOrEmpty($row)) { continue }
                         $parts = $row -split "`t"
-                        if ($parts.Count -lt 3) { continue }
+                        if ($parts.Count -lt 3) {
+                            # Malformed metadata row: fail CLOSED (the bash twin
+                            # compares empty fields and fails) — never skip.
+                            [Console]::Error.WriteLine("FAIL commit-identity: malformed git log row (fail-closed): $row")
+                            $script:fail = 1
+                            continue
+                        }
                         $checked++
                         if ($allowed -cnotcontains $parts[1]) {
                             [Console]::Error.WriteLine("FAIL commit-identity: commit $($parts[0]) author not allowlisted: $($parts[1])")

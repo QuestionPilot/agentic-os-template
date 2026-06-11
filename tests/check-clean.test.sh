@@ -297,6 +297,25 @@ else
   assert_eq "commit-identity: only ahead-of-default commits are checked" "0" "$cc_idrange_rc"
   assert_contains "commit-identity: range-scoped run reports 1 checked" "$cc_idrange_out" "1 branch commit(s) identity-checked"
 
+  # Adversarial regression: a local TAG named origin/main resolves BEFORE the
+  # remote-tracking ref (gitrevisions order) — with bare refnames it would
+  # shadow the no-base fallback and empty the range. Full refs/remotes/ names
+  # are immune: the remoteless rogue repo is still fully checked and FAILS.
+  cc_idtag="$CC_TMP/id-tagshadow"; mkdir -p "$cc_idtag"
+  ( cd "$cc_idtag" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_ROGUE_NAME" -c user.email="$_CC_ROGUE_MAIL" commit -qm one &&
+    git tag origin/main ) >/dev/null 2>&1
+  assert_exit "commit-identity: tag named origin/main cannot shadow the fallback range" 1 -- \
+    env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idtag"
+
+  # Adversarial regression: the no-commits skip is benign ONLY for an unborn
+  # repo (zero commits anywhere) — that path passes with the explicit note.
+  cc_idunborn="$CC_TMP/id-unborn"; mkdir -p "$cc_idunborn"
+  ( cd "$cc_idunborn" && git init -q ) >/dev/null 2>&1
+  cc_idunborn_out="$(env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idunborn" 2>&1)"; cc_idunborn_rc=$?
+  assert_eq "commit-identity: unborn repo passes with the no-commits note" "0" "$cc_idunborn_rc"
+  assert_contains "commit-identity: unborn repo names the no-commits path" "$cc_idunborn_out" "no commits to check"
+
   # --- Scanner-integrity: a non-directory target is an error, not a pass -----
   assert_exit "non-directory target is an error (exit 2)" 2 -- bash "$CC_SUT" "$CC_TMP/does-not-exist"
 
