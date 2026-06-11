@@ -85,6 +85,15 @@ drift check (`scripts/check-drift.sh --manifest "$HERMES_HOME"`). These are
 the same gates a future agent or future operator runs when picking up the
 change.
 
+Commit identity: a clone with no repo-local git identity derives the operator's
+personal name and machine hostname into public history on a plain commit. Pin
+every framework commit to your published identity (`git -c user.name=… -c
+user.email=…`, or a repo-local `git config`). Declare that identity as
+`COMMIT_IDENTITY_ALLOWLIST` in the gitignored `local.env` (comma-separated
+exact `Name <email>` entries) and `scripts/check-clean.sh` fails any branch
+commit whose author or committer is off-list — the content scans cannot see
+commit metadata, so this is the gate that covers it.
+
 ## Ground Rules
 
 Each rule states its rationale in prose, so it is self-justifying without an

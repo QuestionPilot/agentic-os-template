@@ -59,6 +59,8 @@ Start with `START.md` inside the vault. Load only the relevant notes — do not 
 
 Before opening a PR or pushing a branch with framework changes, run `make verify` from the repo root. It runs the verification gates in order, failing fast on first non-zero exit: the acceptance suite (`tests/run.sh`) when present, static validation (`scripts/validate.sh`), and the manifest-based drift check (`scripts/check-drift.sh --manifest "$CLAUDE_CONFIG_DIR"`). These are the same gates a future-Claude or future-operator runs when picking up the change.
 
+Commit identity: a clone with no repo-local git identity derives the operator's personal name and machine hostname into public history on a plain commit. Pin every framework commit to your published identity (`git -c user.name=… -c user.email=…`, or a repo-local `git config`). Declare that identity as `COMMIT_IDENTITY_ALLOWLIST` in the gitignored `local.env` (comma-separated exact `Name <email>` entries) and `scripts/check-clean.sh` fails any branch commit whose author or committer is off-list — the content scans cannot see commit metadata, so this is the gate that covers it.
+
 ## Ground Rules
 
 Each rule states its rationale in prose, so it is self-justifying without an external lookup. The originating issue or decision lives out-of-line in the durable vault note's `linear:` frontmatter (see `core/memory-model.md`), not as an inline tracker identifier — framework files carry no private tracker IDs.

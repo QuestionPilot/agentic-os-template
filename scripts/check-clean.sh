@@ -17,6 +17,10 @@
 #                              aware: each comma-separated token is scanned alone,
 #                              case-insensitively, so a name split across files is
 #                              still caught)
+#   - commit-metadata identity leaks (opt-in, git mode): with
+#                              $COMMIT_IDENTITY_ALLOWLIST set, every ahead-of-default
+#                              branch commit must carry an allowlisted author AND
+#                              committer — content scans cannot see commit metadata
 #
 # Enumeration (hardened): in a git work tree the scan walks `git ls-files` and
 # inspects each TRACKED file. This closes four bypasses a recursive,
@@ -308,9 +312,104 @@ if [ "$is_git" -eq 1 ]; then
   fi
 fi
 
+# --- Commit-metadata identity check -----------------------------------------
+# The content scans above cannot see git COMMIT METADATA: author/committer
+# name+email are their own leak vector — a clone with no repo-local identity
+# derives the operator's personal name and machine hostname into PUBLIC history
+# on a plain `git commit`. When COMMIT_IDENTITY_ALLOWLIST is set (exported, or
+# read from the target's gitignored local.env — the same opt-in pattern as
+# OPERATOR_PII_TOKENS, so the shipped guard carries zero operator identity),
+# every commit the current branch would publish — the range ahead of the
+# published default branch — must carry an allowlisted author AND committer.
+# Entries are comma-separated, matched EXACTLY as `Name <email>` (an identity
+# CONTAINING a comma cannot be expressed — a documented format limit that fails
+# closed, never open). Unset, the check is a documented no-op (downstream
+# operators opt in); the PASS line reports which way it went so coverage is
+# never overstated. Git mode only — a non-git tree has no commit metadata.
+# Trust boundary: the base is the LOCAL view of the remote (refs/remotes/*).
+# A stale-behind ref only widens the checked range; a deliberately mutated
+# local ref implies a local adversary who could equally unset the variable —
+# the guard defends against accidents, not a hostile local environment.
+identity_note=""
+if [ "$is_git" -eq 1 ]; then
+  if [ -z "${COMMIT_IDENTITY_ALLOWLIST:-}" ] && [ -f "$target/local.env" ]; then
+    COMMIT_IDENTITY_ALLOWLIST="$(grep -E '^[[:space:]]*(export[[:space:]]+)?COMMIT_IDENTITY_ALLOWLIST=' "$target/local.env" \
+      | head -n1 | tr -d '\r' | sed -E 's/^[^=]*=//' \
+      | sed -E 's/[[:space:]]+#.*$//' | sed -e 's/^["'\'']//' -e 's/["'\'']$//')"
+  fi
+  if [ -z "${COMMIT_IDENTITY_ALLOWLIST:-}" ]; then
+    identity_note="; commit-identity check skipped (COMMIT_IDENTITY_ALLOWLIST unset)"
+  elif ! git -C "$target" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    # HEAD does not resolve. That is benign ONLY for an unborn repo (zero
+    # commits anywhere) — verify that explicitly; any other git state FAILS
+    # closed per the guard's erroring-scanner contract.
+    if _all_tip="$(git -C "$target" rev-list -n 1 --all 2>/dev/null)" && [ -z "$_all_tip" ]; then
+      identity_note="; commit-identity: no commits to check"
+    else
+      printf 'FAIL commit-identity: HEAD does not resolve but the repo is not empty (fail-closed)\n' >&2
+      fail=1
+    fi
+  else
+    # Parse the allowlist into exact identities. A set-but-empty-after-parsing
+    # allowlist is a misconfiguration — fail closed rather than skip silently.
+    _ALLOWED=()
+    _old_ifs="$IFS"; IFS=','
+    for _e in $COMMIT_IDENTITY_ALLOWLIST; do
+      _e="${_e#"${_e%%[![:space:]]*}"}"; _e="${_e%"${_e##*[![:space:]]}"}"
+      [ -n "$_e" ] && _ALLOWED+=("$_e")
+    done
+    IFS="$_old_ifs"
+    if [ "${#_ALLOWED[@]}" -eq 0 ]; then
+      printf 'FAIL commit-identity: COMMIT_IDENTITY_ALLOWLIST is set but parses to no entries (fail-closed)\n' >&2
+      fail=1
+    else
+      # Base = the published default branch; the range ahead of it is exactly
+      # the commit set a push/PR would publish. FULL refnames only: a bare
+      # `origin/main` resolves through refs/tags/ FIRST (gitrevisions order),
+      # so a local tag named "origin/main" at HEAD would silently empty the
+      # range — the full refs/remotes/ form cannot be shadowed. No resolvable
+      # base (a fixture repo with no remote) => check every commit reachable
+      # from HEAD.
+      _base=""
+      for _ref in refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master; do
+        if git -C "$target" rev-parse --verify --quiet "$_ref" >/dev/null 2>&1; then _base="$_ref"; break; fi
+      done
+      if [ -n "$_base" ]; then _range="$_base..HEAD"; else _range="HEAD"; fi
+      _meta="$(git -C "$target" log --format='%h%x09%an <%ae>%x09%cn <%ce>' "$_range" 2>/dev/null)"; _rc=$?
+      if [ "$_rc" -ne 0 ]; then
+        printf 'FAIL commit-identity: git log failed over %s (fail-closed)\n' "$_range" >&2
+        fail=1
+      else
+        _checked=0
+        while IFS="$(printf '\t')" read -r _h _author _committer; do
+          [ -z "$_h" ] && continue
+          _checked=$((_checked + 1))
+          _ok=0
+          for _allowed in "${_ALLOWED[@]}"; do
+            [ "$_author" = "$_allowed" ] && { _ok=1; break; }
+          done
+          if [ "$_ok" -eq 0 ]; then
+            printf 'FAIL commit-identity: commit %s author not allowlisted: %s\n' "$_h" "$_author" >&2
+            fail=1
+          fi
+          _ok=0
+          for _allowed in "${_ALLOWED[@]}"; do
+            [ "$_committer" = "$_allowed" ] && { _ok=1; break; }
+          done
+          if [ "$_ok" -eq 0 ]; then
+            printf 'FAIL commit-identity: commit %s committer not allowlisted: %s\n' "$_h" "$_committer" >&2
+            fail=1
+          fi
+        done <<< "$_meta"
+        identity_note="; $_checked branch commit(s) identity-checked"
+      fi
+    fi
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   printf 'FAIL check-clean: leaks found in %s\n' "$target" >&2
   exit 1
 fi
-printf 'PASS check-clean: %s is clean (no issue IDs / home paths / emails / operator tokens)\n' "$target"
+printf 'PASS check-clean: %s is clean (no issue IDs / home paths / emails / operator tokens)%s\n' "$target" "$identity_note"
 exit 0

@@ -229,6 +229,93 @@ else
   ( cd "$cc_uni" && git add -A ) >/dev/null 2>&1
   assert_exit "tracked non-ASCII filename leak FAILS (F1 -z enumeration)" 1 -- bash "$CC_SUT" "$cc_uni"
 
+  # --- Commit-metadata identity check (opt-in via COMMIT_IDENTITY_ALLOWLIST) --
+  # Content scans cannot see commit metadata; these fixtures prove the guard's
+  # metadata arm. Identities are runtime-built (allowed email domain) so this
+  # source carries no real identity and no contiguous email shape.
+  _CC_BOT_NAME="Bot Fixture"
+  _CC_BOT_MAIL="bot${_CC_AT}example.com"
+  _CC_BOT_ID="$_CC_BOT_NAME <$_CC_BOT_MAIL>"
+  _CC_ROGUE_NAME="Real Dev"
+  _CC_ROGUE_MAIL="real.dev${_CC_AT}acme-corp.io"
+
+  # Bot-only commits + allowlist => PASS, and the PASS line reports coverage.
+  cc_idok="$CC_TMP/id-ok"; mkdir -p "$cc_idok"
+  ( cd "$cc_idok" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" commit -qm one ) >/dev/null 2>&1
+  assert_exit "commit-identity: bot-only branch PASSES with allowlist" 0 -- \
+    env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idok"
+  cc_idok_out="$(env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idok" 2>&1)"
+  assert_contains "commit-identity: PASS line reports checked count" "$cc_idok_out" "1 branch commit(s) identity-checked"
+
+  # Rogue author+committer => FAIL naming both fields.
+  cc_idbad="$CC_TMP/id-bad"; mkdir -p "$cc_idbad"
+  ( cd "$cc_idbad" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_ROGUE_NAME" -c user.email="$_CC_ROGUE_MAIL" commit -qm one ) >/dev/null 2>&1
+  assert_exit "commit-identity: rogue identity FAILS" 1 -- \
+    env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idbad"
+  cc_idbad_out="$(env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idbad" 2>&1)"
+  assert_contains "commit-identity: FAIL names the author field" "$cc_idbad_out" "author not allowlisted"
+  assert_contains "commit-identity: FAIL names the committer field" "$cc_idbad_out" "committer not allowlisted"
+
+  # Allowed author but rogue COMMITTER => still FAILS (committer is checked too).
+  cc_idcom="$CC_TMP/id-committer"; mkdir -p "$cc_idcom"
+  ( cd "$cc_idcom" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_ROGUE_NAME" -c user.email="$_CC_ROGUE_MAIL" \
+      commit -qm one --author="$_CC_BOT_ID" ) >/dev/null 2>&1
+  cc_idcom_out="$(env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idcom" 2>&1)"; cc_idcom_rc=$?
+  assert_eq "commit-identity: rogue committer behind allowed author FAILS" "1" "$cc_idcom_rc"
+  assert_contains "commit-identity: committer-only leak names the committer" "$cc_idcom_out" "committer not allowlisted"
+  assert_not_contains "commit-identity: allowed author is not flagged" "$cc_idcom_out" "author not allowlisted"
+
+  # Allowlist UNSET => documented no-op even on the rogue repo, and the PASS
+  # line says so (coverage is never silently overstated).
+  cc_idskip_out="$(env -u COMMIT_IDENTITY_ALLOWLIST bash "$CC_SUT" "$cc_idbad" 2>&1)"; cc_idskip_rc=$?
+  assert_eq "commit-identity: unset allowlist is a no-op (exit 0)" "0" "$cc_idskip_rc"
+  assert_contains "commit-identity: skip is reported on the PASS line" "$cc_idskip_out" "commit-identity check skipped"
+
+  # Set-but-empty-after-parsing allowlist is a misconfiguration => fail-closed.
+  assert_exit "commit-identity: empty-parse allowlist FAILS closed" 1 -- \
+    env COMMIT_IDENTITY_ALLOWLIST=" , " bash "$CC_SUT" "$cc_idok"
+
+  # Allowlist read from the target's gitignored local.env (env unset).
+  printf 'COMMIT_IDENTITY_ALLOWLIST="%s"\n' "$_CC_BOT_ID" > "$cc_idbad/local.env"
+  cc_idlenv_out="$(env -u COMMIT_IDENTITY_ALLOWLIST bash "$CC_SUT" "$cc_idbad" 2>&1)"; cc_idlenv_rc=$?
+  assert_eq "commit-identity: allowlist picked up from target local.env" "1" "$cc_idlenv_rc"
+  assert_contains "commit-identity: local.env-sourced check flags the rogue commit" "$cc_idlenv_out" "author not allowlisted"
+
+  # Range scoping: rogue commit BELOW the default-branch ref is published
+  # history (not this branch's to re-litigate); only ahead-of-base commits are
+  # checked, so a bot-only ahead set PASSES.
+  cc_idrange="$CC_TMP/id-range"; mkdir -p "$cc_idrange"
+  ( cd "$cc_idrange" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_ROGUE_NAME" -c user.email="$_CC_ROGUE_MAIL" commit -qm old &&
+    git update-ref refs/remotes/origin/main HEAD &&
+    printf 'more clean prose\n' > b.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" commit -qm new ) >/dev/null 2>&1
+  cc_idrange_out="$(env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idrange" 2>&1)"; cc_idrange_rc=$?
+  assert_eq "commit-identity: only ahead-of-default commits are checked" "0" "$cc_idrange_rc"
+  assert_contains "commit-identity: range-scoped run reports 1 checked" "$cc_idrange_out" "1 branch commit(s) identity-checked"
+
+  # Adversarial regression: a local TAG named origin/main resolves BEFORE the
+  # remote-tracking ref (gitrevisions order) — with bare refnames it would
+  # shadow the no-base fallback and empty the range. Full refs/remotes/ names
+  # are immune: the remoteless rogue repo is still fully checked and FAILS.
+  cc_idtag="$CC_TMP/id-tagshadow"; mkdir -p "$cc_idtag"
+  ( cd "$cc_idtag" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_ROGUE_NAME" -c user.email="$_CC_ROGUE_MAIL" commit -qm one &&
+    git tag origin/main ) >/dev/null 2>&1
+  assert_exit "commit-identity: tag named origin/main cannot shadow the fallback range" 1 -- \
+    env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idtag"
+
+  # Adversarial regression: the no-commits skip is benign ONLY for an unborn
+  # repo (zero commits anywhere) — that path passes with the explicit note.
+  cc_idunborn="$CC_TMP/id-unborn"; mkdir -p "$cc_idunborn"
+  ( cd "$cc_idunborn" && git init -q ) >/dev/null 2>&1
+  cc_idunborn_out="$(env COMMIT_IDENTITY_ALLOWLIST="$_CC_BOT_ID" bash "$CC_SUT" "$cc_idunborn" 2>&1)"; cc_idunborn_rc=$?
+  assert_eq "commit-identity: unborn repo passes with the no-commits note" "0" "$cc_idunborn_rc"
+  assert_contains "commit-identity: unborn repo names the no-commits path" "$cc_idunborn_out" "no commits to check"
+
   # --- Scanner-integrity: a non-directory target is an error, not a pass -----
   assert_exit "non-directory target is an error (exit 2)" 2 -- bash "$CC_SUT" "$CC_TMP/does-not-exist"
 
