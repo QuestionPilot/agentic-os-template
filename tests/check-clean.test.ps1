@@ -236,6 +236,90 @@ $ccUni = Join-Path $CC_TMP 'unicode'; New-Item -ItemType Directory -Path $ccUni 
 & git -C $ccUni add -A *>$null
 Assert-Exit 'tracked non-ASCII filename leak FAILS (F1 -z enumeration)' 1 -- pwsh -NoProfile -File $CC_SUT $ccUni
 
+# --- Commit-metadata identity check (opt-in via COMMIT_IDENTITY_ALLOWLIST) ----
+# Twin of the bash commit-identity block. Content scans cannot see commit
+# metadata; identities are runtime-built (allowed email domain) so this source
+# carries no real identity and no contiguous email shape.
+$CC_BOT_NAME = 'Bot Fixture'
+$CC_BOT_MAIL = "bot${CC_AT}example.com"
+$CC_BOT_ID = "$CC_BOT_NAME <$CC_BOT_MAIL>"
+$CC_ROGUE_NAME = 'Real Dev'
+$CC_ROGUE_MAIL = "real.dev${CC_AT}acme-corp.io"
+Remove-Item Env:\COMMIT_IDENTITY_ALLOWLIST -ErrorAction SilentlyContinue
+
+# Bot-only commits + allowlist => PASS, and the PASS line reports coverage.
+$ccIdOk = Join-Path $CC_TMP 'id-ok'; New-Item -ItemType Directory -Path $ccIdOk -Force | Out-Null
+& git -C $ccIdOk init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccIdOk 'a.md') -Value 'clean prose'
+& git -C $ccIdOk add -A *>$null
+& git -C $ccIdOk -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm one *>$null
+$env:COMMIT_IDENTITY_ALLOWLIST = $CC_BOT_ID
+try {
+    Assert-Exit 'commit-identity: bot-only branch PASSES with allowlist' 0 -- pwsh -NoProfile -File $CC_SUT $ccIdOk
+    $ccIdOkOut = (& pwsh -NoProfile -File $CC_SUT $ccIdOk 2>&1 | Out-String)
+    Assert-Contains 'commit-identity: PASS line reports checked count' $ccIdOkOut '1 branch commit(s) identity-checked'
+
+    # Rogue author+committer => FAIL naming both fields.
+    $ccIdBad = Join-Path $CC_TMP 'id-bad'; New-Item -ItemType Directory -Path $ccIdBad -Force | Out-Null
+    & git -C $ccIdBad init -q *>$null
+    Set-Content -LiteralPath (Join-Path $ccIdBad 'a.md') -Value 'clean prose'
+    & git -C $ccIdBad add -A *>$null
+    & git -C $ccIdBad -c user.name="$CC_ROGUE_NAME" -c user.email="$CC_ROGUE_MAIL" commit -qm one *>$null
+    Assert-Exit 'commit-identity: rogue identity FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccIdBad
+    $ccIdBadOut = (& pwsh -NoProfile -File $CC_SUT $ccIdBad 2>&1 | Out-String)
+    Assert-Contains 'commit-identity: FAIL names the author field' $ccIdBadOut 'author not allowlisted'
+    Assert-Contains 'commit-identity: FAIL names the committer field' $ccIdBadOut 'committer not allowlisted'
+
+    # Allowed author but rogue COMMITTER => still FAILS.
+    $ccIdCom = Join-Path $CC_TMP 'id-committer'; New-Item -ItemType Directory -Path $ccIdCom -Force | Out-Null
+    & git -C $ccIdCom init -q *>$null
+    Set-Content -LiteralPath (Join-Path $ccIdCom 'a.md') -Value 'clean prose'
+    & git -C $ccIdCom add -A *>$null
+    & git -C $ccIdCom -c user.name="$CC_ROGUE_NAME" -c user.email="$CC_ROGUE_MAIL" commit -qm one --author="$CC_BOT_ID" *>$null
+    $ccIdComOut = (& pwsh -NoProfile -File $CC_SUT $ccIdCom 2>&1 | Out-String)
+    $ccIdComRc = $LASTEXITCODE
+    Assert-Eq 'commit-identity: rogue committer behind allowed author FAILS' '1' "$ccIdComRc"
+    Assert-Contains 'commit-identity: committer-only leak names the committer' $ccIdComOut 'committer not allowlisted'
+    Assert-NotContains 'commit-identity: allowed author is not flagged' $ccIdComOut 'author not allowlisted'
+
+    # Set-but-empty-after-parsing allowlist is a misconfiguration => fail-closed.
+    $env:COMMIT_IDENTITY_ALLOWLIST = ' , '
+    Assert-Exit 'commit-identity: empty-parse allowlist FAILS closed' 1 -- pwsh -NoProfile -File $CC_SUT $ccIdOk
+    $env:COMMIT_IDENTITY_ALLOWLIST = $CC_BOT_ID
+
+    # Range scoping: rogue commit BELOW the default-branch ref is published
+    # history; only ahead-of-base commits are checked => bot-only ahead PASSES.
+    $ccIdRange = Join-Path $CC_TMP 'id-range'; New-Item -ItemType Directory -Path $ccIdRange -Force | Out-Null
+    & git -C $ccIdRange init -q *>$null
+    Set-Content -LiteralPath (Join-Path $ccIdRange 'a.md') -Value 'clean prose'
+    & git -C $ccIdRange add -A *>$null
+    & git -C $ccIdRange -c user.name="$CC_ROGUE_NAME" -c user.email="$CC_ROGUE_MAIL" commit -qm old *>$null
+    & git -C $ccIdRange update-ref refs/remotes/origin/main HEAD *>$null
+    Set-Content -LiteralPath (Join-Path $ccIdRange 'b.md') -Value 'more clean prose'
+    & git -C $ccIdRange add -A *>$null
+    & git -C $ccIdRange -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm new *>$null
+    $ccIdRangeOut = (& pwsh -NoProfile -File $CC_SUT $ccIdRange 2>&1 | Out-String)
+    $ccIdRangeRc = $LASTEXITCODE
+    Assert-Eq 'commit-identity: only ahead-of-default commits are checked' '0' "$ccIdRangeRc"
+    Assert-Contains 'commit-identity: range-scoped run reports 1 checked' $ccIdRangeOut '1 branch commit(s) identity-checked'
+} finally {
+    Remove-Item Env:\COMMIT_IDENTITY_ALLOWLIST -ErrorAction SilentlyContinue
+}
+
+# Allowlist UNSET => documented no-op even on the rogue repo, and the PASS line
+# says so (coverage is never silently overstated).
+$ccIdSkipOut = (& pwsh -NoProfile -File $CC_SUT (Join-Path $CC_TMP 'id-bad') 2>&1 | Out-String)
+$ccIdSkipRc = $LASTEXITCODE
+Assert-Eq 'commit-identity: unset allowlist is a no-op (exit 0)' '0' "$ccIdSkipRc"
+Assert-Contains 'commit-identity: skip is reported on the PASS line' $ccIdSkipOut 'commit-identity check skipped'
+
+# Allowlist read from the target's gitignored local.env (env unset).
+[System.IO.File]::WriteAllText((Join-Path $CC_TMP 'id-bad/local.env'), "COMMIT_IDENTITY_ALLOWLIST=`"$CC_BOT_ID`"`n")
+$ccIdLenvOut = (& pwsh -NoProfile -File $CC_SUT (Join-Path $CC_TMP 'id-bad') 2>&1 | Out-String)
+$ccIdLenvRc = $LASTEXITCODE
+Assert-Eq 'commit-identity: allowlist picked up from target local.env' '1' "$ccIdLenvRc"
+Assert-Contains 'commit-identity: local.env-sourced check flags the rogue commit' $ccIdLenvOut 'author not allowlisted'
+
 # --- Scanner-integrity: a non-directory target is an error, not a pass --------
 Assert-Exit 'non-directory target is an error (exit 2)' 2 -- pwsh -NoProfile -File $CC_SUT (Join-Path $CC_TMP 'does-not-exist')
 

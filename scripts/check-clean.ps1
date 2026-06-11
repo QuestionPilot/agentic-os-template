@@ -15,6 +15,10 @@
 #   - email addresses          (real shape; documentation + noreply domains pass)
 #   - operator identity tokens listed in $OPERATOR_PII_TOKENS (component-split
 #                              aware; case-insensitive)
+#   - commit-metadata identity leaks (opt-in, git mode): with
+#                              $COMMIT_IDENTITY_ALLOWLIST set, every ahead-of-default
+#                              branch commit must carry an allowlisted author AND
+#                              committer — content scans cannot see commit metadata
 #
 # Enumeration (hardened): in a git work tree the scan walks `git ls-files` and
 # inspects each TRACKED file. This closes four bypasses a recursive,
@@ -280,9 +284,91 @@ if ($script:isGit) {
     }
 }
 
+# --- Commit-metadata identity check -----------------------------------------
+# Twin of the bash commit-metadata check. The content scans above cannot see git
+# COMMIT METADATA: author/committer name+email are their own leak vector — a
+# clone with no repo-local identity derives the operator's personal name and
+# machine hostname into PUBLIC history on a plain `git commit`. When
+# COMMIT_IDENTITY_ALLOWLIST is set (env, or read from the target's gitignored
+# local.env — the same opt-in pattern as OPERATOR_PII_TOKENS, so the shipped
+# guard carries zero operator identity), every ahead-of-default branch commit
+# must carry an allowlisted author AND committer (comma-separated exact
+# `Name <email>` entries). Unset => documented no-op; the PASS line reports
+# which way it went so coverage is never overstated. Git mode only.
+$identityNote = ''
+if ($script:isGit) {
+    $allowRaw = $env:COMMIT_IDENTITY_ALLOWLIST
+    if ([string]::IsNullOrEmpty($allowRaw)) {
+        $lenv = Join-Path $Target 'local.env'
+        if (Test-Path -LiteralPath $lenv -PathType Leaf) {
+            $line = Get-Content -LiteralPath $lenv |
+                Where-Object { $_ -match '^\s*(export\s+)?COMMIT_IDENTITY_ALLOWLIST=' } |
+                Select-Object -First 1
+            if ($line) {
+                $val = ($line -replace '^[^=]*=', '').TrimEnd("`r")
+                $val = ($val -replace '\s+#.*$', '').Trim()
+                $allowRaw = $val.Trim('"').Trim("'")
+            }
+        }
+    }
+    if ([string]::IsNullOrEmpty($allowRaw)) {
+        $identityNote = '; commit-identity check skipped (COMMIT_IDENTITY_ALLOWLIST unset)'
+    } else {
+        & git -C $Target rev-parse --verify --quiet HEAD *> $null
+        if ($LASTEXITCODE -ne 0) {
+            $identityNote = '; commit-identity: no commits to check'
+        } else {
+            # Parse the allowlist into exact identities. Set-but-empty-after-
+            # parsing is a misconfiguration — fail closed, never skip silently.
+            $allowed = @()
+            foreach ($e in ($allowRaw -split ',')) {
+                $id = $e.Trim()
+                if ($id) { $allowed += $id }
+            }
+            if ($allowed.Count -eq 0) {
+                [Console]::Error.WriteLine('FAIL commit-identity: COMMIT_IDENTITY_ALLOWLIST is set but parses to no entries (fail-closed)')
+                $script:fail = 1
+            } else {
+                # Base = the published default branch; the range ahead of it is
+                # exactly the commit set a push/PR would publish. No resolvable
+                # base (a fixture repo with no remote) => check every commit
+                # reachable from HEAD.
+                $base = ''
+                foreach ($ref in @('origin/HEAD', 'origin/main', 'origin/master')) {
+                    & git -C $Target rev-parse --verify --quiet $ref *> $null
+                    if ($LASTEXITCODE -eq 0) { $base = $ref; break }
+                }
+                $range = if ($base) { "$base..HEAD" } else { 'HEAD' }
+                $meta = & git -C $Target log --format='%h%x09%an <%ae>%x09%cn <%ce>' $range 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    [Console]::Error.WriteLine("FAIL commit-identity: git log failed over $range (fail-closed)")
+                    $script:fail = 1
+                } else {
+                    $checked = 0
+                    foreach ($row in @($meta)) {
+                        if ([string]::IsNullOrEmpty($row)) { continue }
+                        $parts = $row -split "`t"
+                        if ($parts.Count -lt 3) { continue }
+                        $checked++
+                        if ($allowed -cnotcontains $parts[1]) {
+                            [Console]::Error.WriteLine("FAIL commit-identity: commit $($parts[0]) author not allowlisted: $($parts[1])")
+                            $script:fail = 1
+                        }
+                        if ($allowed -cnotcontains $parts[2]) {
+                            [Console]::Error.WriteLine("FAIL commit-identity: commit $($parts[0]) committer not allowlisted: $($parts[2])")
+                            $script:fail = 1
+                        }
+                    }
+                    $identityNote = "; $checked branch commit(s) identity-checked"
+                }
+            }
+        }
+    }
+}
+
 if ($script:fail -ne 0) {
     [Console]::Error.WriteLine("FAIL check-clean: leaks found in $Target")
     exit 1
 }
-Write-Output "PASS check-clean: $Target is clean (no issue IDs / home paths / emails / operator tokens)"
+Write-Output "PASS check-clean: $Target is clean (no issue IDs / home paths / emails / operator tokens)$identityNote"
 exit 0
