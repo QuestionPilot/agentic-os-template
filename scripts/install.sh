@@ -316,6 +316,7 @@ compile_entrypoint() {
           # cross-overlay composition).
           overlay="${overlay//@@OPERATOR_SKILLS_OVERLAY@@/}"
           overlay="${overlay//@@OPERATOR_CODEX_RULES_OVERLAY@@/}"
+          overlay="${overlay//@@OPERATOR_SOUL_IDENTITY@@/}"
         else
           # SET-but-missing is explicit operator intent gone wrong (typo, moved /
           # unmounted path) — warn loudly rather than silently dropping the whole
@@ -350,12 +351,55 @@ compile_entrypoint() {
           # branch above — symmetric cross-overlay neutralization.
           overlay="${overlay//@@OPERATOR_CODEX_RULES_OVERLAY@@/}"
           overlay="${overlay//@@OPERATOR_SKILLS_OVERLAY@@/}"
+          overlay="${overlay//@@OPERATOR_SOUL_IDENTITY@@/}"
         else
           printf 'warning: CODEX_RULES_OVERLAY_PATH=%s is set but the file does not exist — rendering a spine-only %s\n' \
             "$CODEX_RULES_OVERLAY_PATH" "$out" >&2
         fi
       fi
       content="${content//@@OPERATOR_CODEX_RULES_OVERLAY@@/$overlay}"
+      ;;
+  esac
+
+  # Operator soul-identity overlay. The shipped Hermes SOUL template carries the
+  # framework operating section plus a single @@OPERATOR_SOUL_IDENTITY@@ marker;
+  # the operator's PERSONAL identity (name, voice, hard-nos — a lean projection of
+  # the vault Operator Soul master) lives in a local file named by
+  # SOUL_IDENTITY_PATH and is NEVER shipped to the public template (it would carry
+  # operator PII + machine paths). Splice its contents at the marker, or empty for
+  # an identity-less spine render — exactly what a fresh clone with no
+  # SOUL_IDENTITY_PATH gets. Twin of the SKILLS / codex overlays above; done
+  # BEFORE the @@VAR@@ loop so any path tokens inside the identity also resolve.
+  # Only the SOUL template carries this marker, so the warning fires at most once.
+  case "$content" in
+    *@@OPERATOR_SOUL_IDENTITY@@*)
+      overlay=""
+      if [ -n "${SOUL_IDENTITY_PATH:-}" ]; then
+        if [ -f "$SOUL_IDENTITY_PATH" ]; then
+          overlay="$(cat "$SOUL_IDENTITY_PATH")"
+          # Never let the identity payload reintroduce ANY overlay marker (single-
+          # pass splice): a stray marker would survive into $content and either
+          # leak across overlays or hit the @@VAR@@ loop and die "resolves empty".
+          overlay="${overlay//@@OPERATOR_SOUL_IDENTITY@@/}"
+          overlay="${overlay//@@OPERATOR_SKILLS_OVERLAY@@/}"
+          overlay="${overlay//@@OPERATOR_CODEX_RULES_OVERLAY@@/}"
+          # Also neutralize the catalog token: the @@VAR@@ loop SKIPS
+          # CAPABILITY_CATALOG, so a literal @@CAPABILITY_CATALOG@@ in the identity
+          # prose would survive to the final catalog substitution and graft a
+          # second capability table into the identity section. The identity payload
+          # never needs the catalog, so strip it here. (A bare, unshaped `@@` still
+          # passes through — operator-authored identity must be plain prose with no
+          # @@…@@ framework tokens; documented in local.env.example.)
+          overlay="${overlay//@@CAPABILITY_CATALOG@@/}"
+        else
+          # SET-but-missing is explicit operator intent gone wrong (typo, moved /
+          # unmounted path) — warn loudly rather than silently dropping identity,
+          # but still render so the install completes.
+          printf 'warning: SOUL_IDENTITY_PATH=%s is set but the file does not exist — rendering an identity-less spine %s\n' \
+            "$SOUL_IDENTITY_PATH" "$out" >&2
+        fi
+      fi
+      content="${content//@@OPERATOR_SOUL_IDENTITY@@/$overlay}"
       ;;
   esac
 

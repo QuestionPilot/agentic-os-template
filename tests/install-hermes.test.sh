@@ -65,6 +65,38 @@ assert_contains "SOUL.md carries the session-agent spine directive" \
 assert_not_contains "SOUL.md has no unresolved placeholders" \
   "$ih_soul" "@@"
 
+# --- T4b: soul-identity overlay neutralizes an adversarial identity payload ---
+# A second, isolated hermes build whose SOUL_IDENTITY_PATH points at a hostile
+# identity file. Pins the neutralization the SOUL identity twin adds in
+# compile_entrypoint(): framework tokens embedded in the identity prose (a literal
+# @@CAPABILITY_CATALOG@@ and an overlay marker) must be STRIPPED — not expanded
+# into a second capability table, not left literal — while normal prose and shell
+# metacharacters render verbatim. (Guards the cross-model-review findings for the
+# soul-identity overlay: catalog-token double-expansion + marker leakage.)
+IH_OUT2="$(mktemp -d)/hermes-home"; mkdir -p "$IH_OUT2"
+IH_ENV2="$(mktemp -d)/local.env"
+IH_IDENT="$(mktemp -d)/local.soul-identity.md"
+make_hermes_env "$IH_ENV2" "$IH_OUT2" "$IH_VAULT"
+printf 'SOUL_IDENTITY_PATH=%q\n' "$IH_IDENT" >> "$IH_ENV2"
+printf '## Who I am\n- Catalog token @@CAPABILITY_CATALOG@@ inline.\n- Overlay marker @@OPERATOR_SKILLS_OVERLAY@@ inline.\n- Metachars & $HOME `tick` $(echo SUBSHELL) verbatim.\n' > "$IH_IDENT"
+
+assert_exit "install.sh --harness hermes builds clean with a soul-identity overlay" 0 -- \
+  env AI_CONFIG_LOCAL_ENV="$IH_ENV2" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+ih_soul2="$(cat "$IH_OUT2/SOUL.md" 2>/dev/null || printf '')"
+assert_not_contains "soul-identity overlay leaves no unresolved/leaked @@ token" \
+  "$ih_soul2" "@@"
+assert_contains "soul-identity overlay splices the identity prose" \
+  "$ih_soul2" "## Who I am"
+assert_contains "an inline @@CAPABILITY_CATALOG@@ is stripped to empty, not expanded" \
+  "$ih_soul2" "Catalog token  inline."
+assert_contains "an inline overlay marker is stripped to empty" \
+  "$ih_soul2" "Overlay marker  inline."
+assert_contains "shell metacharacters in the identity render verbatim (not executed)" \
+  "$ih_soul2" 'echo SUBSHELL) verbatim.'
+assert_contains "the operating-section spine directive still renders" \
+  "$ih_soul2" "/session-agent"
+rm -rf "${IH_OUT2%/hermes-home}" "${IH_ENV2%/local.env}" "${IH_IDENT%/local.soul-identity.md}"
+
 # --- T5: edit-gate hook behavior against synthetic payloads ---
 if command -v jq >/dev/null 2>&1; then
   IH_GATE="$IH_OUT/hooks/session-agent.sh"
