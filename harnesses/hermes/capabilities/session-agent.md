@@ -8,11 +8,23 @@ lifecycle: shipped
   skill at `$HERMES_HOME/skills/session-agent/SKILL.md` into the slash command
   and injects its body on invocation (skill-read marker:
   `skills/session-agent/SKILL.md`).
-- **Auto-fire:** the framework on_session_start hook
+- **Auto-fire:** the framework `pre_llm_call` hook
   (`$HERMES_HOME/hooks/framework-surface.sh`) injects a directive into the
   first turn's user message on every new session telling the model to invoke
-  `/session-agent` as its first action (Mode 1: kickoff orient). Hermes fires
-  on_session_start only on a session's first turn — one trigger per session.
+  `/session-agent` as its first action (Mode 1: kickoff orient). It rides
+  `pre_llm_call` — **not** `on_session_start`, whose return Hermes discards
+  (see `adapter.md` Fact 2) — and self-gates to the first turn via
+  `.extra.is_first_turn`, so the directive fires exactly once per session.
+- **Orient (Mode 1) memory pathing — Hermes-specific.** Hermes injects its
+  native memory (`$HERMES_HOME/memories/MEMORY.md` + `USER.md`) as a frozen
+  snapshot into the system prompt at session start — it is ALREADY in your
+  context. For O1, read that injected snapshot; do **not** `read_file` a bare
+  `MEMORY.md` path or `search_files` for it (there is no repo-root `MEMORY.md`,
+  and a filesystem search times out). Hermes has no Claude-style
+  `<config>/projects/<slug>/memory/project_*.md` files — durable project memory
+  lives in the vault, so satisfy O1's project-body reads inside the O4 vault
+  orient (read the relevant `01-Projects/` notes) instead of chasing on-disk
+  memory files.
 - **Enforcement:** class `pre-edit-gate` → the `pre_tool_call` hook
   `hooks/session-agent.sh`, matcher `write_file|patch|terminal` (`terminal` is
   included because the shell can write files — the Bash-bypass). Blocks the

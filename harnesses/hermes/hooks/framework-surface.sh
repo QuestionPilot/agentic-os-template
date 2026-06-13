@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Framework-changes surfacing hook (Hermes on_session_start event).
+# Framework-changes surfacing hook (Hermes pre_llm_call event, first turn only).
 # Runs `git log` over the agentic-os-template checkout and surfaces recent
-# framework changes as injected context. Hermes fires on_session_start once,
-# on the first turn of a new session — no matcher needed.
+# framework changes + the session-agent kickoff directive as injected context.
+#
+# WHY pre_llm_call (not on_session_start): on_session_start is fire-and-forget in
+# Hermes — conversation_loop.py invokes it but DISCARDS its return, so a
+# {"context":...} emitted there never reaches the model (verified against the
+# Hermes source, v0.16.0). pre_llm_call is the session-lifecycle event whose
+# {"context":...} IS injected into the user message (turn_context.py ->
+# conversation_loop.py). pre_llm_call fires before EVERY model call, so this hook
+# self-gates to the first turn via .extra.is_first_turn.
 #
 # @@AI_CONFIG_DIR@@ is a build placeholder: install.sh substitutes the absolute
 # path to the agentic-os-template checkout from local.env (see
@@ -17,9 +24,10 @@
 #                                           auto-fire directive
 # Window: set CLAUDE_FRAMEWORK_SINCE_DAYS=N to override (default 10).
 #
-# stdin:  on_session_start event JSON (drained but unused)
-# stdout: when surfacing, {"context": "..."} — Hermes injects it into the
-#         user message (never the system prompt)
+# stdin:  pre_llm_call event JSON — carries .session_id, .cwd, and
+#         .extra.is_first_turn (the first-turn gate signal)
+# stdout: on the first turn only, {"context": "..."} — Hermes injects it into the
+#         user message (never the system prompt). Silent on every later turn.
 # exit:   always 0 (fail-open; this is a surfacing hook)
 
 set -uo pipefail
@@ -41,6 +49,38 @@ DAYS="${CLAUDE_FRAMEWORK_SINCE_DAYS:-10}"
 # declaration channel — see hooks/session-agent.sh).
 EVENT_JSON="$(cat)"
 SESSION_ID="$(printf '%s' "$EVENT_JSON" | jq -r '.session_id // empty' 2>/dev/null || true)"
+
+# --- First-turn gate --------------------------------------------------------
+# This hook is wired to Hermes's pre_llm_call event (see header). pre_llm_call
+# fires before EVERY model call, so surface ONLY on the session's first turn.
+# Primary signal: .extra.is_first_turn (Hermes computes it as
+# `not conversation_history`; a JSON boolean). Use has()-checks, NOT jq's `//`,
+# because `//` treats a literal `false` as empty and would misread a later turn
+# as "absent". Fallback when the signal is missing (defensive — e.g. a future
+# wire change): a per-session sentinel so the directive is never injected twice.
+IS_FIRST="$(printf '%s' "$EVENT_JSON" | jq -r '
+  if (.extra? // {} | type=="object" and has("is_first_turn")) then (.extra.is_first_turn|tostring)
+  elif has("is_first_turn") then (.is_first_turn|tostring)
+  else "absent" end' 2>/dev/null || echo absent)"
+
+# Normalize case so a non-canonical stringified "False"/"True" is treated the
+# same as jq's lowercase boolean — keeps the .sh/.ps1 twins (PowerShell compares
+# case-insensitively) behaviorally identical.
+IS_FIRST="$(printf '%s' "$IS_FIRST" | tr '[:upper:]' '[:lower:]')"
+SENTINEL=""
+if [[ "$IS_FIRST" == "false" ]]; then
+  exit 0
+elif [[ "$IS_FIRST" != "true" ]]; then
+  # No reliable first-turn signal → dedup via a per-session sentinel file.
+  # Without a session_id we cannot dedup at all, so fail SAFE (stay silent)
+  # rather than re-inject the directive on every model call.
+  _gate_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+  if [[ -z "$_gate_dir" || -z "$SESSION_ID" ]]; then
+    exit 0
+  fi
+  SENTINEL="$_gate_dir/agentic-os/surfaced-$SESSION_ID"
+  [[ -f "$SENTINEL" ]] && exit 0
+fi
 
 # --- 1. agentic-os-template git-log block ---------------------------------
 # Use -e (not -d) on .git: inside a linked git worktree it's a regular file
@@ -99,8 +139,8 @@ fi
 # --- 2. Session-agent invocation directive ----------------------------------
 # Auto-fire mechanism for the session-agent spine capability. Emits one
 # directive instructing the model to invoke session-agent as its first action
-# (Mode 1: kickoff orient). One trigger per session — Hermes fires
-# on_session_start only on the first turn.
+# (Mode 1: kickoff orient). One trigger per session — the first-turn gate above
+# ensures this fires only on the session's first pre_llm_call.
 SA_BLOCK=""
 if [[ "${CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE:-0}" != "1" ]]; then
   SA_BLOCK="
@@ -140,6 +180,13 @@ fi
 
 CONTEXT="${GIT_BLOCK}${FRESH_BLOCK}${SA_BLOCK}"
 
+# Sentinel dedup applies only when the first-turn signal was absent (above);
+# mark this session surfaced so a later turn stays silent. Best-effort — never
+# affects this hook's output or exit code.
+if [[ -n "$SENTINEL" ]]; then
+  mkdir -p "$(dirname "$SENTINEL")" 2>/dev/null && : > "$SENTINEL" 2>/dev/null || true
+fi
+
 # Emit Hermes context-injection JSON via jq for safe escaping. Hermes injects
-# the context into the user message of the first turn.
+# the context into the user message (first turn only — gated above).
 jq -nR --arg ctx "$CONTEXT" '{context: $ctx}'

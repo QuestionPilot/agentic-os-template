@@ -43,8 +43,8 @@ done
 ih_yaml="$(cat "$IH_OUT/hooks/hooks.yaml" 2>/dev/null || printf '')"
 assert_contains "hooks.yaml wires the pre_tool_call edit-gate matcher" \
   "$ih_yaml" 'matcher: "write_file|patch|terminal"'
-assert_contains "hooks.yaml wires on_session_start to framework-surface" \
-  "$ih_yaml" "on_session_start"
+assert_contains "hooks.yaml wires pre_llm_call to framework-surface" \
+  "$ih_yaml" "pre_llm_call"
 assert_contains "hooks.yaml enables the agentic-os-hook-bridge plugin" \
   "$ih_yaml" "agentic-os-hook-bridge"
 
@@ -143,15 +143,33 @@ if command -v jq >/dev/null 2>&1; then
     | bash "$IH_GATE")"
   assert_eq "a payload without session_id stays silent" "" "$ih_out"
 
-  # --- T6: framework-surface emits Hermes context-injection shape ---
-  ih_fs="$(printf '{"hook_event_name":"on_session_start","session_id":"%s"}' "$IH_SID" \
+  # --- T6: framework-surface (pre_llm_call) injects on the first turn and
+  #          stays silent on later turns (the auto-fire fix — see adapter Fact 2) ---
+  ih_fs="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":{"is_first_turn":true}}' "$IH_SID" \
     | bash "$IH_OUT/hooks/framework-surface.sh")"
   if [ -n "$ih_fs" ]; then
-    assert_exit "framework-surface output is valid JSON" 0 -- \
+    assert_exit "framework-surface first turn emits valid JSON context" 0 -- \
       sh -c "printf '%s' '$(printf '%s' "$ih_fs" | sed "s/'/'\\\\''/g")' | jq -e '.context | type == \"string\"' >/dev/null"
+    assert_contains "framework-surface first turn carries the session-agent directive" \
+      "$ih_fs" "invoke now (Mode 1: kickoff orient)"
   else
     _skip "framework-surface emits context" "no git window / quiet exit"
   fi
+  # A later turn (is_first_turn=false) must stay silent — the first-turn gate.
+  ih_fs_later="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":{"is_first_turn":false}}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_eq "framework-surface stays silent on a later turn" "" "$ih_fs_later"
+  # Degenerate-payload hardening (surfaced by a cross-model adversarial review):
+  # absent first-turn signal AND no session_id → cannot dedup → must fail SILENT,
+  # never re-inject the directive on every model call.
+  ih_fs_nosig="$(printf '{"hook_event_name":"pre_llm_call","extra":{}}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_eq "framework-surface fails silent when is_first_turn AND session_id absent" "" "$ih_fs_nosig"
+  # A non-canonical stringified "False" must be read as not-the-first-turn (silent),
+  # keeping the .sh twin case-insensitive like the .ps1 twin.
+  ih_fs_strfalse="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":{"is_first_turn":"False"}}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_eq "framework-surface treats stringified False as not-first-turn (silent)" "" "$ih_fs_strfalse"
 else
   _skip "hermes hook behavior suite" "jq not installed"
 fi
