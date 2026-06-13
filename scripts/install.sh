@@ -987,11 +987,14 @@ main() {
 
   # framework-surface is a non-capability hook — wired unconditionally. The
   # event name and matcher are harness-native: claude/codex fire SessionStart
-  # with a source matcher; hermes fires on_session_start (first turn only, no
-  # matcher — matchers apply to pre/post_tool_call events only).
+  # with a source matcher; hermes fires pre_llm_call — NOT on_session_start,
+  # whose {"context":...} return Hermes discards (fire-and-forget). pre_llm_call
+  # is the event whose context is injected into the user message; the hook
+  # self-gates to the first turn via .extra.is_first_turn. No matcher (matchers
+  # apply to pre/post_tool_call events only). See harnesses/hermes/adapter.md Fact 2.
   case "$HARNESS" in
     hermes)
-      install_hook "framework-surface.sh" "on_session_start" ""
+      install_hook "framework-surface.sh" "pre_llm_call" ""
       # Autonomy-governance hooks (hermes-only). All wired DISABLED-BY-DEFAULT
       # or hard-gated: the drain is inert without its enablement flag file, the
       # skill gate blocks mutations pending a consumed per-use approval marker,

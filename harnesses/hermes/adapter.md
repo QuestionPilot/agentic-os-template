@@ -54,8 +54,9 @@ description: <trigger-rich one-paragraph description>
 
 Hermes has three hook systems; this adapter uses **shell hooks** (the
 Claude-Code-compatible system): a `hooks:` block in `config.yaml`, stdin JSON
-carrying `hook_event_name` / `tool_name` / `tool_input` / `session_id` / `cwd`,
-and Claude-Code-style output. Events: `on_session_start` (first turn only),
+carrying `hook_event_name` / `tool_name` / `tool_input` / `session_id` / `cwd`
+plus an `extra` object of event-specific kwargs (e.g. `pre_llm_call` passes
+`extra.is_first_turn`), and Claude-Code-style output. Events: `on_session_start`,
 `on_session_end`, `on_session_finalize` / `on_session_reset`,
 `pre/post_tool_call`, `pre/post_llm_call`, `subagent_stop`. Only
 `pre_tool_call` blocks; `matcher:` (a tool-name regex) applies to
@@ -63,15 +64,29 @@ and Claude-Code-style output. Events: `on_session_start` (first turn only),
 
 **Hook decision formats (verified v0.16.0).** A `pre_tool_call` block emits the
 legacy Claude-Code shape `{"decision":"block","reason":"…"}` — Hermes parses it
-natively into its wire shape (`{"action":"block","message":"…"}`). Context
-injection emits `{"context":"…"}`, which Hermes injects into the **user
-message** (never the system prompt).
+natively into its wire shape (`{"action":"block","message":"…"}`).
+
+**Context injection — which events actually inject (verified against the Hermes
+source, v0.16.0).** A hook returning `{"context":"…"}` only reaches the model on
+**`pre_llm_call`**: `turn_context.py` collects each `pre_llm_call` hook's
+`context` and appends it to the **user message** (never the system prompt), once
+per model call. **`on_session_start` is fire-and-forget** — `conversation_loop.py`
+invokes it but DISCARDS the return, so a `{"context":…}` emitted there never
+reaches the model (the event is meant for side effects like cache warming). This
+is the trap that silently broke session-agent auto-fire on every model and
+entrypoint: the surfacing hook must ride `pre_llm_call`, gated to the first turn.
+Verify end-to-end by the model's BEHAVIOR (it invokes `/session-agent`), **not**
+by grepping `state.db`: `pre_llm_call` context is injected into the ephemeral
+API-call message and is NOT persisted to the transcript, so a transcript grep
+shows nothing even when injection works. `hermes hooks test` only proves the hook
+*emits* valid JSON, not that Hermes injects it — confirm by behavior, or by
+asking the model to echo back its injected context verbatim.
 
 **Enforcement-class → hook mapping.**
 
 | Enforcement class | Hook event | `matcher` | Hook script | Behavior |
 | --- | --- | --- | --- | --- |
-| `pre-edit-gate` | `pre_tool_call` | `write_file\|patch\|terminal` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until session-agent ran and a `Linear gate:` declaration exists. `terminal` is in the matcher because the shell can write files (the Bash-bypass). Safety net; primary auto-fire is the on_session_start directive in `framework-surface.sh`. |
+| `pre-edit-gate` | `pre_tool_call` | `write_file\|patch\|terminal` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until session-agent ran and a `Linear gate:` declaration exists. `terminal` is in the matcher because the shell can write files (the Bash-bypass). Safety net; primary auto-fire is the `pre_llm_call` directive in `framework-surface.sh` (see the Fact 2 context-injection note). |
 
 **Gate detection (Hermes-specific).** Hermes persists transcripts in
 `$HERMES_HOME/state.db` (SQLite `messages(session_id, role, content)` — schema
@@ -84,10 +99,13 @@ exactly that structured write through pre-gate and treats the file as the
 open-gate marker. A read-only `state.db` query (skill-read marker +
 `Linear gate:` line) is the multi-turn backstop when `sqlite3` is available.
 
-**Non-capability hook.** `hooks/framework-surface.sh` runs on
-`on_session_start` (no matcher — the event fires once, on a new session's
-first turn) and surfaces recent framework commits, a config-freshness nudge,
-and the session-agent invocation directive as `{"context": …}`. Wired
+**Non-capability hook.** `hooks/framework-surface.sh` runs on **`pre_llm_call`**
+(no matcher — matchers apply to tool-call events only) and surfaces recent
+framework commits, a config-freshness nudge, and the session-agent invocation
+directive as `{"context": …}`. Because `pre_llm_call` fires before every model
+call, the hook self-gates to the session's first turn via `extra.is_first_turn`
+(falling back to a per-session sentinel under `$HERMES_HOME/agentic-os/` only if
+that signal is ever absent), so the directive injects exactly once. Wired
 unconditionally by the build.
 
 **`config.yaml` is user-owned — wiring is a surfaced manual step.** The build
@@ -107,10 +125,16 @@ hooks silently do not fire in GUI sessions. Hook *dispatch* is engine-level
 (the plugin manager), and plugins DO load in the desktop process, so the build
 ships the **`agentic-os-hook-bridge`** plugin
 (`harnesses/hermes/plugins/agentic-os-hook-bridge/`): its `register()` calls
-the same registration entrypoint, restoring full hook parity in the desktop
-app. Idempotent (double-registration is a no-op) and consent-preserving (the
-allowlist still gates; nothing is auto-approved). The plugin must be enabled
-via `plugins.enabled` in `config.yaml` — part of the same surfaced manual step.
+the same registration entrypoint, restoring hook *registration* — and thus the
+engine-level `pre_tool_call` / `pre_llm_call` dispatch that runs inside the
+shared turn loop — in the desktop app. Note the session-*lifecycle* events
+(`on_session_start` / `on_session_end`) are emitted by the entrypoint, not the
+engine, so the bridge does not resurrect them in the GUI — a second reason the
+surfacing hook rides `pre_llm_call` (which every entrypoint dispatches) rather
+than `on_session_start`. Idempotent (double-registration is a no-op) and
+consent-preserving (the allowlist still gates; nothing is auto-approved). The
+plugin must be enabled via `plugins.enabled` in `config.yaml` — part of the same
+surfaced manual step.
 
 **`jq` runtime contract.** Same split as the other harnesses: the **gate**
 hook fails **closed** without `jq` (static legacy block shape — natively

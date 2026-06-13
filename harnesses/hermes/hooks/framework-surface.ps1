@@ -1,15 +1,19 @@
 #Requires -Version 7
-# Framework-changes surfacing hook (Hermes on_session_start event) — Windows
-# twin of framework-surface.sh. Surfaces recent agentic-os-template commits,
-# a config-freshness nudge, and the session-agent auto-fire directive as
-# Hermes context injection ({"context": "..."}).
+# Framework-changes surfacing hook (Hermes pre_llm_call event, first turn only)
+# — Windows twin of framework-surface.sh. Surfaces recent agentic-os-template
+# commits, a config-freshness nudge, and the session-agent auto-fire directive
+# as Hermes context injection ({"context": "..."}).
+#
+# Wired to pre_llm_call (NOT on_session_start, whose {"context":...} return
+# Hermes discards). pre_llm_call fires before every model call, so this hook
+# self-gates to the first turn via .extra.is_first_turn. See adapter.md Fact 2.
 #
 # Kill switches (same env names as the bash twin / other harnesses):
 #   CLAUDE_SKIP_FRAMEWORK_SURFACE=1, CLAUDE_SKIP_FRESHNESS_CHECK=1,
 #   CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1, CLAUDE_FRAMEWORK_SINCE_DAYS=N
 #
-# stdin:  on_session_start event JSON (drained but unused)
-# stdout: when surfacing, {"context": "..."}
+# stdin:  pre_llm_call event JSON — .session_id, .cwd, .extra.is_first_turn
+# stdout: on the first turn only, {"context": "..."}; silent on later turns
 # exit:   always 0 (fail-open; surfacing hook)
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -25,6 +29,34 @@ $days = if ($env:CLAUDE_FRAMEWORK_SINCE_DAYS) { $env:CLAUDE_FRAMEWORK_SINCE_DAYS
 $inputRaw = [Console]::In.ReadToEnd()
 $sessionId = ''
 try { $sessionId = [string](($inputRaw | ConvertFrom-Json).session_id) } catch { }
+
+# --- First-turn gate --------------------------------------------------------
+# pre_llm_call fires before EVERY model call, so surface ONLY on the first turn.
+# Primary signal: .extra.is_first_turn (a JSON boolean → 'True'/'False' once
+# stringified). Fallback when the signal is absent (defensive): a per-session
+# sentinel so the directive is never injected twice. Mirrors framework-surface.sh.
+$isFirst = 'absent'
+try {
+    $obj = $inputRaw | ConvertFrom-Json
+    if ($null -ne $obj.extra -and ($obj.extra.PSObject.Properties.Name -contains 'is_first_turn')) {
+        $isFirst = [string]$obj.extra.is_first_turn
+    } elseif ($obj.PSObject.Properties.Name -contains 'is_first_turn') {
+        $isFirst = [string]$obj.is_first_turn
+    }
+} catch { }
+
+$sentinel = ''
+if ($isFirst -ieq 'false') {
+    exit 0
+} elseif ($isFirst -ine 'true') {
+    # No reliable first-turn signal → dedup via a per-session sentinel. Without a
+    # session id we cannot dedup, so fail SAFE (stay silent) rather than re-inject
+    # the directive on every model call. Mirrors framework-surface.sh.
+    $gateDir = Split-Path -Parent $PSScriptRoot
+    if (-not $gateDir -or -not $sessionId) { exit 0 }
+    $sentinel = Join-Path $gateDir 'agentic-os' "surfaced-$sessionId"
+    if (Test-Path -LiteralPath $sentinel) { exit 0 }
+}
 
 # --- 1. agentic-os-template git-log block ---------------------------------
 $gitBlock = ''
@@ -116,6 +148,16 @@ After the R5 routing declaration, open the edit-gate by writing the file
 }
 
 if (-not $gitBlock -and -not $freshBlock -and -not $saBlock) { exit 0 }
+
+# Sentinel dedup applies only when the first-turn signal was absent (above);
+# mark this session surfaced so a later turn stays silent. Best-effort.
+if ($sentinel) {
+    try {
+        $sdir = Split-Path -Parent $sentinel
+        if (-not (Test-Path -LiteralPath $sdir)) { New-Item -ItemType Directory -Force -Path $sdir | Out-Null }
+        Set-Content -LiteralPath $sentinel -Value '' -NoNewline
+    } catch { }
+}
 
 $context = "$gitBlock$freshBlock$saBlock"
 @{ context = $context } | ConvertTo-Json -Compress
