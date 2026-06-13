@@ -536,9 +536,55 @@ printf '\357\273\277---\ntitle: x\n---\n\nclean body, no payload.\n' > "$INJ_FS/
 bash "$CMD_SCRIPT" --injection-scan "$INJ_FS/bomclean.md" >/dev/null 2>&1
 assert_eq "memory-drift inj-scan: BOM-prefixed clean file stays clean" "0" "$?"
 
+# --- 32. KEBAB-named notes ARE scanned. The Claude auto-memory uses kebab-case
+# slugs (feedback-foo.md), and some notes carry NO type prefix at all
+# (home-folder.md, toolchain-paths.md) with the type in frontmatter — the old
+# underscore-only glob skipped every one of them, vacuously PASSing the real
+# store. A kebab note with a frontmatter hazard AND a no-type-prefix note with an
+# injection payload must BOTH be caught now. (INJ_HALF1/2 defined above.)
+KEBAB_TMP=$(mktemp -d 2>/dev/null) || KEBAB_TMP="/tmp/memory-kebab-$$"
+mkdir -p "$KEBAB_TMP"
+cat > "$KEBAB_TMP/feedback-kebab-hazard.md" <<'EOF'
+---
+name: feedback-kebab-hazard
+description: kebab note with a hazard # that eats the rest
+metadata:
+  type: feedback
+---
+Body.
+EOF
+{
+  printf -- '---\nname: home-kebab-inject\ndescription: "a no-type-prefix note"\nmetadata:\n  type: project\n---\n'
+  printf '%s %s right now.\n' "$INJ_HALF1" "$INJ_HALF2"
+} > "$KEBAB_TMP/home-kebab-inject.md"
+KEBAB_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$KEBAB_TMP" 2>&1)
+KEBAB_RC=$?
+assert_eq "memory-drift: kebab-named notes are scanned (exit 1)" "1" "$KEBAB_RC"
+assert_contains "memory-drift: kebab fm hazard caught" "$KEBAB_OUT" "feedback-kebab-hazard.md"
+assert_contains "memory-drift: kebab no-type-prefix injection caught" "$KEBAB_OUT" "home-kebab-inject.md"
+
+# --- 33. A clean no-type-prefix kebab note is scanned (counted), not skipped:
+# proves the all-*.md glob picks it up (the old glob reported 0 → vacuous PASS).
+GUARD_TMP=$(mktemp -d 2>/dev/null) || GUARD_TMP="/tmp/memory-guard-$$"
+mkdir -p "$GUARD_TMP"
+cat > "$GUARD_TMP/toolchain-paths.md" <<'EOF'
+---
+name: toolchain-paths
+description: "clean kebab note, no type prefix"
+metadata:
+  type: reference
+---
+Body.
+EOF
+GUARD_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$GUARD_TMP" 2>&1)
+GUARD_RC=$?
+assert_eq "memory-drift: clean no-type-prefix kebab note exits 0" "0" "$GUARD_RC"
+assert_contains "memory-drift: the kebab note IS counted (1 scanned, not a vacuous 0)" "$GUARD_OUT" "1 notes frontmatter+injection-scanned"
+
 # --- Cleanup.
 rm -rf "$MD_TMP" "$EMPTY_TMP" "$SIZE_TMP" "$LINE_TMP" "$OK_TMP" \
   "$EMDASH_OK_TMP" "$EMDASH_BAD_TMP" "$BND_TMP" "$COMBO_TMP" \
   "$FM_TMP" "$FM_NOOPEN" "$FM_NOCLOSE" "$FM_CRLF" "$FM_CLEAN" \
   "$FM_BOM" "$FM_BOM_BAD" "$FM_NOCLOSE2" \
-  "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG" "$INJ_FS"
+  "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG" "$INJ_FS" \
+  "$KEBAB_TMP" "$GUARD_TMP"

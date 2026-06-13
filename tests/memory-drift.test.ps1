@@ -649,7 +649,32 @@ Assert-Eq 'memory-drift.test inj-scan: BOM-prefixed payload is caught (parity wi
 $FS_BOMCLEAN_RC = $LASTEXITCODE
 Assert-Eq 'memory-drift.test inj-scan: BOM-prefixed clean file stays clean' '0' "$FS_BOMCLEAN_RC"
 
+# --- 32. KEBAB-named notes ARE scanned (parity with bash test 32). The auto-memory
+# uses kebab-case slugs (feedback-foo.md) and some notes carry no type prefix at all
+# (toolchain-paths.md) with the type in frontmatter — the old underscore-only glob
+# skipped them, vacuously PASSing the real store.
+$KEBAB_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-kebab-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $KEBAB_TMP -Force | Out-Null
+Write-LfFile (Join-Path $KEBAB_TMP 'feedback-kebab-hazard.md') "---`nname: feedback-kebab-hazard`ndescription: kebab note with a hazard # that eats the rest`nmetadata:`n  type: feedback`n---`nBody.`n"
+Write-LfFile (Join-Path $KEBAB_TMP 'home-kebab-inject.md') "---`nname: home-kebab-inject`ndescription: `"a no-type-prefix note`"`nmetadata:`n  type: project`n---`n$INJ_H1 $INJ_H2 right now.`n"
+$KEBAB_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $KEBAB_TMP 2>&1
+$KEBAB_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test: kebab-named notes are scanned (exit 1)' '1' "$KEBAB_RC"
+Assert-Contains 'memory-drift.test: kebab fm hazard caught' $KEBAB_OUT 'feedback-kebab-hazard.md'
+Assert-Contains 'memory-drift.test: kebab no-type-prefix injection caught' $KEBAB_OUT 'home-kebab-inject.md'
+
+# --- 33. A clean no-type-prefix kebab note is scanned (counted), not skipped.
+$GUARD_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-guard-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $GUARD_TMP -Force | Out-Null
+Write-LfFile (Join-Path $GUARD_TMP 'toolchain-paths.md') "---`nname: toolchain-paths`ndescription: `"clean kebab note, no type prefix`"`nmetadata:`n  type: reference`n---`nBody.`n"
+$GUARD_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $GUARD_TMP 2>&1
+$GUARD_RC = $LASTEXITCODE
+Assert-Eq 'memory-drift.test: clean no-type-prefix kebab note exits 0' '0' "$GUARD_RC"
+Assert-Contains 'memory-drift.test: the kebab note IS counted (1 scanned, not a vacuous 0)' $GUARD_OUT '1 notes frontmatter+injection-scanned'
+
 # --- Cleanup.
+Remove-Item -LiteralPath $KEBAB_TMP -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $GUARD_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_FS -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_VAR -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_NEG -Recurse -Force -ErrorAction SilentlyContinue
