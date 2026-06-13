@@ -113,6 +113,40 @@ foreach ($ct_base in @('.claude', '.codex', '.agents')) {
         $val_skills_output 'never in a framework repo root'
 }
 
+# --- Tests 4j-4l: a CO-LOCATED config dir is recognized, not rejected (<TEAM>-285) ---
+# Mirrors validate.test.sh: CLAUDE_CONFIG_DIR pointed at a repo-root .claude/ with
+# a skills/ subdir + settings.json must PASS (recognized as the harness's own
+# gitignored config dir); the same tree with the config dir ELSEWHERE still FAILS
+# with the security message. Skip-if-real: never co-opt a real $REPO_ROOT/.claude.
+$coloDir = Join-Path $env:REPO_ROOT '.claude'
+if (Test-Path -LiteralPath $coloDir) {
+    _Skip 'validate.test: validate.ps1 recognizes a co-located CLAUDE_CONFIG_DIR' `
+        'real .claude/ present at $REPO_ROOT — refusing to co-opt as a config target'
+} else {
+    $coloSkill = Join-Path $coloDir 'skills' ('.test-que285-skill-' + (Get-VtSuffix))
+    New-Item -ItemType Directory -Path $coloSkill -Force | Out-Null
+    Write-LfFile (Join-Path $coloDir 'settings.json') "{}`n"
+    $savedCfg = $env:CLAUDE_CONFIG_DIR
+    # (a) config dir IS this .claude/ → recognized → PASS
+    $env:CLAUDE_CONFIG_DIR = $coloDir
+    Assert-Exit 'validate.test: validate.ps1 recognizes a co-located CLAUDE_CONFIG_DIR (skills/+settings.json PASS)' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
+    # (b) config dir is a DIFFERENT existing dir → not recognized → still FAILS
+    $coloElse = Join-Path $env:REPO_ROOT ('.test-que285-elsewhere-' + (Get-VtSuffix))
+    New-Item -ItemType Directory -Path $coloElse -Force | Out-Null
+    $env:CLAUDE_CONFIG_DIR = $coloElse
+    $colo_out = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+    $colo_exit = $LASTEXITCODE
+    if ($colo_out -is [array]) { $colo_out = $colo_out -join "`n" }
+    $env:CLAUDE_CONFIG_DIR = $savedCfg
+    Remove-IfEmpty $coloElse
+    Assert-Eq 'validate.test: validate.ps1 still FAILS a foreign repo-root .claude/skills/' '1' "$colo_exit"
+    Assert-Contains 'validate.test: validate.ps1 foreign .claude/skills/ keeps the security message' `
+        $colo_out 'security'
+    Remove-Item -LiteralPath (Join-Path $coloDir 'skills') -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $coloDir 'settings.json') -Force -ErrorAction SilentlyContinue
+    Remove-IfEmpty $coloDir
+}
+
 # --- Test 5: mixed (worktrees/ + hand-edit) must FAIL ---
 $wtName = '.test-que60-fake-worktree-' + (Get-VtSuffix)
 $wtPath = Join-Path $claudeDir 'worktrees' $wtName

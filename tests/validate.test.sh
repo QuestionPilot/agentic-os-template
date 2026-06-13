@@ -136,6 +136,40 @@ for ct_dir in "$REPO_ROOT/.claude" "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
     "$val_skills_output" "never in a framework repo root"
 done
 
+# --- Tests 4j-4l: a CO-LOCATED config dir is recognized, not rejected (<TEAM>-285) ---
+# When the operator points CLAUDE_CONFIG_DIR at a repo-root .claude/ — running
+# every harness out of the framework folder — that dir holds the harness's own
+# compiled output + runtime state (gitignored, never committable). The root-guard
+# must RECOGNIZE it and skip the reject, even with a skills/ subdir + settings.json
+# that would otherwise trip the finding-#8 / hand-edit branches. The contrast
+# (config dir pointing ELSEWHERE) still FAILS — proving the skip is gated on the
+# physical-path match, not blanket-disabled. Skip-if-real: never co-opt a real
+# $REPO_ROOT/.claude. Sentinels are uniquely suffixed; cleanup is inline.
+if [ -e "$REPO_ROOT/.claude" ]; then
+  _skip "validate.sh recognizes a co-located CLAUDE_CONFIG_DIR" \
+    "real .claude/ present at \$REPO_ROOT — refusing to co-opt as a config target"
+else
+  mkdir -p "$REPO_ROOT/.claude/skills/.test-que285-skill-$$-${RANDOM:-x}"
+  printf '{}\n' > "$REPO_ROOT/.claude/settings.json"
+  # (a) config dir IS this .claude/ → recognized → PASS despite skills/ + settings.json
+  assert_exit "validate.sh recognizes a co-located CLAUDE_CONFIG_DIR (skills/+settings.json PASS)" 0 -- \
+    env CLAUDE_CONFIG_DIR="$REPO_ROOT/.claude" bash "$REPO_ROOT/scripts/validate.sh"
+  # (b) config dir is a DIFFERENT existing dir → not recognized → still FAILS (finding #8)
+  VAL_Q285_ELSEWHERE="$REPO_ROOT/.test-que285-elsewhere-$$-${RANDOM:-x}"
+  mkdir -p "$VAL_Q285_ELSEWHERE"
+  val_q285_out="$(env CLAUDE_CONFIG_DIR="$VAL_Q285_ELSEWHERE" bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
+    && val_q285_exit=0 || val_q285_exit=$?
+  rmdir "$VAL_Q285_ELSEWHERE" 2>/dev/null || true
+  assert_eq "validate.sh still FAILS a foreign repo-root .claude/skills/" "1" "$val_q285_exit"
+  assert_contains "validate.sh foreign .claude/skills/ keeps the security message" \
+    "$val_q285_out" "security"
+  # Surgical cleanup — only what this block created (skip-if-real guaranteed .claude/ was absent).
+  rm -rf "$REPO_ROOT/.claude/skills"
+  rm -f "$REPO_ROOT/.claude/settings.json"
+  rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
+  unset VAL_Q285_ELSEWHERE val_q285_out val_q285_exit
+fi
+
 # --- Test 5: mixed (worktrees/ + hand-edit) must FAIL ---
 # Regression: both pre and post fix → FAIL.
 mkdir -p "$REPO_ROOT/.claude/worktrees/.test-que60-fake-worktree"

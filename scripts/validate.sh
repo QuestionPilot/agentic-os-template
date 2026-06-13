@@ -67,7 +67,49 @@ for forbidden in \
   fi
 done
 
-# Harness-config dirs (.claude/, .codex/, .agents/) at agentic-os-template repo root
+# Recognize a deliberately CO-LOCATED harness config dir in the loop below: when
+# the operator points a harness's config-dir variable at a directory under the
+# repo root (e.g. CLAUDE_CONFIG_DIR=$repo_root/.claude — running every harness
+# out of the framework folder), that directory holds the harness's own compiled
+# output + runtime state. It is gitignored and never committable, so it is out of
+# scope for this leak guard, exactly like the cross-model-out/ / .codegraph/ /
+# worktrees/ runtime dirs the scans above already prune. Resolve each configured
+# target to a physical path: environment first, then a sourced local.env
+# (install.sh / bootstrap.sh read local.env the same way). In the maintainer
+# default (~/.claude etc.) and in CI (temp-dir config) none of these equal
+# $repo_root/.<harness>, so the reject below still fires on a genuine leak.
+cfg_claude="${CLAUDE_CONFIG_DIR:-}"
+cfg_codex="${CODEX_HOME:-}"
+cfg_hermes="${HERMES_HOME:-}"
+if [ -f "$repo_root/local.env" ]; then
+  # Source in an isolated subshell (stdin closed) so a side effect, unset-var
+  # reference, or stray read in local.env can neither abort this run (set -e),
+  # hang it, nor pollute its environment. Only the resolved path is captured.
+  if [ -z "$cfg_claude" ]; then
+    cfg_claude="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${CLAUDE_CONFIG_DIR:-}" )"
+  fi
+  if [ -z "$cfg_codex" ]; then
+    cfg_codex="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${CODEX_HOME:-}" )"
+  fi
+  if [ -z "$cfg_hermes" ]; then
+    cfg_hermes="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${HERMES_HOME:-}" )"
+  fi
+fi
+# Physical path of a configured config dir ('' when unset or nonexistent).
+# ALWAYS returns 0: a non-zero status here would abort validate.sh under
+# `set -e` whenever a config var is unset or its dir is absent (the common
+# maintainer / CI case, where none of these dirs live at the repo root anyway).
+_phys_dir() {
+  if [ -n "${1:-}" ]; then
+    ( cd "$1" 2>/dev/null && pwd -P ) || true
+  fi
+  return 0
+}
+cfg_claude_p="$(_phys_dir "$cfg_claude")"
+cfg_codex_p="$(_phys_dir "$cfg_codex")"
+cfg_hermes_p="$(_phys_dir "$cfg_hermes")"
+
+# Harness-config dirs (.claude/, .codex/, .hermes/, .agents/) at agentic-os-template repo root
 # may contain ONLY framework-development workflow state:
 #   worktrees/             — operator's parallel-branch workspaces when
 #                           working on agentic-os-template PRs (Claude Code's
@@ -87,11 +129,31 @@ done
 # subtree present in Claude Code's cwd is auto-loaded into the session
 # without prompting. Letting it pass validation would silently weaken
 # that defense.
-for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.agents"; do
+for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes" "$repo_root/.agents"; do
   [ -e "$harness_dir" ] || continue
   if [ ! -d "$harness_dir" ]; then
     printf 'FAIL forbidden harness-config artifact at repo root (not a directory): %s\n' "$harness_dir" >&2
     exit 1
+  fi
+  # Co-located config target: when this repo-root harness dir IS the operator's
+  # configured CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME, its contents are the
+  # harness's own gitignored output + state, not a leaked hand-edit — recognize
+  # it and skip the reject. The match is by physical path, so a stray .claude/
+  # when the config dir lives elsewhere (the maintainer default) still falls
+  # through to the finding-#8 + hand-edit rejects below. (.agents has no config
+  # variable, so it never matches and is always guarded.)
+  case "$harness_dir" in
+    */.claude) _cfg_phys="$cfg_claude_p" ;;
+    */.codex)  _cfg_phys="$cfg_codex_p" ;;
+    */.hermes) _cfg_phys="$cfg_hermes_p" ;;
+    *)         _cfg_phys="" ;;
+  esac
+  if [ -n "$_cfg_phys" ]; then
+    _hd_phys="$(cd "$harness_dir" 2>/dev/null && pwd -P)" || _hd_phys=""
+    if [ -n "$_hd_phys" ] && [ "$_hd_phys" = "$_cfg_phys" ]; then
+      printf 'PASS co-located harness config dir recognized (out of leak-guard scope): %s\n' "$harness_dir"
+      continue
+    fi
   fi
   # Security precheck — skills/ at a framework repo root is the auto-load
   # attack surface from <TEAM>-67 finding #8: a .claude/skills/ subtree present
