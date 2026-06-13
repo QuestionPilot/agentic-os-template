@@ -75,6 +75,7 @@ classify lessons and route them to the right source of truth
 - Full bootstrap options: `playbooks/new-machine-bootstrap.md`
 - Active-work tracker setup: `linear/linear-setup.md`
 - Durable vault setup: `obsidian/vault-guide.md`
+- Run it as your own OS (co-located config, personal fork): `playbooks/personal-fork.md`
 
 ---
 
@@ -158,6 +159,7 @@ For agent orientation in a new or unfamiliar project, use `playbooks/project-onb
 For repository hygiene, privacy, and cleanup checks, use `playbooks/github-housekeeping.md`.
 For changes that are published, deployed, or live-state-changing, use `playbooks/deploy-certification.md`.
 For fixing a failing test, error, regression, or defect, use `playbooks/root-cause-debugging.md`.
+For running the framework as your own personal OS (co-located config dirs, consumer postures, which publish-guards to drop), use `playbooks/personal-fork.md`.
 
 ## Golden Rule
 
