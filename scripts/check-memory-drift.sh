@@ -19,8 +19,9 @@
 #      Crossing either cap is a memory-index health failure (same exit 1 as
 #      drift) — the index has bloated past the point of reliable recall.
 #
-#   3. FRONTMATTER PARSER-SAFETY. Each memory note (feedback_/
-#      reference_/project_/runtime_*.md) is scanned for the silent-corruption
+#   3. FRONTMATTER PARSER-SAFETY. Each memory note (every *.md in the dir except
+#      MEMORY.md — the store uses kebab-case slugs with the type in frontmatter,
+#      so no filename type-prefix is assumed) is scanned for the silent-corruption
 #      class where a strict YAML parser misreads frontmatter without raising: a
 #      missing/unterminated `---` block, or a TOP-LEVEL scalar value carrying an
 #      unquoted ` #` (space-then-hash → YAML drops the rest as a comment) or `: `
@@ -191,7 +192,7 @@ fi
 
 drift=0
 scanned=0
-# Counts the FULL note set (feedback_/reference_/project_/runtime_*.md) walked by
+# Counts the FULL note set (every *.md except MEMORY.md) walked by
 # the frontmatter + injection scans below — `scanned` counts only the project_*.md
 # headline-drift subset. Reported separately in the PASS line: a single
 # project-only count on a large mixed dir reads as a coverage gap that isn't there.
@@ -354,7 +355,7 @@ while IFS= read -r -d '' f; do
       colon)    printf 'FAIL frontmatter %s: top-level key "%s" value has unquoted ": " — quote it (YAML may read it as a nested mapping)\n' "$base" "$key" >&2 ;;
     esac
   done
-done < <(find "$memory_dir" -maxdepth 1 -type f \( -name 'feedback_*.md' -o -name 'reference_*.md' -o -name 'project_*.md' -o -name 'runtime_*.md' \) -print0)
+done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 # --- <TEAM>-218: injection-defense scan (line-leading payload hazard linter). -----
 # For each memory note, scan the BODY (after the 2nd `---`) for prompt-injection
@@ -418,7 +419,7 @@ while IFS= read -r -d '' f; do
   [ -z "$hit" ] && continue
   inj_fail=1
   printf 'FAIL injection %s: line-leading prompt-injection payload (class: %s) — if documenting the pattern, fence or quote it; if real, remove it (see core/memory-model.md)\n' "$base" "$hit" >&2
-done < <(find "$memory_dir" -maxdepth 1 -type f \( -name 'feedback_*.md' -o -name 'reference_*.md' -o -name 'project_*.md' -o -name 'runtime_*.md' \) -print0)
+done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 if [ "$drift" -eq 0 ] && [ "$index_fail" -eq 0 ] && [ "$fm_fail" -eq 0 ] && [ "$inj_fail" -eq 0 ]; then
   printf 'PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads (%s project files headline-checked, %s notes frontmatter+injection-scanned in %s)\n' "$scanned" "$notes_scanned" "$memory_dir"

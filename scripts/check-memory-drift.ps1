@@ -21,8 +21,9 @@
     headlines). Crossing either cap is a memory-index health failure (same
     exit 1 as drift).
 
-    3. FRONTMATTER PARSER-SAFETY. Each memory note (feedback_/
-    reference_/project_/runtime_*.md) is scanned for the silent-corruption class
+    3. FRONTMATTER PARSER-SAFETY. Each memory note (every *.md except MEMORY.md —
+    the store uses kebab-case slugs with the type in frontmatter, so no filename
+    type-prefix is assumed) is scanned for the silent-corruption class
     a strict YAML parser misreads without raising: a missing/unterminated `---`
     block, or a TOP-LEVEL scalar value with an unquoted ` #` (YAML drops the rest
     as a comment) or `: ` (YAML may read it as a nested mapping). NARROW hazard
@@ -434,7 +435,7 @@ if (Test-Path -LiteralPath $memIndex -PathType Leaf) {
 $fmFail = 0
 $noteFiles = @(
     Get-ChildItem -LiteralPath $MemoryDir -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -cmatch '^(feedback|reference|project|runtime)_.*\.md$' }
+        Where-Object { $_.Name -like '*.md' -and $_.Name -ne 'MEMORY.md' }
 )
 
 foreach ($nf in $noteFiles) {
