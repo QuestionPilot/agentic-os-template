@@ -143,6 +143,31 @@ Test-EmbeddedGit
 # 3. Forbidden artifacts at repo root + harness-config allowlist
 # ---------------------------------------------------------------------------
 
+# Resolve a harness config-dir variable (CLAUDE_CONFIG_DIR / CODEX_HOME /
+# HERMES_HOME) to a physical path — environment first, then a textual local.env
+# parse with $VAR / ${VAR} / %VAR% expansion. Returns '' when unset or the path
+# does not resolve. Mirrors validate.sh's env-then-local.env resolution so a
+# CO-LOCATED config dir is recognized identically on both platforms.
+function Get-ConfiguredConfigDirPhys {
+    param([string]$EnvName, [string]$RepoRoot)
+    $val = [Environment]::GetEnvironmentVariable($EnvName)
+    if ([string]::IsNullOrEmpty($val)) {
+        $localEnv = Join-Path $RepoRoot 'local.env'
+        if (Test-Path -LiteralPath $localEnv) {
+            $line = (Select-String -LiteralPath $localEnv -Pattern "^\s*(export\s+)?$EnvName=" -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($line) {
+                $raw = $line.Line -replace "^\s*(export\s+)?$EnvName=", ''
+                $raw = ($raw -replace '\s+#.*$', '').Trim().Trim('"').Trim("'")
+                $raw = [Environment]::ExpandEnvironmentVariables($raw)
+                $raw = [regex]::Replace($raw, '\$\{?(\w+)\}?', { param($m) [Environment]::GetEnvironmentVariable($m.Groups[1].Value) })
+                $val = $raw
+            }
+        }
+    }
+    if ([string]::IsNullOrEmpty($val)) { return '' }
+    try { return (Resolve-Path -LiteralPath $val -ErrorAction Stop).Path } catch { return '' }
+}
+
 function Test-ForbiddenArtifacts {
     $rootForbidden = @(
         '.env', 'auth.json', 'config.toml', 'settings.json', 'vault', 'codex'
@@ -155,16 +180,44 @@ function Test-ForbiddenArtifacts {
         }
     }
 
+    # Recognize a deliberately CO-LOCATED harness config dir below: when the
+    # operator points a harness's config-dir variable at a dir under the repo
+    # root (CLAUDE_CONFIG_DIR=$repo/.claude — running every harness out of the
+    # framework folder), that dir holds the harness's own gitignored output +
+    # state, out of scope for this leak guard. Resolve each configured target to
+    # a physical path. Mirrors validate.sh. In the maintainer default
+    # (~/.claude etc.) and CI (temp-dir config), none equal $repo/.<harness>, so
+    # the reject still fires on a genuine leak.
+    $cfgDirs = @{
+        '.claude' = (Get-ConfiguredConfigDirPhys 'CLAUDE_CONFIG_DIR' $repo)
+        '.codex'  = (Get-ConfiguredConfigDirPhys 'CODEX_HOME' $repo)
+        '.hermes' = (Get-ConfiguredConfigDirPhys 'HERMES_HOME' $repo)
+    }
+
     # Harness-config dirs at repo root may contain ONLY:
     #   worktrees/            — operator parallel-branch workspaces
     #   settings.local.json   — operator-local permission tweaks
-    # Anything else is a hand-edit leak.
-    foreach ($hname in '.claude', '.codex', '.agents') {
+    # Anything else is a hand-edit leak (unless the dir is the co-located config
+    # target recognized via $cfgDirs above).
+    foreach ($hname in '.claude', '.codex', '.hermes', '.agents') {
         $hdir = Join-Path $repo $hname
         if (-not (Test-Path -LiteralPath $hdir)) { continue }
         if (-not (Test-Path -LiteralPath $hdir -PathType Container)) {
             [Console]::Error.WriteLine("FAIL forbidden harness-config artifact at repo root (not a directory): $hdir")
             exit 1
+        }
+        # Co-located config target: when this repo-root harness dir IS the
+        # operator's configured config dir, its contents are the harness's own
+        # gitignored output + state, not a leak — recognize it and skip the
+        # reject. Matched by physical path, so a stray dir when the config lives
+        # elsewhere still falls through to the rejects below. Mirrors validate.sh.
+        $cfgPhys = $cfgDirs[$hname]
+        if (-not [string]::IsNullOrEmpty($cfgPhys)) {
+            $hdirPhys = (Resolve-Path -LiteralPath $hdir -ErrorAction SilentlyContinue).Path
+            if ($hdirPhys -and ($hdirPhys -eq $cfgPhys)) {
+                Pass-Line "PASS co-located harness config dir recognized (out of leak-guard scope): $hdir"
+                continue
+            }
         }
         # Security precheck — skills/ at framework repo root is the auto-load
         # attack surface from <TEAM>-67 finding #8.
