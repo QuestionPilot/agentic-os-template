@@ -415,13 +415,16 @@ counterpart (e.g. a project note), wikilink the vault note and backtick the
 memory-store name alongside it.
 
 **Full-path wikilinks.** Write every vault wikilink as the target note's full
-vault-relative path without extension — e.g. `[[10-Wiki/Concepts/<note title>]]`,
-not the bare `[[<note title>]]`. The vault audit resolves a wikilink only against
-each note's full path (or, for a root-level note, its bare name), never a
-subfolder note's basename — so a bare-basename link to any note outside the vault
-root is a guaranteed audit failure even though Obsidian's UI resolves it and the
-note exists. The drain runs the audit before it writes its own log, so a bad link
-in the log surfaces only on the next audit — get the form right the first time.
+vault-relative path (e.g. `[[10-Wiki/Concepts/<note title>]]`), not the bare
+basename `[[<note title>]]`. The vault audit registers each note only under its
+full vault-relative path (with or without the `.md`/`.base` extension) and, for a
+note at the vault root, its bare name — it does not resolve a subdirectory note by
+basename the way an Obsidian-style UI does. So a bare-basename link to a
+subdirectory note either fails the audit or, if a root-level note happens to share
+that name, silently resolves to the wrong note. Match the path exactly — same
+case, forward-slash separators, no leading `./`. (The drain runs the audit before
+writing its own log, so a bad link there surfaces only on the next audit — get the
+form right the first time.)
 
 ### 5. Trust model — the session log is UNTRUSTED, mixed-origin evidence
 
