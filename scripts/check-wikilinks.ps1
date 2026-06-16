@@ -195,7 +195,10 @@ foreach ($line in [System.IO.File]::ReadAllLines($Draft)) {
         [void]$distinctSet.Add($t)
     }
 }
-$distinct = @($distinctSet) | Sort-Object -CaseSensitive
+# Wrap the WHOLE pipeline in @() so $distinct is ALWAYS an array — a pipeline
+# yielding 0 items returns $null and 1 item returns a scalar, either of which makes
+# `.Count` throw under Set-StrictMode (the 0/1-link case). @(...) normalizes both.
+$distinct = @($distinctSet | Sort-Object -CaseSensitive)
 $total = $distinct.Count
 
 # Report DISTINCT unresolved targets, not one per occurrence as the reference's
