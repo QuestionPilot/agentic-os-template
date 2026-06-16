@@ -895,6 +895,83 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: scripts/check-wikilinks.{sh,ps1}
+#
+# Run both twins against a shared fixture vault (one root note + one subfolder
+# note) and three drafts: all-resolve (exit 0), bare-subfolder + unknown
+# (exit 1), and an edge draft (aliased/heading collapse to one target,
+# backticked name ignored, empty [[ ]] fail-closed → exit 1). Assert exit codes
+# + sorted output-classes match. The draft path embeds the fixture dir, which
+# _normalize masks to <TMP> identically for both twins; the indented suggestion
+# line is non-class so _sort_classes drops it from the comparison.
+# ---------------------------------------------------------------------------
+if [ -f "$REPO_ROOT/scripts/check-wikilinks.sh" ] \
+   && [ -f "$REPO_ROOT/scripts/check-wikilinks.ps1" ]; then
+  WL_VAULT="$PARITY_TMP/wl-vault"; mkdir -p "$WL_VAULT/10-Wiki/Concepts"
+  printf -- '---\ntitle: START\n---\n' > "$WL_VAULT/START.md"
+  printf -- '---\ntitle: Foo\n---\n'   > "$WL_VAULT/10-Wiki/Concepts/Foo.md"
+
+  WL_OK="$PARITY_TMP/wl-ok.md"
+  printf 'Good [[10-Wiki/Concepts/Foo]] and [[START]].\n' > "$WL_OK"
+  WL_BAD="$PARITY_TMP/wl-bad.md"
+  printf 'Bare [[Foo]] and unknown [[Nope]].\n' > "$WL_BAD"
+  WL_EDGE="$PARITY_TMP/wl-edge.md"
+  printf 'Alias [[10-Wiki/Concepts/Foo|x]], heading [[10-Wiki/Concepts/Foo#h]], `feedback-x` backticked, empty [[ ]].\n' > "$WL_EDGE"
+
+  wl_bash_ok="$PARITY_TMP/wl-bash-ok.out"
+  bash "$REPO_ROOT/scripts/check-wikilinks.sh" --draft "$WL_OK" --vault "$WL_VAULT" > "$wl_bash_ok" 2>&1
+  wl_bash_ok_rc=$?
+  wl_bash_bad="$PARITY_TMP/wl-bash-bad.out"
+  bash "$REPO_ROOT/scripts/check-wikilinks.sh" --draft "$WL_BAD" --vault "$WL_VAULT" > "$wl_bash_bad" 2>&1
+  wl_bash_bad_rc=$?
+  wl_bash_edge="$PARITY_TMP/wl-bash-edge.out"
+  bash "$REPO_ROOT/scripts/check-wikilinks.sh" --draft "$WL_EDGE" --vault "$WL_VAULT" > "$wl_bash_edge" 2>&1
+  wl_bash_edge_rc=$?
+
+  assert_eq "check-wikilinks bash exits 0 (all resolve)" 0 "$wl_bash_ok_rc"
+  assert_eq "check-wikilinks bash exits 1 (unresolved)" 1 "$wl_bash_bad_rc"
+  assert_eq "check-wikilinks bash exits 1 (edge inputs)" 1 "$wl_bash_edge_rc"
+
+  if [ "$_have_pwsh" -eq 1 ]; then
+    wl_ps_ok="$PARITY_TMP/wl-ps-ok.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-wikilinks.ps1" --draft "$WL_OK" --vault "$WL_VAULT" > "$wl_ps_ok" 2>&1
+    wl_ps_ok_rc=$?
+    wl_ps_bad="$PARITY_TMP/wl-ps-bad.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-wikilinks.ps1" --draft "$WL_BAD" --vault "$WL_VAULT" > "$wl_ps_bad" 2>&1
+    wl_ps_bad_rc=$?
+    wl_ps_edge="$PARITY_TMP/wl-ps-edge.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-wikilinks.ps1" --draft "$WL_EDGE" --vault "$WL_VAULT" > "$wl_ps_edge" 2>&1
+    wl_ps_edge_rc=$?
+
+    assert_eq "check-wikilinks parity: exit codes match (all resolve)" "$wl_bash_ok_rc" "$wl_ps_ok_rc"
+    assert_eq "check-wikilinks parity: exit codes match (unresolved)" "$wl_bash_bad_rc" "$wl_ps_bad_rc"
+    assert_eq "check-wikilinks parity: exit codes match (edge inputs)" "$wl_bash_edge_rc" "$wl_ps_edge_rc"
+
+    wl_bash_ok_norm="$(_normalize "$wl_bash_ok" | _sort_classes)"
+    wl_ps_ok_norm="$(_normalize "$wl_ps_ok" | _sort_classes)"
+    assert_eq "check-wikilinks parity: sorted output-classes match (all resolve)" "$wl_bash_ok_norm" "$wl_ps_ok_norm"
+
+    wl_bash_bad_norm="$(_normalize "$wl_bash_bad" | _sort_classes)"
+    wl_ps_bad_norm="$(_normalize "$wl_ps_bad" | _sort_classes)"
+    assert_eq "check-wikilinks parity: sorted output-classes match (unresolved)" "$wl_bash_bad_norm" "$wl_ps_bad_norm"
+
+    wl_bash_edge_norm="$(_normalize "$wl_bash_edge" | _sort_classes)"
+    wl_ps_edge_norm="$(_normalize "$wl_ps_edge" | _sort_classes)"
+    assert_eq "check-wikilinks parity: sorted output-classes match (edge inputs)" "$wl_bash_edge_norm" "$wl_ps_edge_norm"
+  else
+    _skip "check-wikilinks parity: exit codes match (all resolve)" "pwsh not installed"
+    _skip "check-wikilinks parity: exit codes match (unresolved)" "pwsh not installed"
+    _skip "check-wikilinks parity: exit codes match (edge inputs)" "pwsh not installed"
+    _skip "check-wikilinks parity: sorted output-classes match (all resolve)" "pwsh not installed"
+    _skip "check-wikilinks parity: sorted output-classes match (unresolved)" "pwsh not installed"
+    _skip "check-wikilinks parity: sorted output-classes match (edge inputs)" "pwsh not installed"
+  fi
+else
+  _skip "check-wikilinks bash exits 0 (all resolve)" "scripts not present"
+  _skip "check-wikilinks bash exits 1 (unresolved)" "scripts not present"
+fi
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
