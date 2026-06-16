@@ -798,6 +798,103 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test: scripts/check-distillation-completeness.{sh,ps1}
+#
+# Run both twins against a shared lessons fixture (one thematic note recording a
+# kebab + a snake source-note name) and two memory fixtures: one all-distilled
+# (exit 0) and one with an undistilled note (exit 1). Assert exit codes + sorted
+# output-classes match. The undistilled-summary + PASS lines embed the fixture
+# dirs, which _normalize masks to <TMP> identically for both twins.
+# ---------------------------------------------------------------------------
+if [ -f "$REPO_ROOT/scripts/check-distillation-completeness.sh" ] \
+   && [ -f "$REPO_ROOT/scripts/check-distillation-completeness.ps1" ]; then
+  DC_LES="$PARITY_TMP/dc-les"; mkdir -p "$DC_LES"
+  cat > "$DC_LES/2026-06-15 - Theme.md" <<'EOF'
+---
+title: Theme
+---
+## Source Notes
+- feedback-distilled-kebab
+- feedback_distilled_snake
+EOF
+  # All-distilled memory dir (both names recorded above; kebab + snake).
+  DC_OK="$PARITY_TMP/dc-ok"; mkdir -p "$DC_OK"
+  printf -- '---\nname: feedback-distilled-kebab\ndescription: "n"\nmetadata:\n  type: feedback\n---\nBody.\n' > "$DC_OK/feedback-distilled-kebab.md"
+  printf -- '---\nname: feedback_distilled_snake\ndescription: "n"\nmetadata:\n  type: feedback\n---\nBody.\n' > "$DC_OK/feedback_distilled_snake.md"
+  # Undistilled memory dir (a feedback note absent from the corpus).
+  DC_BAD="$PARITY_TMP/dc-bad"; mkdir -p "$DC_BAD"
+  printf -- '---\nname: feedback-orphan\ndescription: "n"\nmetadata:\n  type: feedback\n---\nBody.\n' > "$DC_BAD/feedback-orphan.md"
+
+  # EDGE memory dir — the bash<->PS divergence-risk inputs Codex flagged, all
+  # undistilled so each is expected to flag identically in both twins:
+  #   - frontmatter-only no-prefix feedback note (selection via frontmatter type)
+  #   - BOM'd no-prefix feedback note (bash strips BOM in awk; PS via ReadAllLines)
+  #   - bare `feedback.md` stem with a non-feedback type (filename word-boundary)
+  #   - a prefix note whose superset name IS distilled (whole-token boundary).
+  DC_EDGE="$PARITY_TMP/dc-edge"; mkdir -p "$DC_EDGE"
+  printf -- '---\nname: home-folder\ndescription: "n"\nmetadata:\n  type: feedback\n---\nBody.\n' > "$DC_EDGE/home-folder.md"
+  printf -- '\xef\xbb\xbf---\nname: bom-note\ndescription: "n"\nmetadata:\n  type: feedback\n---\nBody.\n' > "$DC_EDGE/bom-note.md"
+  printf -- '---\nname: feedback\ndescription: "n"\nmetadata:\n  type: note\n---\nBody.\n' > "$DC_EDGE/feedback.md"
+  printf -- '---\nname: feedback-cross-model-review\ndescription: "n"\nmetadata:\n  type: feedback\n---\nBody.\n' > "$DC_EDGE/feedback-cross-model-review.md"
+  DC_EDGE_LES="$PARITY_TMP/dc-edge-les"; mkdir -p "$DC_EDGE_LES"
+  printf -- '---\ntitle: Edge\n---\n## Source Notes\n- feedback-cross-model-review-infra\n' > "$DC_EDGE_LES/lesson.md"
+
+  dc_bash_ok="$PARITY_TMP/dc-bash-ok.out"
+  bash "$REPO_ROOT/scripts/check-distillation-completeness.sh" --memory-dir "$DC_OK" --lessons-dir "$DC_LES" > "$dc_bash_ok" 2>&1
+  dc_bash_ok_rc=$?
+  dc_bash_bad="$PARITY_TMP/dc-bash-bad.out"
+  bash "$REPO_ROOT/scripts/check-distillation-completeness.sh" --memory-dir "$DC_BAD" --lessons-dir "$DC_LES" > "$dc_bash_bad" 2>&1
+  dc_bash_bad_rc=$?
+  dc_bash_edge="$PARITY_TMP/dc-bash-edge.out"
+  bash "$REPO_ROOT/scripts/check-distillation-completeness.sh" --memory-dir "$DC_EDGE" --lessons-dir "$DC_EDGE_LES" > "$dc_bash_edge" 2>&1
+  dc_bash_edge_rc=$?
+
+  assert_eq "check-distillation-completeness bash exits 0 (all distilled)" 0 "$dc_bash_ok_rc"
+  assert_eq "check-distillation-completeness bash exits 1 (undistilled)" 1 "$dc_bash_bad_rc"
+  assert_eq "check-distillation-completeness bash exits 1 (edge inputs)" 1 "$dc_bash_edge_rc"
+
+  if [ "$_have_pwsh" -eq 1 ]; then
+    dc_ps_ok="$PARITY_TMP/dc-ps-ok.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-distillation-completeness.ps1" --memory-dir "$DC_OK" --lessons-dir "$DC_LES" > "$dc_ps_ok" 2>&1
+    dc_ps_ok_rc=$?
+    dc_ps_bad="$PARITY_TMP/dc-ps-bad.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-distillation-completeness.ps1" --memory-dir "$DC_BAD" --lessons-dir "$DC_LES" > "$dc_ps_bad" 2>&1
+    dc_ps_bad_rc=$?
+    dc_ps_edge="$PARITY_TMP/dc-ps-edge.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-distillation-completeness.ps1" --memory-dir "$DC_EDGE" --lessons-dir "$DC_EDGE_LES" > "$dc_ps_edge" 2>&1
+    dc_ps_edge_rc=$?
+
+    assert_eq "check-distillation-completeness parity: exit codes match (all distilled)" "$dc_bash_ok_rc" "$dc_ps_ok_rc"
+    assert_eq "check-distillation-completeness parity: exit codes match (undistilled)" "$dc_bash_bad_rc" "$dc_ps_bad_rc"
+    assert_eq "check-distillation-completeness parity: exit codes match (edge inputs)" "$dc_bash_edge_rc" "$dc_ps_edge_rc"
+
+    dc_bash_ok_norm="$(_normalize "$dc_bash_ok" | _sort_classes)"
+    dc_ps_ok_norm="$(_normalize "$dc_ps_ok" | _sort_classes)"
+    assert_eq "check-distillation-completeness parity: sorted output-classes match (all distilled)" "$dc_bash_ok_norm" "$dc_ps_ok_norm"
+
+    dc_bash_bad_norm="$(_normalize "$dc_bash_bad" | _sort_classes)"
+    dc_ps_bad_norm="$(_normalize "$dc_ps_bad" | _sort_classes)"
+    assert_eq "check-distillation-completeness parity: sorted output-classes match (undistilled)" "$dc_bash_bad_norm" "$dc_ps_bad_norm"
+
+    # The edge case is the high-value parity assertion: frontmatter-only, BOM,
+    # bare-stem, and boundary inputs must flag the SAME set of notes in both twins.
+    dc_bash_edge_norm="$(_normalize "$dc_bash_edge" | _sort_classes)"
+    dc_ps_edge_norm="$(_normalize "$dc_ps_edge" | _sort_classes)"
+    assert_eq "check-distillation-completeness parity: sorted output-classes match (edge inputs)" "$dc_bash_edge_norm" "$dc_ps_edge_norm"
+  else
+    _skip "check-distillation-completeness parity: exit codes match (all distilled)" "pwsh not installed"
+    _skip "check-distillation-completeness parity: exit codes match (undistilled)" "pwsh not installed"
+    _skip "check-distillation-completeness parity: exit codes match (edge inputs)" "pwsh not installed"
+    _skip "check-distillation-completeness parity: sorted output-classes match (all distilled)" "pwsh not installed"
+    _skip "check-distillation-completeness parity: sorted output-classes match (undistilled)" "pwsh not installed"
+    _skip "check-distillation-completeness parity: sorted output-classes match (edge inputs)" "pwsh not installed"
+  fi
+else
+  _skip "check-distillation-completeness bash exits 0 (all distilled)" "scripts not present"
+  _skip "check-distillation-completeness bash exits 1 (undistilled)" "scripts not present"
+fi
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
