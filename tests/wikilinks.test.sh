@@ -2,7 +2,7 @@
 # tests/wikilinks.test.sh — behavioral tests for scripts/check-wikilinks.sh.
 #
 # The check resolves every [[wikilink]] in a drafted session-log body the SAME
-# way the vault audit's checkWikilinks (bin/hendo-vault-audit.js) does: a target
+# way the vault audit's checkWikilinks (bin/memory-vault-audit.js) does: a target
 # resolves iff the vault contains a note at that full vault-relative path (±ext)
 # or — for the vault ROOT only — a note with that bare name. Fails closed: exit 0
 # = all resolve (or none present), 1 = one or more unresolved, 2 = usage error.

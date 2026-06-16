@@ -11,7 +11,7 @@
     the log's own links are not validated until the NEXT audit — the window a
     bare-basename subfolder link once slipped through (<TEAM>-290). This check closes
     that window: it resolves the drafted body's wikilinks at write time, the SAME
-    way the vault audit's checkWikilinks (bin/hendo-vault-audit.js) does, and
+    way the vault audit's checkWikilinks (bin/memory-vault-audit.js) does, and
     blocks the write on any miss.
 
     RESOLUTION RULE — mirrors checkWikilinks EXACTLY (that resolver lives in the

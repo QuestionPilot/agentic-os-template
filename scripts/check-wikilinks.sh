@@ -12,7 +12,7 @@
 # time, the SAME way the vault audit does, and blocks the write on any miss.
 #
 # RESOLUTION RULE — mirrors the vault audit's `checkWikilinks`
-# (`bin/hendo-vault-audit.js`) EXACTLY. That resolver is the source of truth; it
+# (`bin/memory-vault-audit.js`) EXACTLY. That resolver is the source of truth; it
 # lives in the operator's vault, not this repo, so the harness-neutral framework
 # cannot import it — this is a pinned mirror, kept honest by tests/wikilinks.test.sh.
 # The rule:
