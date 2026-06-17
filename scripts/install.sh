@@ -700,6 +700,34 @@ write_manifest() {
     > "$BUILD/.build-manifest.json"
 }
 # validate_build filled below in Step 2
+# fs_case_insensitive <dir> — exit 0 (true) if the filesystem backing <dir>
+# treats names case-insensitively (default macOS APFS, Windows). Probes by
+# creating a UNIQUE temp dir under <dir> (mktemp -d, so it can never collide with
+# operator content), writing a lowercase-named file inside it, and testing
+# whether the uppercase variant resolves to the same entry. It removes ONLY the
+# temp dir it created — a pre-existing operator file/dir of ANY name is never
+# touched (the routine's never-delete-what-we-did-not-author contract). On any
+# probe failure (unwritable dir, mktemp failure) returns 0 (assume case-
+# insensitive) — the SAFE direction for the orphan gate: a case-insensitive
+# comparison yields FEWER orphans, never more, so it can never turn a live
+# managed subdir into a deletion. Callers probe the dir where deletion actually
+# happens ($TARGET/<name>), not its parent, so a $TARGET/<name> mounted on a
+# different-case-sensitivity volume than $TARGET is judged correctly. Mirrors
+# install.ps1's Test-FsCaseInsensitive twin. Guards the bug fixed alongside it:
+# the case-sensitive comm/grep below flagged a casing-only-renamed managed subdir
+# as an orphan, and on a case-insensitive FS the hash gate then deleted the
+# freshly-installed dir (its new-cased files resolve to the old-cased orphan path).
+fs_case_insensitive() {
+  local dir="$1" probe_dir rc=1
+  # Unique probe dir (mktemp -d → no fixed-name collision with operator content;
+  # mktemp failure → safe default below). Remove ONLY this dir we created.
+  probe_dir="$(mktemp -d "$dir/.aos-fscase.XXXXXX" 2>/dev/null)" || return 0
+  : > "$probe_dir/probe" 2>/dev/null
+  [ -e "$probe_dir/PROBE" ] && rc=0
+  rm -rf "$probe_dir" 2>/dev/null
+  return "$rc"
+}
+
 # swap_in <name> — atomically replaces $TARGET/<name> with $BUILD/<name>.
 # Existing content is moved to $TARGET/.install-bak.<name>; main() removes the
 # backups only after every swap has succeeded.
@@ -747,14 +775,39 @@ swap_in() {
     # The prefix is parameterized via --arg so the same jq filter serves any
     # per-subdir path. old_managed is hoisted to the branch scope because the
     # per-subdir swap loop reuses it for the N1 collision warning (authorship).
-    local orphans="" old_managed=""
+    local orphans="" old_managed="" fs_ci=0
     if [ -f "$TARGET/.build-manifest.json" ] && command -v jq >/dev/null 2>&1; then
       old_managed="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$TARGET/.build-manifest.json" 2>/dev/null | sort -u)"
+      # FS-casing-aware comparison (see fs_case_insensitive). Probed once here —
+      # only when prior framework state exists, so a fresh install leaves no
+      # probe artifact — and reused for the orphan filter and the N1 check below.
+      # Probe $TARGET/$name (the dir where deletion happens), not its parent —
+      # they can be on different-case-sensitivity volumes; fall back to $TARGET
+      # when the subdir does not exist yet.
+      local probe_target="$TARGET"
+      [ -d "$TARGET/$name" ] && probe_target="$TARGET/$name"
+      if fs_case_insensitive "$probe_target"; then fs_ci=1; fi
     fi
     if [ -f "$TARGET/.build-manifest.json" ] && [ -f "$BUILD/.build-manifest.json" ] && command -v jq >/dev/null 2>&1; then
       local new_managed
       new_managed="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$BUILD/.build-manifest.json" 2>/dev/null | sort -u)"
       orphans="$(comm -23 <(printf '%s\n' "$old_managed") <(printf '%s\n' "$new_managed"))"
+      # FS-casing-aware false-orphan guard: on a case-insensitive FS, an OLD
+      # <base> that differs from a NEW <base> only by letter case is the SAME
+      # on-disk dir after the per-subdir swap recased it — not a true orphan.
+      # comm above is byte-exact, so it flags the old-cased name; deleting it
+      # would remove the freshly-installed recased dir (the hash gate passes when
+      # content is identical). Drop any candidate whose case-folded name matches a
+      # case-folded NEW name. On a case-SENSITIVE FS (Linux) `Foo` and `foo` are
+      # genuinely distinct dirs, so this filter is skipped (fs_ci=0) and both stay
+      # real orphans. Original OLD casing is preserved in the output so the
+      # downstream hash gate still matches the OLD manifest's old-cased keys.
+      if [ "$fs_ci" = 1 ] && [ -n "$orphans" ]; then
+        orphans="$(LC_ALL=C awk '
+          NR==FNR { if (length($0)) newlc[tolower($0)] = 1; next }
+          { if (length($0) && !(tolower($0) in newlc)) print }
+        ' <(printf '%s\n' "$new_managed") <(printf '%s\n' "$orphans"))"
+      fi
     fi
 
     mkdir -p "$TARGET/$name"
@@ -767,7 +820,12 @@ swap_in() {
     # its own .install-bak.d/<name>/ subtree.
     local bak_root="$TARGET/.install-bak.d"
     mkdir -p "$bak_root/$name"
-    local sub base
+    # N1 authorship match folds case only on a case-insensitive FS, so a recased
+    # managed <base> (the same on-disk dir a prior install authored) does not
+    # spuriously warn. LC_ALL=C keeps the -i fold ASCII-exact (parity with
+    # install.ps1's OrdinalIgnoreCase).
+    local sub base n1_grep_i=""
+    [ "$fs_ci" = 1 ] && n1_grep_i="i"
     for sub in "$BUILD/$name"/*/; do
       [ -d "$sub" ] || continue       # nullglob: no matches → literal pattern, skip
       base="$(basename "$sub")"
@@ -780,7 +838,7 @@ swap_in() {
         # has no old manifest, so old_managed is empty and any pre-existing live
         # subdir is treated as unauthored — correct. The framework version still
         # wins below (the spine depends on closeout/self-audit/session-agent).
-        if ! printf '%s\n' "$old_managed" | grep -qxF "$base"; then
+        if ! printf '%s\n' "$old_managed" | LC_ALL=C grep -q"${n1_grep_i}"xF -- "$base"; then
           warn "replacing $name/$base which no prior framework install authored (operator/native content with a colliding name)"
         fi
         mv "$TARGET/$name/$base" "$bak_root/$name/$base" || return 1

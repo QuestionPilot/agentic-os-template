@@ -110,6 +110,74 @@ assert_eq "check-drift clean after orphan cleanup" "0" "$sd_or_status"
 
 rm -rf "$SC_OR_DIR"
 
+# --- casing-only rename of a managed skill is not a false orphan ---
+# Regression for the case-sensitive comm/grep false-delete (cross-model-panel-
+# found 2026-06-17; pre-existing PR #37). When a managed skill's directory
+# casing changes between builds with identical content (skills/Foo ->
+# skills/foo), the byte-exact orphan computation (comm) and N1 authorship check
+# (grep -qxF) treat the OLD-cased name as unrelated to the NEW one. On a case-
+# INSENSITIVE filesystem (default macOS APFS, Windows NTFS) the OLD-cased orphan
+# path resolves to the freshly-swapped-in NEW-cased files (identical content ->
+# the hash gate passes) and `rm -rf` deletes the just-installed directory; the
+# N1 check also warns spuriously. fs_case_insensitive + the case-folded
+# orphan/N1 comparison fix both.
+#
+# FS-adaptive by construction — exercises the bug on the case-insensitive macOS
+# + Windows runners, correct no-op on case-sensitive Linux:
+#   - case-insensitive FS: `Session-agent` and `session-agent` are the SAME
+#     on-disk dir. Pre-fix the orphan delete wipes the reinstalled skill and N1
+#     warns; post-fix the fold drops the false orphan and suppresses the warn.
+#   - case-sensitive FS (Linux): they are DISTINCT dirs. The freshly-installed
+#     lowercase skill is never the orphan; `Session-agent` is a genuine orphan,
+#     correctly cleaned, and the swap never sees a colliding live `session-agent`
+#     so N1 stays silent. Both assertions pass pre- and post-fix.
+CR_DIR="$(mktemp -d)"
+CR_TGT="$CR_DIR/tgt"; mkdir -p "$CR_TGT"
+CR_ENV="$CR_DIR/local.env"
+make_local_env "$CR_ENV" "$CR_TGT"
+
+# First install — clean baseline with the real managed skill set.
+AI_CONFIG_LOCAL_ENV="$CR_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+
+CR_SKILL="session-agent"   # a spine skill the build always emits, lowercase
+CR_CASED="Session-agent"
+if [ -d "$CR_TGT/skills/$CR_SKILL" ] && command -v jq >/dev/null 2>&1; then
+  # Simulate the PRIOR framework build having emitted the SAME skill under a
+  # different LETTER CASE: recase the live dir AND rewrite its OLD-manifest keys
+  # to the upper-cased base (hashes unchanged — identical content). The next
+  # install's build re-emits the canonical lowercase base. Two-step (via a temp
+  # name) so the recase also works on case-insensitive, case-preserving
+  # filesystems that reject a same-file single-step casing rename (parity with
+  # the PS twin's two-step Move-Item).
+  mv "$CR_TGT/skills/$CR_SKILL" "$CR_TGT/skills/__recase-tmp"
+  mv "$CR_TGT/skills/__recase-tmp" "$CR_TGT/skills/$CR_CASED"
+  jq --arg s "skills/$CR_SKILL/" --arg c "skills/$CR_CASED/" \
+    '.generated |= with_entries(.key |= (if startswith($s) then $c + ltrimstr($s) else . end))' \
+    "$CR_TGT/.build-manifest.json" > "$CR_TGT/.build-manifest.json.tmp" \
+    && mv "$CR_TGT/.build-manifest.json.tmp" "$CR_TGT/.build-manifest.json"
+
+  # Re-install; capture stderr to assert the N1 warning does not spuriously fire.
+  CR_LOG="$CR_DIR/install.stderr"
+  AI_CONFIG_LOCAL_ENV="$CR_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$CR_LOG"
+
+  # The recased managed skill must NOT be false-deleted — on a case-insensitive
+  # FS this is the same on-disk dir as the freshly-installed lowercase one.
+  assert_file "casing-renamed managed skill survives re-install (no false-delete)" \
+    "$CR_TGT/skills/$CR_SKILL/SKILL.md"
+  cr_log="$(cat "$CR_LOG" 2>/dev/null)"
+  assert_not_contains "no spurious N1 warning for a recased managed skill" \
+    "$cr_log" "no prior framework install authored"
+  # The FS-casing probe must clean up after itself — no .aos-fscase* artifact
+  # left in the config dir or under skills/ (it removes only the unique temp dir
+  # it created).
+  cr_residue="$(find "$CR_TGT" -maxdepth 2 -name '.aos-fscase*' 2>/dev/null)"
+  assert_eq "no fs-case probe residue after install" "" "$cr_residue"
+else
+  _skip "casing-rename managed-skill regression" "session-agent or jq absent"
+fi
+
+rm -rf "$CR_DIR"
+
 # --- orphan cleanup preserves operator-modified content ---
 # An operator may pre-write a Shape C SKILL.md OVER the bloated framework
 # rendered content at a previously-managed subdir (the cross-model-review

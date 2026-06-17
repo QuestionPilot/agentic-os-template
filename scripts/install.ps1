@@ -851,6 +851,51 @@ function Test-Build {
 #     below at Remove-StaleOrphanSubdirs.)
 # ---------------------------------------------------------------------------
 
+# Test-FsCaseInsensitive — return $true if the filesystem backing $Dir treats
+# names case-insensitively (default macOS APFS, Windows NTFS/ReFS). Probes by
+# creating a UNIQUE temp dir under $Dir (GetRandomFileName, so it can never
+# collide with operator content), writing a lowercase-named file inside it, and
+# testing whether the uppercase variant resolves to the same entry. It removes
+# ONLY the temp dir it created — a pre-existing operator file/dir of ANY name is
+# never touched (the routine's never-delete-what-we-did-not-author contract).
+# Any probe failure (unwritable dir, name collision) returns $true (assume case-
+# insensitive) — the SAFE direction for the orphan gate: a case-insensitive
+# comparison yields FEWER orphans, never more, so it can never turn a live
+# managed subdir into a deletion. Callers probe the dir where deletion actually
+# happens ($TARGET/<Name>), not its parent, so a $TARGET/<Name> mounted on a
+# different-case-sensitivity volume than $TARGET is judged correctly.
+#
+# Why this exists: the orphan set ($newSet) and the N1 authorship set
+# ($oldManagedSet) below were default (Ordinal, case-SENSITIVE) HashSets. On a
+# case-insensitive FS, a casing-only rename of a managed subdir between builds
+# (e.g. skills/Foo -> skills/foo, identical content) made the OLD-cased name
+# look like an orphan; the hash gate then resolved against the just-swapped-in
+# new-cased files (identical content -> hashes match) and Remove-Item deleted
+# the freshly-installed directory. Folding the comparison ONLY on a case-
+# insensitive FS fixes that without merging genuinely-distinct `Foo`/`foo`
+# dirs on a case-SENSITIVE FS (Linux), where both must remain real orphans.
+# Mirrors install.sh's fs_case_insensitive twin.
+function Test-FsCaseInsensitive {
+    param([Parameter(Mandatory)][string]$Dir)
+    # Unique probe dir (GetRandomFileName → no fixed-name collision with operator
+    # content). If we cannot create it, fail to the safe default (insensitive).
+    $probeDir = Join-Path $Dir ('.aos-fscase.' + [System.IO.Path]::GetRandomFileName())
+    try {
+        New-Item -ItemType Directory -Path $probeDir -ErrorAction Stop | Out-Null
+    } catch {
+        return $true
+    }
+    try {
+        New-Item -ItemType File -Path (Join-Path $probeDir 'probe') -Force -ErrorAction Stop | Out-Null
+        return [bool](Test-Path -LiteralPath (Join-Path $probeDir 'PROBE') -PathType Leaf)
+    } catch {
+        return $true
+    } finally {
+        # Remove ONLY the unique dir we created — never a pre-existing path.
+        Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Move-SubdirsIntoTarget — per-subdir swap of $BUILD/<Name>/* into
 # $TARGET/<Name>/*, for any PER_SUBDIR_PATHS member. Mirrors install.sh's
 # swap_in per-subdir branch. Returns $true on success, $false if any per-subdir
@@ -874,6 +919,19 @@ function Move-SubdirsIntoTarget {
     if (Test-Path -LiteralPath $oldManifest -PathType Leaf) {
         $oldManaged = Get-SubdirsFromManifest -ManifestPath $oldManifest -Prefix $prefix
     }
+    # FS-casing-aware comparer for the orphan set + the N1 authorship set (see
+    # Test-FsCaseInsensitive). Only consulted when prior framework state exists; a
+    # fresh install has no old-managed set to compare (and so no probe artifact).
+    # Probe $targetDir ($TARGET/$Name) — the dir where deletion actually happens —
+    # not its parent, since they can be on different-case-sensitivity volumes;
+    # fall back to $TARGET when the subdir does not exist yet. Case-insensitive FS
+    # -> fold the comparison so a recased-but-same managed subdir is not a false
+    # orphan; case-sensitive FS -> Ordinal (distinct dirs).
+    $baseCmp = [System.StringComparer]::Ordinal
+    if ($null -ne $oldManaged) {
+        $probeTarget = if (Test-Path -LiteralPath $targetDir -PathType Container) { $targetDir } else { $TARGET }
+        if (Test-FsCaseInsensitive -Dir $probeTarget) { $baseCmp = [System.StringComparer]::OrdinalIgnoreCase }
+    }
     $orphans = @()
     if ((Test-Path -LiteralPath $oldManifest -PathType Leaf) -and (Test-Path -LiteralPath $newManifest -PathType Leaf)) {
         $newManaged = Get-SubdirsFromManifest -ManifestPath $newManifest -Prefix $prefix
@@ -886,7 +944,8 @@ function Move-SubdirsIntoTarget {
         # content, but we fail safe rather than rely on that).
         if (($null -ne $oldManaged) -and ($null -ne $newManaged)) {
             # Orphans = OLD-managed subdirs not present in NEW-managed set.
-            $newSet = New-Object System.Collections.Generic.HashSet[string]
+            # $baseCmp folds case only on a case-insensitive FS (see above).
+            $newSet = New-Object -TypeName 'System.Collections.Generic.HashSet[string]' -ArgumentList $baseCmp
             foreach ($n in $newManaged) { [void]$newSet.Add($n) }
             $orphans = @($oldManaged | Where-Object { -not $newSet.Contains($_) })
         }
@@ -907,8 +966,10 @@ function Move-SubdirsIntoTarget {
 
     # N1: a set of <base> names a prior framework install authored. Empty when
     # there is no old manifest / jq failed → every pre-existing live subdir is
-    # treated as unauthored, which is correct for a fresh install.
-    $oldManagedSet = New-Object System.Collections.Generic.HashSet[string]
+    # treated as unauthored, which is correct for a fresh install. $baseCmp folds
+    # case only on a case-insensitive FS, so a recased managed <base> (which WAS
+    # authored by a prior install — same on-disk dir) does not spuriously warn.
+    $oldManagedSet = New-Object -TypeName 'System.Collections.Generic.HashSet[string]' -ArgumentList $baseCmp
     if ($null -ne $oldManaged) { foreach ($m in $oldManaged) { [void]$oldManagedSet.Add($m) } }
 
     # Per-subdir swap. Use [string] base names; iterate only directory children.
