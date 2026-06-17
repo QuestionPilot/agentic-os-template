@@ -44,7 +44,7 @@ Each pillar is scored 0–20. Total is 0–100. Below ~80 is "actively thinning"
 | **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
-| **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (Claude and Codex each carry every `kind: native` capability); project memory files modified in the last 7 days carry a `## State Deltas` section |
+| **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project memory files modified in the last 7 days carry a `## State Deltas` section |
 
 **Out of scope for v1 (deferred to future PRs, when Linear is reachable from the audit run):** state-delta memory writes matched against Linear comments; project memory headline reconciled against Linear state; "recent Linear activity" cross-referenced with "recent file mtime". These are non-trivial to score deterministically and the cost outweighs the v1 benefit; the rubric checks only what the local filesystem can prove today.
 
@@ -268,5 +268,6 @@ specific scores.
   the meta-question "does the audit produce a sane, actionable scorecard?"
   — answered by running the script against fixtures.
 - The capability is the framework's third `kind: native` spine entry. Spine
-  symmetry — every native capability has both a Claude and a Codex
-  realization — is itself one of the things Pillar 5 scores.
+  symmetry — every native capability has a realization for each harness it
+  declares in its `harnesses:` frontmatter (claude, codex, hermes) — is itself
+  one of the things Pillar 5 scores.

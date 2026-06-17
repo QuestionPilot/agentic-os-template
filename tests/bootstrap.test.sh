@@ -30,6 +30,30 @@ assert_contains "bootstrap.sh unknown-harness error lists the known set" \
 assert_exit "bootstrap.sh --harness codex2 (substring of a known name) rejected as unknown" 1 -- \
   bash "$BS" --harness codex2 --check
 
+# --- hermes is first-class in bootstrap (harness handling + --hermes-home) ---
+# F1d: --help advertises the hermes harness + the --hermes-home override.
+bs_help_out="$(bash "$BS" --help 2>&1 || true)"
+assert_contains "bootstrap.sh --help lists hermes as a target harness" \
+  "$bs_help_out" "claude, codex, hermes"
+assert_contains "bootstrap.sh --help documents --hermes-home" \
+  "$bs_help_out" "--hermes-home"
+# The unknown-harness message now names hermes in the known set too.
+assert_contains "bootstrap.sh unknown-harness error names hermes in the known set" \
+  "$bs_badharness_out" "hermes"
+# F1a + first-class: a capital `Hermes` is a KNOWN harness (lowercased on
+# accumulation), so validate_harnesses must NOT reject it as unknown. (Exit code
+# then reflects only the CLI check, which is environment-dependent — so assert on
+# the absence of the rejection message, not the exit code.)
+bs_hermes_out="$(bash "$BS" --harness Hermes --check 2>&1 || true)"
+assert_not_contains "bootstrap.sh --harness Hermes (capital) is not rejected as unknown" \
+  "$bs_hermes_out" "unknown harness"
+# F1c: --hermes-home is a recognized flag, not an 'unknown argument' (exit 2).
+# Assert on the absence of the unknown-arg message rather than the exit code,
+# which depends on whether gh/jq/rg are present on the runner.
+bs_hh_out="$(bash "$BS" --hermes-home "$(mktemp -d)" --check 2>&1 || true)"
+assert_not_contains "bootstrap.sh --hermes-home <dir> is a recognized flag (not unknown arg)" \
+  "$bs_hh_out" "unknown argument"
+
 # --check exits 0 when all CLIs present and stub env clean
 # (requires stubs — built in Task 3; placeholder until then)
 

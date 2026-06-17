@@ -737,43 +737,63 @@ score_closeout_spine_discipline() {
   local key="closeout-spine-discipline"
 
   # Sub-check 5.1: Spine symmetry. Every kind: native capability in
-  # capabilities/ must have a matching realization under both
-  # harnesses/{claude,codex}/capabilities/.
-  local native_caps=() cap kind name
+  # capabilities/ must have a matching realization under EACH harness it declares
+  # in its `harnesses:` frontmatter list. Deriving the harness set from
+  # frontmatter — instead of a hardcoded claude+codex pair — keeps the check
+  # honest as harnesses become first-class: a missing
+  # harnesses/<h>/capabilities/<name>.md (e.g. a dropped hermes realization)
+  # now deducts exactly like a missing Claude/Codex one, so a thinned-out
+  # realization can no longer pass BOTH `make verify` AND /self-audit unnoticed.
+  local native_caps=() native_hlists=() cap kind name
   for cap in "$REPO_ROOT"/capabilities/*.md; do
     [ -f "$cap" ] || continue
     [ "$(basename "$cap" .md)" = "README" ] && continue
     kind="$(fm_get "$cap" kind)"
     [ "$kind" = "native" ] || continue
     native_caps+=("$(basename "$cap" .md)")
+    # `harnesses: [claude, codex, hermes]` -> space-separated `claude codex hermes`.
+    # Lowercased so a capitalized frontmatter value (e.g. `[Claude]`) resolves to
+    # the lowercase harnesses/<h>/ dir on case-sensitive filesystems — parity with
+    # bootstrap's harness-name fold + the PS twin's .ToLower().
+    native_hlists+=("$(fm_get "$cap" harnesses | tr -d '[]' | tr ',' ' ' | tr '[:upper:]' '[:lower:]')")
   done
 
-  local missing_claude=() missing_codex=()
-  if [ "${#native_caps[@]}" -gt 0 ]; then
-    for name in "${native_caps[@]}"; do
-      [ -f "$REPO_ROOT/harnesses/claude/capabilities/$name.md" ] || missing_claude+=("$name")
-      [ -f "$REPO_ROOT/harnesses/codex/capabilities/$name.md" ]  || missing_codex+=("$name")
+  # Union of declared harnesses, first-seen order. bash 3.2 has no associative
+  # arrays, so track membership in a space-padded string.
+  local all_harnesses="" h i
+  for i in "${!native_caps[@]}"; do
+    for h in ${native_hlists[$i]}; do
+      case " $all_harnesses " in *" $h "*) ;; *) all_harnesses="$all_harnesses $h" ;; esac
     done
-  fi
+  done
 
-  if [ "${#missing_claude[@]}" -gt 0 ]; then
-    local pen=$(( ${#missing_claude[@]} * 8 ))
+  # Per harness: native caps that DECLARE it but lack the realization file.
+  for h in $all_harnesses; do
+    # Collect missing names in an ARRAY (not a space-joined string): a name with
+    # a space/glob would otherwise be miscounted by `wc -w` (and glob-expand under
+    # word-splitting). `${#arr[@]}` is the exact count, matching the PS twin's
+    # .Count so per-pillar score parity holds. (An empty array is safe under
+    # bash 3.2 set -u here: `${#arr[@]}` and `+=` never trip the empty-array
+    # value-expansion error; `${arr[*]}` below is reached only when non-empty.)
+    local missing_for=() cnt pen hname
+    for i in "${!native_caps[@]}"; do
+      case " ${native_hlists[$i]} " in *" $h "*) ;; *) continue ;; esac
+      name="${native_caps[$i]}"
+      [ -f "$REPO_ROOT/harnesses/$h/capabilities/$name.md" ] || missing_for+=("$name")
+    done
+    [ "${#missing_for[@]}" -gt 0 ] || continue
+    cnt="${#missing_for[@]}"
+    pen=$(( cnt * 8 ))
     [ "$pen" -gt 16 ] && pen=16
     deduct "$key" "$pen"
+    # Title-case the harness for the gap title (Claude/Codex/Hermes), matching
+    # the prior message style.
+    hname="$(printf '%s' "$h" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
     record_gap 5 10 \
-      "Spine asymmetry: missing Claude realization(s)" \
-      "Native capability(s) without harnesses/claude/capabilities/<name>.md: ${missing_claude[*]}" \
-      "Author the Claude realization file(s) and re-run: bash scripts/install.sh --harness claude"
-  fi
-  if [ "${#missing_codex[@]}" -gt 0 ]; then
-    local pen=$(( ${#missing_codex[@]} * 8 ))
-    [ "$pen" -gt 16 ] && pen=16
-    deduct "$key" "$pen"
-    record_gap 5 10 \
-      "Spine asymmetry: missing Codex realization(s)" \
-      "Native capability(s) without harnesses/codex/capabilities/<name>.md: ${missing_codex[*]}" \
-      "Author the Codex realization file(s) and re-run: bash scripts/install.sh --harness codex"
-  fi
+      "Spine asymmetry: missing $hname realization(s)" \
+      "Native capability(s) without harnesses/$h/capabilities/<name>.md: ${missing_for[*]}" \
+      "Author the $hname realization file(s) and re-run: bash scripts/install.sh --harness $h"
+  done
 
   # Sub-check 5.2: Recent project memory entries should carry a State Deltas
   # section.

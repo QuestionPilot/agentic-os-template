@@ -24,8 +24,8 @@ build does not assume the default.
 > <TEAM>-68 and now lives as a
 > Shape C operator-local skill in each operator's harness config dir, never in
 > the framework. Any ex-vendored tool capabilities are operator-managed Shape C if retained at `$CLAUDE_CONFIG_DIR/skills/<name>/`.
-> agentic-os-template now authors exactly 3 spine capabilities × 2 harnesses
-> (symmetric 3/3).
+> agentic-os-template now authors exactly 3 spine capabilities × 3 harnesses
+> (claude, codex, hermes; symmetric 3/3).
 
 ---
 
