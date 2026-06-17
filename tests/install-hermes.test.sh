@@ -199,13 +199,15 @@ if command -v jq >/dev/null 2>&1; then
     "$ih_dlog" "draining session=s2"
   rm -f "$IH_OUT/agentic-os/unattended-drain.enabled" "$IH_DLOG"
 
-  # 7c. skill_manage mutation blocked pending approval; approval is consumed.
+  # 7c. EVERY skill_manage call is blocked pending approval (mutation-only tool —
+  # no read-only fast-path); the operator marker allows one call and is consumed.
   IH_SGATE="$IH_OUT/hooks/skill-gate.sh"
   ih_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"skill_manage","tool_input":{"action":"create","name":"x"},"session_id":"s3"}' | bash "$IH_SGATE")"
   assert_contains "skill_manage create is blocked pending approval" \
     "$ih_out" '"decision":"block"'
   ih_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"skill_manage","tool_input":{"action":"list"},"session_id":"s3"}' | bash "$IH_SGATE")"
-  assert_eq "skill_manage read-only ops pass the gate" "" "$ih_out"
+  assert_contains "skill_manage read-only verb is gated too (no fast-path)" \
+    "$ih_out" '"decision":"block"'
   : > "$IH_OUT/agentic-os/allow-skill-manage"
   ih_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"skill_manage","tool_input":{"action":"create","name":"x"},"session_id":"s3"}' | bash "$IH_SGATE")"
   assert_eq "an operator approval marker allows ONE mutation" "" "$ih_out"

@@ -154,23 +154,66 @@ try {
         Remove-Item Env:\CLAUDE_SKIP_FRESHNESS_CHECK -ErrorAction SilentlyContinue
     }
 
-    # --- 3e/3f — hermes skill-gate.ps1 action // operation coalesce (<TEAM>-295 F5) ---
-    # The .sh twin reads `.action // .operation`; the PS twin previously read
-    # only `.action`, so a benign verb under the `operation` key fell through to
-    # the fail-closed block on Windows while mac/Linux allowed it.
-    $hkps_sg = Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'skill-gate.ps1'
-    $out = Invoke-CodexHook -HookPath $hkps_sg -Payload '{"tool_input":{"operation":"list"}}'
-    if (-not $out) {
-        _Pass 'hooks-ps-parity.test: skill-gate.ps1 ALLOWS a read-only verb under the .operation key (action // operation)'
-    } else {
-        _Fail 'hooks-ps-parity.test: skill-gate.ps1 should ALLOW operation=list' "got block output: $out"
+    # --- 3e. hermes skill-gate.ps1 — mutation-only gate parity (<TEAM>-300) ------
+    # skill_manage is MUTATION-ONLY (reads are the separate, ungated skill_view/
+    # skills_list tools the matcher never fires on), so the gate has NO read-only
+    # fast-path: EVERY skill_manage call BLOCKS pending a per-use operator approval
+    # marker that the hook CONSUMES. Assert both on the PS twin (mirroring the bash
+    # twin in the .sh sibling's section 3i): (a) block-by-default for every payload
+    # shape, incl. the read-only verbs an earlier version fast-pathed, malformed
+    # input, and a non-object tool_input; (b) the allow-once-then-consume marker
+    # flow. Run against a COPY under a throwaway HHOME so the marker write never
+    # touches the repo. (This replaced a read-only-allowlist table whose JSON parsing
+    # was the source of a clutch of bash<->PS divergences; gating every call removes
+    # that surface whole.)
+    $hkps_sgdir = Join-Path $hkps_tmpdir 'sg'
+    New-Item -ItemType Directory -Path (Join-Path $hkps_sgdir 'hooks') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $hkps_sgdir 'agentic-os') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'skill-gate.ps1') `
+        -Destination (Join-Path $hkps_sgdir 'hooks' 'skill-gate.ps1')
+    $hkps_sg = Join-Path $hkps_sgdir 'hooks' 'skill-gate.ps1'
+    $hkps_sgmk = Join-Path $hkps_sgdir 'agentic-os' 'allow-skill-manage'
+    $hkps_sg_payloads = @(
+        '{"tool_input":{"action":"create","name":"x"}}'
+        '{"tool_input":{"action":"delete"}}'
+        '{"tool_input":{"action":"list"}}'
+        '{"tool_input":{"operation":"list"}}'
+        '{"tool_input":{"action":"list","operation":"delete"}}'
+        '{"tool_input":{}}'
+        '{}'
+        '{"tool_input":[{"action":"list"}]}'
+        'not valid json'
+    )
+    foreach ($hkps_pl in $hkps_sg_payloads) {
+        Remove-Item -LiteralPath $hkps_sgmk -ErrorAction SilentlyContinue
+        $out = Invoke-CodexHook -HookPath $hkps_sg -Payload $hkps_pl
+        if ($out -match '"decision":"block"') {
+            _Pass "hooks-ps-parity.test: skill-gate.ps1 gates (blocks) $hkps_pl"
+        } else {
+            _Fail "hooks-ps-parity.test: skill-gate.ps1 should BLOCK $hkps_pl" "got: $(if ($out) { $out } else { '<allow>' })"
+        }
     }
-    $out = Invoke-CodexHook -HookPath $hkps_sg -Payload '{"tool_input":{"operation":"delete"}}'
+    # approval marker: allows exactly one call, then is consumed.
+    New-Item -ItemType File -Path $hkps_sgmk -Force | Out-Null
+    $out = Invoke-CodexHook -HookPath $hkps_sg -Payload '{"tool_input":{"action":"create"}}'
+    if ((-not $out) -and (-not (Test-Path -LiteralPath $hkps_sgmk))) {
+        _Pass 'hooks-ps-parity.test: skill-gate.ps1 approval marker allows ONE call and is consumed'
+    } else {
+        _Fail 'hooks-ps-parity.test: skill-gate.ps1 approval marker should allow+consume' "out='$(if ($out) { $out } else { '<allow>' })' marker_present=$(Test-Path -LiteralPath $hkps_sgmk)"
+    }
+    # A DIRECTORY at the marker path is NOT an approval — Test-Path -PathType Leaf
+    # (matching bash `[[ -f ]]`) must reject it. Without that qualifier the PS twin
+    # would treat the dir as an approval and a non-empty dir would survive the
+    # delete (standing allow). Parity regression for the -PathType Leaf fix.
+    Remove-Item -LiteralPath $hkps_sgmk -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $hkps_sgmk -Force | Out-Null
+    $out = Invoke-CodexHook -HookPath $hkps_sg -Payload '{"tool_input":{"action":"create"}}'
     if ($out -match '"decision":"block"') {
-        _Pass 'hooks-ps-parity.test: skill-gate.ps1 BLOCKS a mutating verb under the .operation key'
+        _Pass 'hooks-ps-parity.test: skill-gate.ps1 treats a DIRECTORY at the marker path as NO approval (blocks)'
     } else {
-        _Fail 'hooks-ps-parity.test: skill-gate.ps1 should BLOCK operation=delete' "got: $out"
+        _Fail 'hooks-ps-parity.test: skill-gate.ps1 should BLOCK when the marker path is a directory' "got: $(if ($out) { $out } else { '<allow>' })"
     }
+    Remove-Item -LiteralPath $hkps_sgmk -Recurse -Force -ErrorAction SilentlyContinue
 
 } finally {
     Remove-Item -LiteralPath $hkps_tmpdir -Recurse -Force -ErrorAction SilentlyContinue
@@ -187,3 +230,17 @@ Assert-Contains 'hooks-ps-parity.test: hermes framework-surface.ps1 resolves the
 Assert-NotContains "hooks-ps-parity.test: hermes framework-surface.ps1 has no bare '& pwsh -NoProfile -File'" $hkps_hfs '& pwsh -NoProfile -File'
 $hkps_cfs = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'hooks' 'framework-surface.ps1') -Raw
 Assert-Contains "hooks-ps-parity.test: claude framework-surface.ps1 MCP probe parses the Connected status word (-ceq)" $hkps_cfs "-ceq 'Connected'"
+
+# <TEAM>-300: skill_manage is mutation-only, so the gate has NO read-only fast-path
+# — it gates EVERY call. Lock that source-side so a revert re-introducing a
+# read-only fast-path fails on every lane. Robust invariant: the gate does not
+# PARSE the verb out of the payload — any fast-path (a jq pipe-regex like
+# ^(list|...)$ or a JSON-array allowlist) must read .tool_input on bash /
+# ConvertFrom-Json on PS. The simple gate references neither (it only ENCODES its
+# block output via jq -nc / ConvertTo-Json), so the absent input-parse is the tripwire.
+$hkps_sgsh = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'skill-gate.sh') -Raw
+Assert-NotContains 'hooks-ps-parity.test: skill-gate.sh does not parse the verb (no .tool_input read)' $hkps_sgsh '.tool_input'
+Assert-Contains 'hooks-ps-parity.test: skill-gate.sh consumes stdin without inspecting it (cat >/dev/null)' $hkps_sgsh 'cat >/dev/null'
+$hkps_sgps = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'skill-gate.ps1') -Raw
+Assert-NotContains 'hooks-ps-parity.test: skill-gate.ps1 does not parse the verb (no ConvertFrom-Json)' $hkps_sgps 'ConvertFrom-Json'
+Assert-Contains 'hooks-ps-parity.test: skill-gate.ps1 consumes stdin without inspecting it (ReadToEnd)' $hkps_sgps '[Console]::In.ReadToEnd()'

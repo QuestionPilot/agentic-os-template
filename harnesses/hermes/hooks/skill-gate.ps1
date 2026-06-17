@@ -1,7 +1,14 @@
 #Requires -Version 7
 # Skill-management hard gate (Hermes pre_tool_call, matcher skill_manage) —
-# Windows twin of skill-gate.sh. Mutations are blocked pending an explicit,
-# per-use, operator-created approval marker that the hook CONSUMES.
+# Windows twin of skill-gate.sh.
+#
+# skill_manage is a MUTATION-ONLY tool: every valid action (create/edit/patch/
+# delete/write_file/remove_file) mutates a skill. Reads go through the SEPARATE,
+# ungated skill_view/skills_list tools, which this hook's matcher never fires on.
+# So there is no read-only skill_manage call to fast-path — EVERY skill_manage
+# invocation is gated, blocked pending an explicit, per-use, operator-created
+# approval marker that this hook CONSUMES (one approval, one mutation). Mirrors
+# skill-gate.sh.
 
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -11,23 +18,14 @@ if (-not $hhome) {
 }
 $approval = Join-Path $hhome 'agentic-os' 'allow-skill-manage'
 
-$inputRaw = [Console]::In.ReadToEnd()
-$action = ''
-try {
-    # Coalesce action // operation — the .sh twin (skill-gate.sh:29) reads
-    # `.tool_input.action // .tool_input.operation`; some skill_manage payloads
-    # name the verb `operation`. Reading only `.action` let a benign verb (e.g.
-    # operation=list) fall through to the fail-closed block on Windows while
-    # mac/Linux allowed it.
-    $ti = ($inputRaw | ConvertFrom-Json).tool_input
-    $verb = if ($null -ne $ti.action) { $ti.action } else { $ti.operation }
-    $action = ([string]$verb).ToLower()
-} catch { }
+# Consume stdin; we gate EVERY skill_manage call, so there is nothing to inspect.
+[void][Console]::In.ReadToEnd()
 
-# Read-only operations pass; unknown/absent action falls through (fail closed).
-if ($action -in @('list', 'view', 'read', 'show', 'search', 'info')) { exit 0 }
-
-if (Test-Path -LiteralPath $approval) {
+# -PathType Leaf matches a FILE only — parity with the bash twin's `[[ -f ]]`.
+# Without it, Test-Path is also true for a DIRECTORY at the marker path, which the
+# bash twin would never treat as an approval (and a non-empty dir survives the
+# Remove-Item, turning allow-once into a standing allow).
+if (Test-Path -LiteralPath $approval -PathType Leaf) {
     Remove-Item -LiteralPath $approval -Force
     exit 0
 }
