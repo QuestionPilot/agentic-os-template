@@ -117,11 +117,27 @@ function Get-CliVersion([string]$name) {
 }
 
 function Test-VersionGe([string]$v1, [string]$v2) {
-  try {
-    $a = [System.Version]($v1 -replace '[^0-9.]','')
-    $b = [System.Version]($v2 -replace '[^0-9.]','')
-    return $a -ge $b
-  } catch { return $false }
+  # Field-compare dot-separated numerics, padding missing segments with 0 — a
+  # faithful port of bash version_ge (scripts/bootstrap.sh). NOT [System.Version]:
+  # it treats unspecified components as -1, so "2.40" sorts BELOW "2.40.0" (a
+  # 2-segment tool version spuriously fails a 3-segment floor), and a single-
+  # segment string ("13") throws FormatException — both diverge from bash.
+  $a = [regex]::Match($v1, '^[0-9]+(\.[0-9]+)*').Value
+  $b = [regex]::Match($v2, '^[0-9]+(\.[0-9]+)*').Value
+  if (-not $a) { return $false }   # empty v1 → not >= (bash: return 1)
+  if (-not $b) { return $true }    # empty v2 → >=     (bash: return 0)
+  $aSeg = $a -split '\.'
+  $bSeg = $b -split '\.'
+  for ($i = 0; $i -lt 3; $i++) {
+    # [double] (not [long]) matches bash version_ge's awk `+0` float coercion and
+    # cannot overflow — a pathological huge segment yields +Inf, never a throw (a
+    # bare [long] cast would, and the old [System.Version] path crashed too).
+    $x = if ($i -lt $aSeg.Count) { [double]$aSeg[$i] } else { 0 }
+    $y = if ($i -lt $bSeg.Count) { [double]$bSeg[$i] } else { 0 }
+    if ($x -gt $y) { return $true }
+    if ($x -lt $y) { return $false }
+  }
+  return $true   # all 3 segments equal → >=
 }
 
 $missingClis  = @()

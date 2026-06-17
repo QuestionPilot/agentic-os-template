@@ -13,7 +13,16 @@ $approval = Join-Path $hhome 'agentic-os' 'allow-skill-manage'
 
 $inputRaw = [Console]::In.ReadToEnd()
 $action = ''
-try { $action = ([string](($inputRaw | ConvertFrom-Json).tool_input.action)).ToLower() } catch { }
+try {
+    # Coalesce action // operation — the .sh twin (skill-gate.sh:29) reads
+    # `.tool_input.action // .tool_input.operation`; some skill_manage payloads
+    # name the verb `operation`. Reading only `.action` let a benign verb (e.g.
+    # operation=list) fall through to the fail-closed block on Windows while
+    # mac/Linux allowed it.
+    $ti = ($inputRaw | ConvertFrom-Json).tool_input
+    $verb = if ($null -ne $ti.action) { $ti.action } else { $ti.operation }
+    $action = ([string]$verb).ToLower()
+} catch { }
 
 # Read-only operations pass; unknown/absent action falls through (fail closed).
 if ($action -in @('list', 'view', 'read', 'show', 'search', 'info')) { exit 0 }

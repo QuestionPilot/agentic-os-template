@@ -154,6 +154,36 @@ try {
         Remove-Item Env:\CLAUDE_SKIP_FRESHNESS_CHECK -ErrorAction SilentlyContinue
     }
 
+    # --- 3e/3f — hermes skill-gate.ps1 action // operation coalesce (<TEAM>-295 F5) ---
+    # The .sh twin reads `.action // .operation`; the PS twin previously read
+    # only `.action`, so a benign verb under the `operation` key fell through to
+    # the fail-closed block on Windows while mac/Linux allowed it.
+    $hkps_sg = Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'skill-gate.ps1'
+    $out = Invoke-CodexHook -HookPath $hkps_sg -Payload '{"tool_input":{"operation":"list"}}'
+    if (-not $out) {
+        _Pass 'hooks-ps-parity.test: skill-gate.ps1 ALLOWS a read-only verb under the .operation key (action // operation)'
+    } else {
+        _Fail 'hooks-ps-parity.test: skill-gate.ps1 should ALLOW operation=list' "got block output: $out"
+    }
+    $out = Invoke-CodexHook -HookPath $hkps_sg -Payload '{"tool_input":{"operation":"delete"}}'
+    if ($out -match '"decision":"block"') {
+        _Pass 'hooks-ps-parity.test: skill-gate.ps1 BLOCKS a mutating verb under the .operation key'
+    } else {
+        _Fail 'hooks-ps-parity.test: skill-gate.ps1 should BLOCK operation=delete' "got: $out"
+    }
+
 } finally {
     Remove-Item -LiteralPath $hkps_tmpdir -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# --- 4. <TEAM>-295 source guards: Windows hook-twin divergence fixes -------------
+# Lock the F3/F4 fixes that cannot be reproduced on a UTF-8 / pwsh-on-PATH dev
+# box (the bugs only bite on Windows). Pure source-text checks.
+$hkps_ms = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'memory-sanitize.ps1') -Raw
+Assert-Contains 'hooks-ps-parity.test: memory-sanitize.ps1 resolves the running pwsh via $PID' $hkps_ms '(Get-Process -Id $PID).Path'
+Assert-NotContains "hooks-ps-parity.test: memory-sanitize.ps1 has no bare '& pwsh -NoProfile -File'" $hkps_ms '& pwsh -NoProfile -File'
+$hkps_hfs = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'framework-surface.ps1') -Raw
+Assert-Contains 'hooks-ps-parity.test: hermes framework-surface.ps1 resolves the running pwsh via $PID' $hkps_hfs '(Get-Process -Id $PID).Path'
+Assert-NotContains "hooks-ps-parity.test: hermes framework-surface.ps1 has no bare '& pwsh -NoProfile -File'" $hkps_hfs '& pwsh -NoProfile -File'
+$hkps_cfs = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'hooks' 'framework-surface.ps1') -Raw
+Assert-Contains "hooks-ps-parity.test: claude framework-surface.ps1 MCP probe parses the Connected status word (-ceq)" $hkps_cfs "-ceq 'Connected'"

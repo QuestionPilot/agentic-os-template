@@ -170,12 +170,82 @@ if command -v pwsh >/dev/null 2>&1; then
             "got: $hkps_out" ;;
   esac
 
+  # --- 3e/3f. hermes skill-gate.ps1 — action // operation coalesce (<TEAM>-295 F5) ---
+  # The .sh twin reads `.action // .operation`; the PS twin previously read only
+  # `.action`, so a benign verb arriving under the `operation` key fell through
+  # to the fail-closed block on Windows while mac/Linux allowed it.
+  hkps_sg="$REPO_ROOT/harnesses/hermes/hooks/skill-gate.ps1"
+  hkps_out="$(printf '%s' '{"tool_input":{"operation":"list"}}' | pwsh -NoProfile -File "$hkps_sg" 2>/dev/null)"
+  if [ -z "$hkps_out" ]; then
+    _pass "hooks-ps-parity: skill-gate.ps1 ALLOWS a read-only verb under the .operation key (action // operation)"
+  else
+    _fail "hooks-ps-parity: skill-gate.ps1 should ALLOW operation=list" "got block output: $hkps_out"
+  fi
+  hkps_out="$(printf '%s' '{"tool_input":{"operation":"delete"}}' | pwsh -NoProfile -File "$hkps_sg" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"decision":"block"'*)
+      _pass "hooks-ps-parity: skill-gate.ps1 BLOCKS a mutating verb under the .operation key" ;;
+    *)
+      _fail "hooks-ps-parity: skill-gate.ps1 should BLOCK operation=delete" "got: $hkps_out" ;;
+  esac
+
+  # --- 3g. claude framework-surface.ps1 MCP probe — glyph-independent status parse (<TEAM>-295 F4) ---
+  # Stub `claude mcp list` with a mix the fix must classify correctly: a UTF-8 ✓
+  # line and a NON-✓ glyph line (the Windows OEM/ANSI mojibake stand-in) both
+  # surface; Failed-to-connect, Disconnected, a multi-word "...Connected", and
+  # lowercase connected are all EXCLUDED. The probe runs in a Start-Job child that
+  # inherits PATH, so prepend the stub dir.
+  hkps_stub="$hkps_tmpdir/bin"; mkdir -p "$hkps_stub"
+  cat > "$hkps_stub/claude" <<'HKPS_CLAUDE_STUB'
+#!/bin/sh
+[ "$1" = "mcp" ] && [ "$2" = "list" ] || exit 0
+printf '%s\n' "linear: https://x - ✓ Connected" "notebook: a b - Z Connected" "broken: c - ✗ Failed to connect" "gone: d - ✗ Disconnected" "tricky: e - x Not really Connected" "lower: f - ✓ connected"
+HKPS_CLAUDE_STUB
+  chmod +x "$hkps_stub/claude"
+  hkps_fs2="$REPO_ROOT/harnesses/claude/hooks/framework-surface.ps1"
+  hkps_out="$(printf '%s' '{"source":"startup"}' | PATH="$hkps_stub:$PATH" CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1 pwsh -NoProfile -File "$hkps_fs2" 2>/dev/null)"
+  if printf '%s' "$hkps_out" | grep -q -- '- linear' \
+     && printf '%s' "$hkps_out" | grep -q -- '- notebook' \
+     && ! printf '%s' "$hkps_out" | grep -qE -- '- (broken|gone|tricky|lower)$'; then
+    _pass "hooks-ps-parity: claude framework-surface.ps1 MCP probe surfaces glyph-independent Connected + excludes Failed/Disconnected/multi-word/lowercase"
+  else
+    _fail "hooks-ps-parity: claude framework-surface.ps1 MCP probe mis-classified a status line" "got: $hkps_out"
+  fi
+
   rm -rf "$hkps_tmpdir"
-  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs
+  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2
 else
   _pass "hooks-ps-parity: skipping pwsh behavioral parity (pwsh not on PATH)"
 fi
 
+# --- 4. <TEAM>-295 source guards: Windows hook-twin divergence fixes -------------
+# Lock the F3/F4 fixes that cannot be reproduced on a UTF-8 / pwsh-on-PATH dev
+# box (the bugs only bite on Windows). Pure source-text checks — no pwsh needed,
+# so they run on every lane.
+#
+# F3: memory-sanitize.ps1 + hermes framework-surface.ps1 must resolve the
+# RUNNING pwsh via $PID, not a bare `& pwsh` that depends on PATH — absent for a
+# GUI-launched process on Windows, so the governance hook false-blocks every
+# memory write and the freshness probe silently never runs.
+hkps_ms="$(cat "$REPO_ROOT/harnesses/hermes/hooks/memory-sanitize.ps1")"
+assert_contains "hooks-ps-parity: memory-sanitize.ps1 resolves the running pwsh via \$PID" \
+  "$hkps_ms" '(Get-Process -Id $PID).Path'
+assert_not_contains "hooks-ps-parity: memory-sanitize.ps1 has no bare '& pwsh -NoProfile -File'" \
+  "$hkps_ms" '& pwsh -NoProfile -File'
+hkps_hfs="$(cat "$REPO_ROOT/harnesses/hermes/hooks/framework-surface.ps1")"
+assert_contains "hooks-ps-parity: hermes framework-surface.ps1 resolves the running pwsh via \$PID" \
+  "$hkps_hfs" '(Get-Process -Id $PID).Path'
+assert_not_contains "hooks-ps-parity: hermes framework-surface.ps1 has no bare '& pwsh -NoProfile -File'" \
+  "$hkps_hfs" '& pwsh -NoProfile -File'
+
+# F4: claude framework-surface.ps1 MCP probe must key off the Connected status
+# WORD (case-sensitive -ceq), not the ✓ glyph — on Windows native stdout is
+# decoded as OEM/ANSI, so the glyph is mojibake and a glyph match drops every
+# connector. The positive guard catches a revert back to the glyph regex.
+hkps_cfs="$(cat "$REPO_ROOT/harnesses/claude/hooks/framework-surface.ps1")"
+assert_contains "hooks-ps-parity: claude framework-surface.ps1 MCP probe parses the Connected status word (-ceq)" \
+  "$hkps_cfs" "-ceq 'Connected'"
+
 # Cleanup of helper vars to avoid leakage into other test files (tests/run.sh
 # dot-sources each test in the same shell).
-unset hkps_root hkps_sh_pairs hkps_ps1_pairs hkps_missing_ps1 hkps_missing_sh sh_path ps1_path f
+unset hkps_root hkps_sh_pairs hkps_ps1_pairs hkps_missing_ps1 hkps_missing_sh sh_path ps1_path f hkps_ms hkps_hfs hkps_cfs
