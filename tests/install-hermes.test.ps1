@@ -58,3 +58,15 @@ _Skip 'install-hermes.test: memory-sanitize passes benign content' $reason
 _Skip 'install-hermes.test: steward is NOT scheduled in hooks.yaml (operator act)' $reason
 _Skip 'install-hermes.test: steward skips when views match regeneration (no-delta)' $reason
 _Skip 'install-hermes.test: steward enforces the daily run cap' $reason
+_Skip 'install-hermes.test: re-install with an operator plugin subdir present builds clean' $reason
+_Skip 'install-hermes.test: F7: operator plugin subdir survives hermes re-install' $reason
+_Skip 'install-hermes.test: F7: operator plugin content preserved verbatim' $reason
+_Skip 'install-hermes.test: F7: framework bridge plugin still installed after re-install' $reason
+_Skip 'install-hermes.test: check-drift exempts the operator-added plugin subdir' $reason
+_Skip 'install-hermes.test: check-drift flags a rogue file in a framework plugin dir (exit 1)' $reason
+_Skip 'install-hermes.test: check-drift names the rogue framework-plugin file' $reason
+_Skip 'install-hermes.test: N1: colliding non-framework plugins/ subdir warns on fresh install' $reason
+_Skip 'install-hermes.test: forced SOUL.md swap failure aborts the hermes install (nonzero)' $reason
+_Skip 'install-hermes.test: rollback restores the plugins/ backup from the shared root (timing)' $reason
+_Skip 'install-hermes.test: rollback restores the skills/ tree from the shared root' $reason
+_Skip 'install-hermes.test: run-private backup root removed after a both-paths rollback' $reason

@@ -305,3 +305,66 @@ Assert-File 'operator .install-bak.foo survives crash-recovery too' `
     (Join-Path $bakNsDir 'SKILL.md')
 
 Remove-Item -LiteralPath $BN_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
+# ===========================================================================
+# Part N1 — collision warn when install replaces a skills/<base> subdir no
+# prior framework install authored (claude, live; mirrors the bash twin).
+# Invoke-InstallClaude suppresses stderr (*>$null), so invoke directly with
+# 2>&1 to capture Warn's [Console]::Error output.
+# ===========================================================================
+$N1_DIR = Join-Path ([IO.Path]::GetTempPath()) ('shape-c-n1-' + [Guid]::NewGuid().Guid.Substring(0,8))
+$N1_TGT = Join-Path $N1_DIR 'tgt'
+New-Item -ItemType Directory -Path (Join-Path $N1_TGT 'skills' 'session-agent') -Force | Out-Null
+$N1_ENV = Join-Path $N1_DIR 'local.env'
+Write-LocalEnvFixture -EnvFile $N1_ENV -ConfigDir $N1_TGT -VaultDir (Join-Path $N1_DIR 'vault')
+[System.IO.File]::WriteAllText((Join-Path $N1_TGT 'skills' 'session-agent' 'SKILL.md'), `
+    "---`nname: session-agent`ndescription: operator collision fixture`n---`n# operator body`n", `
+    $utf8NoBom)
+
+$env:AI_CONFIG_LOCAL_ENV = $N1_ENV
+try {
+    $n1_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness claude 2>&1 | Out-String)
+    $n1_status = $LASTEXITCODE
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+Assert-Eq 'install-shape-c.test: N1: install still exits 0 on a colliding non-framework skill' '0' "$n1_status"
+Assert-Contains 'install-shape-c.test: N1: collision warns for a non-framework-authored skills subdir' `
+    $n1_out 'replacing skills/session-agent which no prior framework install authored'
+if (Test-Path -LiteralPath (Join-Path $N1_TGT 'skills' 'session-agent' 'SKILL.md') -PathType Leaf) {
+    Assert-NotContains 'install-shape-c.test: N1: framework session-agent replaces the colliding operator body' `
+        (Get-Content -LiteralPath (Join-Path $N1_TGT 'skills' 'session-agent' 'SKILL.md') -Raw) 'operator body'
+}
+# A SECOND install (now manifest-authored) must NOT warn.
+$env:AI_CONFIG_LOCAL_ENV = $N1_ENV
+try {
+    $n1_out2 = (& pwsh -NoProfile -File $INSTALL_PS1 --harness claude 2>&1 | Out-String)
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+Assert-NotContains 'install-shape-c.test: N1: no collision warn on a normal framework re-install' `
+    $n1_out2 'no prior framework install authored'
+
+Remove-Item -LiteralPath $N1_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
+# ===========================================================================
+# Part app-owned plugins — check-drift IGNORES app-owned plugins/ on a claude
+# target (managed-vs-app-owned gate; mirrors the bash twin). Claude Code writes
+# plugins/known_marketplaces.json into the config dir; the manifest has no
+# managed plugins, so plugins/ must not be scanned or flagged.
+# ===========================================================================
+$AP_DIR = Join-Path ([IO.Path]::GetTempPath()) ('shape-c-ap-' + [Guid]::NewGuid().Guid.Substring(0,8))
+$AP_TGT = Join-Path $AP_DIR 'tgt'
+New-Item -ItemType Directory -Path $AP_TGT -Force | Out-Null
+$AP_ENV = Join-Path $AP_DIR 'local.env'
+Write-LocalEnvFixture -EnvFile $AP_ENV -ConfigDir $AP_TGT -VaultDir (Join-Path $AP_DIR 'vault')
+[void](Invoke-InstallClaude -EnvFile $AP_ENV)
+New-Item -ItemType Directory -Path (Join-Path $AP_TGT 'plugins' 'cache' 'marketplace-x') -Force | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $AP_TGT 'plugins' 'known_marketplaces.json'), '{}', $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $AP_TGT 'plugins' 'cache' 'marketplace-x' 'data.json'), "cached`n", $utf8NoBom)
+$ap_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $AP_TGT 2>&1 | Out-String)
+$ap_status = $LASTEXITCODE
+Assert-Eq 'install-shape-c.test: check-drift ignores app-owned plugins/ on a claude target (exit 0)' '0' "$ap_status"
+Assert-NotContains 'install-shape-c.test: check-drift does not flag app-owned plugins/known_marketplaces.json' `
+    $ap_out 'known_marketplaces.json'
+Remove-Item -LiteralPath $AP_DIR -Recurse -Force -ErrorAction SilentlyContinue

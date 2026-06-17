@@ -62,13 +62,24 @@ if [ "${1:-}" = "--manifest" ]; then
     fi
   done < <(jq -r '.generated | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
   # Extra-file detection: a file in the generated tree (hooks/, settings.json)
-  # or in a manifest-managed skills/<name>/ subdir that the manifest does not
-  # list is drift. Unmanaged skills/<name>/ subdirs are **Shape C**
-  # operator-local skills (per <TEAM>-55's three-shape model, formalized in
-  # <TEAM>-68) — install.sh's per-subdir swap preserves them through re-renders,
-  # and their files are intentionally not in the manifest. Compute the set of
-  # manifest-managed skill subdirs once, then exempt all other skill subdirs.
+  # or in a manifest-managed skills/<name>/ or plugins/<name>/ subdir that the
+  # manifest does not list is drift. Unmanaged skills/<name>/ and plugins/<name>/
+  # subdirs are operator-local (**Shape C** skills, operator-added plugins) per
+  # <TEAM>-55's three-shape model (formalized in <TEAM>-68) — install.sh's
+  # per-subdir swap preserves them through re-renders, and their files are
+  # intentionally not in the manifest. Both skills/ and plugins/ are per-subdir
+  # managed trees (install.sh PER_SUBDIR_PATHS), so each gets the same exemption:
+  # compute the manifest-managed subdir set per category, then exempt all others.
   managed_skills="$(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$manifest" 2>/dev/null | sort -u)"
+  managed_plugins="$(jq -r '.generated | keys[] | select(startswith("plugins/")) | split("/")[1]' "$manifest" 2>/dev/null | sort -u)"
+  # plugins/ is scanned ONLY when the manifest declares it a managed tree (i.e.
+  # hermes, whose build produces plugins/agentic-os-hook-bridge/). For claude/
+  # codex, plugins/ is NOT framework-managed — Claude Code's app owns ~/.claude/
+  # plugins/ (it writes plugins/known_marketplaces.json and similar app state
+  # there), so scanning it would mis-flag app state as drift. skills/ + hooks/
+  # are managed by every harness, so they are always scanned.
+  scan_roots=("$target/skills" "$target/hooks")
+  [ -n "$managed_plugins" ] && scan_roots+=("$target/plugins")
   while IFS= read -r f; do
     [ -e "$f" ] || continue
     rel="${f#"$target"/}"
@@ -88,13 +99,17 @@ if [ "${1:-}" = "--manifest" ]; then
         sub="${rel#skills/}"; sub="${sub%%/*}"
         printf '%s\n' "$managed_skills" | grep -qxF "$sub" || continue
         ;;
+      plugins/*/*)
+        sub="${rel#plugins/}"; sub="${sub%%/*}"
+        printf '%s\n' "$managed_plugins" | grep -qxF "$sub" || continue
+        ;;
     esac
     if ! jq -e --arg k "$rel" '.generated | has($k)' "$manifest" >/dev/null 2>&1; then
       printf 'FAIL manifest drift: untracked file in generated tree: %s\n' "$rel" >&2
       drift=1
       DRIFTED_FILES+=("untracked:$rel")
     fi
-  done < <(find "$target/skills" "$target/hooks" -type f 2>/dev/null; [ -f "$target/settings.json" ] && printf '%s\n' "$target/settings.json")
+  done < <(find "${scan_roots[@]}" -type f 2>/dev/null; [ -f "$target/settings.json" ] && printf '%s\n' "$target/settings.json")
   if [ "$drift" -ne 0 ]; then
     # <TEAM>-106 soft-drift auto-cure (opt-in via --cure-soft-drift).
     #

@@ -36,11 +36,15 @@
     is gracefully rejected on Windows until its port lands; the
     macOS/Linux bash twin install.sh supports it.
 
-    <TEAM>-135: skills/ swap is now per-subdir (parity with install.sh's swap_in
-    skills branch) with an OLD-vs-NEW manifest orphan hash-gate, so re-installs
-    preserve operator-authored (Shape C) skills across repeated runs instead of
-    clobbering them through a wholesale-directory backup that a 2nd consecutive
-    run would overwrite. See Move-SkillsIntoTarget below.
+    <TEAM>-135: per-subdir swap (parity with install.sh's swap_in PER_SUBDIR_PATHS
+    branch) with an OLD-vs-NEW manifest orphan hash-gate, so re-installs preserve
+    operator-authored subdirs (Shape C skills, operator-added plugins) across
+    repeated runs instead of clobbering them through a wholesale-directory backup
+    that a 2nd consecutive run would overwrite. The set of per-subdir paths is
+    $Script:PerSubdirPaths (skills, plugins) — parity with install.sh. On Windows
+    the harness is claude-only, so the plugins path is dormant until the hermes
+    port lands; it is mirrored for parity, and the N1 collision warning runs live
+    on claude skills/. See Move-SubdirsIntoTarget below.
 
     <TEAM>-109 PS-5: $PSScriptRoot empty-string fallback applied.
     <TEAM>-100 hook-command shape: generated settings.json hook commands use
@@ -844,34 +848,42 @@ function Test-Build {
 #     whitespace, backup-prefix, symlinks) are rejected before any rm.
 #     (Mount-point detection is bash-twin-specific via stat -c/-f; on Windows
 #     the same-volume assumption holds for $CLAUDE_CONFIG_DIR — documented
-#     below at Remove-StaleOrphanSkills.)
+#     below at Remove-StaleOrphanSubdirs.)
 # ---------------------------------------------------------------------------
 
-# Move-SkillsIntoTarget — per-subdir swap of $BUILD/skills/* into
-# $TARGET/skills/*. Mirrors install.sh:398-575's skills branch. Returns $true
-# on success, $false if any per-subdir Move-Item fails (so the caller rolls
-# back). Orphan cleanup runs only after every per-subdir swap succeeded.
-function Move-SkillsIntoTarget {
-    $buildSkills  = Join-Path $BUILD 'skills'
-    $targetSkills = Join-Path $TARGET 'skills'
-    if (-not (Test-Path -LiteralPath $buildSkills -PathType Container)) { return $true }
+# Move-SubdirsIntoTarget — per-subdir swap of $BUILD/<Name>/* into
+# $TARGET/<Name>/*, for any PER_SUBDIR_PATHS member. Mirrors install.sh's
+# swap_in per-subdir branch. Returns $true on success, $false if any per-subdir
+# Move-Item fails (so the caller rolls back). Orphan cleanup runs only after
+# every per-subdir swap succeeded.
+function Move-SubdirsIntoTarget {
+    param([Parameter(Mandatory)][string]$Name)
+    $buildDir  = Join-Path $BUILD $Name
+    $targetDir = Join-Path $TARGET $Name
+    if (-not (Test-Path -LiteralPath $buildDir -PathType Container)) { return $true }
 
     # Compute orphans BEFORE the per-subdir swap. $TARGET/.build-manifest.json
     # still holds the OLD content here (it is swapped later in the
-    # ManagedPaths order); $BUILD/.build-manifest.json is the NEW manifest.
+    # ManagedPaths order); $BUILD/.build-manifest.json is the NEW manifest. The
+    # prefix is parameterized so the same lookup serves any per-subdir path.
     $oldManifest = Join-Path $TARGET '.build-manifest.json'
     $newManifest = Join-Path $BUILD '.build-manifest.json'
+    $prefix = "$Name/"
+    # old_managed is also reused below for the N1 collision warning (authorship).
+    $oldManaged = $null
+    if (Test-Path -LiteralPath $oldManifest -PathType Leaf) {
+        $oldManaged = Get-SubdirsFromManifest -ManifestPath $oldManifest -Prefix $prefix
+    }
     $orphans = @()
     if ((Test-Path -LiteralPath $oldManifest -PathType Leaf) -and (Test-Path -LiteralPath $newManifest -PathType Leaf)) {
-        $oldManaged = Get-SkillSubdirsFromManifest -ManifestPath $oldManifest
-        $newManaged = Get-SkillSubdirsFromManifest -ManifestPath $newManifest
+        $newManaged = Get-SubdirsFromManifest -ManifestPath $newManifest -Prefix $prefix
         # Require BOTH manifests to enumerate cleanly (mirrors the bash twin's
         # `command -v jq` guard around the whole orphan computation). If either
-        # jq call failed ($null), skip orphan detection entirely — leaving
-        # stale skills is far safer than computing a bogus orphan set from an
+        # jq call failed ($null), skip orphan detection entirely — leaving a
+        # stale subdir is far safer than computing a bogus orphan set from an
         # empty new-managed set (which would mark every OLD-managed subdir an
         # orphan; the hash gate would still protect freshly-rewritten managed
-        # skills, but we fail safe rather than rely on that).
+        # content, but we fail safe rather than rely on that).
         if (($null -ne $oldManaged) -and ($null -ne $newManaged)) {
             # Orphans = OLD-managed subdirs not present in NEW-managed set.
             $newSet = New-Object System.Collections.Generic.HashSet[string]
@@ -880,25 +892,38 @@ function Move-SkillsIntoTarget {
         }
     }
 
-    New-Item -ItemType Directory -Path $targetSkills -Force | Out-Null
+    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 
-    # <TEAM>-147: per-subdir backups go to a run-private root OUTSIDE skills/ at
-    # $TARGET/.install-bak.d/skills/<base>/ (parity with install.sh), so an
-    # operator skill named `.install-bak.*` is never treated as a backup. The
+    # <TEAM>-147: per-subdir backups go to a run-private root OUTSIDE the live
+    # tree at $TARGET/.install-bak.d/<Name>/<base>/ (parity with install.sh), so
+    # an operator subdir named `.install-bak.*` is never treated as a backup. The
     # main flow recovers + removes a leftover .install-bak.d from a crashed prior
     # run before the swap loop, so the root is fresh here (no stale same-base
-    # collision — hence no pre-delete of a per-subdir backup is needed).
-    $bakRoot       = Join-Path $TARGET '.install-bak.d'
-    $bakRootSkills = Join-Path $bakRoot 'skills'
-    New-Item -ItemType Directory -Path $bakRootSkills -Force | Out-Null
+    # collision — hence no pre-delete of a per-subdir backup is needed). The root
+    # is shared across per-subdir paths; each gets its own <Name>/ subtree.
+    $bakRoot    = Join-Path $TARGET '.install-bak.d'
+    $bakRootSub = Join-Path $bakRoot $Name
+    New-Item -ItemType Directory -Path $bakRootSub -Force | Out-Null
+
+    # N1: a set of <base> names a prior framework install authored. Empty when
+    # there is no old manifest / jq failed → every pre-existing live subdir is
+    # treated as unauthored, which is correct for a fresh install.
+    $oldManagedSet = New-Object System.Collections.Generic.HashSet[string]
+    if ($null -ne $oldManaged) { foreach ($m in $oldManaged) { [void]$oldManagedSet.Add($m) } }
 
     # Per-subdir swap. Use [string] base names; iterate only directory children.
-    $subdirs = @(Get-ChildItem -LiteralPath $buildSkills -Directory -ErrorAction SilentlyContinue)
+    $subdirs = @(Get-ChildItem -LiteralPath $buildDir -Directory -ErrorAction SilentlyContinue)
     foreach ($sub in $subdirs) {
         $base       = $sub.Name
-        $tgtSub     = Join-Path $targetSkills $base
-        $bakSub     = Join-Path $bakRootSkills $base
+        $tgtSub     = Join-Path $targetDir $base
+        $bakSub     = Join-Path $bakRootSub $base
         if (Test-Path -LiteralPath $tgtSub) {
+            # N1: warn (don't silently overwrite) when replacing a live subdir no
+            # prior framework install authored — a framework <base> colliding by
+            # name with operator/native content. The framework version still wins.
+            if (-not $oldManagedSet.Contains($base)) {
+                Warn "replacing $Name/$base which no prior framework install authored (operator/native content with a colliding name)"
+            }
             try {
                 Move-Item -LiteralPath $tgtSub -Destination $bakSub -Force -ErrorAction Stop
             } catch {
@@ -913,40 +938,46 @@ function Move-SkillsIntoTarget {
     }
 
     # Orphan cleanup runs only after every per-subdir swap succeeded.
-    Remove-StaleOrphanSkills -Orphans $orphans -OldManifest $oldManifest -TargetSkills $targetSkills
+    Remove-StaleOrphanSubdirs -Orphans $orphans -OldManifest $oldManifest -Name $Name -TargetDir $targetDir
 
     return $true
 }
 
-# Get-SkillSubdirsFromManifest — return the sorted-unique set of <base> names
-# from `.generated` keys shaped `skills/<base>/...`. Mirrors the bash twin's
-# `jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]'`.
+# Get-SubdirsFromManifest — return the sorted-unique set of <base> names from
+# `.generated` keys shaped `<Prefix><base>/...` (Prefix is e.g. `skills/` or
+# `plugins/`). Mirrors the bash twin's
+# `jq -r --arg p <Prefix> '.generated | keys[] | select(startswith($p)) | split("/")[1]'`.
 # Returns $null if jq enumeration fails (caller skips orphan computation).
-function Get-SkillSubdirsFromManifest {
-    param([Parameter(Mandatory)][string]$ManifestPath)
+function Get-SubdirsFromManifest {
+    param(
+        [Parameter(Mandatory)][string]$ManifestPath,
+        [Parameter(Mandatory)][string]$Prefix
+    )
     $out = Get-Content -Raw -LiteralPath $ManifestPath |
-        & $script:JqBin -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' 2>$null
+        & $script:JqBin -r --arg p $Prefix '.generated | keys[] | select(startswith($p)) | split("/")[1]' 2>$null
     if ($LASTEXITCODE -ne 0) { return $null }
     $names = @($out | Where-Object { ($null -ne $_) -and (($_.ToString()) -ne '') })
     return @($names | Sort-Object -Unique -CaseSensitive)
 }
 
-# Remove-StaleOrphanSkills — delete orphan skill subdirs behind a hash gate.
-# Mirrors install.sh:430-575. An orphan is deleted ONLY if every manifest-
-# tracked file under skills/<orphan>/ still exists on disk AND matches the OLD
-# manifest's recorded hash (positive-evidence required via $foundMatch). Unsafe
-# orphan names are rejected before any filesystem touch.
-function Remove-StaleOrphanSkills {
+# Remove-StaleOrphanSubdirs — delete orphan subdirs behind a hash gate, for any
+# per-subdir path (skills, plugins). Mirrors install.sh's swap_in orphan loop. An
+# orphan is deleted ONLY if every manifest-tracked file under <Name>/<orphan>/
+# still exists on disk AND matches the OLD manifest's recorded hash (positive-
+# evidence required via $foundMatch). Unsafe orphan names are rejected before any
+# filesystem touch.
+function Remove-StaleOrphanSubdirs {
     param(
         [string[]]$Orphans,
         [Parameter(Mandatory)][string]$OldManifest,
-        [Parameter(Mandatory)][string]$TargetSkills
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$TargetDir
     )
     if (-not $Orphans -or $Orphans.Count -eq 0) { return }
 
     # Stage the OLD manifest's generated {path -> hash} map once. If jq fails to
     # enumerate it, skip orphan cleanup entirely (defense-in-depth: rather LEAVE
-    # stale skills than risk a partial validation deleting operator content).
+    # a stale subdir than risk a partial validation deleting operator content).
     $manifestJson = Get-Content -Raw -LiteralPath $OldManifest |
         & $script:JqBin -c '.generated' 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -995,7 +1026,7 @@ function Remove-StaleOrphanSkills {
         # stream (`name:stream`); a trailing dot/space is silently stripped by
         # Win32 path normalization so the validated name would not map 1:1 to
         # the deleted directory. Reject both — fail closed, consistent with the
-        # <TEAM>-107 "rather LEAVE stale skills than risk operator content" stance.
+        # <TEAM>-107 "rather LEAVE a stale subdir than risk operator content" stance.
         if ($orphan.Contains(':')) {
             [Console]::Error.WriteLine("install.ps1: unsafe orphan name skipped (NTFS data-stream colon): $orphan")
             continue
@@ -1004,17 +1035,17 @@ function Remove-StaleOrphanSkills {
             [Console]::Error.WriteLine("install.ps1: unsafe orphan name skipped (trailing dot — Win32 normalization): $orphan")
             continue
         }
-        $orphanPath = Join-Path $TargetSkills $orphan
-        # The resolved orphan must remain an IMMEDIATE child of $TargetSkills
+        $orphanPath = Join-Path $TargetDir $orphan
+        # The resolved orphan must remain an IMMEDIATE child of $TargetDir
         # (Codex adversarial <TEAM>-135-F5): if Win32 normalization or a sneaky
-        # name escapes the skills/ dir, refuse. GetFullPath canonicalizes
+        # name escapes the <Name>/ dir, refuse. GetFullPath canonicalizes
         # without requiring the path to exist.
         $orphanFull = [System.IO.Path]::GetFullPath($orphanPath)
-        $skillsFull = [System.IO.Path]::GetFullPath($TargetSkills)
-        $expectedChild = [System.IO.Path]::Combine($skillsFull, $orphan)
+        $targetDirFull = [System.IO.Path]::GetFullPath($TargetDir)
+        $expectedChild = [System.IO.Path]::Combine($targetDirFull, $orphan)
         if ($orphanFull -ne ([System.IO.Path]::GetFullPath($expectedChild)) -or
-            -not $orphanFull.StartsWith($skillsFull.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal)) {
-            [Console]::Error.WriteLine("install.ps1: unsafe orphan name skipped (not an immediate child of skills/): $orphan")
+            -not $orphanFull.StartsWith($targetDirFull.TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal)) {
+            [Console]::Error.WriteLine("install.ps1: unsafe orphan name skipped (not an immediate child of ${Name}/): $orphan")
             continue
         }
         # Reject symlinks/reparse-points before any read under that path.
@@ -1025,19 +1056,19 @@ function Remove-StaleOrphanSkills {
         }
         if (-not (Test-Path -LiteralPath $orphanPath -PathType Container)) { continue }
 
-        # Hash gate: every manifest entry under skills/<orphan>/ must exist on
+        # Hash gate: every manifest entry under <Name>/<orphan>/ must exist on
         # disk AND match its recorded hash; at least one must be validated
         # (positive evidence) before deletion.
         $allStale  = $true
         $foundMatch = $false
-        $prefix = "skills/$orphan/"
+        $prefix = "$Name/$orphan/"
         foreach ($pair in $manifestPairs) {
             $rel = $pair.rel
             # <TEAM>-147 F6: reject any manifest path with a real `..` component
             # before the prefix match (parity with install.sh's `*/../*` guard).
             # A hand-edited OLD manifest could otherwise make a
-            # `skills/<orphan>/../<elsewhere>` key satisfy the prefix and validate
-            # a hash against a file OUTSIDE skills/<orphan>/. Slash-wrap so only a
+            # `<Name>/<orphan>/../<elsewhere>` key satisfy the prefix and validate
+            # a hash against a file OUTSIDE <Name>/<orphan>/. Slash-wrap so only a
             # true `..` segment matches (not `foo..bar`/`..foo`/`foo..`).
             if (('/' + ($rel -replace '\\','/') + '/').Contains('/../')) { continue }
             if (-not $rel.StartsWith($prefix, [StringComparison]::Ordinal)) { continue }
@@ -1070,7 +1101,7 @@ function Remove-StaleOrphanSkills {
                 }
             }
             if ($hasNestedReparse) {
-                [Console]::Error.WriteLine("install.ps1: orphan cleanup skipped (nested reparse-point under skills/${orphan} — refusing recursive delete): $orphan")
+                [Console]::Error.WriteLine("install.ps1: orphan cleanup skipped (nested reparse-point under ${Name}/${orphan} — refusing recursive delete): $orphan")
                 continue
             }
             Remove-Item -LiteralPath $orphanPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -1087,8 +1118,9 @@ function Move-IntoTarget {
     # triggers a clean rollback. -ceq for byte-exact parity with the bash twin's
     # `[ "$X" = "$name" ]`.
     if ($env:AI_CONFIG_INSTALL_TEST_FAIL_SWAP -ceq $Name) { return $false }
-    # <TEAM>-135: skills/ uses the per-subdir swap (parity with install.sh swap_in).
-    if ($Name -eq 'skills') { return (Move-SkillsIntoTarget) }
+    # <TEAM>-135: PER_SUBDIR_PATHS members use the per-subdir swap (parity with
+    # install.sh swap_in). On Windows only skills/ is in ManagedPaths today.
+    if ($Script:PerSubdirPaths -contains $Name) { return (Move-SubdirsIntoTarget -Name $Name) }
 
     $buildPath  = Join-Path $BUILD $Name
     $targetPath = Join-Path $TARGET $Name
@@ -1114,43 +1146,35 @@ function Move-IntoTarget {
 }
 
 function Restore-Backups {
+    # <TEAM>-135/147: PER_SUBDIR_PATHS members use per-subdir backups under the
+    # shared run-private root $TARGET/.install-bak.d/<name>/<base>/ (parity with
+    # install.sh rollback_swaps). Restore each backed-up subdir for every
+    # per-subdir path, then drop the shared root ONCE after the loop — never
+    # inside a per-name branch, which would discard a sibling path's still-needed
+    # backups mid-rollback. Shape C / operator subdirs (incl. any named
+    # `.install-bak.*`) were never moved into the root, so they are untouched.
+    $anyPerSubdir  = $false
+    $rootRestoreOk = $true
     foreach ($n in $Script:ManagedPaths) {
-        # <TEAM>-135: skills/ uses per-subdir backups under
-        # $TARGET/skills/.install-bak.<base>/ (parity with install.sh
-        # rollback_swaps). Shape C subdirs were never touched — nothing to
-        # restore for them.
-        if ($n -eq 'skills') {
-            # <TEAM>-147: per-subdir backups live in the run-private root
-            # $TARGET/.install-bak.d/skills/<base>/ (parity with install.sh
-            # rollback_swaps). Restore each, then drop the root. Shape C subdirs
-            # (incl. any named `.install-bak.*`) were never moved in — untouched.
-            $targetSkills  = Join-Path $TARGET 'skills'
-            $bakRootSkills = Join-Path $TARGET '.install-bak.d' 'skills'
-            $restoreOk = $true
-            if (Test-Path -LiteralPath $bakRootSkills -PathType Container) {
-                $baks = @(Get-ChildItem -LiteralPath $bakRootSkills -Directory -Force -ErrorAction SilentlyContinue)
+        if ($Script:PerSubdirPaths -contains $n) {
+            $anyPerSubdir = $true
+            $targetDir  = Join-Path $TARGET $n
+            $bakRootSub = Join-Path (Join-Path $TARGET '.install-bak.d') $n
+            if (Test-Path -LiteralPath $bakRootSub -PathType Container) {
+                $baks = @(Get-ChildItem -LiteralPath $bakRootSub -Directory -Force -ErrorAction SilentlyContinue)
                 foreach ($bak in $baks) {
                     $base = $bak.Name
-                    $tgtSub = Join-Path $targetSkills $base
+                    $tgtSub = Join-Path $targetDir $base
                     if (Test-Path -LiteralPath $tgtSub) {
                         Remove-Item -LiteralPath $tgtSub -Recurse -Force -ErrorAction SilentlyContinue
                     }
                     try {
                         Move-Item -LiteralPath $bak.FullName -Destination $tgtSub -Force -ErrorAction Stop
                     } catch {
-                        $restoreOk = $false
-                        Warn "rollback could not restore skills/$base"
+                        $rootRestoreOk = $false
+                        Warn "rollback could not restore $n/$base"
                     }
                 }
-            }
-            # Codex adversarial <TEAM>-147 F5: only drop the run-private backup root
-            # once every restore succeeded — never delete the sole surviving copy
-            # on the failure path. Leave .install-bak.d for manual recovery if a
-            # restore failed.
-            if ($restoreOk) {
-                Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
-            } else {
-                Warn "left $TARGET\.install-bak.d after a failed rollback restore"
             }
             continue
         }
@@ -1163,11 +1187,31 @@ function Restore-Backups {
             Move-Item -LiteralPath $bak -Destination $tgt -Force -ErrorAction SilentlyContinue
         }
     }
+    # Codex adversarial <TEAM>-147 F5: only drop the shared run-private backup root
+    # once EVERY per-subdir restore (across all per-subdir paths) succeeded —
+    # never delete the sole surviving copy on the failure path. Leave
+    # .install-bak.d for manual recovery if any restore failed. Dropping it here
+    # (after the loop), not inside the per-name branch, keeps sibling backups intact.
+    if ($anyPerSubdir) {
+        if ($rootRestoreOk) {
+            Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Warn "left $TARGET\.install-bak.d after a failed rollback restore"
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
+
+# Managed paths swapped PER-SUBDIR instead of wholesale (mirrors install.sh's
+# PER_SUBDIR_PATHS). plugins is hermes-only, so it is never in the claude-only
+# Windows ManagedPaths below and stays dormant here until the hermes port lands;
+# it is listed for parity with install.sh, and so the per-subdir swap, rollback,
+# crash-recovery, and cleanup all key off the same shared run-private root. The
+# N1 collision warning runs live on claude skills/.
+$Script:PerSubdirPaths = @('skills', 'plugins')
 
 # Per-harness managed paths + entrypoints (mirrors install.sh:119-126).
 switch ($Harness) {
@@ -1228,23 +1272,28 @@ try {
 
     # <TEAM>-147: a leftover $TARGET/.install-bak.d means a prior install crashed
     # mid-swap. Recover conservatively BEFORE the swap loop (parity with
-    # install.sh): restore any backed-up skill whose live counterpart is now
-    # missing, then drop the root. A live counterpart that still exists means
-    # that subdir's swap completed before the crash, so its backup is stale and
-    # discarded. Crash-safe without ever blind-deleting the only surviving copy.
-    $recoverSkills = Join-Path $TARGET '.install-bak.d' 'skills'
-    if (Test-Path -LiteralPath $recoverSkills -PathType Container) {
-        $targetSkills = Join-Path $TARGET 'skills'
-        $rbaks = @(Get-ChildItem -LiteralPath $recoverSkills -Directory -Force -ErrorAction SilentlyContinue)
+    # install.sh): for EVERY per-subdir path, restore any backed-up subdir whose
+    # live counterpart is now missing, then drop the root. A live counterpart that
+    # still exists means that subdir's swap completed before the crash, so its
+    # backup is stale and discarded. Crash-safe without ever blind-deleting the
+    # only surviving copy. The root is shared, so it is dropped ONCE after the loop.
+    $recoverRoot = Join-Path $TARGET '.install-bak.d'
+    if (Test-Path -LiteralPath $recoverRoot -PathType Container) {
         $recoverOk = $true
-        foreach ($rbak in $rbaks) {
-            $rtgt = Join-Path $targetSkills $rbak.Name
-            if (-not (Test-Path -LiteralPath $rtgt)) {
-                try {
-                    Move-Item -LiteralPath $rbak.FullName -Destination $rtgt -Force -ErrorAction Stop
-                } catch {
-                    $recoverOk = $false
-                    Warn "could not restore skills/$($rbak.Name) from an interrupted prior install"
+        foreach ($rsub in $Script:PerSubdirPaths) {
+            $recoverSub = Join-Path $recoverRoot $rsub
+            if (-not (Test-Path -LiteralPath $recoverSub -PathType Container)) { continue }
+            $targetDir = Join-Path $TARGET $rsub
+            $rbaks = @(Get-ChildItem -LiteralPath $recoverSub -Directory -Force -ErrorAction SilentlyContinue)
+            foreach ($rbak in $rbaks) {
+                $rtgt = Join-Path $targetDir $rbak.Name
+                if (-not (Test-Path -LiteralPath $rtgt)) {
+                    try {
+                        Move-Item -LiteralPath $rbak.FullName -Destination $rtgt -Force -ErrorAction Stop
+                    } catch {
+                        $recoverOk = $false
+                        Warn "could not restore $rsub/$($rbak.Name) from an interrupted prior install"
+                    }
                 }
             }
         }
@@ -1252,7 +1301,7 @@ try {
         # after a FAILED restore — that would discard the sole surviving copy.
         # Abort instead and leave .install-bak.d in place for manual recovery.
         if (-not $recoverOk) {
-            Die "interrupted prior install could not be recovered; $TARGET\.install-bak.d left in place — restore its skills\* subdirs manually, then re-run"
+            Die "interrupted prior install could not be recovered; $TARGET\.install-bak.d left in place — restore its subdirs manually, then re-run"
         }
     }
     Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
@@ -1266,21 +1315,18 @@ try {
         }
     }
 
-    # All swaps succeeded — drop the backups. <TEAM>-135: skills/ uses per-subdir
-    # backups under $TARGET/skills/.install-bak.<base>/ (parity with install.sh).
+    # All swaps succeeded — drop the backups. <TEAM>-135: PER_SUBDIR_PATHS members
+    # share the run-private root $TARGET/.install-bak.d/ (see Move-SubdirsIntoTarget),
+    # so it is dropped ONCE after the loop by exact path (never touching an operator
+    # subdir named `.install-bak.*`); wholesale paths drop their own .install-bak.<name>.
     foreach ($name in $Script:ManagedPaths) {
-        if ($name -eq 'skills') {
-            # <TEAM>-147: skills backups live in the run-private root (see
-            # Move-SkillsIntoTarget); removing it by exact path never touches an
-            # operator skill named `.install-bak.*`.
-            Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
-            continue
-        }
+        if ($Script:PerSubdirPaths -contains $name) { continue }
         $bak = Join-Path $TARGET (".install-bak.$name")
         if (Test-Path -LiteralPath $bak) {
             Remove-Item -LiteralPath $bak -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
 
     [Console]::Error.WriteLine("install.ps1: built $Harness harness into $TARGET")
 } finally {

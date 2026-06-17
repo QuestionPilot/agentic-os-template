@@ -241,4 +241,67 @@ else
   _skip "hermes governance suite" "jq not installed"
 fi
 
+# --- T8: F7 (operator plugin survives re-install) + N1 (collision warn) +
+#          check-drift coherence (operator plugin exempt; rogue framework-plugin
+#          file caught). plugins/ is now a per-subdir managed tree like skills/. ---
+mkdir -p "$IH_OUT/plugins/operator-plugin"
+printf 'name: operator-plugin\nowner: me\n' > "$IH_OUT/plugins/operator-plugin/plugin.yaml"
+assert_exit "re-install with an operator plugin subdir present builds clean" 0 -- \
+  env AI_CONFIG_LOCAL_ENV="$IH_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+assert_file "F7: operator plugin subdir survives hermes re-install" \
+  "$IH_OUT/plugins/operator-plugin/plugin.yaml"
+assert_contains "F7: operator plugin content preserved verbatim" \
+  "$(cat "$IH_OUT/plugins/operator-plugin/plugin.yaml" 2>/dev/null)" "owner: me"
+assert_file "F7: framework bridge plugin still installed after re-install" \
+  "$IH_OUT/plugins/agentic-os-hook-bridge/plugin.yaml"
+assert_exit "check-drift exempts the operator-added plugin subdir" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
+# A rogue file inside the FRAMEWORK plugin dir is NOT operator-local → caught.
+printf 'rogue\n' > "$IH_OUT/plugins/agentic-os-hook-bridge/rogue.py"
+ih_drift_out="$(bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT" 2>&1)"; ih_drift_rc=$?
+assert_eq "check-drift flags a rogue file in a framework plugin dir (exit 1)" "1" "$ih_drift_rc"
+assert_contains "check-drift names the rogue framework-plugin file" \
+  "$ih_drift_out" "plugins/agentic-os-hook-bridge/rogue.py"
+rm -f "$IH_OUT/plugins/agentic-os-hook-bridge/rogue.py"
+rm -rf "$IH_OUT/plugins/operator-plugin"
+
+# N1 on plugins: a FRESH hermes install over a pre-existing non-framework plugin
+# whose name collides with the framework bridge must warn (not silently overwrite).
+IH_N1="$(mktemp -d)/hermes-home"; mkdir -p "$IH_N1/plugins/agentic-os-hook-bridge"
+printf 'name: native-collision\n' > "$IH_N1/plugins/agentic-os-hook-bridge/plugin.yaml"
+IH_N1_ENV="$(mktemp -d)/local.env"
+make_hermes_env "$IH_N1_ENV" "$IH_N1" "$IH_VAULT"
+ih_n1_log="$IH_N1/install.log"
+env AI_CONFIG_LOCAL_ENV="$IH_N1_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$ih_n1_log" || true
+assert_contains "N1: colliding non-framework plugins/ subdir warns on fresh install" \
+  "$(cat "$ih_n1_log" 2>/dev/null)" "replacing plugins/agentic-os-hook-bridge which no prior framework install authored"
+rm -rf "${IH_N1%/hermes-home}" "${IH_N1_ENV%/local.env}"
+
+# --- T9: rollback restores BOTH per-subdir trees (skills/ AND plugins/) from the
+#          SHARED .install-bak.d root. Pre-fix, dropping the root inside the skills
+#          rollback branch discarded the plugins/ backups; this proves the root-drop
+#          moved to AFTER the loop. A live-plugin sentinel makes restore observable
+#          (build content is deterministic, so "restored vs lost" is otherwise
+#          content-identical). Failure is forced on SOUL.md, which sorts AFTER both
+#          skills and plugins in hermes MANAGED_PATHS, so both have live backups. ---
+RB="$(mktemp -d)/hermes-home"; mkdir -p "$RB"
+RB_ENV="$(mktemp -d)/local.env"
+make_hermes_env "$RB_ENV" "$RB" "$IH_VAULT"
+env AI_CONFIG_LOCAL_ENV="$RB_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>&1
+printf '# rollback-sentinel\n' >> "$RB/plugins/agentic-os-hook-bridge/plugin.yaml"
+rb_rc=0
+env AI_CONFIG_INSTALL_TEST_FAIL_SWAP=SOUL.md AI_CONFIG_LOCAL_ENV="$RB_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>&1 || rb_rc=$?
+assert_eq "forced SOUL.md swap failure aborts the hermes install (nonzero)" "1" "$rb_rc"
+assert_contains "rollback restores the plugins/ backup from the shared root (timing)" \
+  "$(cat "$RB/plugins/agentic-os-hook-bridge/plugin.yaml" 2>/dev/null)" "rollback-sentinel"
+assert_file "rollback restores the skills/ tree from the shared root" \
+  "$RB/skills/session-agent/SKILL.md"
+if [ -e "$RB/.install-bak.d" ]; then
+  _fail "run-private backup root removed after a both-paths rollback" ".install-bak.d still present"
+else
+  _pass "run-private backup root removed after a both-paths rollback"
+fi
+rm -rf "${RB%/hermes-home}" "${RB_ENV%/local.env}"
+
 rm -rf "${IH_OUT%/hermes-home}" "${IH_ENV%/local.env}" "${IH_VAULT%/vault}"

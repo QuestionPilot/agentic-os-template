@@ -268,15 +268,24 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
         }
     }
 
-    # Extra-file detection: a file in skills/<managed>/ + hooks/ + settings.json
-    # that the manifest doesn't list is drift. Shape C operator-local skills
-    # (unmanaged subdirs under skills/) are exempt.
+    # Extra-file detection: a file in skills/<managed>/ or plugins/<managed>/ +
+    # hooks/ + settings.json that the manifest doesn't list is drift. Operator-
+    # local content (unmanaged subdirs under skills/ — Shape C skills — or under
+    # plugins/ — operator-added plugins) is exempt. Both are per-subdir managed
+    # trees (install.sh PER_SUBDIR_PATHS), so each gets its own managed-subdir set.
     $managedRaw = & jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' $manifestPath 2>$null
     if ($null -eq $managedRaw) { $managedRaw = @() }
     if ($managedRaw -isnot [array]) { $managedRaw = @($managedRaw) }
     $managedSkills = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($s in $managedRaw) {
         if (-not [string]::IsNullOrEmpty($s)) { [void]$managedSkills.Add($s) }
+    }
+    $managedPluginsRaw = & jq -r '.generated | keys[] | select(startswith("plugins/")) | split("/")[1]' $manifestPath 2>$null
+    if ($null -eq $managedPluginsRaw) { $managedPluginsRaw = @() }
+    if ($managedPluginsRaw -isnot [array]) { $managedPluginsRaw = @($managedPluginsRaw) }
+    $managedPlugins = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($s in $managedPluginsRaw) {
+        if (-not [string]::IsNullOrEmpty($s)) { [void]$managedPlugins.Add($s) }
     }
 
     # Build the candidate list: every file under $target/skills + $target/hooks
@@ -286,8 +295,16 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
     # settingsPath case previously used $target via Join-Path which preserved
     # relative-ness, breaking GetRelativePath when $PWD diverged from $target's
     # parent. $targetAbs sourcing fixes this defense-in-depth.)
+    # plugins/ is scanned ONLY when the manifest declares it a managed tree (i.e.
+    # hermes). For claude/codex, plugins/ is app-owned — Claude Code writes
+    # plugins/known_marketplaces.json and similar app state into the config dir —
+    # so scanning it would mis-flag app state as drift. skills/ + hooks/ are
+    # managed by every harness and always scanned (parity with the bash twin's
+    # managed_plugins gate on scan_roots).
+    $scanSubs = [System.Collections.Generic.List[string]]@('skills', 'hooks')
+    if ($managedPlugins.Count -gt 0) { [void]$scanSubs.Add('plugins') }
     $candidates = New-Object System.Collections.Generic.List[string]
-    foreach ($sub in 'skills', 'hooks') {
+    foreach ($sub in $scanSubs) {
         $subDir = Join-Path $targetAbs $sub
         if (Test-Path -LiteralPath $subDir -PathType Container) {
             foreach ($f in (Get-ChildItem -LiteralPath $subDir -Recurse -File -ErrorAction SilentlyContinue)) {
@@ -326,6 +343,11 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
         if ($rel -like 'skills/*/*') {
             $sub = ($rel.Substring('skills/'.Length) -split '/', 2)[0]
             if (-not $managedSkills.Contains($sub)) { continue }
+        }
+        # Same exemption for operator-added plugins/<sub>/... (parity with skills).
+        if ($rel -like 'plugins/*/*') {
+            $sub = ($rel.Substring('plugins/'.Length) -split '/', 2)[0]
+            if (-not $managedPlugins.Contains($sub)) { continue }
         }
         if (-not $managedRel.Contains($rel)) {
             Write-Fail "manifest drift: untracked file in generated tree: $rel"

@@ -18,8 +18,9 @@ is the directory named by the `HERMES_HOME` environment variable in
 `local.env`. Point it at a **dedicated profile directory** (e.g.
 `~/.hermes/profiles/agentic-os`) for an isolated agentic-os brain, or at
 `~/.hermes` to make the global install the brain — the build manages
-`skills/`, `hooks/`, `plugins/`, and `SOUL.md` wholesale in whichever target
-it is given, so a dedicated profile is the safe default. A profile isolates
+`skills/` and `plugins/` per-subdir (operator-authored subdirs survive
+re-renders) and `hooks/` + `SOUL.md` wholesale in whichever target it is
+given, so a dedicated profile is the safe default. A profile isolates
 config/memory/skills/sessions via `HERMES_HOME`, but is **NOT a filesystem
 sandbox** — the local backend has full user-filesystem access, which is why
 the edit-gate matcher includes `terminal`.
