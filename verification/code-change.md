@@ -5,6 +5,7 @@ Use for source-code changes, scripts, tests, or behavior changes.
 ## Proof
 
 - Run the smallest targeted tests for the changed behavior.
+- Non-trivial logic (a branch, a loop, a parser, a money or security path) leaves at least one runnable check behind — the smallest thing that fails if the logic breaks (an assert-based self-check or one small test file, no new frameworks). A floor, not a ceiling: never reduce existing coverage to it. Trivial one-liners need none.
 - Run type, lint, format, or shell syntax checks when relevant.
 - Run a smoke test if the code has runtime behavior.
 - Inspect failures directly before claiming completion.
@@ -16,7 +17,8 @@ Use for source-code changes, scripts, tests, or behavior changes.
 Two cheap, mechanical passes to run on the diff before opening a PR:
 
 - **Git hygiene.** Every runtime-artifact path the change writes — open-for-write, `>`/`>>`, `mkdir`, `touch`, logs, caches, lockfiles, generated output — must be matched by a `.gitignore` rule. An unignored artifact path lets an auto-committer or a tree-walking scanner pick up runtime files and self-pollute (the failure class behind the framework's own scanner-vs-gitignore fixes).
-- **Delete more than you add.** When a change is net +500 lines with fewer than ~50 deletions, stop and name pruning candidates before shipping. Additive-only growth is how a codebase bloats; a large net-positive diff is the prompt to ask what the change makes redundant — consistent with a boring-is-beautiful posture.
+- **Delete more than you add.** Run a deletion pass on the diff — one line per finding, `file:line: <tag> <what>. <replacement>.`, closing with `net: -N lines`. Tags: `delete:` (dead or speculative code → nothing replaces it), `stdlib:` (hand-rolled what the standard library ships → name it), `native:` (a dependency doing what the platform already does → name the feature), `yagni:` (a one-implementation abstraction, config nobody sets, a layer with one caller → inline it), `shrink:` (same logic, fewer lines → show the shorter form). A net +500-line diff with fewer than ~50 deletions is the loud prompt to run it — additive-only growth is how a codebase bloats, and boring-over-clever is the posture.
+  - **Never cut the floor.** A deletion pass never removes, without explicit approval: input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs, existing regression coverage, the one check non-trivial logic must leave behind, public or back-compat contracts, or behavior the system already promises. Leanness is less code, never a flimsier result.
 
 ## Pre-PR
 
