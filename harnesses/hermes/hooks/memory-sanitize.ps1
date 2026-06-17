@@ -41,7 +41,15 @@ if (-not (Test-Path -LiteralPath $scan)) {
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("ms-" + [guid]::NewGuid().ToString('N') + '.md')
 Set-Content -LiteralPath $tmp -Value $content
 try {
-    & pwsh -NoProfile -File $scan -InjectionScan $tmp *> $null
+    # Resolve the CURRENTLY-RUNNING pwsh from $PID rather than relying on
+    # `pwsh` being on PATH. On Windows pwsh.exe is frequently absent from a
+    # process's PATH, so a bare `& pwsh` fails to launch, leaves $LASTEXITCODE
+    # nonzero, and this governance hook then BLOCKS every native memory write
+    # with a misleading injection reason. Mirrors framework-surface.ps1's $PID
+    # resolution. (The .sh twin shells the already-running `bash`, always on PATH.)
+    $pwshExe = try { (Get-Process -Id $PID).Path } catch { $null }
+    if (-not $pwshExe) { $pwshExe = 'pwsh' }
+    & $pwshExe -NoProfile -File $scan -InjectionScan $tmp *> $null
     if ($LASTEXITCODE -ne 0) {
         Block 'Memory persistence blocked: the content matches a prompt-injection payload class (chat-role spoof / override-instructions / persona flip / future-agent targeting / memory-write directive / prompt exfil). Native memory is injected into every future session, so hostile shapes must not persist. To document such a pattern legitimately, fence it in a code block and persist via a normal note instead.'
     }

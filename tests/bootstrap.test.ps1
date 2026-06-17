@@ -97,3 +97,9 @@ _Skip 'bootstrap.test: bootstrap.ps1 unknown-harness error lists the known set' 
 _Skip 'bootstrap.test: bootstrap.ps1 -Harness doc drops the wrong ''repeatable'' claim' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)' $q133reason
+
+# F6 (<TEAM>-295): version-compare parity. bootstrap.test.sh runs both the bash
+# --check and the pwsh -Check boundary assertions end-to-end on macOS/Linux.
+_Skip 'bootstrap.test: bootstrap --check accepts a 2-segment version equal to a 3-segment floor (version_ge parity)' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Check accepts segment-short versions equal to their floors (F6: version_ge parity, not [System.Version])' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)' $q133reason

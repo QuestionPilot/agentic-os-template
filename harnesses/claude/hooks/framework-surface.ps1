@@ -171,9 +171,30 @@ if ($env:CLAUDE_SKIP_MCP_PROBE -ne '1' -and (Get-Command claude -ErrorAction Sil
     Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
 
     if ($mcpOut) {
-        # `claude mcp list` lines:  <source-prefix>: <url-or-cmd> - <status>
+        # `claude mcp list` lines:  <source-prefix>: <url-or-cmd> - <glyph> Connected
+        # Match the CONNECTED status WITHOUT depending on the leading health
+        # glyph (✓). On Windows, native `claude mcp list` stdout is decoded as
+        # the console OEM/ANSI codepage rather than UTF-8, so the ✓ arrives as
+        # mojibake and a glyph match (the bash twin's `grep -E ' - ✓ Connected$'`,
+        # fine under UTF-8) never fires — silently dropping every connector.
+        # Key off the ASCII status instead: split on the FINAL ' - ', strip the
+        # leading glyph token, and require the REMAINDER to be exactly "Connected".
+        # Faithful to bash's exact "✓ Connected" (glyph + the word) — it rejects
+        # multi-word failure statuses ("Failed to connect", "✗ Disconnected",
+        # "x Not really Connected") that a looser last-token match would surface.
+        # -ceq is case-SENSITIVE (PowerShell -match is case-insensitive + unanchored,
+        # so a regex would also wrongly accept "disconnected"); the parse avoids both.
         $connected = @($mcpOut | ForEach-Object { $_.ToString() } |
-            Where-Object { $_ -match ' - ✓ Connected$' } |
+            Where-Object {
+                $sepIdx = $_.LastIndexOf(' - ')
+                if ($sepIdx -ge 0) {
+                    $status = ($_.Substring($sepIdx + 3)).Trim()
+                    $sp = $status.IndexOf(' ')
+                    if ($sp -ge 0) { ($status.Substring($sp + 1).Trim()) -ceq 'Connected' } else { $false }
+                } else {
+                    $false
+                }
+            } |
             ForEach-Object { ($_ -split ': ', 2)[0] } |
             Sort-Object -Unique
         )

@@ -105,6 +105,18 @@ assert_contains "bootstrap --check survives an unparseable CLI version" "$bs_unp
 assert_contains "bootstrap --check still flags the unparseable CLI" "$bs_unparse_out" "rg"
 make_stub_cli "$BS_STUBS" rg "ripgrep 14.0.0"  # restore
 
+# F6 (<TEAM>-295) version-floor parity: a tool reporting a 2-segment version EQUAL
+# to a 3-segment floor must PASS — bash version_ge pads the missing segment with
+# 0 (2.40 == 2.40.0). This is the boundary the PS twin's old [System.Version]
+# path got wrong (unspecified Build = -1 made "2.40" sort below "2.40.0"); bash
+# has always handled it. Pin it so both twins share one contract.
+printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.40"; exit 0; fi\necho "Logged in"; exit 0\n' \
+  > "$BS_STUBS/gh"; chmod +x "$BS_STUBS/gh"   # gh floor is 2.40.0
+bs_seg_ok=0
+PATH="$BS_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" bash "$REPO_ROOT/scripts/bootstrap.sh" --check >/dev/null 2>&1 \
+  || bs_seg_ok=$?
+assert_eq "bootstrap --check accepts a 2-segment version equal to a 3-segment floor (version_ge parity)" "0" "$bs_seg_ok"
+
 rm -rf "$BS_STUBS"
 
 # --- install_clis dry-run tests ---
@@ -418,6 +430,41 @@ PSSTUB
   assert_eq "bootstrap.ps1 -Check exits 0 with firecrawl absent" "0" "$ps137_check"
   rm -rf "$PS137_STUBS"
 
+  # --- F6 (<TEAM>-295): PS version compare matches bash version_ge ---
+  # A 2-segment version EQUAL to a 3-segment floor must PASS. The old
+  # [System.Version] path sorted "2.40" BELOW "2.40.0" (unspecified Build = -1),
+  # spuriously flagging an up-to-date CLI as outdated. Stub every required CLI at
+  # 2-segment == floor and assert -Check still exits 0. (A bare single-segment
+  # "13" can't reach the comparator via -Check — Get-CliVersion's regex requires
+  # a dot — so the stubs use the 2-segment shape the [System.Version] bug hit.)
+  PS_SEG_STUBS="$(mktemp -d)"
+  make_stub_cli "$PS_SEG_STUBS" codex     "codex 0.132.0"
+  make_stub_cli "$PS_SEG_STUBS" firecrawl "firecrawl 1.0.0"
+  make_stub_cli "$PS_SEG_STUBS" jq        "jq-1.6"        # 2-seg == floor 1.6.0
+  make_stub_cli "$PS_SEG_STUBS" rg        "ripgrep 13.0"   # 2-seg == floor 13.0.0
+  printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.40"; exit 0; fi\necho "Logged in"; exit 0\n' \
+    > "$PS_SEG_STUBS/gh"; chmod +x "$PS_SEG_STUBS/gh"   # 2-seg == floor 2.40.0
+  ps_seg_check=0
+  PATH="$PS_SEG_STUBS" "$PWSH_BIN" -File "$PS1" -Check 2>/dev/null || ps_seg_check=$?
+  assert_eq "bootstrap.ps1 -Check accepts segment-short versions equal to their floors (F6: version_ge parity, not [System.Version])" "0" "$ps_seg_check"
+  rm -rf "$PS_SEG_STUBS"
+
+  # F6 (<TEAM>-295) cross-model Finding 3: a pathological huge version segment must
+  # NOT crash -Check. Get-CliVersion's regex passes the whole numeric run to
+  # Test-VersionGe, where the old [long] cast overflowed (FormatException); the
+  # [double] port yields +Inf and compares cleanly. Stub gh at a >Int64 version.
+  PS_HUGE_STUBS="$(mktemp -d)"
+  make_stub_cli "$PS_HUGE_STUBS" codex     "codex 0.132.0"
+  make_stub_cli "$PS_HUGE_STUBS" firecrawl "firecrawl 1.0.0"
+  make_stub_cli "$PS_HUGE_STUBS" jq        "jq-1.7.0"
+  make_stub_cli "$PS_HUGE_STUBS" rg        "ripgrep 14.0.0"
+  printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 999999999999999999999.0.0"; exit 0; fi\necho "Logged in"; exit 0\n' \
+    > "$PS_HUGE_STUBS/gh"; chmod +x "$PS_HUGE_STUBS/gh"
+  ps_huge_check=0
+  PATH="$PS_HUGE_STUBS" "$PWSH_BIN" -File "$PS1" -Check 2>/dev/null || ps_huge_check=$?
+  assert_eq "bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)" "0" "$ps_huge_check"
+  rm -rf "$PS_HUGE_STUBS"
+
   rm -rf "$PS_STUBS" "$PS_HOME" "$PS_DRY_REPO"
 else
   _skip "bootstrap.ps1 tests" "pwsh not available on this machine"
@@ -436,6 +483,8 @@ else
   _skip "bootstrap.ps1 -Harness doc drops the wrong 'repeatable' claim" "pwsh not available on this machine"
   _skip "bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile" "pwsh not available on this machine"
   _skip "bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Check accepts segment-short versions equal to their floors (F6: version_ge parity, not [System.Version])" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)" "pwsh not available on this machine"
 fi
 
 # --- CLAUDE_CONFIG_DIR persisted after a fresh seed (no --claude-config-dir) ---

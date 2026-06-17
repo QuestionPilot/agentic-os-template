@@ -86,7 +86,13 @@ if ($env:CLAUDE_SKIP_FRESHNESS_CHECK -ne '1') {
     $freshnessScript = Join-Path $AI_CONFIG_DIR 'scripts' 'check-freshness.ps1'
     $manifest = Join-Path $installDir '.build-manifest.json'
     if ($installDir -and (Test-Path -LiteralPath $manifest) -and (Test-Path -LiteralPath $freshnessScript)) {
-        $staleList = & pwsh -NoProfile -File $freshnessScript -Manifest $installDir -List 2>$null
+        # Resolve the running pwsh from $PID (the claude/codex twins already do
+        # this) instead of a bare `& pwsh` that relies on PATH — on Windows
+        # pwsh.exe is often absent from PATH, so the freshness probe would
+        # silently never run. Fail-open: fall back to the PATH name.
+        $pwshExe = try { (Get-Process -Id $PID).Path } catch { $null }
+        if (-not $pwshExe) { $pwshExe = 'pwsh' }
+        $staleList = & $pwshExe -NoProfile -File $freshnessScript -Manifest $installDir -List 2>$null
         $freshRc = $LASTEXITCODE
         if ($freshRc -eq 1 -and $staleList) {
             $staleLines = ($staleList | ForEach-Object { "- $_" }) -join "`n"
