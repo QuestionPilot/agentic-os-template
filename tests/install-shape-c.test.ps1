@@ -163,6 +163,71 @@ Assert-Eq 'install-shape-c.test: F-1: check-drift clean after orphan cleanup' '0
 Remove-Item -LiteralPath $SC_OR_DIR -Recurse -Force -ErrorAction SilentlyContinue
 
 # ===========================================================================
+# Part casing-rename — a casing-only rename of a managed skill is not a false
+# orphan (regression for the case-sensitive HashSet false-delete; cross-model-
+# panel-found 2026-06-17, pre-existing PR #37). Mirrors the bash twin.
+# FS-adaptive: exercises the bug on the case-insensitive Windows + macOS runners
+# (Test-FsCaseInsensitive -> OrdinalIgnoreCase), correct no-op on case-sensitive
+# Linux. Pre-fix the orphan delete wipes the reinstalled skill and N1 warns
+# spuriously; post-fix the fold drops the false orphan + suppresses the warn.
+# ===========================================================================
+$CR_DIR = Join-Path ([IO.Path]::GetTempPath()) ('shape-c-caserename-' + [Guid]::NewGuid().Guid.Substring(0,8))
+$CR_TGT = Join-Path $CR_DIR 'tgt'
+New-Item -ItemType Directory -Path $CR_TGT -Force | Out-Null
+$CR_ENV = Join-Path $CR_DIR 'local.env'
+Write-LocalEnvFixture -EnvFile $CR_ENV -ConfigDir $CR_TGT -VaultDir (Join-Path $CR_DIR 'vault')
+
+# First install — clean baseline with the real managed skill set.
+Invoke-InstallClaude -EnvFile $CR_ENV | Out-Null
+
+$CR_SKILL   = 'session-agent'   # a spine skill the build always emits, lowercase
+$CR_CASED   = 'Session-agent'
+$crSkillDir = Join-Path $CR_TGT 'skills' $CR_SKILL
+if ((Test-Path -LiteralPath $crSkillDir -PathType Container) -and (Get-Command jq -ErrorAction SilentlyContinue)) {
+    # Simulate the PRIOR framework build having emitted the SAME skill under a
+    # different LETTER CASE: recase the live dir (two-step via a temp name to
+    # dodge the same-name collision on a case-insensitive FS) AND rewrite its
+    # OLD-manifest keys to the upper-cased base (hashes unchanged — identical
+    # content). The next install's build re-emits the canonical lowercase base.
+    $skillsRoot = Join-Path $CR_TGT 'skills'
+    $tmpName = '__recase-' + [Guid]::NewGuid().Guid.Substring(0,8)
+    Move-Item -LiteralPath $crSkillDir -Destination (Join-Path $skillsRoot $tmpName)
+    Move-Item -LiteralPath (Join-Path $skillsRoot $tmpName) -Destination (Join-Path $skillsRoot $CR_CASED)
+
+    $jq = (Get-Command jq).Source
+    $crManifest = Join-Path $CR_TGT '.build-manifest.json'
+    $crRewritten = Get-Content -Raw -LiteralPath $crManifest |
+        & $jq --arg s "skills/$CR_SKILL/" --arg c "skills/$CR_CASED/" `
+          '.generated |= with_entries(.key |= (if startswith($s) then $c + ltrimstr($s) else . end))'
+    if ($crRewritten -is [array]) { $crRewritten = $crRewritten -join "`n" }
+    [System.IO.File]::WriteAllText($crManifest, $crRewritten, $utf8NoBom)
+
+    # Re-install; capture stderr to assert the N1 warning does not spuriously fire.
+    $env:AI_CONFIG_LOCAL_ENV = $CR_ENV
+    try {
+        $cr_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness claude 2>&1 | Out-String)
+    } finally {
+        Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+    }
+
+    # The recased managed skill must NOT be false-deleted — on a case-insensitive
+    # FS this is the same on-disk dir as the freshly-installed lowercase one.
+    Assert-File 'install-shape-c.test: casing-renamed managed skill survives re-install (no false-delete)' `
+        (Join-Path $CR_TGT 'skills' $CR_SKILL 'SKILL.md')
+    Assert-NotContains 'install-shape-c.test: no spurious N1 warning for a recased managed skill' `
+        $cr_out 'no prior framework install authored'
+    # The FS-casing probe must clean up after itself — no .aos-fscase* artifact
+    # left in the config dir or under skills/ (it removes only the unique temp
+    # dir it created).
+    $crResidue = @(Get-ChildItem -LiteralPath $CR_TGT -Recurse -Force -Filter '.aos-fscase*' -ErrorAction SilentlyContinue)
+    Assert-Eq 'install-shape-c.test: no fs-case probe residue after install' '0' "$($crResidue.Count)"
+} else {
+    _Skip 'install-shape-c.test: casing-rename managed-skill regression' 'session-agent or jq absent'
+}
+
+Remove-Item -LiteralPath $CR_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
+# ===========================================================================
 # Part 3 — orphan cleanup PRESERVES operator-modified content
 # ===========================================================================
 $HG_DIR = Join-Path ([IO.Path]::GetTempPath()) ('shape-c-hashgate-' + [Guid]::NewGuid().Guid.Substring(0,8))
