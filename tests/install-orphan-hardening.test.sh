@@ -363,6 +363,31 @@ rm -rf "$T7_DIR"
 # cleanups in an inconsistent state. The hardened contract: any non-zero jq
 # exit aborts orphan cleanup entirely (we'd rather LEAVE stale skills than
 # risk a partial validation deleting operator content).
+#
+# T8-strength (Codex 2026-06-17 cross-model review of the PS-twin port): the
+# prior fixture planted a Shape C file that was NEVER manifest-authored. A
+# Shape C subdir is not a hash-gated orphan candidate, so it survives whether
+# or not cleanup correctly skipped — the preservation assertion proved nothing
+# about the destructive path. We now plant a subdir constructed EXACTLY like
+# the T1 deletion target (a genuine stale orphan) and assert IT survives, so
+# the assertion rides on a REAL deletion candidate (T1 proves it is deletable
+# on a valid manifest) instead of a file that survives unconditionally.
+#
+# Subtlety: corrupting the OLD manifest destroys its `.generated` entry, so the
+# "would-be-deleted" property is NOT re-derivable inside this test — no valid
+# manifest is left to enumerate against. It is established by CONSTRUCTION-
+# PARALLEL to T1 (identical render + on-disk hash + manifest authorship), which
+# T1 independently proves leads to deletion on a valid manifest.
+#
+# Scope of proof (Codex cross-model review, conf-75): this asserts the safe
+# OUTCOME — a real, T1-deletable candidate is NOT removed on corrupt input — it
+# does NOT isolate the explicit `manifest enumeration failed` abort. Corrupt
+# input fails safe at TWO independent points: orphan ENUMERATION reads the same
+# OLD manifest (its jq yields an empty managed set, so the rm -rf loop has
+# nothing to iterate) AND the abort returns before that loop. A fixture cannot
+# single out the abort, since deletion needs the (corrupt) manifest for both
+# enumeration and the hash gate; isolating it alone would require harness
+# instrumentation of the loop, deliberately out of scope.
 T8_DIR="$(mktemp -d)"
 T8_TGT="$T8_DIR/tgt"; mkdir -p "$T8_TGT"
 T8_ENV="$T8_DIR/local.env"
@@ -370,23 +395,39 @@ make_local_env "$T8_ENV" "$T8_TGT"
 
 AI_CONFIG_LOCAL_ENV="$T8_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Plant a Shape C skill that should survive any cleanup pass.
-mkdir -p "$T8_TGT/skills/que107-t8-survivor"
-printf 'survivor\n' > "$T8_TGT/skills/que107-t8-survivor/SKILL.md"
+# Plant a GENUINE stale-orphan candidate, constructed EXACTLY like the T1
+# deletion target: render skills/que107-t8-orphan/SKILL.md and record its
+# on-disk hash in the OLD manifest. On a VALID manifest this is a confirmed
+# stale orphan — manifest-authored, hash-matched, absent from the NEW build —
+# i.e. the precise shape T1 proves WOULD be deleted. (We author the manifest
+# entry for construction fidelity even though the corruption below destroys it;
+# see the block-header subtlety.)
+mkdir -p "$T8_TGT/skills/que107-t8-orphan"
+printf -- '---\nname: que107-t8-orphan\ndescription: stale framework skill\n---\nstale body\n' \
+  > "$T8_TGT/skills/que107-t8-orphan/SKILL.md"
+T8_HASH="$(shasum -a 256 "$T8_TGT/skills/que107-t8-orphan/SKILL.md" | cut -d' ' -f1)"
+jq --arg h "$T8_HASH" '.generated["skills/que107-t8-orphan/SKILL.md"] = $h' \
+  "$T8_TGT/.build-manifest.json" > "$T8_TGT/.build-manifest.json.tmp"
+mv "$T8_TGT/.build-manifest.json.tmp" "$T8_TGT/.build-manifest.json"
 
-# Corrupt the manifest: replace with un-parseable text. The OLD manifest is
-# what install.sh reads to enumerate orphans; the NEW manifest at $BUILD/...
-# is fresh and well-formed.
+# Corrupt the manifest: replace with un-parseable text. This DESTROYS the
+# que107-t8-orphan entry just authored — which is the point: the candidate's
+# would-be-deleted property is carried by the T1-identical construction above,
+# NOT by anything readable now. The OLD manifest is what install.sh reads to
+# enumerate orphans; the NEW manifest at $BUILD/... is fresh and well-formed.
 printf 'not valid json {{{\n' > "$T8_TGT/.build-manifest.json"
 
 T8_LOG="$T8_DIR/install.log"
 T8_EXIT=0
 AI_CONFIG_LOCAL_ENV="$T8_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$T8_LOG" || T8_EXIT=$?
 
-# The Shape C survivor MUST be preserved; orphan cleanup must not run on
-# corrupt-manifest input.
-assert_file "Shape C survivor preserved on corrupt-manifest path" \
-  "$T8_TGT/skills/que107-t8-survivor/SKILL.md"
+# The stale-orphan candidate MUST survive: a corrupt OLD manifest yields an
+# empty orphan set AND triggers the enumeration-failed abort, so the rm -rf
+# loop never runs against a real deletion candidate. Asserting on a subdir T1
+# proves is deletable on a valid manifest is the meaningful signal — an
+# unrelated Shape C file would have survived regardless and proved nothing.
+assert_file "stale-orphan candidate preserved on corrupt-manifest path" \
+  "$T8_TGT/skills/que107-t8-orphan/SKILL.md"
 # A warning explaining the skip MUST be printed.
 T8_WARN="$(cat "$T8_LOG" 2>/dev/null || true)"
 assert_contains "install.sh emits warning on corrupt-manifest enumeration" \

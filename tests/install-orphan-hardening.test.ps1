@@ -325,26 +325,62 @@ if ($t7SymlinkOk) {
 Remove-Item -LiteralPath $T7.Dir -Recurse -Force -ErrorAction SilentlyContinue
 
 # ===========================================================================
-# T8 — corrupt OLD manifest → orphan cleanup skipped with WARNING, survivor
+# T8 — corrupt OLD manifest → orphan cleanup skipped with WARNING, candidate
 # preserved. Any non-zero jq exit on the OLD manifest aborts orphan cleanup
 # entirely (rather LEAVE stale skills than risk a partial validation deleting
 # operator content). <TEAM>-294 F7 parity fix: install.ps1 now emits the same
 # "manifest enumeration failed" warning bash install.sh prints, where the lazy
 # orphan computation previously skipped silently.
+#
+# T8-strength (Codex 2026-06-17 cross-model review of this PS-twin port): the
+# prior fixture planted a Shape C file that was NEVER manifest-authored. A
+# Shape C subdir is not a hash-gated orphan candidate, so it survives whether
+# or not cleanup correctly skipped — the preservation assertion proved nothing
+# about the destructive path. We now plant a subdir constructed EXACTLY like
+# the T1 deletion target (a genuine stale orphan) and assert IT survives, so
+# the assertion rides on a REAL deletion candidate (T1 proves it is deletable
+# on a valid manifest) instead of a file that survives unconditionally.
+#
+# Subtlety: corrupting the OLD manifest destroys its `.generated` entry, so the
+# "would-be-deleted" property is NOT re-derivable inside this test — no valid
+# manifest is left to enumerate against. It is established by CONSTRUCTION-
+# PARALLEL to T1 (identical render + on-disk hash + manifest authorship), which
+# T1 independently proves leads to deletion on a valid manifest.
+#
+# Scope of proof (Codex cross-model review, conf-75): this asserts the safe
+# OUTCOME — a real, T1-deletable candidate is NOT removed on corrupt input — it
+# does NOT isolate the explicit `manifest enumeration failed` abort. Corrupt
+# input fails safe at TWO independent points: orphan ENUMERATION reads the same
+# OLD manifest (its jq yields an empty managed set, so the delete loop has
+# nothing to iterate) AND the abort returns before that loop. A fixture cannot
+# single out the abort, since deletion needs the (corrupt) manifest for both
+# enumeration and the hash gate; isolating it alone would require harness
+# instrumentation of the loop, deliberately out of scope.
 # ===========================================================================
 $T8 = New-OrphanFixture 't8'
 Invoke-InstallClaude -EnvFile $T8.Env | Out-Null
 
-$t8Survivor = New-OrphanSkill -Tgt $T8.Tgt -Base 'que107-t8-survivor' `
-    -Body "---`nname: que107-t8-survivor`n---`nsurvivor`n"
+# Plant a GENUINE stale-orphan candidate, constructed EXACTLY like T1's deletion
+# target: render skills/que107-t8-orphan/SKILL.md and record its on-disk hash in
+# the OLD manifest. On a VALID manifest this is the confirmed-stale shape T1
+# proves WOULD be deleted. (Authored for construction fidelity even though the
+# corruption below destroys the entry — see the block-header subtlety.)
+$t8Orphan = New-OrphanSkill -Tgt $T8.Tgt -Base 'que107-t8-orphan' `
+    -Body "---`nname: que107-t8-orphan`ndescription: stale framework skill`n---`nstale body`n"
+$t8Hash = (Get-FileHash -LiteralPath (Join-Path $t8Orphan 'SKILL.md') -Algorithm SHA256).Hash.ToLower()
+Add-ManifestSkillEntry -ManifestPath (Join-Path $T8.Tgt '.build-manifest.json') `
+    -Key 'skills/que107-t8-orphan/SKILL.md' -Hash $t8Hash
 
-# Corrupt the OLD manifest with un-parseable text. The NEW manifest at $BUILD is
-# fresh + well-formed; only the OLD-manifest enumeration fails.
+# Corrupt the OLD manifest with un-parseable text. This DESTROYS the
+# que107-t8-orphan entry just authored — the point: the candidate's would-be-
+# deleted property is carried by the T1-identical construction above, NOT by
+# anything readable now. The NEW manifest at $BUILD is fresh + well-formed;
+# only the OLD-manifest enumeration fails.
 [System.IO.File]::WriteAllText((Join-Path $T8.Tgt '.build-manifest.json'), "not valid json {{{`n", $utf8NoBom)
 
 $cap8 = Invoke-InstallClaudeCapture -EnvFile $T8.Env
-Assert-File 'install-orphan-hardening.test: T8: Shape C survivor preserved on corrupt-manifest path' `
-    (Join-Path $t8Survivor 'SKILL.md')
+Assert-File 'install-orphan-hardening.test: T8: stale-orphan candidate preserved on corrupt-manifest path' `
+    (Join-Path $t8Orphan 'SKILL.md')
 Assert-Contains 'install-orphan-hardening.test: T8: install.ps1 emits warning on corrupt-manifest enumeration' `
     $cap8.Out 'manifest enumeration failed'
 Assert-Eq 'install-orphan-hardening.test: T8: install.ps1 exit code on corrupt-manifest skip is 0' '0' "$($cap8.Code)"
