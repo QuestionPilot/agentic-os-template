@@ -973,11 +973,27 @@ function Remove-StaleOrphanSubdirs {
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$TargetDir
     )
-    if (-not $Orphans -or $Orphans.Count -eq 0) { return }
+    # <TEAM>-294 F7 parity: the OLD-manifest corruptness check runs on manifest
+    # PRESENCE, not on a non-empty $Orphans. install.sh's swap_in dumps the
+    # manifest UNCONDITIONALLY once it reaches the orphan section (install.sh
+    # ~L840) and warns on a non-zero jq exit even when the orphan set is empty —
+    # a corrupt manifest yields an empty orphan set upstream (Get-SubdirsFromManifest
+    # returns $null → the caller's $null-guard skips orphan computation), so
+    # gating this behind $Orphans.Count would silently skip the warning where bash
+    # prints it. An ABSENT manifest (first install) is not corrupt — nothing to
+    # enumerate, no orphans possible, no warning. Critically, a VALID manifest
+    # whose prefix set is simply EMPTY (e.g. an older manifest with no plugins/
+    # entries when plugins/ just became per-subdir) also returns $null upstream,
+    # but dumps cleanly HERE — so it does NOT warn, matching bash's silent
+    # `jq | sort -u` on an empty result. Keying the warning off the .generated
+    # dump (not off the prefix enumeration) is what keeps corrupt distinct from
+    # empty.
+    if (-not (Test-Path -LiteralPath $OldManifest -PathType Leaf)) { return }
 
-    # Stage the OLD manifest's generated {path -> hash} map once. If jq fails to
-    # enumerate it, skip orphan cleanup entirely (defense-in-depth: rather LEAVE
-    # a stale subdir than risk a partial validation deleting operator content).
+    # Stage the OLD manifest's generated {path -> hash} map once. A non-zero jq
+    # exit (corrupt JSON / jq crash) or an unparseable dump skips orphan cleanup
+    # entirely (defense-in-depth: rather LEAVE a stale subdir than risk a partial
+    # validation deleting operator content).
     $manifestJson = Get-Content -Raw -LiteralPath $OldManifest |
         & $script:JqBin -c '.generated' 2>$null
     if ($LASTEXITCODE -ne 0) {
@@ -991,6 +1007,11 @@ function Remove-StaleOrphanSubdirs {
         [Console]::Error.WriteLine("install.ps1: manifest parse failed; skipping orphan cleanup")
         return
     }
+
+    # Manifest is valid; if there is nothing stale to remove, stop here (the
+    # corruptness warning above is correctly suppressed for a clean manifest).
+    if (-not $Orphans -or $Orphans.Count -eq 0) { return }
+
     # Flatten to [pscustomobject]@{ rel; hash } pairs for the inner loop.
     $manifestPairs = New-Object System.Collections.Generic.List[object]
     foreach ($prop in $genMap.PSObject.Properties) {
