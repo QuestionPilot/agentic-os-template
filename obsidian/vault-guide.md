@@ -9,7 +9,7 @@ This document has two audiences:
 - **An operator setting up the framework on a fresh machine** — read end-to-end. §3 walks first-time vault creation step-by-step; §§4-5 specify the target folder + system-note shape; §7 points at copy-paste templates.
 - **An AI agent reading at runtime** — load only the relevant slice. §2 names what belongs in the vault vs other layers; §8 documents the runtime contract (what the agent reads, what it proposes to write).
 
-The vault stores durable knowledge: lessons, decisions, project memory, source-derived summaries, curated outputs. It is not the active-work tracker (that is Linear), the operating framework (that is ``), or the raw-source store (that is the vault's `20-Raw/` folder kept separate from distilled notes).
+The vault stores durable knowledge: lessons, decisions, project memory, source-derived summaries, curated outputs. It is not the active-work tracker (that is Linear), the operating framework (that is `agentic-os-template`), or the raw-source store (that is the vault's `20-Raw/` folder kept separate from distilled notes).
 
 ## 2. Role in the Agentic OS
 
@@ -19,7 +19,7 @@ The framework uses three memory tiers. Each layer owns one class of fact; writes
 
 | Tier | Layer | Owns |
 | --- | --- | --- |
-| 1 | `` | Operating rules, verification expectations, capability specs, skill catalog, harness entrypoints. |
+| 1 | `agentic-os-template` | Operating rules, verification expectations, capability specs, skill catalog, harness entrypoints. |
 | 2 | Linear | Active tasks, projects, owners, status, acceptance criteria, blockers, follow-ups. |
 | 3 | Durable vault (Obsidian or equivalent) | Durable lessons, decisions and rationale, project memory, wiki notes, source-derived summaries. |
 
@@ -29,12 +29,12 @@ The vault sits at Tier 3. It is knowledge — what is true, why it matters, wher
 
 | Change | Destination |
 | --- | --- |
-| Operating rule, verification pattern, skill guidance | `` |
+| Operating rule, verification pattern, skill guidance | `agentic-os-template` |
 | Active task, blocker, acceptance criteria, follow-up | Linear |
 | Durable lesson, decision, project memory, source-derived note | The vault |
 | Raw export, transcript, source file | The vault's `20-Raw/` until promoted |
 
-If a write would fit multiple layers, split it. Put the active follow-up in Linear, the durable lesson in the vault, and the reusable operating rule in ``.
+If a write would fit multiple layers, split it. Put the active follow-up in Linear, the durable lesson in the vault, and the reusable operating rule in `agentic-os-template`.
 
 ## 3. First-Time Setup
 
@@ -144,7 +144,7 @@ Numbered prefixes (`00-`, `01-`, …) give a stable ordering in any file browser
 
 ## 5. `00-System/` Notes
 
-Recommended system notes. Obsidian convention is title-case with spaces (e.g. `Memory Core.md`, not `memory-core.md`); this is different from the framework's kebab-case for `` content. Adopt the title-case convention inside the vault so wiki-style `[[Memory Core]]` links work without escaping.
+Recommended system notes. Obsidian convention is title-case with spaces (e.g. `Memory Core.md`, not `memory-core.md`); this is different from the framework's kebab-case for `agentic-os-template` content. Adopt the title-case convention inside the vault so wiki-style `[[Memory Core]]` links work without escaping.
 
 Creation-order recommendation: start with `START.md`. Add `Memory Core.md` and `Linear Handshake.md` next (they ground the kickoff orient). The rest are optional — add them as you accumulate working state worth naming.
 
@@ -184,7 +184,7 @@ Curated artifacts only. Use subfolders by output kind:
 **Does NOT belong here:**
 
 - Raw exports (`20-Raw/`).
-- Auth files, API tokens, machine-specific config (never in the vault — `local.env` lives in ``).
+- Auth files, API tokens, machine-specific config (never in the vault — `local.env` lives in `agentic-os-template`).
 - Disposable traces, screenshots, run logs (not durable memory).
 - Working drafts (use a project folder under `01-Projects/`).
 

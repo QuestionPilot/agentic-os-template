@@ -9,7 +9,7 @@ This document has two audiences:
 - **An operator setting up the framework on a fresh machine** — read end-to-end. §3 walks first-time Linear access setup step-by-step for either surface; §4 names the operating commands; §6 points at the issue and closeout templates.
 - **An AI agent reading at runtime** — load only the relevant slice. §2 names what belongs in Linear vs other layers; §5 documents the runtime contract (kickoff query order, Linear gate, status updates).
 
-Linear stores active work: tasks, projects, owners, status, acceptance criteria, blockers, follow-ups, and links to PRs and artifacts. It is not the durable-knowledge store (that is the Obsidian vault), the operating framework (that is ``), or a raw-source archive.
+Linear stores active work: tasks, projects, owners, status, acceptance criteria, blockers, follow-ups, and links to PRs and artifacts. It is not the durable-knowledge store (that is the Obsidian vault), the operating framework (that is `agentic-os-template`), or a raw-source archive.
 
 ## 2. Role in the Agentic OS
 
@@ -19,7 +19,7 @@ The framework uses three memory tiers. Each layer owns one class of fact; writes
 
 | Tier | Layer | Owns |
 | --- | --- | --- |
-| 1 | `` | Operating rules, verification expectations, capability specs, skill catalog, harness entrypoints. |
+| 1 | `agentic-os-template` | Operating rules, verification expectations, capability specs, skill catalog, harness entrypoints. |
 | 2 | Linear | Active tasks, projects, owners, status, acceptance criteria, blockers, follow-ups. |
 | 3 | Durable vault (Obsidian or equivalent) | Durable lessons, decisions and rationale, project memory, wiki notes, source-derived summaries. |
 
@@ -29,11 +29,11 @@ Linear sits at Tier 2. It is the shared execution ledger humans and agents read 
 
 | Change | Destination |
 | --- | --- |
-| Operating rule, verification pattern, skill guidance | `` |
+| Operating rule, verification pattern, skill guidance | `agentic-os-template` |
 | Active task, blocker, acceptance criteria, follow-up | Linear |
 | Durable lesson, decision, project memory | The vault |
 
-If a write would fit multiple layers, split it. Put the active follow-up in Linear, the durable lesson in the vault, the reusable operating rule in ``.
+If a write would fit multiple layers, split it. Put the active follow-up in Linear, the durable lesson in the vault, the reusable operating rule in `agentic-os-template`.
 
 ## 3. First-Time Setup
 
