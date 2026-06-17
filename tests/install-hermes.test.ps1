@@ -50,7 +50,7 @@ _Skip 'install-hermes.test: unattended drain default-off leaves no log' $reason
 _Skip 'install-hermes.test: enabled drain skips a telegram session (propose-only)' $reason
 _Skip 'install-hermes.test: telegram session is never drained' $reason
 _Skip 'install-hermes.test: skill_manage create is blocked pending approval' $reason
-_Skip 'install-hermes.test: skill_manage read-only ops pass the gate' $reason
+_Skip 'install-hermes.test: skill_manage read-only verb is gated too (no fast-path)' $reason
 _Skip 'install-hermes.test: an operator approval marker allows ONE mutation' $reason
 _Skip 'install-hermes.test: the approval marker is consumed on use' $reason
 _Skip 'install-hermes.test: memory-sanitize blocks an injection payload shape' $reason
