@@ -3,14 +3,15 @@
 #
 # Usage: bootstrap.sh [--harness <name>] [--check] [--dry-run]
 #                     [--claude-config-dir <dir>] [--vault-dir <dir>]
-#                     [--codex-home <dir>] [-h|--help]
+#                     [--codex-home <dir>] [--hermes-home <dir>] [-h|--help]
 #
-#   --harness <name>         target harness: claude, codex (repeatable; default: claude)
+#   --harness <name>         target harness: claude, codex, hermes (repeatable; default: claude)
 #   --check                  read-only — detect requirements, report, exit non-zero on failures
 #   --dry-run                print mutations without executing them
 #   --claude-config-dir <dir>  override CLAUDE_CONFIG_DIR (takes precedence over local.env)
 #   --vault-dir <dir>          override OBSIDIAN_VAULT_PATH
 #   --codex-home <dir>         override CODEX_HOME
+#   --hermes-home <dir>        override HERMES_HOME (required to build --harness hermes)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +22,7 @@ DRY_RUN=0
 OPT_CLAUDE_CONFIG_DIR=""
 OPT_VAULT_DIR=""
 OPT_CODEX_HOME=""
+OPT_HERMES_HOME=""
 
 die()  { printf 'bootstrap.sh: ERROR: %s\n' "$1" >&2; exit 1; }
 warn() { printf 'bootstrap.sh: WARNING: %s\n' "$1" >&2; }
@@ -36,13 +38,21 @@ would_mutate() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --harness)           HARNESSES+=("${2:?--harness needs a value}"); shift 2 ;;
+    --harness)
+      # Lowercase on accumulation so EVERY downstream consumer (run_install,
+      # smoke_test, check_clis) sees a canonical name — install.sh already folds
+      # at install.sh:45. Without this, `--harness Codex`/`Hermes` (capitalized)
+      # slips past run_install/smoke_test's case arms to target="" or a stale
+      # reused target. validate_harnesses + check_clis fold defensively too, but
+      # folding here is what keeps the build paths correct.
+      HARNESSES+=("$(printf '%s' "${2:?--harness needs a value}" | tr '[:upper:]' '[:lower:]')"); shift 2 ;;
     --check)             CHECK=1; shift ;;
     --dry-run)           DRY_RUN=1; shift ;;
     --claude-config-dir) OPT_CLAUDE_CONFIG_DIR="${2:?--claude-config-dir needs a value}"; shift 2 ;;
     --vault-dir)         OPT_VAULT_DIR="${2:?--vault-dir needs a value}"; shift 2 ;;
     --codex-home)        OPT_CODEX_HOME="${2:?--codex-home needs a value}"; shift 2 ;;
-    -h|--help)           grep -E '^#' "$0" | head -12 | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --hermes-home)       OPT_HERMES_HOME="${2:?--hermes-home needs a value}"; shift 2 ;;
+    -h|--help)           sed -n '2,/^set -euo/{/^#/p;}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'bootstrap.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -51,12 +61,13 @@ done
 
 # validate_harnesses — reject unknown harness names up front, in EVERY mode
 # (including --check). The known set mirrors install.sh's harness_target_env
-# (claude, codex); keep the two in lockstep per the inventory-coupling rule.
-# Case-folded because install.sh resolves CLAUDE == claude. Without this,
-# `--harness typo --check` passes — an unknown name merely suppresses the codex
-# CLI requirement in check_clis — and only a real run dies, deep in install.sh.
-# Fail fast with a clear message here, the same way install.sh rejects an unknown
-# harness before any mutation.
+# (claude, codex, hermes); keep the two in lockstep per the inventory-coupling
+# rule. Names are lowercased at accumulation (the --harness case above), so this
+# fold is defensive — it also covers an env-injected or future-call-site value
+# that skipped that path. Without this guard, `--harness typo --check` passes —
+# an unknown name merely suppresses the codex CLI requirement in check_clis —
+# and only a real run dies, deep in install.sh. Fail fast with a clear message
+# here, the same way install.sh rejects an unknown harness before any mutation.
 validate_harnesses() {
   local h folded
   for h in ${HARNESSES[@]+"${HARNESSES[@]}"}; do
@@ -280,7 +291,7 @@ persist_local_env_values() {
   [ -f "$local_env" ] || return 0
   would_mutate "write resolved values into $local_env" && return 0
   local key val tmp wrote
-  for key in CLAUDE_CONFIG_DIR CODEX_HOME OBSIDIAN_VAULT_PATH; do
+  for key in CLAUDE_CONFIG_DIR CODEX_HOME HERMES_HOME OBSIDIAN_VAULT_PATH; do
     eval "val=\"\${$key:-}\""
     [ -n "$val" ] || continue
     tmp="$(mktemp)"
@@ -317,6 +328,7 @@ run_install() {
     case "$h" in
       claude) target="${CLAUDE_CONFIG_DIR:-}" ;;
       codex)  target="${CODEX_HOME:-}" ;;
+      hermes) target="${HERMES_HOME:-}" ;;
       *)      target="" ;;
     esac
     local out_args=()
@@ -334,18 +346,24 @@ run_install() {
 smoke_test() {
   info "Running smoke tests..."
   bash "$repo_root/scripts/validate.sh" || die "validate.sh failed"
-  local h target ok=0
+  local h target entry ok=0
   for h in "${HARNESSES[@]}"; do
+    # Resolve the target dir AND the harness's canonical entrypoint together. The
+    # `*)` default zeroes both so an unmatched harness never silently reuses the
+    # PRIOR iteration's target (the pre-fix bug: no default case → stale reuse),
+    # and hermes is checked against SOUL.md rather than CLAUDE.md/AGENTS.md.
     case "$h" in
-      claude) target="${CLAUDE_CONFIG_DIR:-}" ;;
-      codex)  target="${CODEX_HOME:-}" ;;
+      claude) target="${CLAUDE_CONFIG_DIR:-}"; entry="CLAUDE.md" ;;
+      codex)  target="${CODEX_HOME:-}";        entry="AGENTS.md" ;;
+      hermes) target="${HERMES_HOME:-}";       entry="SOUL.md" ;;
+      *)      target="";                        entry="" ;;
     esac
     if [ -z "$target" ]; then
       warn "harness $h: target dir unknown — skipping output check"
-    elif [ -f "$target/CLAUDE.md" ] || [ -f "$target/AGENTS.md" ]; then
+    elif [ -f "$target/$entry" ]; then
       info "harness $h: entrypoint present in $target"
     else
-      warn "harness $h: entrypoint not found in $target — run install.sh"
+      warn "harness $h: entrypoint ($entry) not found in $target — run install.sh"
       ok=1
     fi
   done
@@ -392,6 +410,7 @@ main() {
   [ -n "$OPT_CLAUDE_CONFIG_DIR" ] && CLAUDE_CONFIG_DIR="$OPT_CLAUDE_CONFIG_DIR"
   [ -n "$OPT_VAULT_DIR" ]         && OBSIDIAN_VAULT_PATH="$OPT_VAULT_DIR"
   [ -n "$OPT_CODEX_HOME" ]        && CODEX_HOME="$OPT_CODEX_HOME"
+  [ -n "$OPT_HERMES_HOME" ]       && HERMES_HOME="$OPT_HERMES_HOME"
 
   local exit_code=0
   check_clis || exit_code=1
@@ -416,6 +435,7 @@ main() {
   [ -n "$OPT_CLAUDE_CONFIG_DIR" ] && CLAUDE_CONFIG_DIR="$OPT_CLAUDE_CONFIG_DIR"
   [ -n "$OPT_VAULT_DIR" ]         && OBSIDIAN_VAULT_PATH="$OPT_VAULT_DIR"
   [ -n "$OPT_CODEX_HOME" ]        && CODEX_HOME="$OPT_CODEX_HOME"
+  [ -n "$OPT_HERMES_HOME" ]       && HERMES_HOME="$OPT_HERMES_HOME"
   # Persist CLAUDE_CONFIG_DIR only after local.env is seeded + reloaded, so a
   # value that exists only in the freshly seeded local.env still reaches ~/.zshenv.
   set_config_dir_env "${CLAUDE_CONFIG_DIR:-}"

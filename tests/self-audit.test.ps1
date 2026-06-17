@@ -179,6 +179,53 @@ if ($jqAvail) {
     _Skip 'self-audit.test: pillar 5 symmetric-clean test' 'jq not installed'
 }
 
+# --- Pillar 5 — hermes first-class: a native cap declaring hermes in its
+# `harnesses:` frontmatter but missing the hermes realization must deduct
+# (harness set derived from each capability's frontmatter, not a hardcoded pair).
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    # Promote the fixture cap to a 3-harness spine + add the hermes realization.
+    Write-LfFile (Join-Path $fixture 'capabilities' 'example.md') @'
+---
+name: example
+summary: example capability for fixture
+triggers: [test]
+verification: example
+harnesses: [claude, codex, hermes]
+kind: native
+lifecycle: shipped
+---
+
+# Example
+'@
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'harnesses' 'hermes' 'capabilities') -Force | Out-Null
+    Write-LfFile (Join-Path $fixture 'harnesses' 'hermes' 'capabilities' 'example.md') @'
+---
+lifecycle: shipped
+---
+
+## Hermes realization — example
+'@
+    # Sanity: a symmetric 3-harness spine scores 20/20.
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--json')
+    $score = Get-SaPillarScore $out 'closeout-spine-discipline'
+    Assert-Eq 'self-audit.test: pillar 5 is 20/20 on a symmetric 3-harness (incl. hermes) fixture' '20' "$score"
+
+    # Drop ONLY the hermes realization → pillar 5 must deduct.
+    Remove-Item -LiteralPath (Join-Path $fixture 'harnesses' 'hermes' 'capabilities' 'example.md') -Force
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--json')
+    $score = Get-SaPillarScore $out 'closeout-spine-discipline'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    if ($score -and ([int]$score -lt 20)) {
+        _Pass 'self-audit.test: pillar 5 deducts when a native capability is missing its Hermes realization (hermes first-class)'
+    } else {
+        _Fail 'self-audit.test: pillar 5 deducts when a native capability is missing its Hermes realization (hermes first-class)' "expected score < 20, got [$score]"
+    }
+} else {
+    _Skip 'self-audit.test: pillar 5 missing-hermes test' 'jq not installed'
+}
+
 # --- Pillar 4 negative: orphan recipe.
 if ($jqAvail) {
     $fixture = New-SaTmp

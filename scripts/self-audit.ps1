@@ -828,9 +828,14 @@ function Invoke-Pillar4 {
 function Invoke-Pillar5 {
     $key = 'closeout-spine-discipline'
 
-    # Sub-check 5.1 — spine symmetry: every kind: native cap must have both
-    # harnesses/claude and harnesses/codex realizations.
-    $nativeCaps = New-Object System.Collections.Generic.List[string]
+    # Sub-check 5.1 — spine symmetry: every kind: native cap must have a
+    # realization under EACH harness it declares in its `harnesses:` frontmatter
+    # list. Deriving the harness set from frontmatter (not a hardcoded
+    # claude+codex pair) keeps the check honest as harnesses become first-class:
+    # a dropped hermes realization deducts exactly like a missing Claude/Codex
+    # one. Twin of self-audit.sh sub-check 5.1.
+    $nativeCaps  = New-Object System.Collections.Generic.List[string]
+    $nativeHlist = @{}   # capability base -> declared-harness string[]
     $capDir = Join-Path $RepoRoot 'capabilities'
     if (Test-Path -LiteralPath $capDir -PathType Container) {
         foreach ($cap in (Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
@@ -839,33 +844,44 @@ function Invoke-Pillar5 {
             $kind = Get-FmField -Path $cap.FullName -Key 'kind'
             if ($kind -ne 'native') { continue }
             [void]$nativeCaps.Add($base)
+            # `harnesses: [claude, codex, hermes]` -> @('claude','codex','hermes')
+            $hraw = Get-FmField -Path $cap.FullName -Key 'harnesses'
+            $hlist = @()
+            if ($hraw) {
+                # Lowercased — twin of self-audit.sh's tr '[:upper:]' '[:lower:]';
+                # keeps a capitalized frontmatter value resolving to the lowercase
+                # harnesses/<h>/ dir and the bash/PS scores in lockstep.
+                $hlist = @(($hraw -replace '[\[\]]', '') -split ',' |
+                    ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ -ne '' })
+            }
+            $nativeHlist[$base] = $hlist
         }
     }
 
-    $missingClaude = New-Object System.Collections.Generic.List[string]
-    $missingCodex  = New-Object System.Collections.Generic.List[string]
+    # Union of declared harnesses, first-seen order.
+    $allHarnesses = New-Object System.Collections.Generic.List[string]
     foreach ($name in $nativeCaps) {
-        $claudePath = Join-Path $RepoRoot 'harnesses' 'claude' 'capabilities' "$name.md"
-        $codexPath  = Join-Path $RepoRoot 'harnesses' 'codex'  'capabilities' "$name.md"
-        if (-not (Test-Path -LiteralPath $claudePath -PathType Leaf)) { [void]$missingClaude.Add($name) }
-        if (-not (Test-Path -LiteralPath $codexPath  -PathType Leaf)) { [void]$missingCodex.Add($name) }
+        foreach ($h in $nativeHlist[$name]) {
+            if (-not $allHarnesses.Contains($h)) { [void]$allHarnesses.Add($h) }
+        }
     }
 
-    if ($missingClaude.Count -gt 0) {
-        $pen = [Math]::Min($missingClaude.Count * 8, 16)
+    # Per harness: native caps that DECLARE it but lack the realization file.
+    foreach ($h in $allHarnesses) {
+        $missingFor = New-Object System.Collections.Generic.List[string]
+        foreach ($name in $nativeCaps) {
+            if ($nativeHlist[$name] -notcontains $h) { continue }
+            $realPath = Join-Path $RepoRoot 'harnesses' $h 'capabilities' "$name.md"
+            if (-not (Test-Path -LiteralPath $realPath -PathType Leaf)) { [void]$missingFor.Add($name) }
+        }
+        if ($missingFor.Count -eq 0) { continue }
+        $pen = [Math]::Min($missingFor.Count * 8, 16)
         Use-Deduct $key $pen
+        $hname = $h.Substring(0,1).ToUpper() + $h.Substring(1)
         Add-Gap 5 10 `
-            'Spine asymmetry: missing Claude realization(s)' `
-            "Native capability(s) without harnesses/claude/capabilities/<name>.md: $($missingClaude -join ' ')" `
-            'Author the Claude realization file(s) and re-run: bash scripts/install.sh --harness claude'
-    }
-    if ($missingCodex.Count -gt 0) {
-        $pen = [Math]::Min($missingCodex.Count * 8, 16)
-        Use-Deduct $key $pen
-        Add-Gap 5 10 `
-            'Spine asymmetry: missing Codex realization(s)' `
-            "Native capability(s) without harnesses/codex/capabilities/<name>.md: $($missingCodex -join ' ')" `
-            'Author the Codex realization file(s) and re-run: bash scripts/install.sh --harness codex'
+            "Spine asymmetry: missing $hname realization(s)" `
+            "Native capability(s) without harnesses/$h/capabilities/<name>.md: $($missingFor -join ' ')" `
+            "Author the $hname realization file(s) and re-run: bash scripts/install.sh --harness $h"
     }
 
     # Sub-check 5.2 — recent project_*.md (mtime ≤ 7 days) without ## State Deltas.

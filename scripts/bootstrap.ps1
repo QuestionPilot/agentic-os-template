@@ -25,6 +25,9 @@
 #   -VaultDir <d>          override OBSIDIAN_VAULT_PATH
 #   -CodexHome <d>         override CODEX_HOME (no effect on Windows until the
 #                          codex harness port lands — <TEAM>-134)
+#   -HermesHome <d>        override HERMES_HOME (no effect on Windows until the
+#                          hermes harness port lands — tracked Windows-parity
+#                          follow-on)
 
 [CmdletBinding()]
 param(
@@ -33,7 +36,8 @@ param(
   [switch]$DryRun,
   [string]$ClaudeConfigDir = "",
   [string]$VaultDir = "",
-  [string]$CodexHome = ""
+  [string]$CodexHome = "",
+  [string]$HermesHome = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -222,6 +226,7 @@ function Persist-LocalEnvValues {
   $resolved = [ordered]@{
     CLAUDE_CONFIG_DIR   = $env:CLAUDE_CONFIG_DIR
     CODEX_HOME          = $env:CODEX_HOME
+    HERMES_HOME         = $env:HERMES_HOME
     OBSIDIAN_VAULT_PATH = $env:OBSIDIAN_VAULT_PATH
   }
   $lines = [System.IO.File]::ReadAllLines($localEnv)
@@ -287,6 +292,7 @@ function Invoke-RunInstall {
     $target = switch ($h) {
       'claude' { $env:CLAUDE_CONFIG_DIR }
       'codex'  { $env:CODEX_HOME }
+      'hermes' { $env:HERMES_HOME }
       default  { $null }
     }
     $outDesc = if ($target) { " --out $target" } else { "" }
@@ -337,6 +343,12 @@ function Write-AuthChecklist {
 }
 
 # --- main ---
+# Lowercase harness names on accumulation — parity with bootstrap.sh's --harness
+# fold + install.ps1 (CLAUDE == claude). Every downstream consumer
+# (Confirm-HarnessNames, Invoke-RunInstall switch) then matches canonically;
+# without this a `-Harness Codex` slips past the switch arms to a $null target.
+$Harness = @($Harness | ForEach-Object { "$_".ToLower() })
+
 bs_info "bootstrap.ps1 — agentic OS machine setup (Windows)"
 bs_info "Harnesses: $($Harness -join ', ')"
 if ($Check)  { bs_info "(check mode — no mutations)" }
@@ -352,6 +364,7 @@ if (Test-Path $localEnv) { Import-LocalEnv -Path $localEnv }
 if ($ClaudeConfigDir) { $env:CLAUDE_CONFIG_DIR  = $ClaudeConfigDir }
 if ($VaultDir)        { $env:OBSIDIAN_VAULT_PATH = $VaultDir }
 if ($CodexHome)       { $env:CODEX_HOME          = $CodexHome }
+if ($HermesHome)      { $env:HERMES_HOME         = $HermesHome }
 
 $exitCode = 0
 if (-not (Invoke-CheckClis))  { $exitCode = 1 }
@@ -376,6 +389,7 @@ if (Test-Path $localEnv) { Import-LocalEnv -Path $localEnv }
 if ($ClaudeConfigDir) { $env:CLAUDE_CONFIG_DIR  = $ClaudeConfigDir }
 if ($VaultDir)        { $env:OBSIDIAN_VAULT_PATH = $VaultDir }
 if ($CodexHome)       { $env:CODEX_HOME          = $CodexHome }
+if ($HermesHome)      { $env:HERMES_HOME         = $HermesHome }
 # Persist CLAUDE_CONFIG_DIR after local.env is seeded + reloaded.
 Set-ConfigDirEnv $env:CLAUDE_CONFIG_DIR
 Invoke-RunInstall

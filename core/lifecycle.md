@@ -46,7 +46,7 @@ exact set.
   framework adopts — currently one such subdir exists (see `scripts/validate.sh`
   `check_lifecycle` for the literal globs)
 - `capabilities/*.md` — agnostic capability bodies
-- `harnesses/{claude,codex}/capabilities/*.md` — per-harness realizations
+- `harnesses/{claude,codex,hermes}/capabilities/*.md` — per-harness realizations
 
 `README.md` is excluded across all in-scope dirs — a `README.md` is a directory
 introduction, not the lifecycle-tracked artifact it documents. (Mirrors the

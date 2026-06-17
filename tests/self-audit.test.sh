@@ -125,6 +125,59 @@ _test_pillar5_symmetric_clean() {
 }
 _test_pillar5_symmetric_clean
 
+# --- Pillar 5 — hermes is first-class: a native capability that DECLARES hermes
+# in its `harnesses:` frontmatter but lacks the hermes realization must deduct
+# (the harness set is derived from each capability's frontmatter, not a hardcoded
+# claude+codex pair, so a thinned-out hermes realization can no longer pass).
+_test_pillar5_missing_hermes_realization() {
+  command -v jq >/dev/null 2>&1 || { _skip "pillar 5 missing-hermes test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  # Promote the fixture capability to a 3-harness spine + add the hermes
+  # realization, so the ONLY asymmetry is the one induced below.
+  cat > "$fixture/capabilities/example.md" <<'EOF'
+---
+name: example
+summary: example capability for fixture
+triggers: [test]
+verification: example
+harnesses: [claude, codex, hermes]
+kind: native
+lifecycle: shipped
+---
+
+# Example
+EOF
+  mkdir -p "$fixture/harnesses/hermes/capabilities"
+  cat > "$fixture/harnesses/hermes/capabilities/example.md" <<'EOF'
+---
+lifecycle: shipped
+---
+
+## Hermes realization — example
+EOF
+
+  local out score
+  # Sanity: a symmetric 3-harness spine scores 20/20.
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "closeout-spine-discipline")"
+  assert_eq "pillar 5 is 20/20 on a symmetric 3-harness (incl. hermes) fixture" "20" "$score"
+
+  # Drop ONLY the hermes realization → pillar 5 must deduct.
+  rm -f "$fixture/harnesses/hermes/capabilities/example.md"
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "closeout-spine-discipline")"
+  rm -rf "$fixture"
+
+  if [ -n "$score" ] && [ "$score" -lt 20 ]; then
+    _pass "pillar 5 deducts when a native capability is missing its Hermes realization (hermes first-class)"
+  else
+    _fail "pillar 5 deducts when a native capability is missing its Hermes realization (hermes first-class)" \
+          "expected score < 20, got [$score]"
+  fi
+}
+_test_pillar5_missing_hermes_realization
+
 # --- Pillar 4 (verification coverage) — negative case: orphan recipe.
 # Fixture: a verification/orphan.md with no capability declaring `verification: orphan`.
 _test_pillar4_orphan_recipe() {
