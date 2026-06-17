@@ -172,6 +172,10 @@ lineark comments create QUE-NN --body "Markdown comment" --format json
 # Update issue state, assignee, etc.
 lineark issues update QUE-NN --state "In Progress" --assignee me --format json
 
+# Archive / unarchive an issue (archived issues drop out of list/read/search — see §7)
+lineark issues archive QUE-NN --format json
+lineark issues unarchive QUE-NN --format json
+
 # Add a relation (blocks, blocked-by, related)
 lineark relations create QUE-X --blocked-by QUE-Y --format json
 ```
@@ -239,4 +243,6 @@ Common ways the Linear layer degrades, and what to do.
 - **MCP silent-empty-tools.** The Linear MCP connector reports `Connected` but exposes 0 tools on session load. Reconnect from the harness MCP panel. If the silent failure persists, fall back to `lineark`.
 - **Surface-doc mismatch.** This guide cites lineark commands or MCP tool names that the installed binary or connector version does not expose. Both upstreams iterate independently; cross-check `lineark --help` or the MCP plugin's tool catalog when a documented command errors.
 - **Issue not found.** `lineark issues read QUE-NN` returns not-found despite the issue existing. Common cause: the issue lives in a project the token's user does not have access to; verify by viewing the issue in the Linear UI under the same account that owns the token.
+- **Free-plan issue cap.** Linear's Free plan caps a workspace at **250 active (non-archived) issues**; `Done` and `Canceled` issues still count, and once the cap is hit, creating new issues is blocked. The fix is to **archive** closed issues — archived issues are retained but no longer count toward the cap — not to delete them. Watch one masking effect: `lineark issues list --limit` tops out at 250, so on a large workspace the visible count can hide the true active total; page through GraphQL `issues(first: 250, after: $cursor)` for an accurate count.
+- **Archived issues invisible to `lineark`.** `lineark issues read|list|search` all exclude archived issues, so reading an archived issue returns *not found* even though its data is intact. Read an archived issue's description and comments via a GraphQL `issues(filter: …, includeArchived: true)` connection query (the flag is a connection argument — the singular `issue(id:)` query doesn't accept it), or through the Linear UI's Archive view; `lineark issues unarchive QUE-NN` restores it to the active set. `lineark` has no bulk-archive command — `lineark issues archive` takes one issue at a time and `batch-update` cannot archive — so to clear many at once, drive the GraphQL `issueArchive(id: <issue UUID>) { success }` mutation per issue, sequentially to respect the rate limit below (the `id` is each issue's internal `.id` from a list/read, not its `QUE-NN` key).
 - **Rate limit.** Linear's GraphQL API has request-per-minute limits. `lineark` surfaces this as an error; back off and retry after the documented window. Agents should batch reads (one `projects list` then iterate locally) rather than per-issue calls.
