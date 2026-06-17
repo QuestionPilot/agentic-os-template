@@ -236,3 +236,51 @@ assert_file "operator .install-bak.foo survives crash-recovery too" \
   "$BN_TGT/skills/.install-bak.foo/SKILL.md"
 
 rm -rf "$BN_DIR"
+
+# --- N1: collision warn when install replaces a skills/<base> subdir no prior
+#         framework install authored. Fresh target (no manifest) pre-seeded with
+#         skills/session-agent (a framework base) → the per-subdir swap must warn
+#         (don't silently overwrite), still install the framework version, and a
+#         normal framework re-install (now manifest-authored) must NOT warn. ---
+N1_DIR="$(mktemp -d)"
+N1_TGT="$N1_DIR/tgt"; mkdir -p "$N1_TGT/skills/session-agent"
+N1_ENV="$N1_DIR/local.env"
+make_local_env "$N1_ENV" "$N1_TGT"
+printf -- '---\nname: session-agent\ndescription: operator collision fixture\n---\n# operator body\n' \
+  > "$N1_TGT/skills/session-agent/SKILL.md"
+n1_log="$N1_DIR/install.log"; n1_status=0
+AI_CONFIG_LOCAL_ENV="$N1_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$n1_log" || n1_status=$?
+assert_eq "N1: install still exits 0 on a colliding non-framework skill" "0" "$n1_status"
+assert_contains "N1: collision warns for a non-framework-authored skills subdir" \
+  "$(cat "$n1_log" 2>/dev/null)" "replacing skills/session-agent which no prior framework install authored"
+if [ -f "$N1_TGT/skills/session-agent/SKILL.md" ]; then
+  assert_not_contains "N1: framework session-agent replaces the colliding operator body" \
+    "$(cat "$N1_TGT/skills/session-agent/SKILL.md")" "operator body"
+fi
+# A SECOND install (now framework-authored, in the manifest) must NOT warn.
+n1_log2="$N1_DIR/install2.log"
+AI_CONFIG_LOCAL_ENV="$N1_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$n1_log2" || true
+assert_not_contains "N1: no collision warn on a normal framework re-install" \
+  "$(cat "$n1_log2" 2>/dev/null)" "no prior framework install authored"
+
+rm -rf "$N1_DIR"
+
+# --- check-drift: app-owned plugins/ is IGNORED on a claude target. Claude Code
+#     writes plugins/known_marketplaces.json (and a plugins/ cache) into the config
+#     dir; the manifest has no managed plugins, so the managed-vs-app-owned gate
+#     must NOT scan plugins/ and must NOT flag that app state as drift. Regression
+#     guard for the make-verify break this change first surfaced. ---
+AP_DIR="$(mktemp -d)"
+AP_TGT="$AP_DIR/tgt"; mkdir -p "$AP_TGT"
+AP_ENV="$AP_DIR/local.env"
+make_local_env "$AP_ENV" "$AP_TGT"
+AI_CONFIG_LOCAL_ENV="$AP_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1 || true
+mkdir -p "$AP_TGT/plugins/cache/marketplace-x"
+printf '{}' > "$AP_TGT/plugins/known_marketplaces.json"
+printf 'cached\n' > "$AP_TGT/plugins/cache/marketplace-x/data.json"
+ap_status=0
+ap_out="$(bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$AP_TGT" 2>&1)" || ap_status=$?
+assert_eq "check-drift ignores app-owned plugins/ on a claude target (exit 0)" "0" "$ap_status"
+assert_not_contains "check-drift does not flag app-owned plugins/known_marketplaces.json" \
+  "$ap_out" "known_marketplaces.json"
+rm -rf "$AP_DIR"

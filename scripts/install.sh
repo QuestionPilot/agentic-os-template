@@ -186,12 +186,27 @@ case "$HARNESS" in
   hermes)
     # config.yaml is user-owned (operator model/provider/platform config), so
     # hook wiring is emitted as a copy-paste snippet at hooks/hooks.yaml inside
-    # the managed hooks/ subtree. plugins/ is build-managed wholesale — the
-    # adapter directs operators at a dedicated profile dir (HERMES_HOME), where
-    # the framework owns the tree.
+    # the managed hooks/ subtree. plugins/ lives in a dedicated profile dir
+    # (HERMES_HOME) where the framework owns the tree; it is swapped PER-SUBDIR
+    # (see PER_SUBDIR_PATHS below), so an operator who drops a plugin subdir into
+    # the managed plugins/ tree keeps it across re-renders — same contract skills/
+    # has always had.
     MANAGED_PATHS="skills hooks plugins SOUL.md .build-manifest.json"
     ENTRYPOINTS="SOUL.template.md:SOUL.md" ;;
 esac
+
+# Managed paths swapped PER-SUBDIR (one mv per <base> subdir) instead of as a
+# wholesale directory replace, so operator-authored subdirs the build did not
+# produce — Shape C skills, operator-added plugins — survive a re-render. Every
+# other managed path (hooks/, settings.json, the entrypoints, the manifest) is
+# swapped wholesale. swap_in / rollback_swaps / the main crash-recovery + final-
+# cleanup loops all test membership here; a path absent from a harness's
+# MANAGED_PATHS is simply never swapped, so listing plugins (hermes-only) is inert
+# for claude/codex. The per-subdir backups for ALL these paths share ONE
+# run-private root, $TARGET/.install-bak.d/<name>/<base>/ — which is why the root
+# is dropped exactly once, AFTER the swap/rollback/cleanup loop, never inside a
+# per-name branch (dropping it mid-loop would discard a sibling path's backups).
+PER_SUBDIR_PATHS="skills plugins"
 
 # --- stubs (filled in later tasks) ---------------------------------------
 # compile_native <base> <cap-file> <cap-frontmatter>
@@ -689,17 +704,24 @@ write_manifest() {
 # Existing content is moved to $TARGET/.install-bak.<name>; main() removes the
 # backups only after every swap has succeeded.
 #
-# Special case: when <name> is "skills", the swap is **per-subdir** instead of
-# a wholesale dir replace. Each compiled $BUILD/skills/<base>/ replaces its
-# counterpart at $TARGET/skills/<base>/; any subdir of $TARGET/skills/ that
-# the build did not produce — i.e. Shape C operator-authored skills from the
-# <TEAM>-55 three-shape model — is preserved. Per-subdir backups go under a
-# run-private root OUTSIDE the live skills/ tree at
-# $TARGET/.install-bak.d/skills/<base>/ — NOT inside $TARGET/skills/.
-# This keeps the backup namespace off the live tree so an operator-authored
-# Shape C skill literally named `.install-bak.*` is never mistaken for an
-# installer backup by the swap, cleanup, or rollback paths. rollback_swaps and
-# the post-swap cleanup loop key off this exact root, never a glob of skills/.
+# Special case: when <name> is a PER_SUBDIR_PATHS member (skills, plugins), the
+# swap is **per-subdir** instead of a wholesale dir replace. Each compiled
+# $BUILD/<name>/<base>/ replaces its counterpart at $TARGET/<name>/<base>/; any
+# subdir of $TARGET/<name>/ that the build did not produce — i.e. Shape C
+# operator-authored skills or operator-added plugins, all from the three-shape
+# model — is preserved. Per-subdir backups go under a run-private root OUTSIDE
+# the live tree at $TARGET/.install-bak.d/<name>/<base>/ — NOT inside
+# $TARGET/<name>/. This keeps the backup namespace off the live tree so an
+# operator-authored subdir literally named `.install-bak.*` is never mistaken
+# for an installer backup by the swap, cleanup, or rollback paths. rollback_swaps
+# and the post-swap cleanup loop key off this exact root, never a glob of the
+# live tree. The root is shared across ALL per-subdir paths, so it is dropped
+# exactly once after the loop, never inside a per-name branch.
+#
+# N1: before replacing an EXISTING live subdir, swap_in warns if no prior
+# framework install authored it (the OLD manifest has no <name>/<base>/ key) —
+# surfacing a name collision with operator/native content rather than silently
+# overwriting it. The framework version still wins (the spine depends on it).
 swap_in() {
   local name="$1"
   # <TEAM>-147 test seam: deterministic rollback induction for the parity tests.
@@ -711,39 +733,59 @@ swap_in() {
     return 1
   fi
   [ -e "$BUILD/$name" ] || return 0
-  if [ "$name" = "skills" ]; then
-    # <TEAM>-68 / Codex F-1: compute orphans (skill subdirs the OLD manifest
+  local is_per_subdir=0
+  case " $PER_SUBDIR_PATHS " in *" $name "*) is_per_subdir=1 ;; esac
+  if [ "$is_per_subdir" = 1 ]; then
+    # <TEAM>-68 / Codex F-1: compute orphans (<base> subdirs the OLD manifest
     # managed but the NEW build no longer produces) BEFORE the per-subdir swap.
     # Without this, a framework removal (like this PR's cross-model-review
-    # removal) would leave the old rendered SKILL.md lingering in $TARGET/skills/
+    # removal) would leave the old rendered content lingering in $TARGET/$name/
     # and the new check-drift Shape C exemption would silently mask it as if it
     # were operator-local. The $TARGET/.build-manifest.json still holds the OLD
     # content here (it's swapped later in the MANAGED_PATHS order); the NEW
     # manifest is already at $BUILD/.build-manifest.json from write_manifest.
-    local orphans=""
+    # The prefix is parameterized via --arg so the same jq filter serves any
+    # per-subdir path. old_managed is hoisted to the branch scope because the
+    # per-subdir swap loop reuses it for the N1 collision warning (authorship).
+    local orphans="" old_managed=""
+    if [ -f "$TARGET/.build-manifest.json" ] && command -v jq >/dev/null 2>&1; then
+      old_managed="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$TARGET/.build-manifest.json" 2>/dev/null | sort -u)"
+    fi
     if [ -f "$TARGET/.build-manifest.json" ] && [ -f "$BUILD/.build-manifest.json" ] && command -v jq >/dev/null 2>&1; then
-      local old_managed new_managed
-      old_managed="$(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$TARGET/.build-manifest.json" 2>/dev/null | sort -u)"
-      new_managed="$(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$BUILD/.build-manifest.json" 2>/dev/null | sort -u)"
+      local new_managed
+      new_managed="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$BUILD/.build-manifest.json" 2>/dev/null | sort -u)"
       orphans="$(comm -23 <(printf '%s\n' "$old_managed") <(printf '%s\n' "$new_managed"))"
     fi
 
-    mkdir -p "$TARGET/skills"
-    # <TEAM>-147: per-subdir backups go to a run-private root OUTSIDE skills/ so an
-    # operator skill named `.install-bak.*` is never treated as a backup. main()
-    # recovers + removes any leftover .install-bak.d from a crashed prior run
-    # before the swap loop, so the root is fresh here (no stale same-base
-    # collision — hence no pre-delete of a per-subdir backup is needed).
+    mkdir -p "$TARGET/$name"
+    # <TEAM>-147: per-subdir backups go to a run-private root OUTSIDE the live
+    # tree so an operator subdir named `.install-bak.*` is never treated as a
+    # backup. main() recovers + removes any leftover .install-bak.d from a
+    # crashed prior run before the swap loop, so the root is fresh here (no stale
+    # same-base collision — hence no pre-delete of a per-subdir backup is needed).
+    # The root is shared across all per-subdir paths; each path backs up under
+    # its own .install-bak.d/<name>/ subtree.
     local bak_root="$TARGET/.install-bak.d"
-    mkdir -p "$bak_root/skills"
+    mkdir -p "$bak_root/$name"
     local sub base
-    for sub in "$BUILD/skills"/*/; do
+    for sub in "$BUILD/$name"/*/; do
       [ -d "$sub" ] || continue       # nullglob: no matches → literal pattern, skip
       base="$(basename "$sub")"
-      if [ -e "$TARGET/skills/$base" ]; then
-        mv "$TARGET/skills/$base" "$bak_root/skills/$base" || return 1
+      if [ -e "$TARGET/$name/$base" ]; then
+        # N1: warn (don't silently overwrite) when the live subdir we are about
+        # to replace was not authored by a prior framework install — i.e. its
+        # <base> is absent from the OLD manifest's managed set for this path.
+        # Catches a framework <base> colliding by name with operator/native
+        # content (e.g. a Hermes-native skill of the same name). A fresh install
+        # has no old manifest, so old_managed is empty and any pre-existing live
+        # subdir is treated as unauthored — correct. The framework version still
+        # wins below (the spine depends on closeout/self-audit/session-agent).
+        if ! printf '%s\n' "$old_managed" | grep -qxF "$base"; then
+          warn "replacing $name/$base which no prior framework install authored (operator/native content with a colliding name)"
+        fi
+        mv "$TARGET/$name/$base" "$bak_root/$name/$base" || return 1
       fi
-      mv "$BUILD/skills/$base" "$TARGET/skills/$base" || return 1
+      mv "$BUILD/$name/$base" "$TARGET/$name/$base" || return 1
     done
 
     # Orphan cleanup runs only after every per-subdir swap succeeded; if any mv
@@ -767,8 +809,8 @@ swap_in() {
     # filesystem path on the rm -rf side. Reject the orphan and emit a
     # warning. Also flip all_stale to require POSITIVE hash-validation
     # evidence (a found_match counter) before deletion — an orphan dir with
-    # zero manifest entries matching `skills/<orphan>/*` (e.g. manifest key
-    # shape `skills/<orphan>` with no trailing segment) previously survived
+    # zero manifest entries matching `$name/<orphan>/*` (e.g. manifest key
+    # shape `$name/<orphan>` with no trailing segment) previously survived
     # the empty inner-loop pass with all_stale at its initial value 1 and got
     # deleted on no evidence.
     #
@@ -780,7 +822,7 @@ swap_in() {
     #   producing ambiguous semantics if the link points outside the install
     #   target). Reject the symlink case explicitly before any filesystem
     #   reads under that path.
-    # - Reject mount points (a bind-mount under skills/<orphan> would cause
+    # - Reject mount points (a bind-mount under $name/<orphan> would cause
     #   rm -rf to delete content on a different filesystem; we check
     #   parent/child device-id with stat).
     # - Re-materialize jq's manifest stream once into a temp file and check
@@ -791,7 +833,7 @@ swap_in() {
     local orphan rel want_hash got_hash all_stale found_match
     # Stage the manifest into a temp file once; if jq fails to enumerate the
     # OLD manifest, skip orphan cleanup entirely (defense-in-depth: we'd
-    # rather LEAVE stale skills than risk a partial validation deleting
+    # rather LEAVE a stale subdir than risk a partial validation deleting
     # operator content). The temp file lives under $BUILD which is the
     # mktemp-d build dir already cleaned up by the trap in main().
     local manifest_dump="$BUILD/.orphan-manifest.tsv"
@@ -809,7 +851,7 @@ swap_in() {
     # an LF *inside* a manifest key still produces two output lines from jq,
     # so the LF half-names appear as separate orphans here — they're caught
     # by the empty-evidence guard below since no manifest entry matches
-    # `skills/<half-name>/*`.)
+    # `$name/<half-name>/*`.)
     while IFS= read -r orphan; do
       [ -n "$orphan" ] || continue
       # <TEAM>-107: reject unsafe orphan names BEFORE any filesystem touch.
@@ -840,14 +882,14 @@ swap_in() {
       # inner hash validation (which uses `[ -f "$TARGET/$rel" ]`) follows the
       # symlink; that asymmetry is ambiguous and not what the hash gate is
       # designed to handle.
-      if [ -L "$TARGET/skills/$orphan" ]; then
+      if [ -L "$TARGET/$name/$orphan" ]; then
         printf 'install.sh: unsafe orphan name skipped (symlink): %q\n' "$orphan" >&2
         continue
       fi
-      [ -d "$TARGET/skills/$orphan" ] || continue
-      # Reject mount points: a bind-mount under skills/<orphan> would point
+      [ -d "$TARGET/$name/$orphan" ] || continue
+      # Reject mount points: a bind-mount under $name/<orphan> would point
       # `rm -rf` at another filesystem. Compare device-id with the parent
-      # skills/ dir. Cross-platform stat is tricky:
+      # $name/ dir. Cross-platform stat is tricky:
       #
       #   - GNU stat (Linux): `stat -c %d <path>` returns device-id. `-f` on
       #     GNU stat selects filesystem stats (different semantics — `%d` then
@@ -859,8 +901,8 @@ swap_in() {
       # the mount-point threat is residual-risk per the <TEAM>-107 adversarial
       # review (requires mount-creation privilege which is itself elevated).
       local parent_dev orphan_dev
-      parent_dev="$(stat -c %d "$TARGET/skills" 2>/dev/null || stat -f %d "$TARGET/skills" 2>/dev/null || true)"
-      orphan_dev="$(stat -c %d "$TARGET/skills/$orphan" 2>/dev/null || stat -f %d "$TARGET/skills/$orphan" 2>/dev/null || true)"
+      parent_dev="$(stat -c %d "$TARGET/$name" 2>/dev/null || stat -f %d "$TARGET/$name" 2>/dev/null || true)"
+      orphan_dev="$(stat -c %d "$TARGET/$name/$orphan" 2>/dev/null || stat -f %d "$TARGET/$name/$orphan" 2>/dev/null || true)"
       if [ -n "$parent_dev" ] && [ -n "$orphan_dev" ] && [ "$parent_dev" != "$orphan_dev" ]; then
         printf 'install.sh: unsafe orphan name skipped (mount-point): %q\n' "$orphan" >&2
         continue
@@ -871,11 +913,11 @@ swap_in() {
         [ -n "$rel" ] || continue
         # <TEAM>-147 F6: reject any manifest path with a real `..` component before
         # the prefix match — a hand-edited OLD manifest could otherwise make a
-        # `skills/<orphan>/../<elsewhere>` key satisfy the prefix and validate a
-        # hash against a file OUTSIDE skills/<orphan>/. Wrapping in slashes means
+        # `$name/<orphan>/../<elsewhere>` key satisfy the prefix and validate a
+        # hash against a file OUTSIDE $name/<orphan>/. Wrapping in slashes means
         # only a true `..` path segment matches (not `foo..bar`/`..foo`/`foo..`).
         case "/$rel/" in */../*) continue ;; esac
-        case "$rel" in skills/"$orphan"/*) ;; *) continue ;; esac
+        case "$rel" in "$name"/"$orphan"/*) ;; *) continue ;; esac
         if [ ! -f "$TARGET/$rel" ]; then
           all_stale=0
           break
@@ -888,13 +930,13 @@ swap_in() {
         found_match=1
       done < "$manifest_dump"
       # <TEAM>-107: require POSITIVE hash-validation evidence — at least one
-      # manifest entry under skills/$orphan/ must have been validated against
+      # manifest entry under $name/$orphan/ must have been validated against
       # its recorded hash. An empty/no-match inner loop is no evidence; the
       # subdir is preserved. `rm -rf --` defends against future refactors
       # that might strip the prefix and let a `-`-prefixed orphan name be
       # interpreted as a flag.
       if [ "$all_stale" -eq 1 ] && [ "$found_match" -eq 1 ]; then
-        rm -rf -- "$TARGET/skills/$orphan"
+        rm -rf -- "$TARGET/$name/$orphan"
       fi
     done <<< "$orphans"
     return 0
@@ -911,40 +953,48 @@ swap_in() {
 # Run when a swap fails mid-sequence: any already-swapped path (and the path
 # whose swap just failed) is moved back, leaving the target as it was.
 #
-# Special case: skills/ uses per-subdir backups under the run-private root
-# $TARGET/.install-bak.d/skills/<base>/ (<TEAM>-147 — see swap_in). Rollback
-# restores each backed-up subdir, then drops the root. Shape C subdirs (incl.
-# any named `.install-bak.*`) were never moved into the root, so they are never
-# touched here.
+# Special case: PER_SUBDIR_PATHS members (skills, plugins) use per-subdir backups
+# under the run-private root $TARGET/.install-bak.d/<name>/<base>/ (<TEAM>-147 —
+# see swap_in). Rollback restores each backed-up subdir for every per-subdir
+# path, then drops the root ONCE after the loop. Shape C / operator subdirs
+# (incl. any named `.install-bak.*`) were never moved into the root, so they are
+# never touched here. The root is shared across per-subdir paths, so it must NOT
+# be dropped inside a per-name branch — doing so mid-loop would discard a sibling
+# path's still-needed backups.
 rollback_swaps() {
-  local n
+  local n bak base any_per_subdir=0 root_restore_ok=1
   for n in $MANAGED_PATHS; do
-    if [ "$n" = "skills" ]; then
-      local bak base restore_ok=1
-      if [ -d "$TARGET/.install-bak.d/skills" ]; then
-        for bak in "$TARGET/.install-bak.d/skills"/*/; do
-          [ -d "$bak" ] || continue   # nullglob: no backups present → skip
-          base="$(basename "$bak")"
-          rm -rf "$TARGET/skills/$base"
-          mv "$bak" "$TARGET/skills/$base" || { restore_ok=0; warn "rollback could not restore skills/$base"; }
-        done
-      fi
-      # Codex adversarial <TEAM>-147 F5: only drop the run-private backup root once
-      # every restore succeeded — never delete the sole surviving copy on the
-      # failure path. If a restore failed, LEAVE .install-bak.d for manual
-      # recovery.
-      if [ "$restore_ok" -eq 1 ]; then
-        rm -rf "$TARGET/.install-bak.d"
-      else
-        warn "left $TARGET/.install-bak.d after a failed rollback restore"
-      fi
-      continue
-    fi
+    case " $PER_SUBDIR_PATHS " in
+      *" $n "*)
+        any_per_subdir=1
+        if [ -d "$TARGET/.install-bak.d/$n" ]; then
+          for bak in "$TARGET/.install-bak.d/$n"/*/; do
+            [ -d "$bak" ] || continue   # nullglob: no backups present → skip
+            base="$(basename "$bak")"
+            rm -rf "$TARGET/$n/$base"
+            mv "$bak" "$TARGET/$n/$base" || { root_restore_ok=0; warn "rollback could not restore $n/$base"; }
+          done
+        fi
+        continue
+        ;;
+    esac
     if [ -e "$TARGET/.install-bak.$n" ]; then
       rm -rf "$TARGET/$n"
       mv "$TARGET/.install-bak.$n" "$TARGET/$n"
     fi
   done
+  # Codex adversarial <TEAM>-147 F5: only drop the shared run-private backup root
+  # once EVERY per-subdir restore (across all per-subdir paths) succeeded — never
+  # delete the sole surviving copy on the failure path. If any restore failed,
+  # LEAVE .install-bak.d for manual recovery. Dropping it here (after the loop),
+  # not inside the per-name branch, is what keeps sibling paths' backups intact.
+  if [ "$any_per_subdir" -eq 1 ]; then
+    if [ "$root_restore_ok" -eq 1 ]; then
+      rm -rf "$TARGET/.install-bak.d"
+    else
+      warn "left $TARGET/.install-bak.d after a failed rollback restore"
+    fi
+  fi
 }
 
 # --- validate_build — sanity-check the temp build before it is swapped in ---
@@ -1034,28 +1084,32 @@ main() {
   fi
 
   # <TEAM>-147: a leftover $TARGET/.install-bak.d means a prior install crashed
-  # mid-swap (a skill was moved into the run-private backup root but its
+  # mid-swap (a subdir was moved into the run-private backup root but its
   # replacement was never moved into place). Recover conservatively BEFORE the
-  # swap loop: restore any backed-up skill whose live counterpart is now
-  # missing, then drop the root. A live counterpart that still exists means that
-  # subdir's swap completed before the crash, so its backup is stale and
-  # discarded. This makes install crash-safe without ever losing skill content
-  # — never a blind delete of the only surviving copy.
-  if [ -d "$TARGET/.install-bak.d/skills" ]; then
-    local rbak rbase recover_ok=1
-    for rbak in "$TARGET/.install-bak.d/skills"/*/; do
-      [ -d "$rbak" ] || continue
-      rbase="$(basename "$rbak")"
-      if [ ! -e "$TARGET/skills/$rbase" ]; then
-        mv "$rbak" "$TARGET/skills/$rbase" || { recover_ok=0; warn "could not restore skills/$rbase from an interrupted prior install"; }
-      fi
+  # swap loop: for EVERY per-subdir path, restore any backed-up subdir whose live
+  # counterpart is now missing, then drop the root. A live counterpart that still
+  # exists means that subdir's swap completed before the crash, so its backup is
+  # stale and discarded. This makes install crash-safe without ever losing
+  # operator content — never a blind delete of the only surviving copy. The root
+  # is shared across per-subdir paths, so it is dropped ONCE after the loop.
+  if [ -d "$TARGET/.install-bak.d" ]; then
+    local rsub rbak rbase recover_ok=1
+    for rsub in $PER_SUBDIR_PATHS; do
+      [ -d "$TARGET/.install-bak.d/$rsub" ] || continue
+      for rbak in "$TARGET/.install-bak.d/$rsub"/*/; do
+        [ -d "$rbak" ] || continue
+        rbase="$(basename "$rbak")"
+        if [ ! -e "$TARGET/$rsub/$rbase" ]; then
+          mv "$rbak" "$TARGET/$rsub/$rbase" || { recover_ok=0; warn "could not restore $rsub/$rbase from an interrupted prior install"; }
+        fi
+      done
     done
     # Codex adversarial <TEAM>-147 F2: never delete the run-private backup root
     # after a FAILED restore — that would discard the sole surviving copy.
     # Abort instead and leave .install-bak.d in place for manual recovery
     # rather than proceeding from a half-restored state.
     if [ "$recover_ok" -ne 1 ]; then
-      die "interrupted prior install could not be recovered; $TARGET/.install-bak.d left in place — restore its skills/* subdirs manually, then re-run"
+      die "interrupted prior install could not be recovered; $TARGET/.install-bak.d left in place — restore its subdirs manually, then re-run"
     fi
   fi
   rm -rf "$TARGET/.install-bak.d"
@@ -1067,16 +1121,18 @@ main() {
       die "install aborted; target restored to its pre-install state"
     fi
   done
-  # All swaps succeeded — drop the backups. skills/ uses the run-private backup
-  # root $TARGET/.install-bak.d/ (<TEAM>-147 — see swap_in); removing it by its
-  # exact path never touches an operator skill named `.install-bak.*`.
+  # All swaps succeeded — drop the backups. PER_SUBDIR_PATHS members share the
+  # run-private backup root $TARGET/.install-bak.d/ (<TEAM>-147 — see swap_in), so
+  # it is dropped ONCE after the loop by its exact path (never touching an
+  # operator subdir named `.install-bak.*`); wholesale paths drop their own
+  # .install-bak.<name>.
   for name in $MANAGED_PATHS; do
-    if [ "$name" = "skills" ]; then
-      rm -rf "$TARGET/.install-bak.d"
-      continue
-    fi
+    case " $PER_SUBDIR_PATHS " in
+      *" $name "*) continue ;;
+    esac
     rm -rf "$TARGET/.install-bak.$name"
   done
+  rm -rf "$TARGET/.install-bak.d"
   printf 'install.sh: built %s harness into %s\n' "$HARNESS" "$TARGET" >&2
 
   # The codex build is inert until the user trusts the generated hooks.json:
