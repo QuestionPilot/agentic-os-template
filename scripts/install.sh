@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — compiles capabilities/ + a harness adapter into harness-native output.
 #
-# Usage: install.sh [--harness <name>]... [--out <dir>] [--build-only]
+# Usage: install.sh [--harness <name>]... [--out <dir>] [--build-only] [--dry-run]
 #   --harness <name>  target harness (default: claude). Repeatable — pass it more
 #                     than once to build several harnesses in one pass, e.g.
 #                     --harness claude --harness codex. Each harness builds into
@@ -10,6 +10,11 @@
 #                     local.env). Single-harness only — cannot be combined with
 #                     more than one --harness.
 #   --build-only      build + validate into a temp dir, print its path, do NOT swap
+#   --dry-run         build + validate, then REPORT the live target's install state
+#                     (managed/missing/broken/custom/stale) WITHOUT writing anything.
+#                     Surfaces a silently-stale installed config. Single-harness only;
+#                     read-only; always exits 0. (For a pass/fail hand-edit gate on an
+#                     already-installed target, see check-drift.sh --manifest.)
 # Env: AI_CONFIG_LOCAL_ENV  path to local.env (default: <repo>/local.env)
 #
 # The build is idempotent and atomic: it builds into a temp dir on the target
@@ -25,6 +30,7 @@ shopt -u patsub_replacement 2>/dev/null || true
 HARNESSES=()      # requested harnesses, lowercased + deduped, in request order
 OUT=""
 BUILD_ONLY=0
+DRY_RUN=0         # --dry-run: classify + report the live target, write nothing
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
@@ -51,6 +57,7 @@ while [ $# -gt 0 ]; do
       shift 2 ;;
     --out)        OUT="${2:?--out needs a value}"; shift 2;;
     --build-only) BUILD_ONLY=1; shift;;
+    --dry-run)    DRY_RUN=1; shift;;
     -h|--help)    grep -E '^# ' "$0" | sed 's/^# //'; exit 0;;
     *) printf 'install.sh: unknown argument: %s\n' "$1" >&2; exit 2;;
   esac
@@ -126,6 +133,7 @@ AI_CONFIG_DIR="${AI_CONFIG_DIR:-$repo_root}"
 if [ "${#HARNESSES[@]}" -gt 1 ]; then
   [ -z "$OUT" ] || die "--out cannot be combined with multiple --harness values (each harness builds into its own target dir); run install.sh once per harness with --out"
   [ "$BUILD_ONLY" -eq 0 ] || die "--build-only cannot be combined with multiple --harness values (it prints a single build dir); run install.sh once per harness with --build-only"
+  [ "$DRY_RUN" -eq 0 ] || die "--dry-run cannot be combined with multiple --harness values (it reports a single target); run install.sh once per harness with --dry-run"
   for h in "${HARNESSES[@]}"; do
     tenv="$(harness_target_env "$h")" || die "unknown harness '$h' (known: claude, codex, hermes)"
     [ -f "$repo_root/harnesses/$h/adapter.md" ] || die "no adapter for harness '$h' (expected $repo_root/harnesses/$h/adapter.md)"
@@ -161,7 +169,16 @@ mkdir -p "$TARGET"
 # target could resolve via a CDPATH entry (wrong directory) and echo the path
 # (corrupting the captured TARGET).
 TARGET="$(CDPATH= cd "$TARGET" && pwd)"
-BUILD="$(mktemp -d "$TARGET/.install-build.XXXXXX")"
+# A real install builds under $TARGET so the final swap is an atomic same-
+# filesystem rename. A --dry-run never swaps, so it builds in a NEUTRAL system
+# temp instead — the live target is then never written to (not even a transient
+# .install-build.*), which also lets --dry-run run against a read-only target.
+# (cross-model adversarial finding.)
+if [ "$DRY_RUN" -eq 1 ]; then
+  BUILD="$(mktemp -d "${TMPDIR:-/tmp}/aos-dryrun.XXXXXX")"
+else
+  BUILD="$(mktemp -d "$TARGET/.install-build.XXXXXX")"
+fi
 trap 'rm -rf "$BUILD"' EXIT
 mkdir -p "$BUILD/skills" "$BUILD/hooks"
 
@@ -1076,6 +1093,101 @@ validate_build() {
   fi
 }
 
+# --- classify_state — read-only --dry-run reporter -----------------------
+# Compares the LIVE target against the NEW build manifest ($BUILD, just written)
+# and the OLD installed manifest ($TARGET/.build-manifest.json from a prior
+# install, if present), and prints a classification of every framework-managed
+# file. It WRITES NOTHING and always returns 0 — it is a report, not a gate.
+#
+#   managed  present and byte-identical to the NEW build (up to date)
+#   stale    matches the OLD installed manifest but the NEW build differs — a
+#            re-install would UPDATE it. This is the silently-stale-config gap:
+#            the installed file is intact, just behind the current framework.
+#   broken   present but matches NEITHER manifest — hand-modified or corrupted
+#            (a re-install would overwrite it).
+#   missing  the NEW build produces it but the target lacks it (would be created).
+#   custom   an operator-authored skills/ or plugins/ subdir the NEW build does
+#            not produce — Shape C content the installer PRESERVES, never clobbers.
+#
+# Mirrors install.ps1 Get-StateClassification. The classification vocabulary is
+# the install-side counterpart to check-drift.sh --manifest's pass/fail gate; the
+# Shape C `custom` exemption matches that script's untracked-file exemption.
+classify_state() {
+  local new_manifest="$BUILD/.build-manifest.json"
+  local old_manifest="$TARGET/.build-manifest.json"
+  local have_old=0
+  [ -f "$old_manifest" ] && have_old=1
+
+  local managed=0 stale=0 broken=0 missing=0 custom=0
+  local stale_list="" broken_list="" missing_list=""
+  local rel new_hash got old_hash
+
+  # 1) Every generated file the NEW build produces → managed/stale/broken/missing.
+  while IFS=$'\t' read -r rel new_hash; do
+    [ -n "$rel" ] || continue
+    if [ ! -e "$TARGET/$rel" ]; then
+      missing=$((missing+1)); missing_list="${missing_list}    - $rel"$'\n'; continue
+    fi
+    # Present but not a readable regular file (a dir where a file is expected, or
+    # an unreadable file) → broken. Never hash it: sha256 on a dir/unreadable path
+    # fails, and under set -e that would ABORT the report. (cross-model finding.)
+    if [ ! -f "$TARGET/$rel" ] || [ ! -r "$TARGET/$rel" ]; then
+      broken=$((broken+1)); broken_list="${broken_list}    - $rel"$'\n'; continue
+    fi
+    got="$(sha256 "$TARGET/$rel" 2>/dev/null || true)"
+    if [ -n "$got" ] && [ "$got" = "$new_hash" ]; then
+      managed=$((managed+1)); continue
+    fi
+    old_hash=""
+    [ "$have_old" = 1 ] && old_hash="$(jq -r --arg k "$rel" '.generated[$k] // empty' "$old_manifest" 2>/dev/null || true)"
+    old_hash="${old_hash%$'\r'}"   # strip a stray CR if a Windows jq emitted CRLF
+    if [ -n "$got" ] && [ -n "$old_hash" ] && [ "$got" = "$old_hash" ]; then
+      stale=$((stale+1)); stale_list="${stale_list}    - $rel"$'\n'
+    else
+      broken=$((broken+1)); broken_list="${broken_list}    - $rel"$'\n'
+    fi
+  done < <(jq -r '.generated | to_entries[] | "\(.key)\t\(.value)"' "$new_manifest" 2>/dev/null)
+
+  # 2) Operator Shape C: a skills/<base>/ or plugins/<base>/ subdir present in the
+  # target but NOT produced by the NEW build is operator-authored — PRESERVED.
+  # Mirrors check-drift.sh's per-subdir managed-set exemption (same jq query).
+  local name sub base mbase
+  for name in $PER_SUBDIR_PATHS; do
+    [ -d "$TARGET/$name" ] || continue
+    mbase="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$new_manifest" 2>/dev/null | sort -u)"
+    for sub in "$TARGET/$name"/*/; do
+      [ -d "$sub" ] || continue
+      base="$(basename "$sub")"
+      # App-written bookkeeping the drift gate already exempts is not "custom".
+      case "$name/$base" in skills/.*) continue ;; esac
+      if ! printf '%s\n' "$mbase" | grep -qxF -- "$base"; then
+        # custom (Shape C) is the reassuring "preserved, nothing to do" class —
+        # counted, not enumerated, to keep the actionable drift lists legible.
+        custom=$((custom+1))
+      fi
+    done
+  done
+
+  # Report (read-only). Goes to stdout — it IS the command's output.
+  printf 'install.sh: dry-run state for %s at %s\n' "$HARNESS" "$TARGET"
+  [ "$have_old" = 1 ] || printf '  (no prior .build-manifest.json — target looks uninstalled; files that differ report as broken)\n'
+  printf '  managed: %d  (present and current)\n' "$managed"
+  printf '  stale:   %d  (an install would UPDATE — framework moved on)\n' "$stale"
+  [ -n "$stale_list" ] && printf '%s' "$stale_list"
+  printf '  broken:  %d  (modified/corrupted on disk — an install would overwrite)\n' "$broken"
+  [ -n "$broken_list" ] && printf '%s' "$broken_list"
+  printf '  missing: %d  (absent — an install would create)\n' "$missing"
+  [ -n "$missing_list" ] && printf '%s' "$missing_list"
+  printf '  custom:  %d  (operator skills/plugins — PRESERVED, never clobbered)\n' "$custom"
+  if [ "$((stale+broken+missing))" -gt 0 ]; then
+    printf 'install.sh: re-run without --dry-run to reconcile managed files (custom content is preserved).\n'
+  else
+    printf 'install.sh: target is in sync with the current framework.\n'
+  fi
+  printf 'install.sh: no changes written (dry-run).\n'
+  return 0
+}
+
 # --- main flow -----------------------------------------------------------
 main() {
   local cap base fm harnesses kind
@@ -1134,6 +1246,14 @@ main() {
   esac
   write_manifest
   validate_build
+
+  # --dry-run: classify the live target against the just-built NEW manifest and
+  # report, then stop. The EXIT trap removes $BUILD; the live target is never
+  # touched. Placed before BUILD_ONLY so a --dry-run report wins if both passed.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    classify_state
+    return 0
+  fi
 
   if [ "$BUILD_ONLY" -eq 1 ]; then
     printf '%s\n' "$BUILD"

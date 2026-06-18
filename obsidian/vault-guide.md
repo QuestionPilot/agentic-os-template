@@ -59,6 +59,8 @@ Common options:
 
 **Sync-conflict caveat:** cloud-storage providers handle simultaneous writes from multiple devices differently. Files like `START (conflict copy).md` or `decision-yyyy-mm-dd (1).md` appearing in the vault indicate an unresolved conflict; §9 covers the failure mode.
 
+**Never put a live `.git` inside a sync-hosted vault.** If the vault lives on Google Drive, iCloud, or Dropbox, do **not** run `git init` (or drop a worktree/submodule gitlink) anywhere under `OBSIDIAN_VAULT_PATH`. The sync client races the many small writes git makes into `.git/objects`, which silently corrupts the repository — and Google Drive additionally sprays `.DS_Store` into every tracked directory. If you want version history for the vault, keep a **separate clone OUTSIDE the synced tree** and copy notes into it deliberately. The `self-audit` folder-hygiene pillar flags a live `.git` found under the configured vault path so this footgun surfaces in the regular health check.
+
 Pick one and commit. The vault path is single-valued in `local.env`; switching later means moving the directory + updating one env var.
 
 ### 3.3 Create the top-level folder structure

@@ -18,9 +18,13 @@
                      from local.env). Single-harness only — cannot be combined
                      with more than one --harness.
     -BuildOnly       build + validate into a temp dir, print its path, do NOT swap
+    -DryRun          build + validate, then REPORT the live target's install state
+                     (managed/missing/broken/custom/stale) WITHOUT writing anything.
+                     Surfaces a silently-stale installed config. Single-harness only;
+                     read-only; always exits 0.
 
     Args are also accepted in --kebab-case for symmetry with install.sh:
-        --harness <name>, --out <dir>, --build-only
+        --harness <name>, --out <dir>, --build-only, --dry-run
 
     Env: AI_CONFIG_LOCAL_ENV  path to local.env (default: <repo>\local.env)
 
@@ -79,6 +83,7 @@ Set-StrictMode -Version Latest
 
 $Out = ''
 $BuildOnly = $false
+$DryRun = $false         # --dry-run: classify + report the live target, write nothing
 
 # --harness is repeatable. Collect every requested harness, lowercased (so casing
 # variants dedupe and resolve identically: claude == CLAUDE) and deduped in
@@ -109,6 +114,12 @@ while ($i -lt $args.Count) {
     # `-?build-?only` matches --build-only / -build-only / -BuildOnly.
     if ($arg -imatch '^--?build-?only$') {
         $BuildOnly = $true
+        $i += 1
+        continue
+    }
+    # `-?dry-?run` matches --dry-run / -dry-run / -DryRun.
+    if ($arg -imatch '^--?dry-?run$') {
+        $DryRun = $true
         $i += 1
         continue
     }
@@ -170,6 +181,9 @@ if ($harnessList.Count -gt 1) {
     }
     if ($BuildOnly) {
         Die "--build-only / -BuildOnly cannot be combined with multiple --harness values (it prints a single build dir); run install.ps1 once per harness with -BuildOnly"
+    }
+    if ($DryRun) {
+        Die "--dry-run / -DryRun cannot be combined with multiple --harness values (it reports a single target); run install.ps1 once per harness with -DryRun"
     }
     $pwshExe = (Get-Process -Id $PID).Path
     if (-not $pwshExe) { $pwshExe = 'pwsh' }
@@ -347,7 +361,16 @@ New-Item -ItemType Directory -Path $TARGET -Force | Out-Null
 # leak relative `command` paths into the generated settings.json hook entries.
 $TARGET = (Resolve-Path -LiteralPath $TARGET).Path
 
-$BUILD = Join-Path $TARGET (".install-build." + [Guid]::NewGuid().Guid.Substring(0,8))
+# A real install builds under $TARGET so the final swap is an atomic same-
+# filesystem rename. A -DryRun never swaps, so it builds in a NEUTRAL system temp
+# instead — the live target is then never written to (not even a transient
+# .install-build.*), which also lets -DryRun run against a read-only target.
+# (cross-model adversarial finding.)
+if ($DryRun) {
+    $BUILD = Join-Path ([IO.Path]::GetTempPath()) ("aos-dryrun." + [Guid]::NewGuid().Guid.Substring(0,8))
+} else {
+    $BUILD = Join-Path $TARGET (".install-build." + [Guid]::NewGuid().Guid.Substring(0,8))
+}
 New-Item -ItemType Directory -Path $BUILD -Force | Out-Null
 
 # Cleanup trap — runs on script exit. PS's `try/finally` is the closest analog
@@ -1451,6 +1474,101 @@ function Restore-Backups {
 }
 
 # ---------------------------------------------------------------------------
+# Get-StateClassification — read-only --dry-run reporter (mirrors install.sh
+# classify_state). Compares the LIVE target against the NEW build manifest
+# ($BUILD, just written) and the OLD installed manifest ($TARGET\.build-manifest.json,
+# if a prior install left one), and prints a classification of every framework-
+# managed file. Writes nothing; always succeeds.
+#   managed  present and byte-identical to the NEW build (up to date)
+#   stale    matches the OLD installed manifest but the NEW build differs — a
+#            re-install would UPDATE it (the silently-stale-config gap)
+#   broken   present but matches NEITHER manifest — hand-modified/corrupted
+#   missing  the NEW build produces it but the target lacks it
+#   custom   an operator-authored skills/ or plugins/ subdir the NEW build does
+#            not produce — Shape C content the installer PRESERVES, never clobbers
+# ---------------------------------------------------------------------------
+function Get-StateClassification {
+    $newManifest = Join-Path $BUILD '.build-manifest.json'
+    $oldManifest = Join-Path $TARGET '.build-manifest.json'
+    $haveOld = Test-Path -LiteralPath $oldManifest -PathType Leaf
+
+    $managed = 0; $stale = 0; $broken = 0; $missing = 0; $custom = 0
+    $staleList   = New-Object System.Collections.Generic.List[string]
+    $brokenList  = New-Object System.Collections.Generic.List[string]
+    $missingList = New-Object System.Collections.Generic.List[string]
+
+    # 1) Every generated file the NEW build produces → managed/stale/broken/missing.
+    $entries = Get-Content -Raw -LiteralPath $newManifest |
+        & $script:JqBin -r '.generated | to_entries[] | "\(.key)\t\(.value)"' 2>$null
+    foreach ($line in @($entries)) {
+        if ([string]::IsNullOrEmpty($line)) { continue }
+        $parts = $line -split "`t", 2
+        $rel = $parts[0]
+        $newHash = if ($parts.Count -ge 2) { $parts[1] } else { '' }
+        $tgtPath = Join-Path $TARGET $rel
+        if (-not (Test-Path -LiteralPath $tgtPath)) {
+            $missing++; [void]$missingList.Add($rel); continue
+        }
+        # Present but not a readable regular file (a dir where a file is expected,
+        # or an unreadable file) → broken. Never hash it: Get-FileHash on a dir
+        # throws a terminating error under StrictMode and aborts the report.
+        # (cross-model finding.)
+        if (-not (Test-Path -LiteralPath $tgtPath -PathType Leaf)) {
+            $broken++; [void]$brokenList.Add($rel); continue
+        }
+        $got = $null
+        try { $got = Get-FileSha256Hex -Path $tgtPath } catch { $got = $null }
+        if ($got -and ($got -eq $newHash)) { $managed++; continue }
+        $oldHash = ''
+        if ($haveOld) {
+            $oldHash = Get-Content -Raw -LiteralPath $oldManifest |
+                & $script:JqBin -r --arg k $rel '.generated[$k] // empty' 2>$null
+            if ($LASTEXITCODE -ne 0) { $oldHash = '' }
+        }
+        if ($got -and $oldHash -and ($got -eq $oldHash)) {
+            $stale++; [void]$staleList.Add($rel)
+        } else {
+            $broken++; [void]$brokenList.Add($rel)
+        }
+    }
+
+    # 2) Operator Shape C: a skills/<base>/ or plugins/<base>/ subdir present in the
+    # target but NOT produced by the NEW build is operator-authored — PRESERVED.
+    # Mirrors check-drift.sh / classify_state's per-subdir managed-set exemption.
+    foreach ($name in $Script:PerSubdirPaths) {
+        $tgtSub = Join-Path $TARGET $name
+        if (-not (Test-Path -LiteralPath $tgtSub -PathType Container)) { continue }
+        $mbase = Get-SubdirsFromManifest -ManifestPath $newManifest -Prefix ($name + '/')
+        if ($null -eq $mbase) { $mbase = @() }
+        $subs = @(Get-ChildItem -LiteralPath $tgtSub -Directory -Force -ErrorAction SilentlyContinue)
+        foreach ($sub in $subs) {
+            $b = $sub.Name
+            # App-written bookkeeping the drift gate exempts is not "custom".
+            if ($name -eq 'skills' -and $b.StartsWith('.')) { continue }
+            if ($mbase -notcontains $b) { $custom++ }
+        }
+    }
+
+    # Report (read-only) — to stdout, mirrors the bash twin.
+    Write-Output "install.ps1: dry-run state for $Harness at $TARGET"
+    if (-not $haveOld) { Write-Output '  (no prior .build-manifest.json — target looks uninstalled; files that differ report as broken)' }
+    Write-Output ("  managed: {0}  (present and current)" -f $managed)
+    Write-Output ("  stale:   {0}  (an install would UPDATE — framework moved on)" -f $stale)
+    foreach ($r in $staleList) { Write-Output "    - $r" }
+    Write-Output ("  broken:  {0}  (modified/corrupted on disk — an install would overwrite)" -f $broken)
+    foreach ($r in $brokenList) { Write-Output "    - $r" }
+    Write-Output ("  missing: {0}  (absent — an install would create)" -f $missing)
+    foreach ($r in $missingList) { Write-Output "    - $r" }
+    Write-Output ("  custom:  {0}  (operator skills/plugins — PRESERVED, never clobbered)" -f $custom)
+    if (($stale + $broken + $missing) -gt 0) {
+        Write-Output 'install.ps1: re-run without --dry-run to reconcile managed files (custom content is preserved).'
+    } else {
+        Write-Output 'install.ps1: target is in sync with the current framework.'
+    }
+    Write-Output 'install.ps1: no changes written (dry-run).'
+}
+
+# ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
 
@@ -1549,6 +1667,14 @@ try {
 
     Write-Manifest
     Test-Build
+
+    # --dry-run: classify the live target against the just-built NEW manifest and
+    # report, then stop. The finally block removes $BUILD; the live target is never
+    # touched. Placed before BuildOnly so a --dry-run report wins if both passed.
+    if ($DryRun) {
+        Get-StateClassification
+        return
+    }
 
     if ($BuildOnly) {
         # Print the build dir + suppress the EXIT cleanup so the operator can inspect.

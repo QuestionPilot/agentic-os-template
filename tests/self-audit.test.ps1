@@ -277,6 +277,44 @@ if ($jqAvail) {
     _Skip 'self-audit.test: pillar 3 antipattern-dir test' 'jq not installed'
 }
 
+# --- Pillar 3 negative: a live .git inside the configured vault (the Drive-sync
+# corruption footgun <TEAM>-298 #2 guards against).
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $vault = New-SaTmp
+    New-Item -ItemType Directory -Path (Join-Path $vault '.git') -Force | Out-Null
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--vault-dir', $vault, '--json')
+    $score = Get-SaPillarScore $out 'folder-hygiene'
+    if ($score -and ([int]$score -lt 20)) {
+        _Pass 'self-audit.test: pillar 3 deducts on a live .git inside the vault'
+    } else {
+        _Fail 'self-audit.test: pillar 3 deducts on a live .git inside the vault' "expected score < 20, got [$score]"
+    }
+    Assert-Contains 'self-audit.test: pillar 3 names the .git-in-vault gap' `
+        $out 'Live .git inside the sync-hosted vault'
+
+    # A .git gitlink FILE (worktree/submodule pointer), not a dir, is the same
+    # footgun — the guard uses -e / Test-Path, which catches both (cross-model note).
+    Remove-Item -LiteralPath (Join-Path $vault '.git') -Recurse -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText((Join-Path $vault '.git'), "gitdir: /elsewhere/.git/worktrees/x`n", [System.Text.UTF8Encoding]::new($false))
+    $outGl = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--vault-dir', $vault, '--json')
+    Assert-Contains 'self-audit.test: Drive-git guard also fires on a .git gitlink FILE' `
+        $outGl 'Live .git inside the sync-hosted vault'
+    Remove-Item -LiteralPath (Join-Path $vault '.git') -Force -ErrorAction SilentlyContinue
+
+    # Positive: a clean vault (no .git) must NOT trip the check — proves the guard
+    # is additive (no false positive on the common, correct setup).
+    Remove-Item -LiteralPath (Join-Path $vault '.git') -Recurse -Force -ErrorAction SilentlyContinue
+    $out2 = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--vault-dir', $vault, '--json')
+    $score2 = Get-SaPillarScore $out2 'folder-hygiene'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $vault -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: pillar 3 stays 20/20 with a vault that has no .git' '20' "$score2"
+} else {
+    _Skip 'self-audit.test: pillar 3 drive-git test' 'jq not installed'
+}
+
 # --- Pillar 3 positive: clean folder structure.
 if ($jqAvail) {
     $fixture = New-SaTmp
