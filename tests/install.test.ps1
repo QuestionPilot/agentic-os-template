@@ -286,54 +286,55 @@ try {
     $env:AI_CONFIG_LOCAL_ENV = $null
 }
 
-# --- codex harness is gracefully rejected on Windows ----------------
-# install.ps1:247-249 pre-fix hard-died with a confusing "not implemented
-# in the prototype" message; a fresh Windows operator who picked the
-# DOCUMENTED bootstrap.ps1 -Harness codex option got a hard crash.
-# turns this into a graceful rejection: exit 1, an actionable message naming
-# the supported harness, and NO partial filesystem mutation (the reject fires
-# BEFORE the target env var is resolved or any build dir is created).
-$cxRoot = Join-Path ([IO.Path]::GetTempPath()) ("que134-codex-reject-" + [Guid]::NewGuid().Guid.Substring(0,8))
-New-Item -ItemType Directory -Path $cxRoot -Force | Out-Null
-$cxTgt   = Join-Path $cxRoot 'claude-config'
-$cxCodex = Join-Path $cxRoot 'codex-home'
-$cxEnv   = Join-Path $cxRoot 'fixture.local.env'
-$cxVault = Join-Path $cxRoot 'vault'
-New-Item -ItemType Directory -Path $cxTgt   -Force | Out-Null
-New-Item -ItemType Directory -Path $cxVault -Force | Out-Null
-# Hand-write a local.env that sets BOTH CLAUDE_CONFIG_DIR and CODEX_HOME so the
-# rejection cannot be confused with a "CODEX_HOME not set" failure.
-$cxLines = @(
-    "CLAUDE_CONFIG_DIR=`"$cxTgt`"",
-    "CODEX_HOME=`"$cxCodex`"",
-    "OBSIDIAN_VAULT_PATH=`"$cxVault`""
+# --- hermes harness is gracefully rejected on Windows ----------------
+# <TEAM>-296: codex is now ported to the Windows install.ps1, so hermes is the
+# harness whose Windows port is still a tracked follow-on. install.ps1 rejects it
+# GRACEFULLY: exit 1, an actionable message naming a supported harness, and NO
+# partial filesystem mutation (the reject fires BEFORE the target env var is
+# resolved or any build dir is created — so a fresh Windows operator who picks the
+# DOCUMENTED bootstrap.ps1 -Harness hermes option gets a clear instruction, not a
+# hard crash).
+$hmRoot = Join-Path ([IO.Path]::GetTempPath()) ("que296-hermes-reject-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $hmRoot -Force | Out-Null
+$hmTgt   = Join-Path $hmRoot 'claude-config'
+$hmHome  = Join-Path $hmRoot 'hermes-home'
+$hmEnv   = Join-Path $hmRoot 'fixture.local.env'
+$hmVault = Join-Path $hmRoot 'vault'
+New-Item -ItemType Directory -Path $hmTgt   -Force | Out-Null
+New-Item -ItemType Directory -Path $hmVault -Force | Out-Null
+# Hand-write a local.env that sets BOTH CLAUDE_CONFIG_DIR and HERMES_HOME so the
+# rejection cannot be confused with a "HERMES_HOME not set" failure.
+$hmLines = @(
+    "CLAUDE_CONFIG_DIR=`"$hmTgt`"",
+    "HERMES_HOME=`"$hmHome`"",
+    "OBSIDIAN_VAULT_PATH=`"$hmVault`""
 )
-$cxUtf8 = [System.Text.UTF8Encoding]::new($false)
-[System.IO.File]::WriteAllText($cxEnv, (($cxLines -join "`n") + "`n"), $cxUtf8)
+$hmUtf8 = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($hmEnv, (($hmLines -join "`n") + "`n"), $hmUtf8)
 
 try {
-    $env:AI_CONFIG_LOCAL_ENV = $cxEnv
-    $cxOut = & pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1
-    $cxExit = $LASTEXITCODE
-    $cxOutStr = if ($cxOut -is [array]) { $cxOut -join "`n" } else { [string]$cxOut }
+    $env:AI_CONFIG_LOCAL_ENV = $hmEnv
+    $hmOut = & pwsh -NoProfile -File $INSTALL_PS1 --harness hermes 2>&1
+    $hmExit = $LASTEXITCODE
+    $hmOutStr = if ($hmOut -is [array]) { $hmOut -join "`n" } else { [string]$hmOut }
 
     # Exit 1 (graceful failure), not 0 (silent) and not an uncaught throw.
-    Assert-Eq 'install.test: codex harness exits 1 (graceful reject, no crash)' '1' "$cxExit"
+    Assert-Eq 'install.test: hermes harness exits 1 (graceful reject, no crash)' '1' "$hmExit"
 
-    # Message is actionable — names claude as the supported harness.
-    Assert-Contains 'install.test: codex reject message names -Harness claude' `
-        $cxOutStr '-Harness claude'
-    Assert-Contains 'install.test: codex reject message says not yet supported on Windows' `
-        $cxOutStr 'not yet supported on Windows'
+    # Message is actionable — names a supported harness (claude / codex).
+    Assert-Contains 'install.test: hermes reject message names a supported harness' `
+        $hmOutStr '-Harness claude'
+    Assert-Contains 'install.test: hermes reject message says not yet supported on Windows' `
+        $hmOutStr 'not yet supported on Windows'
 
-    # NO partial mutation — CODEX_HOME must not have been created (reject fires
+    # NO partial mutation — HERMES_HOME must not have been created (reject fires
     # before target resolution / build-dir creation).
-    if (Test-Path -LiteralPath $cxCodex) {
-        _Fail 'install.test: codex reject leaves no partial CODEX_HOME mutation' 'CODEX_HOME dir was created'
+    if (Test-Path -LiteralPath $hmHome) {
+        _Fail 'install.test: hermes reject leaves no partial HERMES_HOME mutation' 'HERMES_HOME dir was created'
     } else {
-        _Pass 'install.test: codex reject leaves no partial CODEX_HOME mutation'
+        _Pass 'install.test: hermes reject leaves no partial HERMES_HOME mutation'
     }
 } finally {
-    Remove-Item -LiteralPath $cxRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $hmRoot -Recurse -Force -ErrorAction SilentlyContinue
     $env:AI_CONFIG_LOCAL_ENV = $null
 }

@@ -96,7 +96,9 @@ _Skip 'bootstrap.test: bootstrap.ps1 -Harness typo -Check rejects unknown harnes
 _Skip 'bootstrap.test: bootstrap.ps1 unknown-harness error lists the known set' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Harness doc drops the wrong ''repeatable'' claim' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile' $q133reason
-_Skip 'bootstrap.test: bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Harness codex -Check passes when codex present (codex now required for -Harness codex)' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Harness codex -Check flags absent codex as required' $q133reason
+_Skip 'bootstrap.test: bootstrap.ps1 -Check (claude) does not require codex' $q133reason
 
 # F6 (<TEAM>-295): version-compare parity. bootstrap.test.sh runs both the bash
 # --check and the pwsh -Check boundary assertions end-to-end on macOS/Linux.

@@ -338,9 +338,10 @@ if command -v pwsh >/dev/null 2>&1; then
   # Confirm-HarnessNames rejects a typo up front (in -Check too). The -Harness doc
   # drops the wrong "repeatable" claim AND must NOT recommend `-Harness claude,codex`
   # — under the documented `pwsh -File` invocation a comma value binds as a single
-  # literal (no array split) and is rejected as unknown. A known-but-Windows-
-  # unsupported `codex` still passes -Check; install.ps1 owns the unsupported
-  # message on a real/dry-run install path.
+  # literal (no array split) and is rejected as unknown. codex is a supported
+  # Windows build target (<TEAM>-296), so -Harness codex -Check now requires the
+  # codex CLI; hermes remains the Windows-deferred harness, and install.ps1 owns
+  # its unsupported message on a real/dry-run install path.
   ps_badharness_exit=0
   PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness typo -Check >/dev/null 2>&1 \
     || ps_badharness_exit=$?
@@ -352,11 +353,27 @@ if command -v pwsh >/dev/null 2>&1; then
     "$ps_src" "(repeatable; default: claude)"
   assert_contains "bootstrap.ps1 -Harness doc warns the comma form is pwsh -File-hostile" \
     "$ps_src" "does NOT split"
+  # <TEAM>-296: codex is now a supported Windows build target, so bootstrap.ps1's
+  # Invoke-CheckClis requires the codex CLI when -Harness codex is requested
+  # (parity with bootstrap.sh check_clis). With codex present (stubbed), -Check passes.
   ps_codex_check_exit=0
   PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness codex -Check >/dev/null 2>&1 \
     || ps_codex_check_exit=$?
-  assert_eq "bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)" \
+  assert_eq "bootstrap.ps1 -Harness codex -Check passes when codex present (codex now required for -Harness codex)" \
     "0" "$ps_codex_check_exit"
+  # Conditional requirement: with codex ABSENT, -Harness codex -Check flags it
+  # (exit 1), but -Harness claude -Check still passes (codex not required for
+  # claude). Mirrors bootstrap.sh's harness-conditional codex tests.
+  rm "$PS_STUBS/codex"
+  ps_codex_absent_exit=0
+  PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness codex -Check >/dev/null 2>&1 \
+    || ps_codex_absent_exit=$?
+  assert_eq "bootstrap.ps1 -Harness codex -Check flags absent codex as required" "1" "$ps_codex_absent_exit"
+  ps_claude_nocodex_exit=0
+  PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness claude -Check >/dev/null 2>&1 \
+    || ps_claude_nocodex_exit=$?
+  assert_eq "bootstrap.ps1 -Check (claude) does not require codex" "0" "$ps_claude_nocodex_exit"
+  make_stub_cli "$PS_STUBS" codex "codex 0.132.0"  # restore for the dry-run tests below
 
   # The -DryRun mode should show the install action routed through pwsh, not
   # bash. With all CLIs present, -DryRun on full mode (not just -Check) lists

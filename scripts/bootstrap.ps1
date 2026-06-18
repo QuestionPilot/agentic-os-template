@@ -5,26 +5,24 @@
 #   bootstrap.ps1 [-Harness <name>] [-Check] [-DryRun]
 #                 [-ClaudeConfigDir <dir>] [-VaultDir <dir>] [-CodexHome <dir>]
 #
-#   -Harness <name>        target harness. Default: claude. On Windows only
-#                          `claude` is supported (install.ps1 rejects `codex`), so
-#                          pass a single `-Harness claude` — you never need more
-#                          than one here. Do NOT repeat the flag: PowerShell
-#                          rejects `-Harness claude -Harness codex` with
-#                          "specified more than once". (A comma value like
-#                          `-Harness claude,codex` does NOT split into two under
-#                          the documented `pwsh -File` invocation — it binds as a
-#                          single literal and is rejected as an unknown harness.
-#                          The macOS/Linux bootstrap.sh builds both via the
-#                          repeatable POSIX `--harness claude --harness codex`
-#                          form; full Windows codex parity — including proper
-#                          multi-harness arg handling here — is a tracked
-#                          follow-on.)
+#   -Harness <name>        target harness. Default: claude. On Windows claude and
+#                          codex are supported (hermes is a tracked follow-on); pass
+#                          a single `-Harness claude` or `-Harness codex`. Do NOT
+#                          repeat the flag: PowerShell rejects `-Harness claude
+#                          -Harness codex` with "specified more than once", and a
+#                          comma value like `-Harness claude,codex` does NOT split
+#                          under the documented `pwsh -File` invocation (it binds as
+#                          a single literal and is rejected as an unknown harness).
+#                          To bootstrap both on Windows, run bootstrap.ps1 once per
+#                          harness. The macOS/Linux bootstrap.sh builds all three via
+#                          the repeatable POSIX `--harness` form; richer Windows
+#                          multi-harness arg handling here is a tracked follow-on.
 #   -Check                 read-only — detect requirements, report, exit 1 on failures
 #   -DryRun                print mutations without executing them
 #   -ClaudeConfigDir <d>   override CLAUDE_CONFIG_DIR
 #   -VaultDir <d>          override OBSIDIAN_VAULT_PATH
-#   -CodexHome <d>         override CODEX_HOME (no effect on Windows until the
-#                          codex harness port lands — <TEAM>-134)
+#   -CodexHome <d>         override CODEX_HOME (used when -Harness codex builds on
+#                          Windows — <TEAM>-296)
 #   -HermesHome <d>        override HERMES_HOME (no effect on Windows until the
 #                          hermes harness port lands — tracked Windows-parity
 #                          follow-on)
@@ -63,12 +61,12 @@ function would_mutate([string]$desc) {
 
 # Confirm-HarnessNames — twin of bootstrap.sh validate_harnesses. Reject unknown
 # harness names up front, in -Check too. The known set mirrors install.ps1's
-# resolution (claude, codex); keep in lockstep per the inventory-coupling rule.
-# Case-insensitive — install.ps1 lowercases names (CLAUDE == claude). codex is a
-# KNOWN name here: install.ps1 owns the Windows-codex-unsupported message, so this
-# guard only catches genuine typos. Without it, `-Harness typo -Check` passes
-# (Invoke-CheckClis never validates names) and only a real run dies, deep in
-# install.ps1.
+# resolution (claude, codex, hermes); keep in lockstep per the inventory-coupling
+# rule. Case-insensitive — install.ps1 lowercases names (CLAUDE == claude). codex +
+# hermes are KNOWN names here: install.ps1 owns the Windows-hermes-unsupported
+# message (codex now builds on Windows — <TEAM>-296), so this guard only catches
+# genuine typos. Without it, `-Harness typo -Check` passes (Invoke-CheckClis never
+# validates names) and only a real run dies, deep in install.ps1.
 function Confirm-HarnessNames {
   foreach ($h in $Harness) {
     if ($h.ToLower() -notin @('claude','codex','hermes')) {
@@ -81,12 +79,11 @@ function Confirm-HarnessNames {
 # <TEAM>-115: `bash` is NO LONGER required. Invoke-RunInstall + Invoke-SmokeTest
 # now route through native `install.ps1` / `validate.ps1` via `pwsh -File`.
 # A Windows operator with no Git Bash / WSL can run bootstrap.ps1 end-to-end.
-# The CLIs checked on this (Windows) path are gh, jq, rg. `codex` is NOT required:
-# only the claude harness is supported on Windows (install.ps1 rejects codex), so
-# a claude-only operator must not need a second AI harness installed — and the
-# codex CLI would only be installed for a harness this path cannot build. The
-# codex version + npm entries below remain for when Windows codex-harness support
-# lands. Keep the universal set in lockstep with bootstrap.sh check_clis + the
+# The universal CLIs checked on this (Windows) path are gh, jq, rg. `codex` is
+# required ONLY when the codex harness is a build target (<TEAM>-296 — codex now
+# builds on Windows): a claude-only operator must not need a second AI harness
+# installed. Invoke-CheckClis adds codex to the required set when -Harness codex is
+# requested. Keep the universal set in lockstep with bootstrap.sh check_clis + the
 # README / new-machine-bootstrap.md prose (inventory-coupling rule).
 $cliMin = @{
   codex     = "0.132.0"
@@ -145,11 +142,14 @@ $outdatedClis = @()
 
 function Invoke-CheckClis {
   $ok = $true
-  # gh/jq/rg are the universal requirements. codex is intentionally NOT checked on
-  # Windows — the codex harness is unsupported here (install.ps1 rejects it), so a
-  # claude-only operator never needs the codex CLI. Re-add codex conditionally on
-  # $Harness when Windows codex-harness support lands.
+  # gh/jq/rg are the universal requirements. codex is required ONLY when the codex
+  # harness is a build target (<TEAM>-296 — codex now builds on Windows): a
+  # claude-only operator must not need a second AI harness installed to bootstrap.
+  # Mirrors bootstrap.sh check_clis; keep in lockstep per the inventory-coupling
+  # rule. $Harness is lowercased at accumulation (CODEX == codex), so an exact
+  # -contains test is case-safe and avoids false matches on tokens like 'codex2'.
   $required = @('gh','jq','rg')
+  if ($Harness -contains 'codex') { $required = @('codex') + $required }
   foreach ($name in $required) {
     $min = $cliMin[$name]
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
