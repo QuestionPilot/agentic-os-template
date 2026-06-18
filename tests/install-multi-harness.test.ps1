@@ -1,14 +1,13 @@
 #Requires -Version 7
 # tests/install-multi-harness.test.ps1 — install.ps1 repeatable --harness.
 #
-# Twin of tests/install-multi-harness.test.sh, but the behavior is intentionally
-# ASYMMETRIC: the bash twin builds all supported harnesses; the Windows-native
-# install.ps1 builds claude + codex and WARN-skips hermes in a multi-harness run
-# (<TEAM>-296 — single `--harness hermes` keeps the hard exit-1 graceful reject,
-# pinned in install.test.ps1). This file pins the multi-harness behavior:
+# Twin of tests/install-multi-harness.test.sh. install.ps1 now builds claude,
+# codex, AND hermes on Windows (<TEAM>-296), so a multi-harness run builds every
+# requested harness (no WARN-skip); a genuinely unknown harness name is rejected
+# (pinned in install.test.ps1). This file pins the multi-harness behavior:
 #
 # 1. `--harness claude --harness codex` builds BOTH, exit 0; `--harness claude
-#    --harness hermes` builds claude, warn-skips hermes, exit 0.
+#    --harness hermes` builds BOTH, exit 0.
 # 2. Reversed order behaves the same.
 # 3. A repeated harness dedupes (builds once).
 # 4. --out cannot be combined with multiple --harness.
@@ -22,7 +21,7 @@ $INSTALL_PS1 = Join-Path $env:REPO_ROOT 'scripts' 'install.ps1'
 
 Assert-File 'install-multi-harness.test: scripts/install.ps1 exists' $INSTALL_PS1
 if (-not (Test-Path -LiteralPath $INSTALL_PS1 -PathType Leaf)) {
-    _Skip 'install-multi-harness.test: --harness claude --harness codex builds both, --harness hermes skips' 'install.ps1 missing'
+    _Skip 'install-multi-harness.test: --harness claude --harness codex/hermes builds all requested' 'install.ps1 missing'
     return
 }
 
@@ -65,11 +64,9 @@ try {
     Assert-File 'install-multi-harness.test: multi-harness builds the claude entrypoint' (Join-Path $cc1 'CLAUDE.md')
     Assert-File 'install-multi-harness.test: multi-harness builds the codex entrypoint'  (Join-Path $cx1 'AGENTS.md')
 
-    # --- 1b. --harness claude --harness hermes: claude builds, hermes WARN-skip -
-    # hermes is the harness whose Windows port is still deferred (<TEAM>-296), so a
-    # multi-harness run WARN-skips it (exit 0, claude still builds) rather than
-    # aborting. HERMES_HOME is set so the skip is provably a skip, not "HERMES_HOME
-    # unset".
+    # --- 1b. --harness claude --harness hermes: BOTH build (hermes now ported) -
+    # <TEAM>-296: hermes builds natively on Windows now, so a multi-harness run
+    # installs both targets (claude CLAUDE.md + hermes SOUL.md), exit 0.
     $cc1b  = Join-Path $tmpRoot 'cc1b'
     $hm1b  = Join-Path $tmpRoot 'hm1b'
     $env1b = Join-Path $tmpRoot 'env1b.local.env'
@@ -81,17 +78,11 @@ try {
         "OBSIDIAN_VAULT_PATH=`"$vault`""
     ) -join "`n") + "`n"), $utf8NoBom1b)
     $env:AI_CONFIG_LOCAL_ENV = $env1b
-    $out1b  = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --harness hermes 2>&1
+    $null   = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --harness hermes 2>&1
     $exit1b = $LASTEXITCODE
-    $out1bStr = if ($out1b -is [array]) { $out1b -join "`n" } else { [string]$out1b }
     Assert-Eq 'install-multi-harness.test: --harness claude --harness hermes exits 0' '0' "$exit1b"
-    Assert-File 'install-multi-harness.test: multi-harness builds claude alongside skipped hermes' (Join-Path $cc1b 'CLAUDE.md')
-    Assert-Contains 'install-multi-harness.test: multi-harness WARN-skips hermes (message)' $out1bStr 'hermes harness is not yet supported on Windows'
-    if (Test-Path -LiteralPath (Join-Path $hm1b 'SOUL.md')) {
-        _Fail 'install-multi-harness.test: hermes is NOT built (warn-skipped)' 'SOUL.md present in HERMES_HOME'
-    } else {
-        _Pass 'install-multi-harness.test: hermes is NOT built (warn-skipped)'
-    }
+    Assert-File 'install-multi-harness.test: multi-harness builds the claude entrypoint (with hermes)' (Join-Path $cc1b 'CLAUDE.md')
+    Assert-File 'install-multi-harness.test: multi-harness builds the hermes entrypoint'              (Join-Path $hm1b 'SOUL.md')
 
     # --- 2. Reversed order behaves the same -----------------------------------
     $cc2  = Join-Path $tmpRoot 'cc2'
