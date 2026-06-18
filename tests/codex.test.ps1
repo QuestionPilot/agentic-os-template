@@ -125,6 +125,32 @@ try {
         # PS twin: command is 'pwsh', the hook path is the LAST element of args.
         $cx_cmdpath = if ($cx_hj) { @($cx_hj.hooks.PreToolUse[0].hooks[0].args)[-1] } else { '' }
         Assert-Contains 'codex.test: codex PreToolUse command points at target hooks dir' (ConvertTo-Slash $cx_cmdpath) ((ConvertTo-Slash $CX_OUT) + '/hooks/session-agent.ps1')
+        # SessionStart is wired unconditionally for EVERY harness (codex included)
+        # at install.ps1's non-capability Add-Hook — NOT via Resolve-HookForClass,
+        # which only carries enforcement classes. Assert the TARGET + matcher (not
+        # just the event key) so this proves framework-surface.ps1 is actually wired
+        # into the codex hooks.json, and self-documents the routing.
+        $cx_ss_matcher = if ($cx_hj) { $cx_hj.hooks.SessionStart[0].matcher } else { '' }
+        Assert-Eq 'codex.test: codex SessionStart matcher is startup|clear|compact' 'startup|clear|compact' "$cx_ss_matcher"
+        $cx_ss_path = if ($cx_hj) { @($cx_hj.hooks.SessionStart[0].hooks[0].args)[-1] } else { '' }
+        Assert-Contains 'codex.test: codex SessionStart command points at framework-surface.ps1' (ConvertTo-Slash $cx_ss_path) ((ConvertTo-Slash $CX_OUT) + '/hooks/framework-surface.ps1')
+        # Every codex hook entry uses the pwsh launcher shape EXACTLY: command
+        # 'pwsh' + args ['-NoProfile','-File','<abs>.ps1']. A bare .ps1 command path
+        # (the install.sh shape) is non-executable on Windows — pin the exact shape
+        # so an install.sh-style regression cannot pass (parity with the claude
+        # exact-args-shape assertion in install.test.ps1).
+        $cx_shape_bad = 0
+        if ($cx_hj) {
+            foreach ($ev in $cx_hj.hooks.PSObject.Properties.Name) {
+                foreach ($me in $cx_hj.hooks.$ev) {
+                    foreach ($hk in $me.hooks) {
+                        $a = @($hk.args)
+                        if ($hk.command -ne 'pwsh' -or $a.Count -ne 3 -or $a[0] -ne '-NoProfile' -or $a[1] -ne '-File' -or ($a[2] -notlike '*.ps1')) { $cx_shape_bad++ }
+                    }
+                }
+            }
+        }
+        Assert-Eq 'codex.test: codex hook entries use the exact pwsh -NoProfile -File <abs>.ps1 launcher shape' '0' "$cx_shape_bad"
     } else {
         foreach ($lbl in @(
             'codex.test: codex hooks.json is valid JSON',
@@ -132,7 +158,10 @@ try {
             'codex.test: codex hooks.json wires SessionStart',
             'codex.test: codex hooks.json does NOT wire a Stop hook',
             'codex.test: codex PreToolUse matcher is apply_patch',
-            'codex.test: codex PreToolUse command points at target hooks dir')) {
+            'codex.test: codex PreToolUse command points at target hooks dir',
+            'codex.test: codex SessionStart matcher is startup|clear|compact',
+            'codex.test: codex SessionStart command points at framework-surface.ps1',
+            'codex.test: codex hook entries use the exact pwsh -NoProfile -File <abs>.ps1 launcher shape')) {
             _Skip $lbl 'hooks.json not built'
         }
     }
