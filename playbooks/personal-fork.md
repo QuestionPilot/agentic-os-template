@@ -36,38 +36,51 @@ is your framework now.
 
 ## Everything in one folder (co-located operation)
 
-By default the harness config dirs (`.claude`, `.codex`, `.hermes`) live under
-your home directory. To run everything out of the framework folder instead — so
-your skills, projects, short-term memory, and all harnesses are co-located — point
-the config-dir variables at gitignored subdirs of the repo. In `local.env`:
-
-```bash
-# Set the framework folder once, then co-locate each harness's config dir under it.
-AI_CONFIG_DIR="/path/to/MyAgenticOS"
-CLAUDE_CONFIG_DIR="$AI_CONFIG_DIR/.claude"
-CODEX_HOME="$AI_CONFIG_DIR/.codex"
-HERMES_HOME="$AI_CONFIG_DIR/.hermes"
-```
-
-Then re-run `bash scripts/install.sh --harness claude` (repeat per harness). The
-compiled config and your runtime state render into those dirs; `.gitignore`
-already ignores those harness config dirs so they are never staged; and
-`scripts/validate.sh` recognizes a config dir that **is** your configured target
-as legitimate runtime state rather than a leak.
+This is the **default** for the claude and codex harnesses: a fresh
+`bash scripts/bootstrap.sh` (or `pwsh … bootstrap.ps1`) renders each harness's
+config into a gitignored dot-dir *inside the framework folder* — so your skills,
+projects, and short-term memory are co-located with the source. The mechanism:
+bootstrap defaults `CLAUDE_CONFIG_DIR` / `CODEX_HOME` to `$AI_CONFIG_DIR/.claude`
+and `$AI_CONFIG_DIR/.codex` (where `$AI_CONFIG_DIR` is the repo root) whenever you
+have not set them, and exports the resolved paths to your shell (`~/.zshenv`) /
+User environment so the CLIs pick them up. `.gitignore` already ignores those
+dirs, and `scripts/validate.sh` recognizes a config dir that **is** your
+configured target as legitimate runtime state rather than a leak.
 
 The resulting layout:
 
 ```
 MyAgenticOS/                          ← AI_CONFIG_DIR (the framework folder)
 ├── core/  capabilities/  skills/     ← framework SOURCE (tracked)
-├── CLAUDE_CONFIG_DIR                 ← gitignored: compiled output + projects + memory
-├── CODEX_HOME                        ← gitignored
-├── HERMES_HOME                       ← gitignored
+├── CLAUDE_CONFIG_DIR                 ← gitignored dot-dir: compiled output + projects + memory
+├── CODEX_HOME                        ← gitignored dot-dir
 └── local.env
 ```
 
-(Each config-dir line is the gitignored target you pointed the matching variable
-at — conventionally a dot-dir under the repo.)
+(Each config-dir line is the gitignored target — conventionally a dot-dir under
+the repo, e.g. the `$AI_CONFIG_DIR/.claude` / `$AI_CONFIG_DIR/.codex` defaults
+bootstrap fills in.)
+
+**Opt out — the maintainer's home-dir model.** To put config under your home dir
+(`~/.claude`, `~/.codex`) instead — e.g. as the upstream maintainer who keeps the
+repo clean for pushes — run bootstrap with `--scattered` (`-Scattered` on
+Windows), or set the absolute paths explicitly in `local.env` / via the
+per-harness flags. Explicit values always win over the co-located default.
+
+**Hermes is the exception — it is never co-located.** `~/.hermes` is a live
+desktop-application home (databases, auth tokens, a bundled runtime, the app's
+own source checkout, native skills), and the Hermes app discovers it at its OWN
+default path — NOT via `HERMES_HOME`, which the framework uses only as a build
+target. Pointing `HERMES_HOME` at a repo subdir would render the spine into a dir
+the GUI never reads (and drag app state into the repo tree), so `HERMES_HOME`
+stays at `~/.hermes`. `--scattered` does not affect it.
+
+**Desktop-app limit (macOS).** The co-located export lives in `~/.zshenv`, which
+**CLI** sessions read. macOS apps launched from Finder do not inherit shell env,
+so a Finder-launched Claude desktop session reads the home-dir default
+(`~/.claude`) unless you also set `CLAUDE_CONFIG_DIR` at the OS level
+(`launchctl setenv`, or a LaunchAgent). Windows has no such gap — bootstrap.ps1
+writes the User-scope env var, which GUI apps do read.
 
 **Co-locate into the dot-subdirs, never the repo root itself.** Pointing a config
 dir at the repo root would collide with the repo's own `skills/` source and trip

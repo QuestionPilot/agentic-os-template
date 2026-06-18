@@ -19,6 +19,9 @@
 #                          multi-harness arg handling here is a tracked follow-on.
 #   -Check                 read-only — detect requirements, report, exit 1 on failures
 #   -DryRun                print mutations without executing them
+#   -Scattered             opt out of the co-located default: put claude/codex config
+#                          under your home dir (~\.claude, ~\.codex) instead of in the
+#                          framework folder. For the maintainer's clean-push clones.
 #   -ClaudeConfigDir <d>   override CLAUDE_CONFIG_DIR
 #   -VaultDir <d>          override OBSIDIAN_VAULT_PATH
 #   -CodexHome <d>         override CODEX_HOME (used when -Harness codex builds on
@@ -31,6 +34,7 @@ param(
   [string[]]$Harness = @("claude"),
   [switch]$Check,
   [switch]$DryRun,
+  [switch]$Scattered,
   [string]$ClaudeConfigDir = "",
   [string]$VaultDir = "",
   [string]$CodexHome = "",
@@ -200,13 +204,21 @@ function Invoke-InstallClis {
   }
 }
 
+function Set-UserEnvVar([string]$name, [string]$value) {
+  # Generalized core of Set-ConfigDirEnv: co-located operation (<TEAM>-297) needs
+  # CODEX_HOME persisted to the User environment the same way CLAUDE_CONFIG_DIR
+  # always has been, so the codex CLI finds the in-folder config dir. User-scope
+  # SetEnvironmentVariable reaches GUI apps too (the Windows GUI bridge — macOS
+  # has no equivalent, hence the documented CLI-only ceiling there).
+  if (-not $value) { bs_warn "$name not set — skipping User env write"; return }
+  $current = [System.Environment]::GetEnvironmentVariable($name, "User")
+  if ($current -eq $value) { bs_info "$name already set correctly"; return }
+  if (would_mutate "setenv User $name=$value") { return }
+  [System.Environment]::SetEnvironmentVariable($name, $value, "User")
+  bs_info "Set $name=$value in User environment"
+}
 function Set-ConfigDirEnv([string]$configDir) {
-  if (-not $configDir) { bs_warn "CLAUDE_CONFIG_DIR not set — skipping User env write"; return }
-  $current = [System.Environment]::GetEnvironmentVariable("CLAUDE_CONFIG_DIR", "User")
-  if ($current -eq $configDir) { bs_info "CLAUDE_CONFIG_DIR already set correctly"; return }
-  if (would_mutate "setenv User CLAUDE_CONFIG_DIR=$configDir") { return }
-  [System.Environment]::SetEnvironmentVariable("CLAUDE_CONFIG_DIR", $configDir, "User")
-  bs_info "Set CLAUDE_CONFIG_DIR=$configDir in User environment"
+  Set-UserEnvVar 'CLAUDE_CONFIG_DIR' $configDir
 }
 
 function Invoke-SeedLocalEnv {
@@ -216,10 +228,12 @@ function Invoke-SeedLocalEnv {
   if (would_mutate "copy $tmpl -> $localEnv") { return }
   Copy-Item $tmpl $localEnv
   bs_info "Created local.env from template."
+  bs_info "Leave CLAUDE_CONFIG_DIR / CODEX_HOME empty to use the co-located defaults"
+  bs_info "(dirs under the framework folder); run with -Scattered for ~\.claude, ~\.codex."
   # Pause for the user to fill in local.env before install runs (parity with
   # bootstrap.sh); skip the prompt in non-interactive sessions.
   if ([Environment]::UserInteractive) {
-    Read-Host "bootstrap.ps1: Edit $localEnv now, then press Enter to continue" | Out-Null
+    Read-Host "bootstrap.ps1: Edit $localEnv now (or press Enter for co-located defaults)" | Out-Null
   } else {
     bs_info "(non-interactive — fill in $localEnv then re-run bootstrap.)"
   }
@@ -357,6 +371,43 @@ function Write-AuthChecklist {
   Write-Host ""
 }
 
+function Resolve-ConfigTargets {
+  # Twin of bootstrap.sh resolve_config_targets (<TEAM>-297). Fill the stateless
+  # claude + codex targets: co-located ($env:AI_CONFIG_DIR\.claude|.codex) by
+  # default, or the home dir under -Scattered. -Scattered applies when the target is
+  # unset OR still at the co-located default (un-doing a prior default run), but
+  # NEVER over an explicit -ClaudeConfigDir/-CodexHome flag or an operator-authored
+  # custom path. Hermes is excluded. Called twice in the main flow (before persist +
+  # after the reload) so a -DryRun — where persist is skipped and the reload
+  # re-imports empty values — still resolves. Idempotent. $ClaudeConfigDir /
+  # $CodexHome / $Scattered / $repoRoot are script-scoped + visible here.
+  if (-not $env:AI_CONFIG_DIR) { $env:AI_CONFIG_DIR = $repoRoot }
+  $coLocClaude = Join-Path $env:AI_CONFIG_DIR '.claude'
+  $coLocCodex  = Join-Path $env:AI_CONFIG_DIR '.codex'
+  if ($Scattered) {
+    $bsHome = [Environment]::GetFolderPath('UserProfile')
+    $claudeDefault = Join-Path $bsHome '.claude'
+    $codexDefault  = Join-Path $bsHome '.codex'
+  } else {
+    $claudeDefault = $coLocClaude
+    $codexDefault  = $coLocCodex
+  }
+  if (-not $ClaudeConfigDir) {
+    if (-not $env:CLAUDE_CONFIG_DIR) {
+      $env:CLAUDE_CONFIG_DIR = $claudeDefault
+    } elseif ($Scattered -and $env:CLAUDE_CONFIG_DIR -eq $coLocClaude) {
+      $env:CLAUDE_CONFIG_DIR = $claudeDefault   # un-do a prior co-located default
+    }
+  }
+  if (-not $CodexHome) {
+    if (-not $env:CODEX_HOME) {
+      $env:CODEX_HOME = $codexDefault
+    } elseif ($Scattered -and $env:CODEX_HOME -eq $coLocCodex) {
+      $env:CODEX_HOME = $codexDefault
+    }
+  }
+}
+
 # --- main ---
 # Lowercase harness names on accumulation — parity with bootstrap.sh's --harness
 # fold + install.ps1 (CLAUDE == claude). Every downstream consumer
@@ -380,6 +431,13 @@ if ($ClaudeConfigDir) { $env:CLAUDE_CONFIG_DIR  = $ClaudeConfigDir }
 if ($VaultDir)        { $env:OBSIDIAN_VAULT_PATH = $VaultDir }
 if ($CodexHome)       { $env:CODEX_HOME          = $CodexHome }
 if ($HermesHome)      { $env:HERMES_HOME         = $HermesHome }
+
+# Co-located-by-default (<TEAM>-297) — resolve the stateless claude+codex config
+# targets (see Resolve-ConfigTargets). Called here so Persist-LocalEnvValues writes
+# the resolved value into local.env, AND again after the reload below so a -DryRun
+# (where persist is skipped and the reload re-imports an existing local.env's empty
+# values) still resolves the target rather than previewing an empty one.
+Resolve-ConfigTargets
 
 $exitCode = 0
 if (-not (Invoke-CheckClis))  { $exitCode = 1 }
@@ -405,8 +463,15 @@ if ($ClaudeConfigDir) { $env:CLAUDE_CONFIG_DIR  = $ClaudeConfigDir }
 if ($VaultDir)        { $env:OBSIDIAN_VAULT_PATH = $VaultDir }
 if ($CodexHome)       { $env:CODEX_HOME          = $CodexHome }
 if ($HermesHome)      { $env:HERMES_HOME         = $HermesHome }
-# Persist CLAUDE_CONFIG_DIR after local.env is seeded + reloaded.
+# Re-resolve after the reload (<TEAM>-297): in -DryRun the reload re-imports an
+# existing local.env's empty values, so re-apply the co-located default here too.
+Resolve-ConfigTargets
+# Persist CLAUDE_CONFIG_DIR + CODEX_HOME after local.env is seeded + reloaded
+# (<TEAM>-297) so a co-located codex dir is picked up by the codex CLI, not merely
+# built into the folder. User-scope reaches GUI apps too. Hermes has no env
+# export — the app reads its own home dir.
 Set-ConfigDirEnv $env:CLAUDE_CONFIG_DIR
+Set-UserEnvVar 'CODEX_HOME' $env:CODEX_HOME
 Invoke-RunInstall
 Invoke-SmokeTest
 Write-AuthChecklist
