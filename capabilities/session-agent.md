@@ -127,10 +127,15 @@ Orient:
 - Memory contradictions vs session-start commits: <one line per contradiction, or "none">
 - Vault: <one line of context from START.md>
 - Cross-issue Linear claim verification: <pass / mismatches found>
+- Safety posture: <default "safe"; name any active tightening from a session-guardrail skill or unattended-governance flag>
 ```
 
 Then proceed immediately to the routing steps (R1–R5 below) for the user's request.
 The orient summary + routing declaration both land in the same first response.
+
+The **Safety posture** line makes the run's posture visible at start; it defaults
+to `safe` and reports any active tightening, never a loosening — the contract is
+`core/operating-system.md` → Per-Run Safety Posture.
 
 ---
 
