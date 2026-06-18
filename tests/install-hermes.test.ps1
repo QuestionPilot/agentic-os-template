@@ -69,8 +69,8 @@ try {
     Assert-Contains 'install-hermes.test: hooks.yaml enables the agentic-os-hook-bridge plugin' $ih_yaml 'agentic-os-hook-bridge'
     # PS-twin: every hooks.yaml entry uses the pwsh launcher (a bare .ps1 path is
     # non-executable on Windows). Pin it so an install.sh bare-path regression fails.
-    Assert-Contains 'install-hermes.test: hooks.yaml uses the pwsh launcher command' $ih_yaml "command: 'pwsh'"
-    Assert-Contains 'install-hermes.test: hooks.yaml launches the .ps1 hooks via -File' $ih_yaml "'-File'"
+    Assert-Contains 'install-hermes.test: hooks.yaml uses the pwsh launcher command' $ih_yaml 'command: "pwsh"'
+    Assert-Contains 'install-hermes.test: hooks.yaml launches the .ps1 hooks via -File' $ih_yaml '"-File"'
 
     # --- T3: drift gate passes a fresh build + app-written exemption ----------
     Assert-Exit 'install-hermes.test: check-drift passes the fresh hermes build' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $IH_OUT
@@ -89,7 +89,11 @@ try {
     # overlay marker) must be STRIPPED to empty — not expanded into a second catalog,
     # not left literal — while normal prose + metacharacters render verbatim (PS
     # splices literally; no shell execution). Guards the SOUL-overlay edit.
-    $IH_OUT2  = Join-Path $IH_ROOT 'hermes-home2'
+    # F1 (cross-model panel): the apostrophe in this target name is deliberate —
+    # Windows usernames like O'Brien produce HERMES_HOME paths with a single quote,
+    # which must NOT break the generated hooks.yaml (the hook paths are double-quoted
+    # YAML, so an apostrophe is literal; a single-quoted scalar would break on it).
+    $IH_OUT2  = Join-Path $IH_ROOT "hermes-home2'apos"
     $IH_ENV2  = Join-Path $IH_ROOT 'local2.env'
     $IH_IDENT = Join-Path $IH_ROOT 'local.soul-identity.md'
     New-Item -ItemType Directory -Path $IH_OUT2 -Force | Out-Null
@@ -116,6 +120,11 @@ try {
     Assert-Contains 'install-hermes.test: an inline overlay marker is stripped to empty' $ih_soul2 'Overlay marker  inline.'
     Assert-Contains 'install-hermes.test: shell metacharacters in the identity render verbatim (not executed)' $ih_soul2 'echo SUBSHELL) verbatim.'
     Assert-Contains 'install-hermes.test: the operating-section spine directive still renders' $ih_soul2 '/session-agent'
+    # F1: the apostrophe-containing hook path is wrapped in DOUBLE quotes (a closing
+    # `"` right after the .ps1 path), so the apostrophe is literal and the YAML stays
+    # valid — a single-quoted scalar would have closed early on the apostrophe.
+    $ih_yaml2 = if (Test-Path -LiteralPath (Join-Path $IH_OUT2 'hooks/hooks.yaml')) { Get-Content -Raw -LiteralPath (Join-Path $IH_OUT2 'hooks/hooks.yaml') } else { '' }
+    Assert-Contains 'install-hermes.test: hooks.yaml double-quotes an apostrophe-containing hook path (valid YAML)' $ih_yaml2 (($IH_OUT2 -replace '\\', '/') + '/hooks/session-agent.ps1"')
     Remove-Item -LiteralPath $IH_OUT2, $IH_ENV2, $IH_IDENT -Recurse -Force -ErrorAction SilentlyContinue
 
     # --- T5/T6/T7: hermes hook behaviour — _Skip on the Windows lane ----------

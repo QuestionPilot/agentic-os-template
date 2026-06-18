@@ -824,11 +824,14 @@ function New-CodexHooks {
 #    since a .ps1 path is non-executable on Windows. Hermes's config.yaml hooks are
 #    Claude-Code-compatible (adapter Fact 2), so the same command/args shape the
 #    claude New-Settings ships applies.
-#  - The hook path is forward-slashed: pwsh -File accepts '/' on Windows, and it
-#    sidesteps YAML backslash-escaping (a '\' in a double-quoted YAML scalar is an
-#    escape). command/args values are single-quoted YAML (literal — backslash-safe
-#    even if a future path keeps separators); the matcher stays double-quoted
-#    (regex, no backslashes), matching the bash snippet.
+#  - The hook path is forward-slashed: pwsh -File accepts '/' on Windows, and
+#    forward slashes mean the baked path carries NO backslashes — so command/args
+#    use DOUBLE-quoted YAML scalars. (A backslash would be a YAML escape; an
+#    apostrophe in the path — common in Windows usernames like O'Brien — is literal
+#    in double-quotes but would PREMATURELY CLOSE a single-quoted scalar unless
+#    doubled. Windows forbids '"' in path names, so double-quotes are fully safe.)
+#    The matcher is double-quoted too (regex, no backslashes), matching the bash
+#    snippet's quoting.
 # Events are grouped (YAML forbids duplicate mapping keys) in first-seen order,
 # identical to the bash double-loop, so the snippet structure stays in parity.
 # ---------------------------------------------------------------------------
@@ -849,14 +852,14 @@ function New-HermesHooks {
             $hookAbs = (Join-Path $TARGET 'hooks' $e.script) -replace '\\', '/'
             if ($e.matcher) {
                 $lines.Add("    - matcher: `"$($e.matcher)`"")
-                $lines.Add("      command: 'pwsh'")
+                $lines.Add("      command: `"pwsh`"")
             } else {
-                $lines.Add("    - command: 'pwsh'")
+                $lines.Add("    - command: `"pwsh`"")
             }
             $lines.Add('      args:')
-            $lines.Add("        - '-NoProfile'")
-            $lines.Add("        - '-File'")
-            $lines.Add("        - '$hookAbs'")
+            $lines.Add("        - `"-NoProfile`"")
+            $lines.Add("        - `"-File`"")
+            $lines.Add("        - `"$hookAbs`"")
         }
     }
     $lines.Add('plugins:')
