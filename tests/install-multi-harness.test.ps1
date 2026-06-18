@@ -2,12 +2,13 @@
 # tests/install-multi-harness.test.ps1 — install.ps1 repeatable --harness.
 #
 # Twin of tests/install-multi-harness.test.sh, but the behavior is intentionally
-# ASYMMETRIC: the bash twin builds BOTH claude and codex; the Windows-native
-# install.ps1 builds claude only and WARN-skips codex in a multi-harness run
-# (single `--harness codex` keeps the hard exit-1 graceful reject — that path is
+# ASYMMETRIC: the bash twin builds all supported harnesses; the Windows-native
+# install.ps1 builds claude + codex and WARN-skips hermes in a multi-harness run
+# (<TEAM>-296 — single `--harness hermes` keeps the hard exit-1 graceful reject,
 # pinned in install.test.ps1). This file pins the multi-harness behavior:
 #
-# 1. `--harness claude --harness codex` builds claude, warn-skips codex, exit 0.
+# 1. `--harness claude --harness codex` builds BOTH, exit 0; `--harness claude
+#    --harness hermes` builds claude, warn-skips hermes, exit 0.
 # 2. Reversed order behaves the same.
 # 3. A repeated harness dedupes (builds once).
 # 4. --out cannot be combined with multiple --harness.
@@ -21,12 +22,13 @@ $INSTALL_PS1 = Join-Path $env:REPO_ROOT 'scripts' 'install.ps1'
 
 Assert-File 'install-multi-harness.test: scripts/install.ps1 exists' $INSTALL_PS1
 if (-not (Test-Path -LiteralPath $INSTALL_PS1 -PathType Leaf)) {
-    _Skip 'install-multi-harness.test: --harness claude --harness codex builds claude, skips codex' 'install.ps1 missing'
+    _Skip 'install-multi-harness.test: --harness claude --harness codex builds both, --harness hermes skips' 'install.ps1 missing'
     return
 }
 
 # Dual local.env writer (LF + no-BOM, like Write-LocalEnvFixture) — sets BOTH
-# harness targets so the codex skip is provably a skip, not a "CODEX_HOME unset".
+# harness targets so a claude+codex multi-harness run builds both, not a
+# "CODEX_HOME unset" failure for the codex child.
 function Write-DualEnvFixture {
     param(
         [Parameter(Mandatory)][string]$EnvFile,
@@ -47,7 +49,7 @@ $tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("que250-multi-harness-" + [Guid
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 
 try {
-    # --- 1. --harness claude --harness codex: claude builds, codex warn-skip --
+    # --- 1. --harness claude --harness codex: BOTH build (codex now ported) ----
     $cc1   = Join-Path $tmpRoot 'cc1'
     $cx1   = Join-Path $tmpRoot 'cx1'
     $vault = Join-Path $tmpRoot 'vault'
@@ -56,17 +58,39 @@ try {
     Write-DualEnvFixture -EnvFile $env1 -ClaudeDir $cc1 -CodexHome $cx1 -VaultDir $vault
 
     $env:AI_CONFIG_LOCAL_ENV = $env1
-    $out1  = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --harness codex 2>&1
+    $null  = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --harness codex 2>&1
     $exit1 = $LASTEXITCODE
-    $out1Str = if ($out1 -is [array]) { $out1 -join "`n" } else { [string]$out1 }
 
     Assert-Eq 'install-multi-harness.test: --harness claude --harness codex exits 0' '0' "$exit1"
     Assert-File 'install-multi-harness.test: multi-harness builds the claude entrypoint' (Join-Path $cc1 'CLAUDE.md')
-    Assert-Contains 'install-multi-harness.test: multi-harness WARN-skips codex (message)' $out1Str 'codex harness is not yet supported on Windows'
-    if (Test-Path -LiteralPath (Join-Path $cx1 'AGENTS.md')) {
-        _Fail 'install-multi-harness.test: codex is NOT built (warn-skipped)' 'AGENTS.md present in CODEX_HOME'
+    Assert-File 'install-multi-harness.test: multi-harness builds the codex entrypoint'  (Join-Path $cx1 'AGENTS.md')
+
+    # --- 1b. --harness claude --harness hermes: claude builds, hermes WARN-skip -
+    # hermes is the harness whose Windows port is still deferred (<TEAM>-296), so a
+    # multi-harness run WARN-skips it (exit 0, claude still builds) rather than
+    # aborting. HERMES_HOME is set so the skip is provably a skip, not "HERMES_HOME
+    # unset".
+    $cc1b  = Join-Path $tmpRoot 'cc1b'
+    $hm1b  = Join-Path $tmpRoot 'hm1b'
+    $env1b = Join-Path $tmpRoot 'env1b.local.env'
+    New-Item -ItemType Directory -Path $cc1b, $hm1b -Force | Out-Null
+    $utf8NoBom1b = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($env1b, ((@(
+        "CLAUDE_CONFIG_DIR=`"$cc1b`"",
+        "HERMES_HOME=`"$hm1b`"",
+        "OBSIDIAN_VAULT_PATH=`"$vault`""
+    ) -join "`n") + "`n"), $utf8NoBom1b)
+    $env:AI_CONFIG_LOCAL_ENV = $env1b
+    $out1b  = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --harness hermes 2>&1
+    $exit1b = $LASTEXITCODE
+    $out1bStr = if ($out1b -is [array]) { $out1b -join "`n" } else { [string]$out1b }
+    Assert-Eq 'install-multi-harness.test: --harness claude --harness hermes exits 0' '0' "$exit1b"
+    Assert-File 'install-multi-harness.test: multi-harness builds claude alongside skipped hermes' (Join-Path $cc1b 'CLAUDE.md')
+    Assert-Contains 'install-multi-harness.test: multi-harness WARN-skips hermes (message)' $out1bStr 'hermes harness is not yet supported on Windows'
+    if (Test-Path -LiteralPath (Join-Path $hm1b 'SOUL.md')) {
+        _Fail 'install-multi-harness.test: hermes is NOT built (warn-skipped)' 'SOUL.md present in HERMES_HOME'
     } else {
-        _Pass 'install-multi-harness.test: codex is NOT built (warn-skipped)'
+        _Pass 'install-multi-harness.test: hermes is NOT built (warn-skipped)'
     }
 
     # --- 2. Reversed order behaves the same -----------------------------------

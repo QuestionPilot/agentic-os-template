@@ -8,16 +8,16 @@
 
     Usage: pwsh scripts/install.ps1 [-Harness <name>] [--harness <name>]... [-Out <dir>] [-BuildOnly]
 
-    -Harness <name>  target harness (default: claude). WINDOWS: claude only.
-                     The codex harness is gracefully rejected on Windows with
+    -Harness <name>  target harness (default: claude). WINDOWS: claude + codex.
+                     The hermes harness is gracefully rejected on Windows with
                      an actionable message; the macOS/Linux bash twin
-                     install.sh supports codex. Full Windows codex parity is a
+                     install.sh supports hermes. Full Windows hermes parity is a
                      tracked follow-on.
                      Repeatable via the POSIX --harness form (PowerShell binds
                      the native -Harness to a single value): the documented
                      `--harness claude --harness codex` builds every requested
-                     harness in one pass — on Windows codex is WARN-skipped so
-                     claude still installs.
+                     harness in one pass — on Windows hermes is WARN-skipped so
+                     claude + codex still install.
     -Out <dir>       override build target (default: $env:CLAUDE_CONFIG_DIR
                      from local.env). Single-harness only — cannot be combined
                      with more than one --harness.
@@ -32,8 +32,8 @@
     filesystem, validates, then renames the managed subtrees into place.
 
 .NOTES
-    Compiles the claude harness end-to-end on native Windows. The codex harness
-    is gracefully rejected on Windows until its port lands; the
+    Compiles the claude + codex harnesses end-to-end on native Windows. The
+    hermes harness is gracefully rejected on Windows until its port lands; the
     macOS/Linux bash twin install.sh supports it.
 
     <TEAM>-135: per-subdir swap (parity with install.sh's swap_in PER_SUBDIR_PATHS
@@ -42,9 +42,10 @@
     repeated runs instead of clobbering them through a wholesale-directory backup
     that a 2nd consecutive run would overwrite. The set of per-subdir paths is
     $Script:PerSubdirPaths (skills, plugins) — parity with install.sh. On Windows
-    the harness is claude-only, so the plugins path is dormant until the hermes
-    port lands; it is mirrored for parity, and the N1 collision warning runs live
-    on claude skills/. See Move-SubdirsIntoTarget below.
+    only claude + codex build (neither manages plugins — only hermes does), so the
+    plugins path stays dormant until the hermes port lands; it is mirrored for
+    parity, and the N1 collision warning runs live on claude/codex skills/. See
+    Move-SubdirsIntoTarget below.
 
     <TEAM>-109 PS-5: $PSScriptRoot empty-string fallback applied.
     <TEAM>-100 hook-command shape: generated settings.json hook commands use
@@ -180,19 +181,20 @@ if ($harnessList.Count -gt 1) {
     if (-not $pwshExe) { $pwshExe = 'pwsh' }
     $built = 0
     foreach ($h in $harnessList) {
-        if ($h -in @('codex', 'hermes')) {
-            # CONTRACT (deliberate bash↔PS asymmetry): the Windows-native twin
-            # builds claude only. In a multi-harness run codex is WARN-skipped —
-            # NOT a hard failure — so the documented `--harness claude --harness
-            # codex` still installs claude on Windows (best-effort) rather than
-            # aborting it. The warning to stderr is the signal that codex was not
-            # built; the command still exits 0 as long as a supported harness
-            # built (operators can't build codex on Windows, so failing the whole
-            # command would only block the claude install for no actionable
-            # reason). A SINGLE `-Harness codex` still hard-rejects (exit 1) at
-            # the resolution block below. The macOS/Linux bash twin builds codex;
-            # full Windows codex parity is a tracked follow-on.
-            Warn "$h harness is not yet supported on Windows; skipping it (claude still builds — the macOS/Linux install.sh supports codex and hermes; full Windows parity is a tracked follow-on)"
+        if ($h -eq 'hermes') {
+            # CONTRACT (deliberate bash↔PS asymmetry): the Windows-native twin builds
+            # claude + codex but not yet hermes. In a multi-harness run hermes is
+            # WARN-skipped — NOT a hard failure — so the documented `--harness claude
+            # --harness codex --harness hermes` still installs claude + codex on
+            # Windows (best-effort) rather than aborting them. The warning to stderr
+            # is the signal that hermes was not built; the command still exits 0 as
+            # long as a supported harness built (operators can't build hermes on
+            # Windows yet, so failing the whole command would only block the
+            # claude/codex install for no actionable reason). A SINGLE `-Harness
+            # hermes` still hard-rejects (exit 1) at the resolution block below. The
+            # macOS/Linux bash twin builds hermes; full Windows hermes parity is a
+            # tracked follow-on.
+            Warn "hermes harness is not yet supported on Windows; skipping it (claude + codex still build — the macOS/Linux install.sh supports hermes; full Windows parity is a tracked follow-on)"
             continue
         }
         $childArgs = @('-NoProfile', '-File', $PSCommandPath, '--harness', $h)
@@ -201,7 +203,7 @@ if ($harnessList.Count -gt 1) {
         $built++
     }
     if ($built -eq 0) {
-        Die "no supported harness was built (requested: $($harnessList -join ', ')); the Windows twin supports claude only — re-run with -Harness claude (the macOS/Linux install.sh supports codex)"
+        Die "no supported harness was built (requested: $($harnessList -join ', ')); the Windows twin supports claude + codex — re-run with one of those (the macOS/Linux install.sh also supports hermes)"
     }
     exit 0
 }
@@ -324,23 +326,24 @@ if (-not $env:AI_CONFIG_DIR) {
 # Harness resolution
 # ---------------------------------------------------------------------------
 
-# <TEAM>-134: the Windows install.ps1 currently ports the claude harness only.
-# The codex harness is documented as a bootstrap.ps1 option but its Windows
-# port (codex hooks.json shape, AGENTS.md entrypoint, apply_patch matcher, the
-# interactive hooks-trust step) is not yet implemented. Reject it GRACEFULLY
-# with an actionable message instead of hard-crashing on a half-resolved
-# CODEX_HOME path. The macOS/Linux bash twin (install.sh) supports codex; full
-# Windows parity is tracked as a follow-on. Reject BEFORE resolving the target
-# env var so a fresh Windows operator who passes -Harness codex gets a clear
-# "use claude" instruction, not a confusing CODEX_HOME-not-set failure.
-if ($Harness -in @('codex', 'hermes')) {
-    Die "$Harness harness is not yet supported on Windows; re-run with -Harness claude (the macOS/Linux install.sh supports codex and hermes — full Windows parity is a tracked follow-on)"
+# <TEAM>-296: the Windows install.ps1 now ports claude + codex. The hermes harness
+# port (hooks.yaml shape, SOUL.md entrypoint + soul-identity overlay, the
+# agentic-os-hook-bridge desktop-app plugin, the 5-hook wiring, the steward
+# script-only copy, plugin-source hashing) is not yet implemented. Reject it
+# GRACEFULLY with an actionable message instead of hard-crashing on a
+# half-resolved HERMES_HOME path. The macOS/Linux bash twin (install.sh) supports
+# hermes; full Windows hermes parity is tracked as a follow-on. Reject BEFORE
+# resolving the target env var so a fresh Windows operator who passes
+# -Harness hermes gets a clear "use claude or codex" instruction, not a confusing
+# HERMES_HOME-not-set failure.
+if ($Harness -eq 'hermes') {
+    Die "hermes harness is not yet supported on Windows; re-run with -Harness claude or -Harness codex (the macOS/Linux install.sh supports hermes — full Windows parity is a tracked follow-on)"
 }
 
 $targetEnvVar = switch ($Harness) {
     'claude' { 'CLAUDE_CONFIG_DIR' }
     'codex'  { 'CODEX_HOME' }
-    default  { Die "unknown harness '$Harness' (known on Windows: claude)" }
+    default  { Die "unknown harness '$Harness' (known on Windows: claude, codex)" }
 }
 
 # Read the target env var by NAME. [Environment]::GetEnvironmentVariable returns
@@ -433,13 +436,17 @@ function Add-Hook {
 # hook_for_class — enforcement-class -> "script event matcher".
 function Resolve-HookForClass {
     param([Parameter(Mandatory)][string]$Class)
-    # PROTOTYPE: claude only. Each row mirrors install.sh hook_for_class.
+    # claude + codex on Windows. Each row mirrors install.sh hook_for_class.
     # Hook script names are .ps1 — the <TEAM>-100 Windows-native fix to the
-    # generated settings.json hook command shape.
+    # generated hook command shape. The codex matcher is `apply_patch` (codex
+    # file edits report tool_name "apply_patch"), event PreToolUse — mirrors
+    # install.sh:493 (codex:pre-edit-gate). hermes (pre_tool_call /
+    # write_file|patch|terminal) is a tracked follow-on.
     # `session-end-gate` was removed in <TEAM>-211 (closeout Stop hook removed;
     # closeout is now manual-fire) — no row, mirroring install.sh.
     $rows = @{
         'claude:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'Write|Edit|NotebookEdit' }
+        'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'apply_patch' }
     }
     $key = "${Harness}:${Class}"
     if (-not $rows.ContainsKey($key)) {
@@ -724,6 +731,49 @@ function New-Settings {
     if ($LASTEXITCODE -ne 0) { Die "failed to generate settings.json" }
     $merged = if ($mergedOut -is [array]) { $mergedOut -join "`n" } else { $mergedOut }
     Write-LfFile -Path $outSettings -Content $merged
+}
+
+# ---------------------------------------------------------------------------
+# generate_codex_hooks — emits the standalone codex hooks.json.
+#
+# Mirrors install.sh:565-587 (generate_codex_hooks). Each entry's `command` is
+# the PS-callable `pwsh` + `args: ["-NoProfile", "-File", "<abs>\hooks\<x>.ps1"]`
+# launcher shape (identical to New-Settings) — a bare `.ps1` path in `command` is
+# non-executable on Windows. Codex's hooks.json hook block is structurally
+# identical to Claude's settings.json hooks object (codex adapter Fact 2), so the
+# same launcher shape applies. The only structural differences from New-Settings:
+# a standalone `{hooks: ...}` envelope written to hooks.json (not merged into a
+# settings.base.json) and NO preserve-live overlay — codex has neither a base
+# settings file nor operator-owned preference keys to carry across re-renders.
+# ---------------------------------------------------------------------------
+
+function New-CodexHooks {
+    $hooksJson = '{}'
+    foreach ($rec in $Script:HookBlocks) {
+        # Absolute path in the FINAL target (not the temp build dir).
+        $hookAbs = Join-Path $TARGET 'hooks' $rec.script
+        $entryOut = & $script:JqBin -nc `
+            --arg matcher $rec.matcher `
+            --arg command 'pwsh' `
+            --arg flag1 '-NoProfile' `
+            --arg flag2 '-File' `
+            --arg hookpath $hookAbs `
+            '{matcher: $matcher, hooks: [{type: "command", command: $command, args: [$flag1, $flag2, $hookpath], timeout: 10}]}'
+        if ($LASTEXITCODE -ne 0) { Die "jq failed to construct codex hook entry" }
+        $entryJson = if ($entryOut -is [array]) { $entryOut -join '' } else { $entryOut }
+        $appendOut = $hooksJson | & $script:JqBin -c `
+            --arg event $rec.event `
+            --argjson entry $entryJson `
+            '.[$event] = ((.[$event] // []) + [$entry])'
+        if ($LASTEXITCODE -ne 0) { Die "jq failed to append codex hook entry" }
+        $hooksJson = if ($appendOut -is [array]) { $appendOut -join '' } else { $appendOut }
+    }
+
+    $outHooks = Join-Path $BUILD 'hooks.json'
+    $wrappedOut = & $script:JqBin -n --argjson hooks $hooksJson '{hooks: $hooks}'
+    if ($LASTEXITCODE -ne 0) { Die "failed to generate hooks.json" }
+    $wrapped = if ($wrappedOut -is [array]) { $wrappedOut -join "`n" } else { $wrappedOut }
+    Write-LfFile -Path $outHooks -Content $wrapped
 }
 
 # ---------------------------------------------------------------------------
@@ -1288,11 +1338,11 @@ function Restore-Backups {
 # ---------------------------------------------------------------------------
 
 # Managed paths swapped PER-SUBDIR instead of wholesale (mirrors install.sh's
-# PER_SUBDIR_PATHS). plugins is hermes-only, so it is never in the claude-only
+# PER_SUBDIR_PATHS). plugins is hermes-only, so it is never in the claude/codex
 # Windows ManagedPaths below and stays dormant here until the hermes port lands;
 # it is listed for parity with install.sh, and so the per-subdir swap, rollback,
 # crash-recovery, and cleanup all key off the same shared run-private root. The
-# N1 collision warning runs live on claude skills/.
+# N1 collision warning runs live on claude/codex skills/.
 $Script:PerSubdirPaths = @('skills', 'plugins')
 
 # Per-harness managed paths + entrypoints (mirrors install.sh:119-126).
@@ -1304,7 +1354,16 @@ switch ($Harness) {
             [pscustomobject]@{ tmpl = 'SKILLS.template.md'; out = 'SKILLS.md' }
         )
     }
-    default { Die "harness '$Harness' not implemented in prototype" }
+    'codex' {
+        # Mirrors install.sh:184-185 — codex manages a standalone hooks.json (not
+        # settings.json) and a single AGENTS.md entrypoint. The `plugins` per-subdir
+        # path stays dormant (codex has no managed plugins, same as claude).
+        $Script:ManagedPaths = @('skills', 'hooks', 'hooks.json', 'AGENTS.md', '.build-manifest.json')
+        $Script:Entrypoints  = @(
+            [pscustomobject]@{ tmpl = 'AGENTS.template.md'; out = 'AGENTS.md' }
+        )
+    }
+    default { Die "harness '$Harness' not implemented on Windows (known: claude, codex)" }
 }
 
 try {
@@ -1339,6 +1398,7 @@ try {
     # Wire hooks into the harness's native config file.
     switch ($Harness) {
         'claude' { New-Settings }
+        'codex'  { New-CodexHooks }
         default  { Die "harness '$Harness' has no settings generator" }
     }
 
@@ -1411,6 +1471,17 @@ try {
     Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
 
     [Console]::Error.WriteLine("install.ps1: built $Harness harness into $TARGET")
+
+    # The codex build is inert until the user trusts the generated hooks.json:
+    # Codex does not run a non-managed hooks.json until trusted via the interactive
+    # `/hooks` command. install.ps1 cannot trust hooks on the user's behalf, so it
+    # surfaces the step (codex adapter.md Fact 2 documents it as surfaced). Mirrors
+    # install.sh:1200-1204.
+    if ($Harness -eq 'codex') {
+        [Console]::Error.WriteLine('install.ps1: NEXT STEP — run the interactive `/hooks` command in codex once')
+        [Console]::Error.WriteLine("            to review and trust $TARGET\hooks.json; until trusted, the")
+        [Console]::Error.WriteLine('            enforcement hooks will not run. (codex exec runs no hooks at all.)')
+    }
 } finally {
     if (-not $Script:KeepBuild) {
         if ($BUILD -and (Test-Path -LiteralPath $BUILD)) {
