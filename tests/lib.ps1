@@ -201,6 +201,26 @@ function Write-CodexEnvFixture {
     [System.IO.File]::WriteAllText($EnvFile, $content, $utf8NoBom)
 }
 
+# Write-HermesEnvFixture <env-file> <hermes-home> [vault-dir]
+#
+# Mirrors `make_hermes_env` in tests/lib.sh. install.ps1 resolves the hermes build
+# target from HERMES_HOME; the generated SOUL.md references OBSIDIAN_VAULT_PATH, so
+# a fixture must supply it or the build fails on the empty-placeholder gate.
+function Write-HermesEnvFixture {
+    param(
+        [Parameter(Mandatory)][string]$EnvFile,
+        [Parameter(Mandatory)][string]$HermesHome,
+        [string]$VaultDir = '/tmp/test-vault'
+    )
+    $lines = @(
+        "HERMES_HOME=`"$HermesHome`"",
+        "OBSIDIAN_VAULT_PATH=`"$VaultDir`""
+    )
+    $content = ($lines -join "`n") + "`n"
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($EnvFile, $content, $utf8NoBom)
+}
+
 # ---------------------------------------------------------------------------
 # Test tiering — mirrors tests/lib.sh _test_tier_of / _tier_should_run.
 #

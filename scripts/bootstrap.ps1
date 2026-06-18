@@ -5,17 +5,17 @@
 #   bootstrap.ps1 [-Harness <name>] [-Check] [-DryRun]
 #                 [-ClaudeConfigDir <dir>] [-VaultDir <dir>] [-CodexHome <dir>]
 #
-#   -Harness <name>        target harness. Default: claude. On Windows claude and
-#                          codex are supported (hermes is a tracked follow-on); pass
-#                          a single `-Harness claude` or `-Harness codex`. Do NOT
+#   -Harness <name>        target harness. Default: claude. On Windows claude,
+#                          codex, and hermes all build; pass a single `-Harness
+#                          claude` / `-Harness codex` / `-Harness hermes`. Do NOT
 #                          repeat the flag: PowerShell rejects `-Harness claude
 #                          -Harness codex` with "specified more than once", and a
 #                          comma value like `-Harness claude,codex` does NOT split
 #                          under the documented `pwsh -File` invocation (it binds as
 #                          a single literal and is rejected as an unknown harness).
-#                          To bootstrap both on Windows, run bootstrap.ps1 once per
-#                          harness. The macOS/Linux bootstrap.sh builds all three via
-#                          the repeatable POSIX `--harness` form; richer Windows
+#                          To bootstrap several on Windows, run bootstrap.ps1 once
+#                          per harness. The macOS/Linux bootstrap.sh builds all three
+#                          via the repeatable POSIX `--harness` form; richer Windows
 #                          multi-harness arg handling here is a tracked follow-on.
 #   -Check                 read-only — detect requirements, report, exit 1 on failures
 #   -DryRun                print mutations without executing them
@@ -23,9 +23,8 @@
 #   -VaultDir <d>          override OBSIDIAN_VAULT_PATH
 #   -CodexHome <d>         override CODEX_HOME (used when -Harness codex builds on
 #                          Windows — <TEAM>-296)
-#   -HermesHome <d>        override HERMES_HOME (no effect on Windows until the
-#                          hermes harness port lands — tracked Windows-parity
-#                          follow-on)
+#   -HermesHome <d>        override HERMES_HOME (used when -Harness hermes builds on
+#                          Windows — <TEAM>-296; required to build the hermes harness)
 
 [CmdletBinding()]
 param(
@@ -62,11 +61,11 @@ function would_mutate([string]$desc) {
 # Confirm-HarnessNames — twin of bootstrap.sh validate_harnesses. Reject unknown
 # harness names up front, in -Check too. The known set mirrors install.ps1's
 # resolution (claude, codex, hermes); keep in lockstep per the inventory-coupling
-# rule. Case-insensitive — install.ps1 lowercases names (CLAUDE == claude). codex +
-# hermes are KNOWN names here: install.ps1 owns the Windows-hermes-unsupported
-# message (codex now builds on Windows — <TEAM>-296), so this guard only catches
-# genuine typos. Without it, `-Harness typo -Check` passes (Invoke-CheckClis never
-# validates names) and only a real run dies, deep in install.ps1.
+# rule. Case-insensitive — install.ps1 lowercases names (CLAUDE == claude). claude,
+# codex, and hermes all build on Windows now (<TEAM>-296), so this guard only
+# catches genuine typos before any check or mutation. Without it, `-Harness typo
+# -Check` passes (Invoke-CheckClis never validates names) and only a real run dies,
+# deep in install.ps1.
 function Confirm-HarnessNames {
   foreach ($h in $Harness) {
     if ($h.ToLower() -notin @('claude','codex','hermes')) {
