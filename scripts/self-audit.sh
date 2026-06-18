@@ -614,6 +614,22 @@ score_folder_hygiene() {
     fi
   fi
 
+  # Sub-check 3.4: a sync-hosted vault must never contain a live `.git`. The
+  # durable vault lives on a sync service (Google Drive / iCloud / Dropbox —
+  # OBSIDIAN_VAULT_PATH) that races file writes; a live `.git` there corrupts the
+  # object store (and Drive sprays .DS_Store into tracked dirs). Vault history, if
+  # wanted, belongs in a clone OUTSIDE the synced tree. Gated on VAULT_DIR being
+  # set, so a machine with no configured vault (e.g. CI) is unaffected. `-e`
+  # catches both a `.git` dir (real repo) and a `.git` gitlink file (worktree /
+  # submodule). See obsidian/vault-guide.md. Mirrors self-audit.ps1.
+  if [ -n "$VAULT_DIR" ] && [ -e "$VAULT_DIR/.git" ]; then
+    deduct "$key" 6
+    record_gap 3 8 \
+      "Live .git inside the sync-hosted vault" \
+      "$VAULT_DIR/.git exists — a sync service races writes to the git object store (corruption footgun) and sprays .DS_Store into tracked dirs" \
+      "Remove the in-vault .git; if you want vault history, keep a clone OUTSIDE the synced path (see obsidian/vault-guide.md)"
+  fi
+
   local s; s="$(pillar_score "$key")"
   if [ "$s" -eq 20 ]; then
     pillar_set_note "$key" "clean"

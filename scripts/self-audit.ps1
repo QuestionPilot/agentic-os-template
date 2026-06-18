@@ -704,6 +704,22 @@ function Invoke-Pillar3 {
         }
     }
 
+    # Sub-check 3.4: a sync-hosted vault must never contain a live `.git`. The
+    # durable vault lives on a sync service (Google Drive / iCloud / Dropbox —
+    # OBSIDIAN_VAULT_PATH) that races file writes; a live `.git` there corrupts
+    # the object store (and Drive sprays .DS_Store into tracked dirs). Vault
+    # history, if wanted, belongs in a clone OUTSIDE the synced tree. Gated on
+    # $VaultDir being set, so a machine with no configured vault (e.g. CI) is
+    # unaffected. Test-Path (no -PathType) catches both a `.git` dir and a `.git`
+    # gitlink file. See obsidian/vault-guide.md. Mirrors self-audit.sh.
+    if ((-not [string]::IsNullOrEmpty($VaultDir)) -and (Test-Path -LiteralPath (Join-Path $VaultDir '.git'))) {
+        Use-Deduct $key 6
+        Add-Gap 3 8 `
+            'Live .git inside the sync-hosted vault' `
+            "$VaultDir/.git exists — a sync service races writes to the git object store (corruption footgun) and sprays .DS_Store into tracked dirs" `
+            "Remove the in-vault .git; if you want vault history, keep a clone OUTSIDE the synced path (see obsidian/vault-guide.md)"
+    }
+
     $s = $pillarScores[$key]
     if ($s -eq 20) { $pillarNotes[$key] = 'clean' }
     else { $pillarNotes[$key] = "$((20 - $s)) pts deducted; see top gaps" }

@@ -241,6 +241,51 @@ _test_pillar3_antipattern_dir() {
 }
 _test_pillar3_antipattern_dir
 
+# --- Pillar 3 — negative case: a live .git inside the configured vault (the
+# Drive-sync corruption footgun <TEAM>-298 #2 guards against).
+_test_pillar3_drive_git() {
+  command -v jq >/dev/null 2>&1 || { _skip "pillar 3 drive-git test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local vault; vault="$(mktemp -d)" || { rm -rf "$fixture"; return 1; }
+  mkdir -p "$vault/.git"          # plant a live .git inside the vault
+
+  local out score
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+          --repo-root "$fixture" --vault-dir "$vault" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "folder-hygiene")"
+
+  if [ -n "$score" ] && [ "$score" -lt 20 ]; then
+    _pass "pillar 3 deducts on a live .git inside the vault"
+  else
+    _fail "pillar 3 deducts on a live .git inside the vault" \
+          "expected score < 20, got [$score]"
+  fi
+  assert_contains "pillar 3 names the .git-in-vault gap" \
+    "$out" "Live .git inside the sync-hosted vault"
+
+  # A `.git` gitlink FILE (worktree/submodule pointer), not a dir, is the same
+  # footgun — the guard uses -e / Test-Path, which catches both (cross-model note).
+  rm -rf "$vault/.git"
+  printf 'gitdir: /elsewhere/.git/worktrees/x\n' > "$vault/.git"
+  local out_gl
+  out_gl="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --vault-dir "$vault" --json 2>/dev/null)"
+  assert_contains "Drive-git guard also fires on a .git gitlink FILE" \
+    "$out_gl" "Live .git inside the sync-hosted vault"
+  rm -f "$vault/.git"
+
+  # Positive: a clean vault (no .git) must NOT trip the check — proves the guard
+  # is additive (no false positive on the common, correct setup).
+  rm -rf "$vault/.git"
+  local out2 score2
+  out2="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+           --repo-root "$fixture" --vault-dir "$vault" --json 2>/dev/null)"
+  score2="$(_sa_pillar_score "$out2" "folder-hygiene")"
+  rm -rf "$fixture" "$vault"
+  assert_eq "pillar 3 stays 20/20 with a vault that has no .git" "20" "$score2"
+}
+_test_pillar3_drive_git
+
 # --- Pillar 3 — positive case: clean folder structure.
 _test_pillar3_clean() {
   command -v jq >/dev/null 2>&1 || { _skip "pillar 3 clean test" "jq not installed"; return 0; }
