@@ -40,9 +40,15 @@ bash scripts/bootstrap.sh --harness claude
 ```
 
 `bootstrap.sh` seeds `local.env`, checks the required CLIs, compiles the
-framework config into `$CLAUDE_CONFIG_DIR`, and prints the manual auth
-checklist. Pass `--dry-run` first to preview all changes without writing
-anything.
+framework config, and prints the manual auth checklist. Pass `--dry-run` first to
+preview all changes without writing anything.
+
+By default config is **co-located**: a fresh clone renders into gitignored dirs
+*inside the repo* (`<repo>/.claude`, plus `<repo>/.codex` for the codex harness)
+and exports those paths to your shell, so everything runs self-contained from one
+folder. Prefer your home dir (`~/.claude`, `~/.codex`)? Run with `--scattered`.
+Hermes is never co-located (it's a live desktop-app home), and macOS GUI sessions
+have a documented limit — see `playbooks/personal-fork.md`.
 
 On Windows (PowerShell 7+, no bash required):
 
@@ -117,7 +123,7 @@ The compiler enforces capability ↔ harness consistency (every listed harness h
 
 ## Security model
 
-Framework scripts run with your shell's permissions. They read `local.env` (which you author), modify your harness config directory, install third-party CLIs via Homebrew / `npm` (macOS) or `winget` / `npm` (Windows), and write `CLAUDE_CONFIG_DIR` into your shell rc (`~/.zshenv` on macOS) or your User-scope environment (Windows). On a system you do not control, audit the full first-run path — `scripts/bootstrap.{sh,ps1}` plus `scripts/install.sh`, `scripts/validate.sh`, the generated hooks they wire (`$TARGET/hooks/*.sh`), and every PATH-resolved CLI they call — not just the bootstrap entry points. Operator tools are advisory and operator-local — the framework does not vendor or endorse them.
+Framework scripts run with your shell's permissions. They read `local.env` (which you author), modify your harness config directory, install third-party CLIs via Homebrew / `npm` (macOS) or `winget` / `npm` (Windows), and write `CLAUDE_CONFIG_DIR` / `CODEX_HOME` into your shell rc (`~/.zshenv` on macOS) or your User-scope environment (Windows). On a system you do not control, audit the full first-run path — `scripts/bootstrap.{sh,ps1}` plus `scripts/install.sh`, `scripts/validate.sh`, the generated hooks they wire (`$TARGET/hooks/*.sh`), and every PATH-resolved CLI they call — not just the bootstrap entry points. Operator tools are advisory and operator-local — the framework does not vendor or endorse them.
 
 **Trust boundaries:**
 
@@ -132,8 +138,9 @@ Framework scripts run with your shell's permissions. They read `local.env` (whic
 
 **Persistent machine mutation:**
 
-- `scripts/bootstrap.sh` appends `export CLAUDE_CONFIG_DIR=<your-config-dir>` to `~/.zshenv` (idempotent — any existing line is replaced).
-- `scripts/bootstrap.ps1` writes `CLAUDE_CONFIG_DIR` to the User-scope Windows environment via `[System.Environment]::SetEnvironmentVariable(..., "User")`. This persists across reboots and applies to every shell.
+- `scripts/bootstrap.sh` appends `export CLAUDE_CONFIG_DIR=<dir>` and `export CODEX_HOME=<dir>` to `~/.zshenv` (idempotent — any existing line is replaced). By default `<dir>` is co-located under the repo (`<repo>/.claude`, `<repo>/.codex`); `--scattered` uses `~/.claude` / `~/.codex`.
+- `scripts/bootstrap.ps1` writes `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to the User-scope Windows environment via `[System.Environment]::SetEnvironmentVariable(..., "User")`. This persists across reboots, applies to every shell, and — unlike the macOS shell export — is also read by Finder/Start-launched GUI apps.
+- Hermes is never co-located: `HERMES_HOME` stays at `~/.hermes` (a live desktop-app home the app discovers on its own), and bootstrap writes no env export for it.
 - Both writes are intentional, idempotent, and visible. Pass `--dry-run` (macOS) / `-DryRun` (Windows) to print the mutations without executing them.
 
 **Windows operators:**

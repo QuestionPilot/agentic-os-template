@@ -8,6 +8,9 @@
 #   --harness <name>         target harness: claude, codex, hermes (repeatable; default: claude)
 #   --check                  read-only — detect requirements, report, exit non-zero on failures
 #   --dry-run                print mutations without executing them
+#   --scattered              opt out of the co-located default: put claude/codex config
+#                            under your home dir (~/.claude, ~/.codex) instead of in the
+#                            framework folder. For the maintainer's clean-push clones.
 #   --claude-config-dir <dir>  override CLAUDE_CONFIG_DIR (takes precedence over local.env)
 #   --vault-dir <dir>          override OBSIDIAN_VAULT_PATH
 #   --codex-home <dir>         override CODEX_HOME
@@ -19,6 +22,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HARNESSES=()
 CHECK=0
 DRY_RUN=0
+SCATTERED=0
 OPT_CLAUDE_CONFIG_DIR=""
 OPT_VAULT_DIR=""
 OPT_CODEX_HOME=""
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
       HARNESSES+=("$(printf '%s' "${2:?--harness needs a value}" | tr '[:upper:]' '[:lower:]')"); shift 2 ;;
     --check)             CHECK=1; shift ;;
     --dry-run)           DRY_RUN=1; shift ;;
+    --scattered)         SCATTERED=1; shift ;;
     --claude-config-dir) OPT_CLAUDE_CONFIG_DIR="${2:?--claude-config-dir needs a value}"; shift 2 ;;
     --vault-dir)         OPT_VAULT_DIR="${2:?--vault-dir needs a value}"; shift 2 ;;
     --codex-home)        OPT_CODEX_HOME="${2:?--codex-home needs a value}"; shift 2 ;;
@@ -227,28 +232,37 @@ install_clis() {
     fi
   done <<< "$need"
 }
-# set_config_dir_env <dir> — idempotently export CLAUDE_CONFIG_DIR in ~/.zshenv.
-# Removes any existing CLAUDE_CONFIG_DIR line then appends the canonical form.
-set_config_dir_env() {
-  local config_dir="${1:-}"
-  [ -n "$config_dir" ] || { warn "CLAUDE_CONFIG_DIR not set — skipping ~/.zshenv write"; return 0; }
+# set_zshenv_export <name> <value> — idempotently export NAME=value in ~/.zshenv.
+# Removes any existing NAME= line then appends the canonical %q-quoted form. This
+# is the generalized core of set_config_dir_env: co-located operation (<TEAM>-297)
+# needs CODEX_HOME exported the same way CLAUDE_CONFIG_DIR always has been, so the
+# codex CLI finds the in-folder config dir in a fresh shell — without the export
+# it falls back to ~/.codex and the co-located build is never used at runtime.
+set_zshenv_export() {
+  local name="$1" val="${2:-}"
+  [ -n "$val" ] || { warn "$name not set — skipping ~/.zshenv write"; return 0; }
   local zshenv="$HOME/.zshenv"
   # Already correct?
   local export_line
-  export_line="$(printf 'export CLAUDE_CONFIG_DIR=%q' "$config_dir")"
+  export_line="$(printf 'export %s=%q' "$name" "$val")"
   if grep -qxF "$export_line" "$zshenv" 2>/dev/null; then
-    info "CLAUDE_CONFIG_DIR already set in $zshenv"
+    info "$name already set in $zshenv"
     return 0
   fi
   would_mutate "write '$export_line' to $zshenv" && return 0
   local tmp; tmp="$(mktemp)"
-  # Remove any existing CLAUDE_CONFIG_DIR line, then append.
+  # Remove any existing NAME= line, then append.
   if [ -f "$zshenv" ]; then
-    grep -vE "^(export )?CLAUDE_CONFIG_DIR=" "$zshenv" > "$tmp" || true
+    grep -vE "^(export )?${name}=" "$zshenv" > "$tmp" || true
   fi
   printf '%s\n' "$export_line" >> "$tmp"
   mv "$tmp" "$zshenv"
-  info "Set CLAUDE_CONFIG_DIR in $zshenv"
+  info "Set $name in $zshenv"
+}
+# set_config_dir_env <dir> — idempotently export CLAUDE_CONFIG_DIR in ~/.zshenv.
+# Thin wrapper over set_zshenv_export, kept for the named call site + its tests.
+set_config_dir_env() {
+  set_zshenv_export CLAUDE_CONFIG_DIR "${1:-}"
 }
 # seed_local_env — create local.env from the template if it does not exist.
 # In non-interactive mode (tests), values come from env vars / --flags.
@@ -263,12 +277,14 @@ seed_local_env() {
   [ -f "$tmpl" ] || die "Template not found: $tmpl"
   cp "$tmpl" "$local_env"
   info "Created $local_env from template."
-  info "Next: fill in the required values in $local_env"
-  info "  CLAUDE_CONFIG_DIR     — path to your claude-config directory"
-  info "  CODEX_HOME            — path to your codex config (~/.codex)"
-  info "  OBSIDIAN_VAULT_PATH   — path to your Obsidian vault"
+  info "Leave CLAUDE_CONFIG_DIR / CODEX_HOME empty to use the co-located defaults"
+  info "(dirs under the framework folder); run with --scattered for ~/.claude, ~/.codex."
+  info "Fill in the values you want to set in $local_env:"
+  info "  OBSIDIAN_VAULT_PATH   — path to your Obsidian vault (recommended)"
+  info "  CLAUDE_CONFIG_DIR     — optional: override the co-located default for claude"
+  info "  CODEX_HOME            — optional: override the co-located default for codex"
   if [ -t 0 ]; then
-    printf 'bootstrap.sh: Edit %s now, then press Enter to continue: ' "$local_env"
+    printf 'bootstrap.sh: Edit %s now (or press Enter to accept co-located defaults): ' "$local_env"
     read -r _
   else
     info "(non-interactive mode — fill in $local_env then re-run bootstrap.)"
@@ -391,6 +407,42 @@ print_auth_checklist() {
   printf '\nDone. Reload your shell: source ~/.zshenv\n\n'
 }
 
+# resolve_config_targets — fill the STATELESS claude + codex config-dir targets
+# (<TEAM>-297). Default (co-located): $AI_CONFIG_DIR/.claude, $AI_CONFIG_DIR/.codex
+# under the framework folder when unset, so a fresh clone runs self-contained.
+# --scattered: the home dir (~/.claude, ~/.codex) — applied when the target is unset
+# OR still at the co-located default (so it un-does a prior default run), but NEVER
+# over an explicit --claude-config-dir/--codex-home flag or an operator-authored
+# custom path. Hermes is excluded (stateful app home discovered at ~/.hermes by the
+# app itself). Called twice in main(): before persist (so the resolved value is
+# written into local.env) and after the post-seed reload (so a --dry-run, where
+# persist is skipped and the reload re-sources an existing local.env's empty lines,
+# still resolves the target). Idempotent — uses `if`, not `&&` chains, for set -e
+# safety. OPT_* + SCATTERED + AI_CONFIG_DIR are globals in scope at call time.
+resolve_config_targets() {
+  : "${AI_CONFIG_DIR:=$repo_root}"
+  local claude_default codex_default
+  if [ "$SCATTERED" -eq 1 ]; then
+    claude_default="$HOME/.claude"; codex_default="$HOME/.codex"
+  else
+    claude_default="$AI_CONFIG_DIR/.claude"; codex_default="$AI_CONFIG_DIR/.codex"
+  fi
+  if [ -z "$OPT_CLAUDE_CONFIG_DIR" ]; then
+    if [ -z "${CLAUDE_CONFIG_DIR:-}" ]; then
+      CLAUDE_CONFIG_DIR="$claude_default"
+    elif [ "$SCATTERED" -eq 1 ] && [ "${CLAUDE_CONFIG_DIR:-}" = "$AI_CONFIG_DIR/.claude" ]; then
+      CLAUDE_CONFIG_DIR="$claude_default"   # un-do a prior co-located default
+    fi
+  fi
+  if [ -z "$OPT_CODEX_HOME" ]; then
+    if [ -z "${CODEX_HOME:-}" ]; then
+      CODEX_HOME="$codex_default"
+    elif [ "$SCATTERED" -eq 1 ] && [ "${CODEX_HOME:-}" = "$AI_CONFIG_DIR/.codex" ]; then
+      CODEX_HOME="$codex_default"
+    fi
+  fi
+}
+
 main() {
   info "bootstrap.sh — agentic OS machine setup"
   info "Harnesses: ${HARNESSES[*]}"
@@ -411,6 +463,13 @@ main() {
   [ -n "$OPT_VAULT_DIR" ]         && OBSIDIAN_VAULT_PATH="$OPT_VAULT_DIR"
   [ -n "$OPT_CODEX_HOME" ]        && CODEX_HOME="$OPT_CODEX_HOME"
   [ -n "$OPT_HERMES_HOME" ]       && HERMES_HOME="$OPT_HERMES_HOME"
+
+  # Co-located-by-default (<TEAM>-297) — resolve the stateless claude+codex config
+  # targets (see resolve_config_targets). Called here so persist materialises the
+  # resolved value into local.env, AND again after the reload below so a --dry-run
+  # (where persist is skipped and the reload re-sources an existing local.env's
+  # empty value lines) still resolves the target rather than previewing an empty one.
+  resolve_config_targets
 
   local exit_code=0
   check_clis || exit_code=1
@@ -436,9 +495,17 @@ main() {
   [ -n "$OPT_VAULT_DIR" ]         && OBSIDIAN_VAULT_PATH="$OPT_VAULT_DIR"
   [ -n "$OPT_CODEX_HOME" ]        && CODEX_HOME="$OPT_CODEX_HOME"
   [ -n "$OPT_HERMES_HOME" ]       && HERMES_HOME="$OPT_HERMES_HOME"
-  # Persist CLAUDE_CONFIG_DIR only after local.env is seeded + reloaded, so a
-  # value that exists only in the freshly seeded local.env still reaches ~/.zshenv.
+  # Re-resolve the co-located targets after the reload (<TEAM>-297): in --dry-run the
+  # reload re-sources an existing local.env's empty value lines, so the co-located
+  # default must be re-applied here too (persist was skipped, nothing wrote it back).
+  resolve_config_targets
+  # Persist CLAUDE_CONFIG_DIR + CODEX_HOME only after local.env is seeded +
+  # reloaded, so a value that exists only in the freshly seeded local.env still
+  # reaches ~/.zshenv. CODEX_HOME is exported too (<TEAM>-297) so a co-located codex
+  # dir is picked up by the codex CLI in a fresh shell, not merely built into the
+  # folder. Hermes has no ~/.zshenv export — the app reads its own ~/.hermes home.
   set_config_dir_env "${CLAUDE_CONFIG_DIR:-}"
+  set_zshenv_export CODEX_HOME "${CODEX_HOME:-}"
   run_install
   smoke_test
   print_auth_checklist

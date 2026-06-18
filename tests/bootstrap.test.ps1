@@ -105,3 +105,27 @@ _Skip 'bootstrap.test: bootstrap.ps1 -Check (claude) does not require codex' $q1
 _Skip 'bootstrap.test: bootstrap --check accepts a 2-segment version equal to a 3-segment floor (version_ge parity)' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Check accepts segment-short versions equal to their floors (F6: version_ge parity, not [System.Version])' $q133reason
 _Skip 'bootstrap.test: bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)' $q133reason
+
+# <TEAM>-297 twins: co-located-by-default resolution. bootstrap.test.sh runs the bash
+# assertions live on macOS/Linux and the bootstrap.ps1 assertions via pwsh on those
+# lanes; the Windows lane preserves the count + rationale here.
+$colocreason = 'bootstrap.test.sh runs the bash + pwsh co-located assertions end-to-end on macOS/Linux'
+_Skip 'bootstrap.test: co-located default: claude target is <repo>/.claude' $colocreason
+_Skip 'bootstrap.test: co-located default: codex target is <repo>/.codex' $colocreason
+_Skip 'bootstrap.test: --scattered: claude target is ~/.claude' $colocreason
+_Skip 'bootstrap.test: --scattered: codex target is ~/.codex' $colocreason
+_Skip 'bootstrap.test: explicit --claude-config-dir wins over co-located default' $colocreason
+_Skip 'bootstrap.test: explicit run does not co-locate claude under the repo' $colocreason
+_Skip 'bootstrap.test: bootstrap.ps1 co-located: CLAUDE_CONFIG_DIR defaults to <repo>/.claude' $colocreason
+_Skip 'bootstrap.test: bootstrap.ps1 co-located: CODEX_HOME defaults to <repo>/.codex' $colocreason
+_Skip 'bootstrap.test: bootstrap.ps1 -Scattered: targets resolve under the home dir' $colocreason
+_Skip 'bootstrap.test: fresh seed exports co-located CODEX_HOME to ~/.zshenv' $colocreason
+# <TEAM>-297 value-flow edge cases (cross-model panel) — bash + pwsh assertions run
+# live on macOS/Linux; the Windows lane preserves the count + rationale.
+_Skip 'bootstrap.test: co-located: --dry-run with an existing empty local.env still previews co-located' $colocreason
+_Skip 'bootstrap.test: --scattered un-does a prior co-located default in local.env' $colocreason
+_Skip 'bootstrap.test: --scattered preserves an operator-authored custom config path' $colocreason
+_Skip 'bootstrap.test: co-located default resolves under a repo path containing a space' $colocreason
+_Skip 'bootstrap.test: bootstrap.ps1 co-located: -DryRun with an existing empty local.env still resolves co-located' $colocreason
+_Skip 'bootstrap.test: bootstrap.ps1 -Scattered un-does a prior co-located default in local.env' $colocreason
+_Skip 'bootstrap.test: bootstrap.ps1 co-located resolves under a repo path containing a space' $colocreason

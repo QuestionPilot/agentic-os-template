@@ -263,6 +263,82 @@ assert_contains "full bootstrap prints auth checklist" "$e2e_out" "gh auth login
 
 rm -rf "$E2E_HOME" "$E2E_STUBS" "$E2E_REPO" 2>/dev/null || true
 
+# --- <TEAM>-297: co-located-by-default resolution (bootstrap.sh) ---
+# Fresh clone, NO local.env, clean env -> claude+codex targets default to
+# gitignored dot-dirs UNDER THE REPO; --scattered opts out to the home dir; an
+# explicit --claude-config-dir still wins. Asserted via the --dry-run install
+# --out lines (install.sh is never actually invoked in --dry-run). validate.sh is
+# stubbed so smoke_test stays fast and quiet.
+CL_REPO="$(mktemp -d)"; CL_HOME="$(mktemp -d)"
+cp -R "$REPO_ROOT/." "$CL_REPO/"; rm -rf "$CL_REPO/.git" "$CL_REPO/local.env"
+printf '#!/bin/sh\nexit 0\n' > "$CL_REPO/scripts/validate.sh"; chmod +x "$CL_REPO/scripts/validate.sh"
+CL_UNSET="env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH"
+
+cl_default="$($CL_UNSET HOME="$CL_HOME" bash "$CL_REPO/scripts/bootstrap.sh" \
+  --harness claude --harness codex --dry-run 2>&1 || true)"
+assert_contains "co-located default: claude target is <repo>/.claude" \
+  "$cl_default" "install.sh --harness claude --out $CL_REPO/.claude"
+assert_contains "co-located default: codex target is <repo>/.codex" \
+  "$cl_default" "install.sh --harness codex --out $CL_REPO/.codex"
+
+cl_scatter="$($CL_UNSET HOME="$CL_HOME" bash "$CL_REPO/scripts/bootstrap.sh" \
+  --harness claude --harness codex --dry-run --scattered 2>&1 || true)"
+assert_contains "--scattered: claude target is ~/.claude" \
+  "$cl_scatter" "install.sh --harness claude --out $CL_HOME/.claude"
+assert_contains "--scattered: codex target is ~/.codex" \
+  "$cl_scatter" "install.sh --harness codex --out $CL_HOME/.codex"
+
+cl_explicit="$($CL_UNSET HOME="$CL_HOME" bash "$CL_REPO/scripts/bootstrap.sh" \
+  --harness claude --dry-run --claude-config-dir /tmp/cl-explicit 2>&1 || true)"
+assert_contains "explicit --claude-config-dir wins over co-located default" \
+  "$cl_explicit" "install.sh --harness claude --out /tmp/cl-explicit"
+assert_not_contains "explicit run does not co-locate claude under the repo" \
+  "$cl_explicit" "--out $CL_REPO/.claude"
+rm -rf "$CL_REPO" "$CL_HOME" 2>/dev/null || true
+
+# --- <TEAM>-297: co-located value-flow edge cases (cross-model panel) ---
+# Guards the resolve_config_targets fixes: (A) a --dry-run with an EXISTING local.env
+# whose values are empty must still preview co-located targets (the reload re-empties;
+# the post-reload re-resolve re-fills); (B) --scattered un-does a prior co-located
+# DEFAULT in local.env but (B2) preserves an operator-AUTHORED custom path; and the
+# co-located default survives a repo path that contains a space.
+CLE_HOME="$(mktemp -d)"
+cle_setup() {  # <repo> — copy repo, drop .git + local.env, stub validate.sh (fast/quiet)
+  cp -R "$REPO_ROOT/." "$1/"; rm -rf "$1/.git" "$1/local.env"
+  printf '#!/bin/sh\nexit 0\n' > "$1/scripts/validate.sh"; chmod +x "$1/scripts/validate.sh"
+}
+cle_run() {  # <repo> <expect-substr> <label> [extra bootstrap flags...]
+  local repo="$1" want="$2" label="$3"; shift 3
+  local out
+  out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH \
+    HOME="$CLE_HOME" bash "$repo/scripts/bootstrap.sh" --dry-run "$@" 2>&1 || true)"
+  assert_contains "$label" "$out" "$want"
+}
+# (A) existing local.env with EMPTY values + --dry-run -> co-located preview.
+CLE_A="$(mktemp -d)"; cle_setup "$CLE_A"
+printf 'CLAUDE_CONFIG_DIR=\nCODEX_HOME=\nOBSIDIAN_VAULT_PATH=\n' > "$CLE_A/local.env"
+cle_run "$CLE_A" "install.sh --harness claude --out $CLE_A/.claude" \
+  "co-located: --dry-run with an existing empty local.env still previews co-located" --harness claude
+rm -rf "$CLE_A"
+# (B) prior co-located DEFAULT in local.env + --scattered -> home (un-done).
+CLE_B="$(mktemp -d)"; cle_setup "$CLE_B"
+printf 'CLAUDE_CONFIG_DIR=%s/.claude\nOBSIDIAN_VAULT_PATH=\n' "$CLE_B" > "$CLE_B/local.env"
+cle_run "$CLE_B" "install.sh --harness claude --out $CLE_HOME/.claude" \
+  "--scattered un-does a prior co-located default in local.env" --harness claude --scattered
+rm -rf "$CLE_B"
+# (B2) operator-AUTHORED custom path + --scattered -> preserved (NOT clobbered).
+CLE_B2="$(mktemp -d)"; cle_setup "$CLE_B2"
+printf 'CLAUDE_CONFIG_DIR=/custom/claude\nOBSIDIAN_VAULT_PATH=\n' > "$CLE_B2/local.env"
+cle_run "$CLE_B2" "install.sh --harness claude --out /custom/claude" \
+  "--scattered preserves an operator-authored custom config path" --harness claude --scattered
+rm -rf "$CLE_B2"
+# (spaces) co-located default resolves under a repo path containing a space.
+CLE_SPP="$(mktemp -d)"; CLE_SP="$CLE_SPP/repo with space"; mkdir -p "$CLE_SP"; cle_setup "$CLE_SP"
+cle_run "$CLE_SP" "install.sh --harness claude --out $CLE_SP/.claude" \
+  "co-located default resolves under a repo path containing a space" --harness claude
+rm -rf "$CLE_SPP"
+rm -rf "$CLE_HOME" 2>/dev/null || true
+
 # --- bootstrap.ps1 tests (skip if pwsh unavailable) ---
 if command -v pwsh >/dev/null 2>&1; then
   PS1="$REPO_ROOT/scripts/bootstrap.ps1"
@@ -482,6 +558,55 @@ PSSTUB
   assert_eq "bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)" "0" "$ps_huge_check"
   rm -rf "$PS_HUGE_STUBS"
 
+  # --- <TEAM>-297: co-located-by-default resolution (bootstrap.ps1) ---
+  # Fresh clone, NO local.env, clean env -> claude+codex default to gitignored
+  # dot-dirs under the repo; -Scattered opts out to the home dir. Asserted via the
+  # -DryRun "setenv User <VAR>=<path>" lines. Mirrors the bash co-located block;
+  # execution-verified under local pwsh.
+  CLPS_REPO="$(mktemp -d)"; CLPS_HOME="$(mktemp -d)"
+  cp -R "$REPO_ROOT/." "$CLPS_REPO/"; rm -rf "$CLPS_REPO/.git" "$CLPS_REPO/local.env"
+  CLPS_UNSET="env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH"
+  clps_default="$($CLPS_UNSET HOME="$CLPS_HOME" "$PWSH_BIN" -NoProfile -File \
+    "$CLPS_REPO/scripts/bootstrap.ps1" -DryRun 2>&1 || true)"
+  assert_contains "bootstrap.ps1 co-located: CLAUDE_CONFIG_DIR defaults to <repo>/.claude" \
+    "$clps_default" "setenv User CLAUDE_CONFIG_DIR=$CLPS_REPO/.claude"
+  assert_contains "bootstrap.ps1 co-located: CODEX_HOME defaults to <repo>/.codex" \
+    "$clps_default" "setenv User CODEX_HOME=$CLPS_REPO/.codex"
+  clps_scatter="$($CLPS_UNSET HOME="$CLPS_HOME" "$PWSH_BIN" -NoProfile -File \
+    "$CLPS_REPO/scripts/bootstrap.ps1" -DryRun -Scattered 2>&1 || true)"
+  assert_contains "bootstrap.ps1 -Scattered: targets resolve under the home dir" \
+    "$clps_scatter" "setenv User CLAUDE_CONFIG_DIR=$CLPS_HOME/.claude"
+  rm -rf "$CLPS_REPO" "$CLPS_HOME" 2>/dev/null || true
+
+  # --- <TEAM>-297: co-located value-flow edge cases (cross-model panel), PS twin ---
+  CLEP_HOME="$(mktemp -d)"
+  clep_setup() { cp -R "$REPO_ROOT/." "$1/"; rm -rf "$1/.git" "$1/local.env"; }
+  clep_run() {  # <repo> <expect-substr> <label> [extra -flags...]
+    local repo="$1" want="$2" label="$3"; shift 3
+    local out
+    out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH \
+      HOME="$CLEP_HOME" "$PWSH_BIN" -NoProfile -File "$repo/scripts/bootstrap.ps1" -DryRun "$@" 2>&1 || true)"
+    assert_contains "$label" "$out" "$want"
+  }
+  # (A) existing empty local.env + -DryRun -> co-located.
+  CLEP_A="$(mktemp -d)"; clep_setup "$CLEP_A"
+  printf 'CLAUDE_CONFIG_DIR=\nCODEX_HOME=\nOBSIDIAN_VAULT_PATH=\n' > "$CLEP_A/local.env"
+  clep_run "$CLEP_A" "setenv User CLAUDE_CONFIG_DIR=$CLEP_A/.claude" \
+    "bootstrap.ps1 co-located: -DryRun with an existing empty local.env still resolves co-located"
+  rm -rf "$CLEP_A"
+  # (B) prior co-located default + -Scattered -> home.
+  CLEP_B="$(mktemp -d)"; clep_setup "$CLEP_B"
+  printf 'CLAUDE_CONFIG_DIR=%s/.claude\nOBSIDIAN_VAULT_PATH=\n' "$CLEP_B" > "$CLEP_B/local.env"
+  clep_run "$CLEP_B" "setenv User CLAUDE_CONFIG_DIR=$CLEP_HOME/.claude" \
+    "bootstrap.ps1 -Scattered un-does a prior co-located default in local.env" -Scattered
+  rm -rf "$CLEP_B"
+  # (spaces) co-located resolves under a repo path with a space.
+  CLEP_SPP="$(mktemp -d)"; CLEP_SP="$CLEP_SPP/repo with space"; mkdir -p "$CLEP_SP"; clep_setup "$CLEP_SP"
+  clep_run "$CLEP_SP" "setenv User CLAUDE_CONFIG_DIR=$CLEP_SP/.claude" \
+    "bootstrap.ps1 co-located resolves under a repo path containing a space"
+  rm -rf "$CLEP_SPP"
+  rm -rf "$CLEP_HOME" 2>/dev/null || true
+
   rm -rf "$PS_STUBS" "$PS_HOME" "$PS_DRY_REPO"
 else
   _skip "bootstrap.ps1 tests" "pwsh not available on this machine"
@@ -502,11 +627,22 @@ else
   _skip "bootstrap.ps1 -Harness codex -Check passes (known; Windows-unsupported deferred to install.ps1)" "pwsh not available on this machine"
   _skip "bootstrap.ps1 -Check accepts segment-short versions equal to their floors (F6: version_ge parity, not [System.Version])" "pwsh not available on this machine"
   _skip "bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 co-located: CLAUDE_CONFIG_DIR defaults to <repo>/.claude" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 co-located: CODEX_HOME defaults to <repo>/.codex" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Scattered: targets resolve under the home dir" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 co-located: -DryRun with an existing empty local.env still resolves co-located" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 -Scattered un-does a prior co-located default in local.env" "pwsh not available on this machine"
+  _skip "bootstrap.ps1 co-located resolves under a repo path containing a space" "pwsh not available on this machine"
 fi
 
-# --- CLAUDE_CONFIG_DIR persisted after a fresh seed (no --claude-config-dir) ---
-# Regression: set_config_dir_env must run AFTER local.env is seeded + reloaded,
-# so a value that only exists in the seeded local.env still reaches ~/.zshenv.
+# --- co-located default reaches ~/.zshenv on a fresh seed (<TEAM>-297) ---
+# Replaces the prior doctored-template regression: with the shipped template's
+# CLAUDE_CONFIG_DIR / CODEX_HOME EMPTY, a fresh bootstrap with no override now
+# DEFAULTS both to gitignored dirs under the repo and exports them to ~/.zshenv.
+# Still guards the seed -> persist -> reload -> export ordering — the value
+# reaching ~/.zshenv now originates from the co-located default rather than a
+# doctored template. (Operator-supplied values reaching ~/.zshenv stay guarded by
+# the Q133E/Q133F + full end-to-end cases above.)
 PSEED_HOME="$(mktemp -d)"
 PSEED_STUBS="$(mktemp -d)"
 PSEED_REPO="$(mktemp -d)"
@@ -517,18 +653,19 @@ make_stub_cli "$PSEED_STUBS" jq    "jq-1.7.0"
 make_stub_cli "$PSEED_STUBS" rg    "ripgrep 14.0.0"
 printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.50.0"; exit 0; fi\necho "Logged in"; exit 0\n' \
   > "$PSEED_STUBS/gh"; chmod +x "$PSEED_STUBS/gh"
-PSEED_CFG="$PSEED_HOME/cfg"
-printf '#!/bin/sh\nmkdir -p "%s" && echo stub > "%s/CLAUDE.md"; exit 0\n' \
-  "$PSEED_CFG" "$PSEED_CFG" > "$PSEED_REPO/scripts/install.sh"; chmod +x "$PSEED_REPO/scripts/install.sh"
+# Co-located install.sh stub: create the entrypoint at the in-repo .claude dir
+# (the co-located default target run_install passes via --out).
+printf '#!/bin/sh\nmkdir -p "%s/.claude" && echo stub > "%s/.claude/CLAUDE.md"; exit 0\n' \
+  "$PSEED_REPO" "$PSEED_REPO" > "$PSEED_REPO/scripts/install.sh"; chmod +x "$PSEED_REPO/scripts/install.sh"
 printf '#!/bin/sh\nexit 0\n' > "$PSEED_REPO/scripts/validate.sh"; chmod +x "$PSEED_REPO/scripts/validate.sh"
-# Doctor the template so the seeded local.env carries a real CLAUDE_CONFIG_DIR.
-printf 'CLAUDE_CONFIG_DIR=%s\n' "$PSEED_CFG" > "$PSEED_REPO/templates/local.env.example"
-env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME \
+# No flag, no env, REAL (empty) template -> co-located default fills both vars.
+env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME \
   HOME="$PSEED_HOME" PATH="$PSEED_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
   bash "$PSEED_REPO/scripts/bootstrap.sh" >/dev/null 2>&1 || true
 assert_file "fresh seed persists CLAUDE_CONFIG_DIR to ~/.zshenv" "$PSEED_HOME/.zshenv"
-assert_contains "seeded ~/.zshenv carries the config dir" \
-  "$(cat "$PSEED_HOME/.zshenv" 2>/dev/null)" "$PSEED_CFG"
+pseed_zsh="$(cat "$PSEED_HOME/.zshenv" 2>/dev/null)"
+assert_contains "seeded ~/.zshenv carries the config dir" "$pseed_zsh" "$PSEED_REPO/.claude"
+assert_contains "fresh seed exports co-located CODEX_HOME to ~/.zshenv" "$pseed_zsh" "$PSEED_REPO/.codex"
 rm -rf "$PSEED_HOME" "$PSEED_STUBS" "$PSEED_REPO" 2>/dev/null || true
 
 # --- T-90C: bootstrap.sh --check parity ---
