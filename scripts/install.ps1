@@ -8,16 +8,12 @@
 
     Usage: pwsh scripts/install.ps1 [-Harness <name>] [--harness <name>]... [-Out <dir>] [-BuildOnly]
 
-    -Harness <name>  target harness (default: claude). WINDOWS: claude + codex.
-                     The hermes harness is gracefully rejected on Windows with
-                     an actionable message; the macOS/Linux bash twin
-                     install.sh supports hermes. Full Windows hermes parity is a
-                     tracked follow-on.
+    -Harness <name>  target harness (default: claude). WINDOWS: claude, codex, and
+                     hermes all build natively.
                      Repeatable via the POSIX --harness form (PowerShell binds
                      the native -Harness to a single value): the documented
-                     `--harness claude --harness codex` builds every requested
-                     harness in one pass — on Windows hermes is WARN-skipped so
-                     claude + codex still install.
+                     `--harness claude --harness codex --harness hermes` builds
+                     every requested harness in one pass.
     -Out <dir>       override build target (default: $env:CLAUDE_CONFIG_DIR
                      from local.env). Single-harness only — cannot be combined
                      with more than one --harness.
@@ -32,20 +28,18 @@
     filesystem, validates, then renames the managed subtrees into place.
 
 .NOTES
-    Compiles the claude + codex harnesses end-to-end on native Windows. The
-    hermes harness is gracefully rejected on Windows until its port lands; the
-    macOS/Linux bash twin install.sh supports it.
+    Compiles the claude, codex, and hermes harnesses end-to-end on native Windows.
 
     <TEAM>-135: per-subdir swap (parity with install.sh's swap_in PER_SUBDIR_PATHS
     branch) with an OLD-vs-NEW manifest orphan hash-gate, so re-installs preserve
     operator-authored subdirs (Shape C skills, operator-added plugins) across
     repeated runs instead of clobbering them through a wholesale-directory backup
     that a 2nd consecutive run would overwrite. The set of per-subdir paths is
-    $Script:PerSubdirPaths (skills, plugins) — parity with install.sh. On Windows
-    only claude + codex build (neither manages plugins — only hermes does), so the
-    plugins path stays dormant until the hermes port lands; it is mirrored for
-    parity, and the N1 collision warning runs live on claude/codex skills/. See
-    Move-SubdirsIntoTarget below.
+    $Script:PerSubdirPaths (skills, plugins) — parity with install.sh. claude and
+    codex have no managed plugins (the plugins path stays dormant for them); hermes
+    manages plugins/ (the agentic-os-hook-bridge), so the per-subdir swap preserves
+    operator-added plugins across re-installs. The N1 collision warning runs live on
+    every harness's skills/. See Move-SubdirsIntoTarget below.
 
     <TEAM>-109 PS-5: $PSScriptRoot empty-string fallback applied.
     <TEAM>-100 hook-command shape: generated settings.json hook commands use
@@ -179,31 +173,18 @@ if ($harnessList.Count -gt 1) {
     }
     $pwshExe = (Get-Process -Id $PID).Path
     if (-not $pwshExe) { $pwshExe = 'pwsh' }
+    # <TEAM>-296: claude, codex, and hermes all build on Windows, so every requested
+    # harness re-execs in its own clean process (no WARN-skip). An unknown harness
+    # name is caught up front (validation) and again at the per-harness env switch.
     $built = 0
     foreach ($h in $harnessList) {
-        if ($h -eq 'hermes') {
-            # CONTRACT (deliberate bash↔PS asymmetry): the Windows-native twin builds
-            # claude + codex but not yet hermes. In a multi-harness run hermes is
-            # WARN-skipped — NOT a hard failure — so the documented `--harness claude
-            # --harness codex --harness hermes` still installs claude + codex on
-            # Windows (best-effort) rather than aborting them. The warning to stderr
-            # is the signal that hermes was not built; the command still exits 0 as
-            # long as a supported harness built (operators can't build hermes on
-            # Windows yet, so failing the whole command would only block the
-            # claude/codex install for no actionable reason). A SINGLE `-Harness
-            # hermes` still hard-rejects (exit 1) at the resolution block below. The
-            # macOS/Linux bash twin builds hermes; full Windows hermes parity is a
-            # tracked follow-on.
-            Warn "hermes harness is not yet supported on Windows; skipping it (claude + codex still build — the macOS/Linux install.sh supports hermes; full Windows parity is a tracked follow-on)"
-            continue
-        }
         $childArgs = @('-NoProfile', '-File', $PSCommandPath, '--harness', $h)
         & $pwshExe @childArgs
         if ($LASTEXITCODE -ne 0) { Die "install failed for harness '$h' (exit $LASTEXITCODE)" }
         $built++
     }
     if ($built -eq 0) {
-        Die "no supported harness was built (requested: $($harnessList -join ', ')); the Windows twin supports claude + codex — re-run with one of those (the macOS/Linux install.sh also supports hermes)"
+        Die "no harness was built (requested: $($harnessList -join ', '))"
     }
     exit 0
 }
@@ -326,24 +307,16 @@ if (-not $env:AI_CONFIG_DIR) {
 # Harness resolution
 # ---------------------------------------------------------------------------
 
-# <TEAM>-296: the Windows install.ps1 now ports claude + codex. The hermes harness
-# port (hooks.yaml shape, SOUL.md entrypoint + soul-identity overlay, the
-# agentic-os-hook-bridge desktop-app plugin, the 5-hook wiring, the steward
-# script-only copy, plugin-source hashing) is not yet implemented. Reject it
-# GRACEFULLY with an actionable message instead of hard-crashing on a
-# half-resolved HERMES_HOME path. The macOS/Linux bash twin (install.sh) supports
-# hermes; full Windows hermes parity is tracked as a follow-on. Reject BEFORE
-# resolving the target env var so a fresh Windows operator who passes
-# -Harness hermes gets a clear "use claude or codex" instruction, not a confusing
-# HERMES_HOME-not-set failure.
-if ($Harness -eq 'hermes') {
-    Die "hermes harness is not yet supported on Windows; re-run with -Harness claude or -Harness codex (the macOS/Linux install.sh supports hermes — full Windows parity is a tracked follow-on)"
-}
-
+# <TEAM>-296: claude, codex, and hermes all build on native Windows now. (Earlier
+# prototypes hard-rejected codex/hermes here; the per-harness resolution below
+# handles all three, mirroring install.sh's harness_target_env.) A genuinely
+# unknown harness still dies at the switch default below, before any target
+# resolution or build-dir creation.
 $targetEnvVar = switch ($Harness) {
     'claude' { 'CLAUDE_CONFIG_DIR' }
     'codex'  { 'CODEX_HOME' }
-    default  { Die "unknown harness '$Harness' (known on Windows: claude, codex)" }
+    'hermes' { 'HERMES_HOME' }
+    default  { Die "unknown harness '$Harness' (known on Windows: claude, codex, hermes)" }
 }
 
 # Read the target env var by NAME. [Environment]::GetEnvironmentVariable returns
@@ -433,6 +406,34 @@ function Add-Hook {
     }
 }
 
+# install_hook_script_only — copies + substitutes a hook script into the build
+# WITHOUT registering any event wiring (no HookBlocks record, so it never lands in
+# the generated hooks.yaml). For tooling shipped alongside the hooks whose
+# scheduling is a deliberate operator act (the hermes steward). Mirrors
+# install.sh:455-477. Substitutes @@AI_CONFIG_DIR@@ and — only when set —
+# @@OBSIDIAN_VAULT_PATH@@; an unset vault token is left in place so Test-Build's
+# unresolved-placeholder gate fails loudly rather than baking a broken path.
+function Add-HookScriptOnly {
+    param([Parameter(Mandatory)][string]$Script)
+    $src = Join-Path (Join-Path (Join-Path $repoRoot 'harnesses') $Harness 'hooks') $Script
+    if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+        Die "hook script not found: $src"
+    }
+    $buildHooksDir = Join-Path $BUILD 'hooks'
+    if (-not (Test-Path -LiteralPath $buildHooksDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $buildHooksDir -Force | Out-Null
+    }
+    $dst = Join-Path $buildHooksDir $Script
+    if (-not (Test-Path -LiteralPath $dst -PathType Leaf)) {
+        $content = Get-RawText -Path $src
+        $resolved = $content.Replace('@@AI_CONFIG_DIR@@', $env:AI_CONFIG_DIR)
+        if ($env:OBSIDIAN_VAULT_PATH) {
+            $resolved = $resolved.Replace('@@OBSIDIAN_VAULT_PATH@@', $env:OBSIDIAN_VAULT_PATH)
+        }
+        Write-LfFile -Path $dst -Content $resolved
+    }
+}
+
 # hook_for_class — enforcement-class -> "script event matcher".
 function Resolve-HookForClass {
     param([Parameter(Mandatory)][string]$Class)
@@ -440,13 +441,15 @@ function Resolve-HookForClass {
     # Hook script names are .ps1 — the <TEAM>-100 Windows-native fix to the
     # generated hook command shape. The codex matcher is `apply_patch` (codex
     # file edits report tool_name "apply_patch"), event PreToolUse — mirrors
-    # install.sh:493 (codex:pre-edit-gate). hermes (pre_tool_call /
-    # write_file|patch|terminal) is a tracked follow-on.
+    # install.sh:493 (codex:pre-edit-gate). The hermes matcher is
+    # `write_file|patch|terminal` on event `pre_tool_call` (terminal is in the set
+    # because the shell can write files) — mirrors install.sh:494 (hermes:pre-edit-gate).
     # `session-end-gate` was removed in <TEAM>-211 (closeout Stop hook removed;
     # closeout is now manual-fire) — no row, mirroring install.sh.
     $rows = @{
         'claude:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'Write|Edit|NotebookEdit' }
         'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'apply_patch' }
+        'hermes:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'pre_tool_call'; matcher = 'write_file|patch|terminal' }
     }
     $key = "${Harness}:${Class}"
     if (-not $rows.ContainsKey($key)) {
@@ -588,6 +591,7 @@ function Compile-Entrypoint {
                 # loop and die "resolves empty" — Codex F3 + cross-overlay composition.
                 $overlay = $overlay.Replace('@@OPERATOR_SKILLS_OVERLAY@@', '')
                 $overlay = $overlay.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', '')
+                $overlay = $overlay.Replace('@@OPERATOR_SOUL_IDENTITY@@', '')
             } else {
                 # SET-but-missing — warn loudly, still render spine-only (Codex F2).
                 [Console]::Error.WriteLine("warning: SKILLS_OVERLAY_PATH=$overlayPath is set but the file does not exist — rendering a spine-only $OutName")
@@ -615,11 +619,45 @@ function Compile-Entrypoint {
                 # @@VAR@@ loop and die "resolves empty".
                 $overlay = $overlay.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', '')
                 $overlay = $overlay.Replace('@@OPERATOR_SKILLS_OVERLAY@@', '')
+                $overlay = $overlay.Replace('@@OPERATOR_SOUL_IDENTITY@@', '')
             } else {
                 [Console]::Error.WriteLine("warning: CODEX_RULES_OVERLAY_PATH=$overlayPath is set but the file does not exist — rendering a spine-only $OutName")
             }
         }
         $content = $content.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', $overlay)
+    }
+
+    # Operator soul-identity overlay — twin of install.sh compile_entrypoint. The
+    # hermes SOUL template carries the framework operating section plus a single
+    # @@OPERATOR_SOUL_IDENTITY@@ marker; the operator's PERSONAL identity (named by
+    # SOUL_IDENTITY_PATH) is NEVER shipped to the public template (it carries
+    # operator PII + machine paths). Splice it at the marker, or empty for an
+    # identity-less spine render — exactly what a fresh clone with no
+    # SOUL_IDENTITY_PATH gets. Strip trailing newlines to match bash's $(cat); done
+    # before the @@VAR@@ loop so any path tokens inside the identity resolve. Only
+    # the SOUL template carries this marker.
+    if ($content.Contains('@@OPERATOR_SOUL_IDENTITY@@')) {
+        $overlay = ''
+        $overlayPath = [Environment]::GetEnvironmentVariable('SOUL_IDENTITY_PATH')
+        if ($overlayPath) {
+            if (Test-Path -LiteralPath $overlayPath -PathType Leaf) {
+                $overlay = (Get-RawText -Path $overlayPath) -replace '(\r?\n)+\z', ''
+                # Never let the identity payload reintroduce ANY overlay marker
+                # (single-pass splice). Also strip @@CAPABILITY_CATALOG@@: the @@VAR@@
+                # loop SKIPS that token, so a literal catalog marker in the identity
+                # prose would survive to the final catalog substitution and graft a
+                # second capability table into the identity section. Mirrors
+                # install.sh:398-408.
+                $overlay = $overlay.Replace('@@OPERATOR_SOUL_IDENTITY@@', '')
+                $overlay = $overlay.Replace('@@OPERATOR_SKILLS_OVERLAY@@', '')
+                $overlay = $overlay.Replace('@@OPERATOR_CODEX_RULES_OVERLAY@@', '')
+                $overlay = $overlay.Replace('@@CAPABILITY_CATALOG@@', '')
+            } else {
+                # SET-but-missing — warn loudly, still render an identity-less spine.
+                [Console]::Error.WriteLine("warning: SOUL_IDENTITY_PATH=$overlayPath is set but the file does not exist — rendering an identity-less spine $OutName")
+            }
+        }
+        $content = $content.Replace('@@OPERATOR_SOUL_IDENTITY@@', $overlay)
     }
 
     # Find every @@VAR@@ token. Mirrors install.sh's `[A-Z_]+` shape — keeping
@@ -777,6 +815,76 @@ function New-CodexHooks {
 }
 
 # ---------------------------------------------------------------------------
+# generate_hermes_hooks — emits hooks/hooks.yaml (the copy-paste wiring snippet,
+# since config.yaml is user-owned) + copies the agentic-os-hook-bridge plugin.
+#
+# Mirrors install.sh:596-630, with two PS-twin divergences:
+#  - Command shape: each entry uses the pwsh launcher (command 'pwsh' + args
+#    [-NoProfile, -File, <abs>.ps1]) instead of bash's bare `command: "<abs>.sh"`,
+#    since a .ps1 path is non-executable on Windows. Hermes's config.yaml hooks are
+#    Claude-Code-compatible (adapter Fact 2), so the same command/args shape the
+#    claude New-Settings ships applies.
+#  - The hook path is forward-slashed: pwsh -File accepts '/' on Windows, and
+#    forward slashes mean the baked path carries NO backslashes — so command/args
+#    use DOUBLE-quoted YAML scalars. (A backslash would be a YAML escape; an
+#    apostrophe in the path — common in Windows usernames like O'Brien — is literal
+#    in double-quotes but would PREMATURELY CLOSE a single-quoted scalar unless
+#    doubled. Windows forbids '"' in path names, so double-quotes are fully safe.)
+#    The matcher is double-quoted too (regex, no backslashes), matching the bash
+#    snippet's quoting.
+# Events are grouped (YAML forbids duplicate mapping keys) in first-seen order,
+# identical to the bash double-loop, so the snippet structure stays in parity.
+# ---------------------------------------------------------------------------
+
+function New-HermesHooks {
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('# Generated by install.ps1 --harness hermes — DO NOT hand-edit.')
+    $lines.Add("# Merge this block into $TARGET/config.yaml (hooks: + plugins.enabled),")
+    $lines.Add('# then approve the hooks on first use (TTY prompt or --accept-hooks).')
+    $lines.Add('hooks:')
+    $seen = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($rec in $Script:HookBlocks) {
+        if (-not $seen.Add($rec.event)) { continue }   # one header per event
+        $lines.Add("  $($rec.event):")
+        foreach ($e in $Script:HookBlocks) {
+            if ($e.event -ne $rec.event) { continue }
+            # Absolute path in the FINAL target, forward-slashed (no YAML escaping).
+            $hookAbs = (Join-Path $TARGET 'hooks' $e.script) -replace '\\', '/'
+            if ($e.matcher) {
+                $lines.Add("    - matcher: `"$($e.matcher)`"")
+                $lines.Add("      command: `"pwsh`"")
+            } else {
+                $lines.Add("    - command: `"pwsh`"")
+            }
+            $lines.Add('      args:')
+            $lines.Add("        - `"-NoProfile`"")
+            $lines.Add("        - `"-File`"")
+            $lines.Add("        - `"$hookAbs`"")
+        }
+    }
+    $lines.Add('plugins:')
+    $lines.Add('  enabled:')
+    $lines.Add('    - agentic-os-hook-bridge')
+
+    $outYaml = Join-Path (Join-Path $BUILD 'hooks') 'hooks.yaml'
+    Write-LfFile -Path $outYaml -Content (($lines -join "`n") + "`n")
+
+    # Copy the bridge plugin into plugins/ (the desktop app's dashboard entrypoint
+    # does not register config.yaml shell hooks natively; the plugin restores
+    # engine-level pre_tool_call / pre_llm_call dispatch in the GUI — adapter Fact 2).
+    $pluginSrc    = Join-Path (Join-Path (Join-Path $repoRoot 'harnesses') 'hermes' 'plugins') 'agentic-os-hook-bridge'
+    $pluginDstDir = Join-Path $BUILD 'plugins'
+    if (-not (Test-Path -LiteralPath $pluginDstDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $pluginDstDir -Force | Out-Null
+    }
+    try {
+        Copy-Item -LiteralPath $pluginSrc -Destination (Join-Path $pluginDstDir 'agentic-os-hook-bridge') -Recurse -Force -ErrorAction Stop
+    } catch {
+        Die "failed to copy the agentic-os-hook-bridge plugin: $($_.Exception.Message)"
+    }
+}
+
+# ---------------------------------------------------------------------------
 # write_manifest — sha256 of every source input and every generated output.
 # ---------------------------------------------------------------------------
 
@@ -815,6 +923,15 @@ function Write-Manifest {
     $vendored = Join-Path $harnessRoot 'vendored'
     if (Test-Path -LiteralPath $vendored -PathType Container) {
         Get-ChildItem -LiteralPath $vendored -Recurse -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Add-SrcPair -AbsPath $_.FullName }
+    }
+
+    # Harness plugin sources (hermes: agentic-os-hook-bridge) are installed verbatim
+    # — hash every file so a hand-edit registers as source drift. Mirrors
+    # install.sh:672-680. No-op for claude/codex (no harnesses/<h>/plugins dir).
+    $harnessPlugins = Join-Path $harnessRoot 'plugins'
+    if (Test-Path -LiteralPath $harnessPlugins -PathType Container) {
+        Get-ChildItem -LiteralPath $harnessPlugins -Recurse -File -ErrorAction SilentlyContinue |
             ForEach-Object { Add-SrcPair -AbsPath $_.FullName }
     }
 
@@ -1338,11 +1455,10 @@ function Restore-Backups {
 # ---------------------------------------------------------------------------
 
 # Managed paths swapped PER-SUBDIR instead of wholesale (mirrors install.sh's
-# PER_SUBDIR_PATHS). plugins is hermes-only, so it is never in the claude/codex
-# Windows ManagedPaths below and stays dormant here until the hermes port lands;
-# it is listed for parity with install.sh, and so the per-subdir swap, rollback,
-# crash-recovery, and cleanup all key off the same shared run-private root. The
-# N1 collision warning runs live on claude/codex skills/.
+# PER_SUBDIR_PATHS). plugins is hermes-only (in the hermes ManagedPaths below, not
+# claude/codex), so the per-subdir swap, rollback, crash-recovery, and cleanup all
+# key off the same shared run-private root and preserve operator-added plugins
+# across re-installs. The N1 collision warning runs live on every harness's skills/.
 $Script:PerSubdirPaths = @('skills', 'plugins')
 
 # Per-harness managed paths + entrypoints (mirrors install.sh:119-126).
@@ -1363,7 +1479,18 @@ switch ($Harness) {
             [pscustomobject]@{ tmpl = 'AGENTS.template.md'; out = 'AGENTS.md' }
         )
     }
-    default { Die "harness '$Harness' not implemented on Windows (known: claude, codex)" }
+    'hermes' {
+        # Mirrors install.sh:194-195 — hermes manages a SOUL.md entrypoint, the
+        # hooks/ dir (the .ps1 hooks + the generated hooks/hooks.yaml snippet), and
+        # the plugins/ dir (the agentic-os-hook-bridge). plugins is in PerSubdirPaths
+        # so operator-added plugins survive a re-install. No settings.json/hooks.json
+        # — config.yaml is user-owned, so wiring is a surfaced hooks.yaml snippet.
+        $Script:ManagedPaths = @('skills', 'hooks', 'plugins', 'SOUL.md', '.build-manifest.json')
+        $Script:Entrypoints  = @(
+            [pscustomobject]@{ tmpl = 'SOUL.template.md'; out = 'SOUL.md' }
+        )
+    }
+    default { Die "harness '$Harness' not implemented on Windows (known: claude, codex, hermes)" }
 }
 
 try {
@@ -1385,8 +1512,25 @@ try {
         }
     }
 
-    # Non-capability hook — framework-surface fires unconditionally.
-    Add-Hook -Script 'framework-surface.ps1' -Event 'SessionStart' -Matcher 'startup|clear|compact'
+    # Non-capability hooks (mirrors install.sh:1103-1118). claude + codex wire
+    # framework-surface on SessionStart. hermes wires its autonomy-governance set:
+    # framework-surface on `pre_llm_call` (NOT SessionStart — Hermes discards the
+    # {context} return of on_session_start; pre_llm_call is the injection point),
+    # plus autonomy-drain / memory-sanitize / skill-gate (all disabled-by-default or
+    # hard-gated), and copies the steward script with NO event wiring (cron
+    # registration is a deliberate operator act).
+    switch ($Harness) {
+        'hermes' {
+            Add-Hook -Script 'framework-surface.ps1' -Event 'pre_llm_call'  -Matcher ''
+            Add-Hook -Script 'autonomy-drain.ps1'    -Event 'on_session_end' -Matcher ''
+            Add-Hook -Script 'memory-sanitize.ps1'   -Event 'pre_tool_call'  -Matcher 'memory'
+            Add-Hook -Script 'skill-gate.ps1'        -Event 'pre_tool_call'  -Matcher 'skill_manage'
+            Add-HookScriptOnly -Script 'steward.ps1'
+        }
+        default {
+            Add-Hook -Script 'framework-surface.ps1' -Event 'SessionStart' -Matcher 'startup|clear|compact'
+        }
+    }
 
     # Generate harness entrypoints from templates + capability catalog.
     $catalog = New-CapabilityCatalog
@@ -1399,6 +1543,7 @@ try {
     switch ($Harness) {
         'claude' { New-Settings }
         'codex'  { New-CodexHooks }
+        'hermes' { New-HermesHooks }
         default  { Die "harness '$Harness' has no settings generator" }
     }
 
@@ -1481,6 +1626,19 @@ try {
         [Console]::Error.WriteLine('install.ps1: NEXT STEP — run the interactive `/hooks` command in codex once')
         [Console]::Error.WriteLine("            to review and trust $TARGET\hooks.json; until trusted, the")
         [Console]::Error.WriteLine('            enforcement hooks will not run. (codex exec runs no hooks at all.)')
+    }
+
+    # The hermes build is inert until the operator merges the generated wiring into
+    # the user-owned config.yaml and consents to the hooks (first-use allowlist).
+    # Re-renders rewrite the hook scripts, invalidating prior consent — re-approve
+    # after every install. Mirrors install.sh:1210-1217.
+    if ($Harness -eq 'hermes') {
+        [Console]::Error.WriteLine("install.ps1: NEXT STEP — merge $TARGET\hooks\hooks.yaml into $TARGET\config.yaml")
+        [Console]::Error.WriteLine('            (hooks: block + plugins.enabled), then approve the hooks on first')
+        [Console]::Error.WriteLine('            use (TTY prompt or `hermes --accept-hooks`); re-approval is needed')
+        [Console]::Error.WriteLine('            after every re-render. The agentic-os-hook-bridge plugin restores')
+        [Console]::Error.WriteLine('            hook firing in the desktop app (its dashboard entrypoint does not')
+        [Console]::Error.WriteLine('            register config.yaml shell hooks natively).')
     }
 } finally {
     if (-not $Script:KeepBuild) {

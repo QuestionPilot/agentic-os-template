@@ -286,27 +286,20 @@ try {
     $env:AI_CONFIG_LOCAL_ENV = $null
 }
 
-# --- hermes harness is gracefully rejected on Windows ----------------
-# <TEAM>-296: codex is now ported to the Windows install.ps1, so hermes is the
-# harness whose Windows port is still a tracked follow-on. install.ps1 rejects it
-# GRACEFULLY: exit 1, an actionable message naming a supported harness, and NO
-# partial filesystem mutation (the reject fires BEFORE the target env var is
-# resolved or any build dir is created — so a fresh Windows operator who picks the
-# DOCUMENTED bootstrap.ps1 -Harness hermes option gets a clear instruction, not a
-# hard crash).
-$hmRoot = Join-Path ([IO.Path]::GetTempPath()) ("que296-hermes-reject-" + [Guid]::NewGuid().Guid.Substring(0,8))
+# --- an unknown harness name is gracefully rejected on Windows ----------------
+# <TEAM>-296: claude, codex, and hermes all build on Windows now, so the graceful
+# rejection applies to a genuinely UNKNOWN harness name (a typo). install.ps1
+# rejects it: exit 1, an actionable message naming the known set, and NO partial
+# filesystem mutation (the reject fires at the per-harness env-var switch default,
+# before any target resolution or build-dir creation).
+$hmRoot = Join-Path ([IO.Path]::GetTempPath()) ("que296-unknown-harness-reject-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $hmRoot -Force | Out-Null
 $hmTgt   = Join-Path $hmRoot 'claude-config'
-$hmHome  = Join-Path $hmRoot 'hermes-home'
 $hmEnv   = Join-Path $hmRoot 'fixture.local.env'
 $hmVault = Join-Path $hmRoot 'vault'
-New-Item -ItemType Directory -Path $hmTgt   -Force | Out-Null
-New-Item -ItemType Directory -Path $hmVault -Force | Out-Null
-# Hand-write a local.env that sets BOTH CLAUDE_CONFIG_DIR and HERMES_HOME so the
-# rejection cannot be confused with a "HERMES_HOME not set" failure.
+New-Item -ItemType Directory -Path $hmTgt, $hmVault -Force | Out-Null
 $hmLines = @(
     "CLAUDE_CONFIG_DIR=`"$hmTgt`"",
-    "HERMES_HOME=`"$hmHome`"",
     "OBSIDIAN_VAULT_PATH=`"$hmVault`""
 )
 $hmUtf8 = [System.Text.UTF8Encoding]::new($false)
@@ -314,25 +307,25 @@ $hmUtf8 = [System.Text.UTF8Encoding]::new($false)
 
 try {
     $env:AI_CONFIG_LOCAL_ENV = $hmEnv
-    $hmOut = & pwsh -NoProfile -File $INSTALL_PS1 --harness hermes 2>&1
+    $hmOut = & pwsh -NoProfile -File $INSTALL_PS1 --harness bogusharness 2>&1
     $hmExit = $LASTEXITCODE
     $hmOutStr = if ($hmOut -is [array]) { $hmOut -join "`n" } else { [string]$hmOut }
 
     # Exit 1 (graceful failure), not 0 (silent) and not an uncaught throw.
-    Assert-Eq 'install.test: hermes harness exits 1 (graceful reject, no crash)' '1' "$hmExit"
+    Assert-Eq 'install.test: unknown harness exits 1 (graceful reject, no crash)' '1' "$hmExit"
 
-    # Message is actionable — names a supported harness (claude / codex).
-    Assert-Contains 'install.test: hermes reject message names a supported harness' `
-        $hmOutStr '-Harness claude'
-    Assert-Contains 'install.test: hermes reject message says not yet supported on Windows' `
-        $hmOutStr 'not yet supported on Windows'
+    # Message is actionable — names the known harness set.
+    Assert-Contains 'install.test: unknown-harness reject message names the known set' `
+        $hmOutStr 'claude, codex, hermes'
+    Assert-Contains 'install.test: unknown-harness reject message says unknown harness' `
+        $hmOutStr 'unknown harness'
 
-    # NO partial mutation — HERMES_HOME must not have been created (reject fires
-    # before target resolution / build-dir creation).
-    if (Test-Path -LiteralPath $hmHome) {
-        _Fail 'install.test: hermes reject leaves no partial HERMES_HOME mutation' 'HERMES_HOME dir was created'
+    # NO partial mutation — no build landed in the claude target (the reject fires
+    # at the env switch default, before any target resolution / build-dir creation).
+    if (Test-Path -LiteralPath (Join-Path $hmTgt 'CLAUDE.md')) {
+        _Fail 'install.test: unknown-harness reject leaves no partial build' 'CLAUDE.md was built'
     } else {
-        _Pass 'install.test: hermes reject leaves no partial HERMES_HOME mutation'
+        _Pass 'install.test: unknown-harness reject leaves no partial build'
     }
 } finally {
     Remove-Item -LiteralPath $hmRoot -Recurse -Force -ErrorAction SilentlyContinue
