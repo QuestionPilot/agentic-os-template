@@ -78,4 +78,3 @@ _Skip 'scripts-ps-parity.test: check-drift.ps1 accepts POSIX --manifest' $reason
 _Skip 'scripts-ps-parity.test: build-public-snapshot.sh --help exits 0' $reason
 _Skip 'scripts-ps-parity.test: build-public-snapshot.ps1 -Help exits 0' $reason
 _Skip 'scripts-ps-parity.test: build-public-snapshot --help/-Help exit codes match' $reason
-_Skip 'scripts-ps-parity.test: sanitize-for-publish parity holds' $reason

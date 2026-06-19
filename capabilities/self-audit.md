@@ -31,7 +31,7 @@ call.
 
 It is **not** auto-fired. Of the three spine capabilities, only `session-agent`
 carries a session-start directive; `closeout` and `self-audit` are invoked
-manually (closeout's `Stop` gate was removed in <TEAM>-211).
+manually (closeout's `Stop` gate was removed because it re-fired on closeout's own writes).
 
 ## The five pillars
 
@@ -86,7 +86,7 @@ script's penalty rules are the canonical scoring.
    three config keys as data** rather than sourcing the file — both twins
    (`self-audit.sh`, `self-audit.ps1`) read the keys without executing
    `local.env`, so a hostile or malformed file can neither run code nor poison
-   the `lineark`/`jq`/`git` lookups (<TEAM>-180 F1). Reading `local.env`
+   the `lineark`/`jq`/`git` lookups. Reading `local.env`
    rather than the ambient environment is what makes the score **reproducible** —
    two shells score the same repo identically whether or not they happened to
    export those vars. `local.env` wins over ambient env; explicit

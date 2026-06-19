@@ -196,7 +196,7 @@ Refer to each plugin's documentation for the exact tool names and argument shape
 
 ### 4.3 JSON response shape
 
-Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. `<TEAM>-76`), `title`, `description`, `state.name`, `priority`, `assignee`, `team`, `labels`, `url`, plus relations and comments where requested. Scripts should query against `.identifier` for the human-readable issue ID and `.id` (UUID) for relations and update calls.
+Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. `ABC-123`), `title`, `description`, `state.name`, `priority`, `assignee`, `team`, `labels`, `url`, plus relations and comments where requested. Scripts should query against `.identifier` for the human-readable issue ID and `.id` (UUID) for relations and update calls.
 
 ## 5. How the AI Uses Linear at Runtime
 

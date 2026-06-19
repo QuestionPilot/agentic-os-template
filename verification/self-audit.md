@@ -27,7 +27,7 @@ the script encodes.
 ## Closeout
 
 State what the rubric changed, how the new behavior was tested against
-fixtures, and whether independent review (Codex per <TEAM>-68) was used. If the
+fixtures, and whether independent review (e.g. a cross-model critic) was used. If the
 rubric tightened (gaps newly surfaced that previously scored as PASS), name
 each newly-surfaced class so a future operator-local audit run isn't
 surprised by a score drop with no PR context.

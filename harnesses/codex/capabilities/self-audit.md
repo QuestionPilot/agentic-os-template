@@ -9,7 +9,7 @@ lifecycle: shipped
 - **No auto-fire.** Unlike `session-agent` (which carries a SessionStart hook),
   `/self-audit` — like `closeout` — is opt-in only. Neither declares an
   `enforcement:` class, so `install.sh`'s hook-wiring step registers nothing for
-  them. (`closeout`'s `Stop` gate was removed in <TEAM>-211; it is now manual-fire.)
+  them. (`closeout`'s `Stop` gate was removed; it is now manual-fire.)
 - **Script lookup:** the capability invokes `$AI_CONFIG_DIR/scripts/self-audit.sh`.
   `$AI_CONFIG_DIR` is the framework checkout path, substituted into rendered
   files by `install.sh` from `local.env`.

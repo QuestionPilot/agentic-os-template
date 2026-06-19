@@ -11,7 +11,7 @@ Make the active harness follow this repository's shared framework without copyin
 - Codex: `AGENTS.md`
 - Claude Code: `CLAUDE.md`
 - Hermes Agent: `SOUL.md` (the global identity file in the Hermes home /
-  profile dir; per-project `CLAUDE.md`/`AGENTS.md` files are auto-discovered
+  profile dir; per-project `CLAUDE.md`/`AGENTS.md`/`SOUL.md` files are auto-discovered
   from the working directory and compose with it)
 
 These files are front doors into the framework. Keep them thin. Shared operating rules belong in `core/`, proof patterns in `verification/`, workflows in `playbooks/`, and tool guidance in `skills/`.
@@ -37,7 +37,7 @@ If copying, keep the copied file thin. It should point back to this repository's
 
 ## Tool-Specific Boundaries
 
-Harness-specific files may name the harness's local convention, such as `AGENTS.md`, `CLAUDE.md`, `.codex/`, `.claude/`, or local command syntax.
+Harness-specific files may name the harness's local convention, such as `AGENTS.md`, `CLAUDE.md`, `SOUL.md`, `.codex/`, `.claude/`, or local command syntax.
 
 Shared framework files should describe the behavior without depending on one harness's folder shape.
 
