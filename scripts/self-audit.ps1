@@ -931,9 +931,17 @@ function Invoke-Pillar5 {
     # Sub-check 5.2 — recent project_*.md (mtime ≤ 7 days) without ## State Deltas.
     if (-not [string]::IsNullOrEmpty($MemoryDir) -and (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
         $missingSd = 0
-        $sevenDaysAgo = (Get-Date).AddDays(-7)
+        # Epoch-based 7-day cutoff (integer seconds) to match the bash twin exactly
+        # — see scripts/self-audit.sh. `find -mtime -7` rounds the age by whole days
+        # (and differs BSD vs GNU), so an instant-based AddDays(-7) here would
+        # disagree with bash near a day boundary. Compare integer mtime epochs.
+        # Use the UTC instants on BOTH sides: bash `stat` reports the raw UTC mtime
+        # epoch, so PS must read LastWriteTimeUtc (not the local LastWriteTime, whose
+        # DateTimeOffset cast drifts by the local offset around DST / on a host with
+        # no tz database) to land on the same epoch seconds.
+        $cutoffEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 7 * 86400
         $projectFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter 'project_*.md' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.LastWriteTime -ge $sevenDaysAgo })
+            Where-Object { ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $cutoffEpoch })
         foreach ($pf in $projectFiles) {
             $txt = [System.IO.File]::ReadAllText($pf.FullName)
             if ($txt -notmatch '(?m)^## State Deltas') { $missingSd++ }

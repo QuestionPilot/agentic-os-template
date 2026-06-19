@@ -40,6 +40,10 @@ if command -v pwsh >/dev/null 2>&1; then
   _have_pwsh=1
 fi
 
+# On a CI lane that MUST run the bash<->PS cross-check, a missing pwsh is a hard
+# failure, not a silent skip (PARITY_REQUIRE_PWSH=1 set on the acceptance lanes).
+_require_pwsh_or_fail "parity.test"
+
 # ---------------------------------------------------------------------------
 # Normalization helpers — duplicated from tests/scripts-ps-parity.test.sh for
 # self-containment. When BOTH files need to change, change BOTH (low-leverage

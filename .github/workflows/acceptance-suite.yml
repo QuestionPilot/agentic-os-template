@@ -57,6 +57,16 @@ permissions:
 jobs:
   acceptance-suite:
     runs-on: ubuntu-latest
+    # The bash<->PS cross-twin parity tests (parity / scripts-ps-parity /
+    # hooks-ps-parity) SKIP their comparison half when pwsh is absent. This lane
+    # runs the bash acceptance suite and ubuntu-latest ships pwsh pre-installed,
+    # so the cross-check executes HERE. PARITY_REQUIRE_PWSH=1 makes that
+    # mandatory: if a future runner image ever drops pwsh, the parity tests
+    # hard-FAIL instead of silently skipping the only place the bash<->PS
+    # comparison runs — closing the silent-skip gap (a PS-only behavioral
+    # regression could otherwise merge green).
+    env:
+      PARITY_REQUIRE_PWSH: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -123,6 +133,20 @@ jobs:
             printf 'mawk: '; mawk -W version 2>&1 | head -1 || true
           fi
 
+      # Identify pwsh on the runner. The bash<->PS cross-twin parity comparison
+      # runs on THIS lane (PARITY_REQUIRE_PWSH=1), so capture the pwsh version in
+      # the CI log for provenance and fail fast with a clear message if it is
+      # somehow absent — the parity tests would also fail, but this step names
+      # the cause up front instead of leaving it buried in a parity FAIL.
+      - name: Identify pwsh on runner (required for bash↔PS cross-check)
+        run: |
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo "pwsh not found on PATH — the bash↔PS parity cross-check cannot run on this lane" >&2
+            exit 1
+          fi
+          printf 'pwsh: '; command -v pwsh
+          pwsh --version
+
       # Diagnostic — run validate.sh directly so its stderr surfaces in
       # the CI log when something breaks. assert_exit in the acceptance
       # suite redirects stderr to /dev/null which hides the actual
@@ -166,6 +190,10 @@ jobs:
   #
   # Tools on macos-latest:
   #   - bash, git, jq, awk (BSD), sed, grep, find, mktemp, shasum  — pre-installed
+  #   - pwsh (PowerShell 7.x)  — ALSO pre-installed on the macOS runner image, so
+  #     the bash<->PS cross-twin parity comparison runs on this lane too (this list
+  #     is the in-repo note, NOT the authoritative runner manifest — confirm pwsh
+  #     presence at github.com/actions/runner-images before assuming it is absent).
   # ===========================================================================
 
   acceptance-suite-macos:
@@ -177,6 +205,13 @@ jobs:
     # and bakes no org/repo name into a tracked file.
     if: github.event_name != 'pull_request' || github.event.repository.private == false
     runs-on: macos-latest
+    # macos-latest ships pwsh pre-installed, so the bash<->PS cross-twin parity
+    # comparison runs on this lane too. PARITY_REQUIRE_PWSH=1 makes it mandatory:
+    # a missing pwsh hard-FAILs instead of silently skipping. The macOS lane is
+    # ALSO where the BSD vs GNU `find -mtime` rounding divergence the epoch-based
+    # freshness cutoff fixes would otherwise surface.
+    env:
+      PARITY_REQUIRE_PWSH: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -201,6 +236,19 @@ jobs:
           else
             printf 'awk version: (no recognized --version / -W version)\n'
           fi
+
+      # Identify pwsh on the macOS runner — mirrors the ubuntu lane. The
+      # bash<->PS cross-twin parity comparison runs here (PARITY_REQUIRE_PWSH=1);
+      # capture the version for provenance and fail fast with a clear message if
+      # it is absent.
+      - name: Identify pwsh on runner (required for bash↔PS cross-check)
+        run: |
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo "pwsh not found on PATH — the bash↔PS parity cross-check cannot run on this lane" >&2
+            exit 1
+          fi
+          printf 'pwsh: '; command -v pwsh
+          pwsh --version
 
       # Diagnostic — run validate.sh directly so its stderr surfaces in
       # the CI log when something breaks. Mirrors the ubuntu lane's
