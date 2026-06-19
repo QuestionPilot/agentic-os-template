@@ -18,13 +18,13 @@ make_local_env "$SC_ENV" "$SC_TGT"
 
 # Pre-seed a fresh Shape C skill under the target's skills/ dir, before any
 # install.sh run. The skill has no counterpart under capabilities/.
-mkdir -p "$SC_TGT/skills/que68-shape-c-fixture"
+mkdir -p "$SC_TGT/skills/t68-shape-c-fixture"
 # A tracker-shaped token assembled at runtime from non-matching halves: the suite
 # source carries no literal tracker id, yet the fixture still proves install
 # preserves tracker-shaped operator content verbatim through the skills/ swap.
 sc_tok="QUE""-68"
-printf -- '---\nname: que68-shape-c-fixture\ndescription: Shape C fixture (%s) preserved verbatim\n---\n# Body\n' "$sc_tok" \
-  > "$SC_TGT/skills/que68-shape-c-fixture/SKILL.md"
+printf -- '---\nname: t68-shape-c-fixture\ndescription: Shape C fixture (%s) preserved verbatim\n---\n# Body\n' "$sc_tok" \
+  > "$SC_TGT/skills/t68-shape-c-fixture/SKILL.md"
 
 sc_status=0
 AI_CONFIG_LOCAL_ENV="$SC_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1 || sc_status=$?
@@ -32,9 +32,9 @@ assert_eq "install.sh exits 0 with a pre-existing Shape C skill" "0" "$sc_status
 
 # The Shape C skill must survive the skills/ swap intact.
 assert_file "install.sh preserves Shape C SKILL.md through skills/ swap" \
-  "$SC_TGT/skills/que68-shape-c-fixture/SKILL.md"
-if [ -f "$SC_TGT/skills/que68-shape-c-fixture/SKILL.md" ]; then
-  sc_content="$(cat "$SC_TGT/skills/que68-shape-c-fixture/SKILL.md")"
+  "$SC_TGT/skills/t68-shape-c-fixture/SKILL.md"
+if [ -f "$SC_TGT/skills/t68-shape-c-fixture/SKILL.md" ]; then
+  sc_content="$(cat "$SC_TGT/skills/t68-shape-c-fixture/SKILL.md")"
   assert_contains "Shape C content (incl. tracker-shaped token) preserved verbatim" \
     "$sc_content" "Shape C fixture ($sc_tok) preserved verbatim"
 fi
@@ -49,7 +49,7 @@ sc2_status=0
 AI_CONFIG_LOCAL_ENV="$SC_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1 || sc2_status=$?
 assert_eq "second install run also exits 0" "0" "$sc2_status"
 assert_file "second install run still preserves Shape C SKILL.md" \
-  "$SC_TGT/skills/que68-shape-c-fixture/SKILL.md"
+  "$SC_TGT/skills/t68-shape-c-fixture/SKILL.md"
 
 # check-drift --manifest must NOT report a Shape C subdir as untracked
 # drift. The manifest only tracks manifest-managed skills; Shape C is exempt.
@@ -57,7 +57,7 @@ sd_status=0
 sd_out="$(bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$SC_TGT" 2>&1)" || sd_status=$?
 assert_eq "check-drift --manifest passes with Shape C present" "0" "$sd_status"
 assert_not_contains "check-drift does not flag Shape C subdir as untracked" \
-  "$sd_out" "que68-shape-c-fixture"
+  "$sd_out" "t68-shape-c-fixture"
 
 rm -rf "$SC_DIR"
 
@@ -76,31 +76,31 @@ make_local_env "$SC_OR_ENV" "$SC_OR_TGT"
 # First install — populates a clean state with the current capability set.
 AI_CONFIG_LOCAL_ENV="$SC_OR_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Simulate: a previous framework version compiled an extra "que68-orphan" skill.
+# Simulate: a previous framework version compiled an extra "t68-orphan" skill.
 # Add it to the manifest (managed) and create the rendered subdir, as install.sh
 # would have left it.
-mkdir -p "$SC_OR_TGT/skills/que68-orphan"
-printf -- '---\nname: que68-orphan\ndescription: simulated prior-install skill\n---\nold body\n' \
-  > "$SC_OR_TGT/skills/que68-orphan/SKILL.md"
-ORPHAN_HASH="$(shasum -a 256 "$SC_OR_TGT/skills/que68-orphan/SKILL.md" 2>/dev/null | cut -d' ' -f1)"
+mkdir -p "$SC_OR_TGT/skills/t68-orphan"
+printf -- '---\nname: t68-orphan\ndescription: simulated prior-install skill\n---\nold body\n' \
+  > "$SC_OR_TGT/skills/t68-orphan/SKILL.md"
+ORPHAN_HASH="$(shasum -a 256 "$SC_OR_TGT/skills/t68-orphan/SKILL.md" 2>/dev/null | cut -d' ' -f1)"
 if [ -n "$ORPHAN_HASH" ] && command -v jq >/dev/null 2>&1; then
-  jq --arg h "$ORPHAN_HASH" '.generated["skills/que68-orphan/SKILL.md"] = $h' \
+  jq --arg h "$ORPHAN_HASH" '.generated["skills/t68-orphan/SKILL.md"] = $h' \
     "$SC_OR_TGT/.build-manifest.json" > "$SC_OR_TGT/.build-manifest.json.tmp" \
     && mv "$SC_OR_TGT/.build-manifest.json.tmp" "$SC_OR_TGT/.build-manifest.json"
 fi
 
 # Plant a true Shape C skill — it must survive the orphan cleanup.
-mkdir -p "$SC_OR_TGT/skills/que68-shape-c-survivor"
-printf -- '---\nname: que68-shape-c-survivor\ndescription: operator-local survivor\n---\nshape c\n' \
-  > "$SC_OR_TGT/skills/que68-shape-c-survivor/SKILL.md"
+mkdir -p "$SC_OR_TGT/skills/t68-shape-c-survivor"
+printf -- '---\nname: t68-shape-c-survivor\ndescription: operator-local survivor\n---\nshape c\n' \
+  > "$SC_OR_TGT/skills/t68-shape-c-survivor/SKILL.md"
 
 # Re-install. Orphan must be removed; Shape C must remain.
 AI_CONFIG_LOCAL_ENV="$SC_OR_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
-[ -d "$SC_OR_TGT/skills/que68-orphan" ] \
-  && _fail "orphan skill subdir removed when source disappears" "skills/que68-orphan still present" \
+[ -d "$SC_OR_TGT/skills/t68-orphan" ] \
+  && _fail "orphan skill subdir removed when source disappears" "skills/t68-orphan still present" \
   || _pass "orphan skill subdir removed when source disappears"
 assert_file "Shape C survivor preserved through orphan cleanup" \
-  "$SC_OR_TGT/skills/que68-shape-c-survivor/SKILL.md"
+  "$SC_OR_TGT/skills/t68-shape-c-survivor/SKILL.md"
 
 # check-drift --manifest must remain clean post-cleanup: no orphan, Shape C
 # exempt, managed skills intact.
@@ -191,29 +191,29 @@ make_local_env "$HG_ENV" "$HG_TGT"
 # First install — populates a clean state.
 AI_CONFIG_LOCAL_ENV="$HG_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Simulate a previous framework install of "que68-hash-gate" with a known body.
-mkdir -p "$HG_TGT/skills/que68-hash-gate"
-printf -- '---\nname: que68-hash-gate\ndescription: stale framework body\n---\nstale framework body\n' \
-  > "$HG_TGT/skills/que68-hash-gate/SKILL.md"
-STALE_HASH="$(shasum -a 256 "$HG_TGT/skills/que68-hash-gate/SKILL.md" 2>/dev/null | cut -d' ' -f1)"
+# Simulate a previous framework install of "t68-hash-gate" with a known body.
+mkdir -p "$HG_TGT/skills/t68-hash-gate"
+printf -- '---\nname: t68-hash-gate\ndescription: stale framework body\n---\nstale framework body\n' \
+  > "$HG_TGT/skills/t68-hash-gate/SKILL.md"
+STALE_HASH="$(shasum -a 256 "$HG_TGT/skills/t68-hash-gate/SKILL.md" 2>/dev/null | cut -d' ' -f1)"
 if [ -n "$STALE_HASH" ] && command -v jq >/dev/null 2>&1; then
-  jq --arg h "$STALE_HASH" '.generated["skills/que68-hash-gate/SKILL.md"] = $h' \
+  jq --arg h "$STALE_HASH" '.generated["skills/t68-hash-gate/SKILL.md"] = $h' \
     "$HG_TGT/.build-manifest.json" > "$HG_TGT/.build-manifest.json.tmp" \
     && mv "$HG_TGT/.build-manifest.json.tmp" "$HG_TGT/.build-manifest.json"
 fi
 
 # NOW the operator overwrites the stale framework content with their own
 # Shape C body — different hash than what the manifest recorded.
-printf -- '---\nname: que68-hash-gate\ndescription: operator Shape C version\n---\noperator-authored Shape C body\n' \
-  > "$HG_TGT/skills/que68-hash-gate/SKILL.md"
+printf -- '---\nname: t68-hash-gate\ndescription: operator Shape C version\n---\noperator-authored Shape C body\n' \
+  > "$HG_TGT/skills/t68-hash-gate/SKILL.md"
 
 # Re-install. Hash gate must detect the operator modification and preserve
 # the subdir — only stale framework content gets deleted.
 AI_CONFIG_LOCAL_ENV="$HG_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 assert_file "hash gate preserves operator-modified orphan subdir" \
-  "$HG_TGT/skills/que68-hash-gate/SKILL.md"
-if [ -f "$HG_TGT/skills/que68-hash-gate/SKILL.md" ]; then
-  hg_content="$(cat "$HG_TGT/skills/que68-hash-gate/SKILL.md")"
+  "$HG_TGT/skills/t68-hash-gate/SKILL.md"
+if [ -f "$HG_TGT/skills/t68-hash-gate/SKILL.md" ]; then
+  hg_content="$(cat "$HG_TGT/skills/t68-hash-gate/SKILL.md")"
   assert_contains "hash gate preserves operator content verbatim" \
     "$hg_content" "operator-authored Shape C body"
 fi
@@ -284,18 +284,18 @@ assert_file "managed skills restored after rollback" \
 # run-private backup root but its replacement was never moved into place (its
 # live counterpart is missing). The NEXT install must restore it BEFORE the
 # swap loop and never blind-delete the only surviving copy (Codex adversarial F2).
-mkdir -p "$BN_TGT/.install-bak.d/skills/que147-recover"
-printf -- '---\nname: que147-recover\ndescription: crashed-install backup body\n---\nrecovered body\n' \
-  > "$BN_TGT/.install-bak.d/skills/que147-recover/SKILL.md"
-rm -rf "$BN_TGT/skills/que147-recover"   # live counterpart missing (simulated crash)
+mkdir -p "$BN_TGT/.install-bak.d/skills/t147-recover"
+printf -- '---\nname: t147-recover\ndescription: crashed-install backup body\n---\nrecovered body\n' \
+  > "$BN_TGT/.install-bak.d/skills/t147-recover/SKILL.md"
+rm -rf "$BN_TGT/skills/t147-recover"   # live counterpart missing (simulated crash)
 bn_rec_status=0
 AI_CONFIG_LOCAL_ENV="$BN_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1 || bn_rec_status=$?
 assert_eq "install exits 0 after recovering a crashed prior install" "0" "$bn_rec_status"
 assert_file "crash-recovery restores a backed-up skill whose live copy was missing" \
-  "$BN_TGT/skills/que147-recover/SKILL.md"
-if [ -f "$BN_TGT/skills/que147-recover/SKILL.md" ]; then
+  "$BN_TGT/skills/t147-recover/SKILL.md"
+if [ -f "$BN_TGT/skills/t147-recover/SKILL.md" ]; then
   assert_contains "crash-recovery restores the backup content verbatim" \
-    "$(cat "$BN_TGT/skills/que147-recover/SKILL.md")" "recovered body"
+    "$(cat "$BN_TGT/skills/t147-recover/SKILL.md")" "recovered body"
 fi
 [ -e "$BN_TGT/.install-bak.d" ] \
   && _fail "run-private backup root removed after crash-recovery" ".install-bak.d still present" \

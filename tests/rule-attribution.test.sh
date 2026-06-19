@@ -165,8 +165,12 @@ assert_eq "detector catches legacy (harness-mechanic)" "0" \
   "$(forbidden_match "- foo (harness-mechanic)"; echo $?)"
 
 # Negative controls: benign text must NOT match.
+# Lowercase variant of the runtime-built key — the detector matches UPPERCASE
+# tracker IDs, so the lowercase form must be ignored. Built by lowercasing
+# TRACKER_KEY so this source still carries no literal issue-shaped token.
+lqid="$(printf '%s' "$TRACKER_KEY" | tr 'A-Z' 'a-z')-185"
 assert_eq "detector ignores lowercase key" "1" \
-  "$(forbidden_match "- foo (que-185)"; echo $?)"
+  "$(forbidden_match "- foo (${lqid})"; echo $?)"
 assert_eq "detector ignores the word 'founding' in prose (no parens)" "1" \
   "$(forbidden_match "these are the founding rules"; echo $?)"
 assert_eq "detector ignores an ordinary hyphenated word" "1" \

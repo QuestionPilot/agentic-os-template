@@ -42,6 +42,23 @@ else
   printf 'see %s-1 detail\n' "$_CC_QUE" > "$cc_q/a.md"
   assert_exit "issue-ID alone FAILS" 1 -- bash "$CC_SUT" "$cc_q"
 
+  # Lowercase, no-hyphen tracker token (que<NN>) — the class the old uppercase +
+  # required-hyphen ISSUE_RE missed (real issue numbers survived as lowercase
+  # identifiers in tracked test/script files). Built at runtime so this source
+  # carries no contiguous trip-shape.
+  _CC_QUE_LC="qu""e"
+  cc_qlc="$CC_TMP/qlc"; mkdir -p "$cc_qlc"
+  printf 'stale skill named %s107-stale here\n' "$_CC_QUE_LC" > "$cc_qlc/a.md"
+  assert_exit "lowercase no-hyphen issue-ID (que<NN>) FAILS" 1 -- bash "$CC_SUT" "$cc_qlc"
+
+  # Boundary: ordinary words ending in "que" + digits (unique/opaque/technique
+  # class) must NOT trip this fail-closed gate — the lowercase arm requires a left
+  # boundary, so a "que" embedded inside a word is ignored. Words assembled at
+  # runtime (uni+que+100 …) so this source carries no contiguous trip-shape.
+  cc_ok="$CC_TMP/ok"; mkdir -p "$cc_ok"
+  printf 'uni%s100 opa%s22 techni%s5 here\n' "$_CC_QUE_LC" "$_CC_QUE_LC" "$_CC_QUE_LC" > "$cc_ok/a.md"
+  assert_exit "benign words ending in 'que'+digits do NOT trip (word boundary)" 0 -- bash "$CC_SUT" "$cc_ok"
+
   cc_p="$CC_TMP/p"; mkdir -p "$cc_p"
   printf 'path /%s/realperson/x\n' "$_CC_USERS" > "$cc_p/a.md"
   assert_exit "home-path alone FAILS" 1 -- bash "$CC_SUT" "$cc_p"

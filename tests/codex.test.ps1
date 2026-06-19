@@ -49,7 +49,7 @@ function Get-TreeDigest {
 }
 
 # === Shared fixture for the codex target ====================================
-$CX_ROOT  = Join-Path ([IO.Path]::GetTempPath()) ("que296-codex-test-" + [Guid]::NewGuid().Guid.Substring(0,8))
+$CX_ROOT  = Join-Path ([IO.Path]::GetTempPath()) ("t296-codex-test-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $CX_ROOT -Force | Out-Null
 $CX_OUT   = Join-Path $CX_ROOT 'out'
 $CX_VAULT = Join-Path $CX_ROOT 'vault'
@@ -262,7 +262,7 @@ try {
     # install.ps1 must canonicalize TARGET to an absolute path — a relative --out
     # otherwise leaks relative command paths into hooks.json, resolved against an
     # unpredictable CWD.
-    $CXR_WORK = Join-Path ([IO.Path]::GetTempPath()) ("que296-codex-relout-" + [Guid]::NewGuid().Guid.Substring(0,8))
+    $CXR_WORK = Join-Path ([IO.Path]::GetTempPath()) ("t296-codex-relout-" + [Guid]::NewGuid().Guid.Substring(0,8))
     New-Item -ItemType Directory -Path $CXR_WORK -Force | Out-Null
     $CXR_ENV = Join-Path $CXR_WORK 'local.env'
     Write-CodexEnvFixture -EnvFile $CXR_ENV -CodexHome (Join-Path $CXR_WORK 'unused') -VaultDir $CX_VAULT
@@ -293,7 +293,7 @@ try {
     Remove-Item -LiteralPath $CXR_WORK -Recurse -Force -ErrorAction SilentlyContinue
 
     # === Full install: swap into the target + drift gate ====================
-    $CXB_ROOT = Join-Path ([IO.Path]::GetTempPath()) ("que296-codex-full-" + [Guid]::NewGuid().Guid.Substring(0,8))
+    $CXB_ROOT = Join-Path ([IO.Path]::GetTempPath()) ("t296-codex-full-" + [Guid]::NewGuid().Guid.Substring(0,8))
     New-Item -ItemType Directory -Path $CXB_ROOT -Force | Out-Null
     $CXB_OUT = Join-Path $CXB_ROOT 'target'
     $CXB_ENV = Join-Path $CXB_ROOT 'local.env'

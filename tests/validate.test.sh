@@ -28,7 +28,7 @@ assert_exit "validate.sh passes from \$REPO_ROOT" 0 -- \
 # Differentiator under current code: validate FAILs because.claude/ exists at
 # all. After the fix: validate FAILs because the sentinel is not in the
 # allowlist. Both exit 1 — this test catches regressions, not the bug.
-VAL_HAND_EDIT=".test-que60-hand-edit-$$-${RANDOM:-x}"
+VAL_HAND_EDIT=".test-t60-hand-edit-$$-${RANDOM:-x}"
 mkdir -p "$REPO_ROOT/.claude"
 printf 'simulated hand-edit\n' > "$REPO_ROOT/.claude/$VAL_HAND_EDIT"
 assert_exit "validate.sh fails on a non-allowlisted child in .claude/" 1 -- \
@@ -39,10 +39,10 @@ rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 # --- Test 3:.claude/worktrees/ as the only child must PASS (KEY BUG FIX) ---
 # Before the fix: validate FAILs (existence is enough to reject) — RED.
 # After the fix: worktrees/ is allowlisted → PASS — GREEN.
-mkdir -p "$REPO_ROOT/.claude/worktrees/.test-que60-fake-worktree"
+mkdir -p "$REPO_ROOT/.claude/worktrees/.test-t60-fake-worktree"
 assert_exit "validate.sh passes when .claude/ has only worktrees/" 0 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-rm -rf "$REPO_ROOT/.claude/worktrees/.test-que60-fake-worktree"
+rm -rf "$REPO_ROOT/.claude/worktrees/.test-t60-fake-worktree"
 rmdir "$REPO_ROOT/.claude/worktrees" 2>/dev/null || true
 rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 
@@ -123,7 +123,7 @@ for ct_dir in "$REPO_ROOT/.claude" "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
       "real ${ct_base}/skills/ present at \$REPO_ROOT — refusing to overwrite"
     continue
   fi
-  mkdir -p "$ct_dir/skills/.test-que70-fake-skill-$$-${RANDOM:-x}"
+  mkdir -p "$ct_dir/skills/.test-t70-fake-skill-$$-${RANDOM:-x}"
   val_skills_output="$(bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
     && val_skills_exit=0 || val_skills_exit=$?
   rm -rf "$ct_dir/skills"
@@ -149,13 +149,13 @@ if [ -e "$REPO_ROOT/.claude" ]; then
   _skip "validate.sh recognizes a co-located CLAUDE_CONFIG_DIR" \
     "real .claude/ present at \$REPO_ROOT — refusing to co-opt as a config target"
 else
-  mkdir -p "$REPO_ROOT/.claude/skills/.test-que285-skill-$$-${RANDOM:-x}"
+  mkdir -p "$REPO_ROOT/.claude/skills/.test-t285-skill-$$-${RANDOM:-x}"
   printf '{}\n' > "$REPO_ROOT/.claude/settings.json"
   # (a) config dir IS this .claude/ → recognized → PASS despite skills/ + settings.json
   assert_exit "validate.sh recognizes a co-located CLAUDE_CONFIG_DIR (skills/+settings.json PASS)" 0 -- \
     env CLAUDE_CONFIG_DIR="$REPO_ROOT/.claude" bash "$REPO_ROOT/scripts/validate.sh"
   # (b) config dir is a DIFFERENT existing dir → not recognized → still FAILS (finding #8)
-  VAL_Q285_ELSEWHERE="$REPO_ROOT/.test-que285-elsewhere-$$-${RANDOM:-x}"
+  VAL_Q285_ELSEWHERE="$REPO_ROOT/.test-t285-elsewhere-$$-${RANDOM:-x}"
   mkdir -p "$VAL_Q285_ELSEWHERE"
   val_q285_out="$(env CLAUDE_CONFIG_DIR="$VAL_Q285_ELSEWHERE" bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
     && val_q285_exit=0 || val_q285_exit=$?
@@ -172,13 +172,13 @@ fi
 
 # --- Test 5: mixed (worktrees/ + hand-edit) must FAIL ---
 # Regression: both pre and post fix → FAIL.
-mkdir -p "$REPO_ROOT/.claude/worktrees/.test-que60-fake-worktree"
-VAL_MIXED_EDIT=".test-que60-mixed-$$-${RANDOM:-x}"
+mkdir -p "$REPO_ROOT/.claude/worktrees/.test-t60-fake-worktree"
+VAL_MIXED_EDIT=".test-t60-mixed-$$-${RANDOM:-x}"
 printf 'mixed hand-edit\n' > "$REPO_ROOT/.claude/$VAL_MIXED_EDIT"
 assert_exit "validate.sh fails on mixed .claude/ (worktrees + hand-edit)" 1 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
 rm -f "$REPO_ROOT/.claude/$VAL_MIXED_EDIT"
-rm -rf "$REPO_ROOT/.claude/worktrees/.test-que60-fake-worktree"
+rm -rf "$REPO_ROOT/.claude/worktrees/.test-t60-fake-worktree"
 rmdir "$REPO_ROOT/.claude/worktrees" 2>/dev/null || true
 rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 
@@ -187,7 +187,7 @@ rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 # path/.claude" — no per-child detail. After: message lists the actual
 # hand-edited path so the operator knows what to move/delete.
 mkdir -p "$REPO_ROOT/.claude"
-VAL_DIAG_NAME=".test-que60-diag-$$-${RANDOM:-x}"
+VAL_DIAG_NAME=".test-t60-diag-$$-${RANDOM:-x}"
 printf 'diag content\n' > "$REPO_ROOT/.claude/$VAL_DIAG_NAME"
 val_output="$(bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" && val_exit=0 || val_exit=$?
 rm -f "$REPO_ROOT/.claude/$VAL_DIAG_NAME"
@@ -209,7 +209,7 @@ for ct_dir in "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
       "real ${ct_base}/ present at \$REPO_ROOT — refusing to inject"
     continue
   fi
-  CT_INJECT=".test-que60-${ct_base}-$$-${RANDOM:-x}"
+  CT_INJECT=".test-t60-${ct_base}-$$-${RANDOM:-x}"
   mkdir -p "$ct_dir"
   printf 'simulated hand-edit\n' > "$ct_dir/$CT_INJECT"
   assert_exit "validate.sh fails on hand-edit in ${ct_base}/" 1 -- \
@@ -226,16 +226,16 @@ done
 # dir) or test fixtures whose strings match the secret regex (e.g., sk-...
 # mock data inside an unrelated worktree). Each scan must prune the
 # {claude,codex,agents}/worktrees/ subtree. Sentinel-named injections live
-# inside an explicit.test-que61-* dir so they cannot collide with a real
+# inside an explicit.test-t61-* dir so they cannot collide with a real
 # worktree even when the test runs from main.
 
 # Test 7:.DS_Store inside.claude/worktrees/<name>/ must NOT trip validate.
-VAL_QUE61_WT=".test-que61-fake-wt-$$-${RANDOM:-x}"
-mkdir -p "$REPO_ROOT/.claude/worktrees/$VAL_QUE61_WT"
-touch "$REPO_ROOT/.claude/worktrees/$VAL_QUE61_WT/.DS_Store"
+VAL_T61_WT=".test-t61-fake-wt-$$-${RANDOM:-x}"
+mkdir -p "$REPO_ROOT/.claude/worktrees/$VAL_T61_WT"
+touch "$REPO_ROOT/.claude/worktrees/$VAL_T61_WT/.DS_Store"
 assert_exit "validate.sh ignores .DS_Store inside .claude/worktrees/" 0 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-rm -rf "$REPO_ROOT/.claude/worktrees/$VAL_QUE61_WT"
+rm -rf "$REPO_ROOT/.claude/worktrees/$VAL_T61_WT"
 rmdir "$REPO_ROOT/.claude/worktrees" 2>/dev/null || true
 rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 
@@ -245,16 +245,16 @@ rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 # real fixture might legitimately exist. The secret is CONSTRUCTED at
 # runtime — never written as a literal in the source — so this test file
 # itself does not match validate.sh's grep when validate scans tests/.
-VAL_QUE61_SEC=".test-que61-sec-$$-${RANDOM:-x}"
-mkdir -p "$REPO_ROOT/.claude/worktrees/$VAL_QUE61_SEC"
-val_que61_prefix='sk-'
-val_que61_body='fakefake1234567890_abcdefghij_test'
-printf '%s%s\n' "$val_que61_prefix" "$val_que61_body" > \
-  "$REPO_ROOT/.claude/worktrees/$VAL_QUE61_SEC/fixture-secret.txt"
-unset val_que61_prefix val_que61_body
+VAL_T61_SEC=".test-t61-sec-$$-${RANDOM:-x}"
+mkdir -p "$REPO_ROOT/.claude/worktrees/$VAL_T61_SEC"
+val_t61_prefix='sk-'
+val_t61_body='fakefake1234567890_abcdefghij_test'
+printf '%s%s\n' "$val_t61_prefix" "$val_t61_body" > \
+  "$REPO_ROOT/.claude/worktrees/$VAL_T61_SEC/fixture-secret.txt"
+unset val_t61_prefix val_t61_body
 assert_exit "validate.sh ignores secret-shaped strings inside .claude/worktrees/" 0 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-rm -rf "$REPO_ROOT/.claude/worktrees/$VAL_QUE61_SEC"
+rm -rf "$REPO_ROOT/.claude/worktrees/$VAL_T61_SEC"
 rmdir "$REPO_ROOT/.claude/worktrees" 2>/dev/null || true
 rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
 
@@ -275,7 +275,7 @@ for ct_dir in "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
     continue
   fi
   # DS_Store inside the sibling harness's worktrees subtree
-  CT_WT_NAME=".test-que61-fb-wt-${ct_base}-$$-${RANDOM:-x}"
+  CT_WT_NAME=".test-t61-fb-wt-${ct_base}-$$-${RANDOM:-x}"
   mkdir -p "$ct_dir/worktrees/$CT_WT_NAME"
   touch "$ct_dir/worktrees/$CT_WT_NAME/.DS_Store"
   assert_exit "validate.sh ignores .DS_Store inside ${ct_base}/worktrees/" 0 -- \
@@ -283,13 +283,13 @@ for ct_dir in "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
   rm -rf "$ct_dir/worktrees/$CT_WT_NAME"
   # Secret-shaped fixture inside the sibling harness's worktrees subtree.
   # Same runtime-construction discipline as the.claude/ case.
-  CT_SEC_NAME=".test-que61-fb-sec-${ct_base}-$$-${RANDOM:-x}"
+  CT_SEC_NAME=".test-t61-fb-sec-${ct_base}-$$-${RANDOM:-x}"
   mkdir -p "$ct_dir/worktrees/$CT_SEC_NAME"
-  val_que61fb_prefix='sk-'
-  val_que61fb_body='fakefake1234567890_abcdefghij_test'
-  printf '%s%s\n' "$val_que61fb_prefix" "$val_que61fb_body" > \
+  val_t61fb_prefix='sk-'
+  val_t61fb_body='fakefake1234567890_abcdefghij_test'
+  printf '%s%s\n' "$val_t61fb_prefix" "$val_t61fb_body" > \
     "$ct_dir/worktrees/$CT_SEC_NAME/fixture-secret.txt"
-  unset val_que61fb_prefix val_que61fb_body
+  unset val_t61fb_prefix val_t61fb_body
   assert_exit "validate.sh ignores secret-shaped strings inside ${ct_base}/worktrees/" 0 -- \
     bash "$REPO_ROOT/scripts/validate.sh"
   rm -rf "$ct_dir/worktrees/$CT_SEC_NAME"
@@ -314,19 +314,19 @@ done
 # Sentinel is runtime-constructed (per [[feedback_self_tripping_test_source]])
 # so this test source doesn't self-trip when validate.sh scans tests/. The index
 # is reset in cleanup so the force-added fixture leaves no staged orphan.
-VAL_QUE66_FA_PARENT="tests/fixtures/que66-fa-$$-${RANDOM:-x}"
-VAL_QUE66_FA_DIR="$VAL_QUE66_FA_PARENT/worktrees"
-mkdir -p "$REPO_ROOT/$VAL_QUE66_FA_DIR"
-val_que66fa_prefix='sk-'
-val_que66fa_body='fakefake1234567890_abcdefghij_test'
-printf '%s%s\n' "$val_que66fa_prefix" "$val_que66fa_body" > \
-  "$REPO_ROOT/$VAL_QUE66_FA_DIR/secret.txt"
-unset val_que66fa_prefix val_que66fa_body
-git -C "$REPO_ROOT" add -f "$VAL_QUE66_FA_DIR/secret.txt" >/dev/null 2>&1
+VAL_T66_FA_PARENT="tests/fixtures/t66-fa-$$-${RANDOM:-x}"
+VAL_T66_FA_DIR="$VAL_T66_FA_PARENT/worktrees"
+mkdir -p "$REPO_ROOT/$VAL_T66_FA_DIR"
+val_t66fa_prefix='sk-'
+val_t66fa_body='fakefake1234567890_abcdefghij_test'
+printf '%s%s\n' "$val_t66fa_prefix" "$val_t66fa_body" > \
+  "$REPO_ROOT/$VAL_T66_FA_DIR/secret.txt"
+unset val_t66fa_prefix val_t66fa_body
+git -C "$REPO_ROOT" add -f "$VAL_T66_FA_DIR/secret.txt" >/dev/null 2>&1
 assert_exit "validate.sh catches secrets in a tracked non-harness worktrees/ dir" 1 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" reset -q -- "$VAL_QUE66_FA_DIR/secret.txt" 2>/dev/null || true
-rm -rf "$REPO_ROOT/$VAL_QUE66_FA_PARENT"
+git -C "$REPO_ROOT" reset -q -- "$VAL_T66_FA_DIR/secret.txt" 2>/dev/null || true
+rm -rf "$REPO_ROOT/$VAL_T66_FA_PARENT"
 
 # --- gitignored runtime-artifact dir cross-model-out/ pruned from the
 # secret-pattern scan ---
@@ -345,16 +345,16 @@ rm -rf "$REPO_ROOT/$VAL_QUE66_FA_PARENT"
 # CONSTRUCTED at runtime (never a source literal) per
 # [[feedback_self_tripping_test_source]] so this test file does not itself match
 # validate.sh's grep when validate scans tests/.
-VAL_QUE244_DIR="cross-model-out/.test-que244-$$-${RANDOM:-x}"
-mkdir -p "$REPO_ROOT/$VAL_QUE244_DIR"
-val_que244_prefix='sk-'
-val_que244_body='fakefake1234567890_abcdefghij_test'
-printf '%s%s\n' "$val_que244_prefix" "$val_que244_body" > \
-  "$REPO_ROOT/$VAL_QUE244_DIR/codex-review.md"
-unset val_que244_prefix val_que244_body
+VAL_T244_DIR="cross-model-out/.test-t244-$$-${RANDOM:-x}"
+mkdir -p "$REPO_ROOT/$VAL_T244_DIR"
+val_t244_prefix='sk-'
+val_t244_body='fakefake1234567890_abcdefghij_test'
+printf '%s%s\n' "$val_t244_prefix" "$val_t244_body" > \
+  "$REPO_ROOT/$VAL_T244_DIR/codex-review.md"
+unset val_t244_prefix val_t244_body
 assert_exit "validate.sh ignores secret-shaped strings inside cross-model-out/" 0 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-rm -rf "$REPO_ROOT/$VAL_QUE244_DIR"
+rm -rf "$REPO_ROOT/$VAL_T244_DIR"
 # rmdir only if empty — preserve any real cross-model-out/ the operator owns.
 rmdir "$REPO_ROOT/cross-model-out" 2>/dev/null || true
 
@@ -365,16 +365,16 @@ rmdir "$REPO_ROOT/cross-model-out" 2>/dev/null || true
 # loose post-filter) would silently skip it — a real secret-scan blind spot.
 # The dir lives at repo root because the prefix collision only arises at the
 # excluded root's own level. Sentinel constructed at runtime.
-VAL_QUE244_SIB="cross-model-out-.test-que244-sib-$$-${RANDOM:-x}"
-mkdir -p "$REPO_ROOT/$VAL_QUE244_SIB"
-val_que244sib_prefix='sk-'
-val_que244sib_body='fakefake1234567890_abcdefghij_test'
-printf '%s%s\n' "$val_que244sib_prefix" "$val_que244sib_body" > \
-  "$REPO_ROOT/$VAL_QUE244_SIB/secret.txt"
-unset val_que244sib_prefix val_que244sib_body
+VAL_T244_SIB="cross-model-out-.test-t244-sib-$$-${RANDOM:-x}"
+mkdir -p "$REPO_ROOT/$VAL_T244_SIB"
+val_t244sib_prefix='sk-'
+val_t244sib_body='fakefake1234567890_abcdefghij_test'
+printf '%s%s\n' "$val_t244sib_prefix" "$val_t244sib_body" > \
+  "$REPO_ROOT/$VAL_T244_SIB/secret.txt"
+unset val_t244sib_prefix val_t244sib_body
 assert_exit "validate.sh still catches secrets in a cross-model-out* sibling dir" 1 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-rm -rf "$REPO_ROOT/$VAL_QUE244_SIB"
+rm -rf "$REPO_ROOT/$VAL_T244_SIB"
 
 # --- a TRACKED file whose NAME matches a gitignore rule is still
 # scanned ---
@@ -385,7 +385,7 @@ rm -rf "$REPO_ROOT/$VAL_QUE244_SIB"
 # negative on a committable secret. `.gitignore` ignores `*.log` and `.mcp.json`,
 # so each fixture is force-added; the index is reset in cleanup (no staged
 # orphan). Sentinels constructed at runtime per [[feedback_self_tripping_test_source]].
-for val_q246_name in "fixture-que246-$$-${RANDOM:-x}.log" ".test-que246-$$-${RANDOM:-y}.mcp.json"; do
+for val_q246_name in "fixture-t246-$$-${RANDOM:-x}.log" ".test-t246-$$-${RANDOM:-y}.mcp.json"; do
   val_q246_prefix='sk-'
   val_q246_body='fakefake1234567890_abcdefghij_test'
   printf '%s%s\n' "$val_q246_prefix" "$val_q246_body" > "$REPO_ROOT/$val_q246_name"
@@ -415,7 +415,7 @@ assert_exit "validate.sh passes clean on the committable set" 0 -- \
 # non-.md extension isolates the failure to the secret scan (the link/lifecycle
 # checks ignore it). Index reset in cleanup so no staged orphan survives (per
 # [[feedback_orphan_staged_fixtures]]); runs in CI / isolated worktree.
-VAL_Q248_DEL="$REPO_ROOT/.test-que248-unreadable-$$-${RANDOM:-x}.txt"
+VAL_Q248_DEL="$REPO_ROOT/.test-t248-unreadable-$$-${RANDOM:-x}.txt"
 if [ -e "$VAL_Q248_DEL" ]; then
   _skip "validate.sh fails closed on an unreadable listed file" "fixture collision: $VAL_Q248_DEL"
 else
@@ -439,7 +439,7 @@ unset VAL_Q248_DEL
 # (the orphan-staged-fixture hazard). The trap is INT/TERM only (NOT EXIT — run.sh
 # sources files, so an EXIT trap would persist across siblings per the header
 # note) and is cleared immediately after the inline cleanup.
-VAL_Q248_NEST="tests/fixtures/que248-nested-$$-${RANDOM:-x}"
+VAL_Q248_NEST="tests/fixtures/t248-nested-$$-${RANDOM:-x}"
 trap 'git -C "$REPO_ROOT" reset -q -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1 || true; rm -rf "$REPO_ROOT/$VAL_Q248_NEST"' INT TERM
 mkdir -p "$REPO_ROOT/$VAL_Q248_NEST"
 val_q248_prefix='sk-'

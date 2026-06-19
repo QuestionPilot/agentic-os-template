@@ -160,20 +160,20 @@ fi
 # if-real preserves any pre-existing harness worktree state.
 #
 # Sentinel constructed at runtime (per [[feedback_self_tripping_test_source]]).
-DR_QUE66_FAKE_WT=".claude/worktrees/.test-que66-c1-fake-wt-$$-${RANDOM:-x}"
-if [ -e "$REPO_ROOT/$DR_QUE66_FAKE_WT" ]; then
+DR_T66_FAKE_WT=".claude/worktrees/.test-t66-c1-fake-wt-$$-${RANDOM:-x}"
+if [ -e "$REPO_ROOT/$DR_T66_FAKE_WT" ]; then
   _skip "check-drift.sh skips /Users/ inside harness gitlink" \
     "collision with real worktree path — refusing to overwrite"
 else
-  mkdir -p "$REPO_ROOT/$DR_QUE66_FAKE_WT"
+  mkdir -p "$REPO_ROOT/$DR_T66_FAKE_WT"
   c1_prefix='/U'
-  c1_path_body='sers/test-que66-c1/.test-claude-config/repo.git/worktrees/branch'
+  c1_path_body='sers/test-t66-c1/.test-claude-config/repo.git/worktrees/branch'
   c1_full="${c1_prefix}${c1_path_body}"
-  printf 'gitdir: %s\n' "$c1_full" > "$REPO_ROOT/$DR_QUE66_FAKE_WT/.git"
+  printf 'gitdir: %s\n' "$c1_full" > "$REPO_ROOT/$DR_T66_FAKE_WT/.git"
   unset c1_prefix c1_path_body c1_full
   assert_exit "check-drift.sh skips /Users/ inside harness gitlink" 0 -- \
     bash "$REPO_ROOT/scripts/check-drift.sh"
-  rm -rf "$REPO_ROOT/$DR_QUE66_FAKE_WT"
+  rm -rf "$REPO_ROOT/$DR_T66_FAKE_WT"
   # Best-effort empty-dir cleanup (don't disturb real worktrees/ dir)
   rmdir "$REPO_ROOT/.claude/worktrees" 2>/dev/null || true
   rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
@@ -199,9 +199,9 @@ fi
 # when it scans tests/drift.test.sh.
 
 # --- positive: mac home prefix + user + trailing path ---
-DR_C1_POS_M="$REPO_ROOT/.test-que66-c1-mac-pos-$$-${RANDOM:-x}.md"
+DR_C1_POS_M="$REPO_ROOT/.test-t66-c1-mac-pos-$$-${RANDOM:-x}.md"
 c1_p='/Us'
-c1_b='ers/test-que66-c1-pos/path'
+c1_b='ers/test-t66-c1-pos/path'
 printf '%s%s\n' "$c1_p" "$c1_b" > "$DR_C1_POS_M"
 unset c1_p c1_b
 assert_exit "check-drift catches mac home prefix + user + path" 1 -- \
@@ -209,9 +209,9 @@ assert_exit "check-drift catches mac home prefix + user + path" 1 -- \
 rm -f "$DR_C1_POS_M"
 
 # --- positive: linux home prefix + user + trailing path ---
-DR_C1_POS_L="$REPO_ROOT/.test-que66-c1-linux-pos-$$-${RANDOM:-x}.md"
+DR_C1_POS_L="$REPO_ROOT/.test-t66-c1-linux-pos-$$-${RANDOM:-x}.md"
 c1_p='/h'
-c1_b='ome/test-que66-c1-pos/path'
+c1_b='ome/test-t66-c1-pos/path'
 printf '%s%s\n' "$c1_p" "$c1_b" > "$DR_C1_POS_L"
 unset c1_p c1_b
 assert_exit "check-drift catches linux home prefix + user + path" 1 -- \
@@ -221,9 +221,9 @@ rm -f "$DR_C1_POS_L"
 # --- positive: mac home prefix + user, NO trailing slash (cross-model
 # amendment — the original pattern required trailing slash and missed
 # bare-home-dir references) ---
-DR_C1_POS_NS="$REPO_ROOT/.test-que66-c1-no-trail-$$-${RANDOM:-x}.md"
+DR_C1_POS_NS="$REPO_ROOT/.test-t66-c1-no-trail-$$-${RANDOM:-x}.md"
 c1_p='/Us'
-c1_b='ers/test-que66-c1-no-trail'
+c1_b='ers/test-t66-c1-no-trail'
 printf '%s%s\n' "$c1_p" "$c1_b" > "$DR_C1_POS_NS"
 unset c1_p c1_b
 assert_exit "check-drift catches mac home prefix + user with no trailing slash" 1 -- \
@@ -231,10 +231,10 @@ assert_exit "check-drift catches mac home prefix + user with no trailing slash" 
 rm -f "$DR_C1_POS_NS"
 
 # --- positive: Windows drive home prefix + user + path ---
-DR_C1_POS_W="$REPO_ROOT/.test-que66-c1-win-pos-$$-${RANDOM:-x}.md"
+DR_C1_POS_W="$REPO_ROOT/.test-t66-c1-win-pos-$$-${RANDOM:-x}.md"
 c1_drive='C:'
 c1_p='\Us'
-c1_b='ers\test-que66-c1-pos\path'
+c1_b='ers\test-t66-c1-pos\path'
 printf '%s%s%s\n' "$c1_drive" "$c1_p" "$c1_b" > "$DR_C1_POS_W"
 unset c1_drive c1_p c1_b
 assert_exit "check-drift catches Windows drive home prefix + user + path" 1 -- \
@@ -245,7 +245,7 @@ rm -f "$DR_C1_POS_W"
 # The OLD pattern would catch this (bare-substring `/Users/`); the NEW
 # class-shape pattern requires `[^/]+` after, so bare home with no user
 # is intentionally skipped. Same for `/home/`.
-DR_C1_NEG_M="$REPO_ROOT/.test-que66-c1-bare-mac-neg-$$-${RANDOM:-x}.md"
+DR_C1_NEG_M="$REPO_ROOT/.test-t66-c1-bare-mac-neg-$$-${RANDOM:-x}.md"
 c1_p='/Us'
 c1_b='ers/'
 printf '%s%s\n' "$c1_p" "$c1_b" > "$DR_C1_NEG_M"
@@ -266,9 +266,9 @@ rm -f "$DR_C1_NEG_M"
 # docs/ is excluded from the public template ship-set, so docs/plans/ may not
 # exist on a fresh template clone — create it so the fixture can be planted.
 mkdir -p "$REPO_ROOT/docs/plans"
-H6_INJECT="$REPO_ROOT/docs/plans/test-que52-h6-leak.md"
+H6_INJECT="$REPO_ROOT/docs/plans/test-t52-h6-leak.md"
 h6_prefix='/U'
-h6_body='sers/test-que52-h6/sentinel'
+h6_body='sers/test-t52-h6/sentinel'
 printf '%s%s\n' "$h6_prefix" "$h6_body" > "$H6_INJECT"
 unset h6_prefix h6_body
 assert_exit "check-drift.sh catches concrete-home-prefix path in docs/plans/" 1 -- \
@@ -290,31 +290,31 @@ rm -f "$H6_INJECT"
 # Sentinel is runtime-constructed from non-matching halves so this test
 # source does not self-trip the path scan when drift scans tests/ (mirrors
 # the H6 pattern above). The dir name is unique-per-test ($$-$RANDOM,
-# parallel to DR_QUE66_FAKE_WT at line 149) to avoid colliding with a real
+# parallel to DR_T66_FAKE_WT at line 149) to avoid colliding with a real
 # review run that happens to land here. Skip-if-exists guard preserves the
 # real run if the fixture name collides (vanishingly rare).
-DR_QUE87_DIR="cross-model-out/.test-que87-leak-$$-${RANDOM:-x}"
-if [ -e "$REPO_ROOT/$DR_QUE87_DIR" ]; then
+DR_T87_DIR="cross-model-out/.test-t87-leak-$$-${RANDOM:-x}"
+if [ -e "$REPO_ROOT/$DR_T87_DIR" ]; then
   _skip "check-drift.sh prunes cross-model-out/ runtime artifacts" \
-    "fixture collision: $REPO_ROOT/$DR_QUE87_DIR exists"
+    "fixture collision: $REPO_ROOT/$DR_T87_DIR exists"
 else
-  mkdir -p "$REPO_ROOT/$DR_QUE87_DIR"
+  mkdir -p "$REPO_ROOT/$DR_T87_DIR"
   # Fixture pins the cross-model-out/ prune for the active scans (machine-path,
   # plus the personal-naming scan when the operator fragment is present) so a
   # future regression that drops --exclude-dir=cross-model-out fails this single
   # assertion. The sentinels are runtime-constructed from non-matching halves so
   # this test source does not self-trip the scans when drift scans tests/.
   cmr_prefix='/U'
-  cmr_body='sers/test-que87/Claude - Local/agentic-os-template'
+  cmr_body='sers/test-t87/Claude - Local/agentic-os-template'
   hd_a='Hen'; hd_b='do'
   {
     printf 'workdir: %s%s\nmodel: gpt-5.5\n\n' "$cmr_prefix" "$cmr_body"
     printf '# Review repo by %s%s\n' "$hd_a" "$hd_b"
-  } > "$REPO_ROOT/$DR_QUE87_DIR/codex-review.md"
+  } > "$REPO_ROOT/$DR_T87_DIR/codex-review.md"
   unset cmr_prefix cmr_body hd_a hd_b
   assert_exit "check-drift.sh prunes cross-model-out/ runtime artifacts" 0 -- \
     bash "$REPO_ROOT/scripts/check-drift.sh"
-  rm -rf "$REPO_ROOT/$DR_QUE87_DIR"
+  rm -rf "$REPO_ROOT/$DR_T87_DIR"
 fi
 
 # --- the broad content scans enumerate the COMMITTABLE set
@@ -325,14 +325,14 @@ fi
 # [[feedback_self_tripping_test_source]]). Each fixture asserts its gitignore
 # precondition before the behavioral assertion — a misconfigured.gitignore would
 # otherwise make these pass vacuously. ---
-q213_home='/Us''ers/test-que213/Projects/foo/bar.js'
+q213_home='/Us''ers/test-t213/Projects/foo/bar.js'
 
 # (a) THE FIX: a gitignored.codegraph/*.log carrying an absolute home path (the
 # field case: codegraph's.codegraph/daemon.log) is PRUNED -> exit 0. Under the
 # pre-fix `grep -r` walk this exited 1. Unique filename + rmdir-if-created so
 # a real codegraph install's state is never touched.
 DR_Q213_IGN_DIR="$REPO_ROOT/.codegraph"
-DR_Q213_IGN="$DR_Q213_IGN_DIR/.test-que213-daemon-$$-${RANDOM:-x}.log"
+DR_Q213_IGN="$DR_Q213_IGN_DIR/.test-t213-daemon-$$-${RANDOM:-x}.log"
 DR_Q213_MADE_DIR=0
 [ -d "$DR_Q213_IGN_DIR" ] || { mkdir -p "$DR_Q213_IGN_DIR"; DR_Q213_MADE_DIR=1; }
 if [ -e "$DR_Q213_IGN" ]; then
@@ -352,7 +352,7 @@ fi
 
 # (b) a gitignored *.log anywhere proves it is the.gitignore decision, not a
 # hardcoded.codegraph special-case -> exit 0.
-DR_Q213_LOG="$REPO_ROOT/.test-que213-stray-$$-${RANDOM:-x}.log"
+DR_Q213_LOG="$REPO_ROOT/.test-t213-stray-$$-${RANDOM:-x}.log"
 if [ -e "$DR_Q213_LOG" ]; then
   _skip "check-drift.sh prunes a gitignored *.log file" "fixture collision: $DR_Q213_LOG"
 else
@@ -373,7 +373,7 @@ fi
 # hazard in [[feedback_git_lsfiles_test_skips_untracked]]). Untracked-not-ignored
 # is itself committable content, so this also covers the AC's "a tracked file
 # still fails" without mutating the index.
-DR_Q213_COMMIT="$REPO_ROOT/.test-que213-committable-$$-${RANDOM:-x}.md"
+DR_Q213_COMMIT="$REPO_ROOT/.test-t213-committable-$$-${RANDOM:-x}.md"
 if [ -e "$DR_Q213_COMMIT" ]; then
   _skip "check-drift.sh still catches a committable machine path" "fixture collision: $DR_Q213_COMMIT"
 else
@@ -393,7 +393,7 @@ fi
 # UNSTAGED + removed immediately so no orphan survives (per
 # [[feedback_orphan_staged_fixtures]]). Runs in CI (fresh clone) / isolated
 # worktree, never operator-main.
-DR_Q213_TRACKED="$REPO_ROOT/.test-que213-tracked-$$-${RANDOM:-x}.md"
+DR_Q213_TRACKED="$REPO_ROOT/.test-t213-tracked-$$-${RANDOM:-x}.md"
 if [ -e "$DR_Q213_TRACKED" ]; then
   _skip "check-drift.sh catches a TRACKED machine path" "fixture collision: $DR_Q213_TRACKED"
 else
@@ -416,7 +416,7 @@ unset q213_home DR_Q213_IGN_DIR DR_Q213_IGN DR_Q213_MADE_DIR DR_Q213_LOG DR_Q213
 # ReadLines error via catch{}). Content carries no machine path / secret so the
 # unreadable file is the sole failure cause. Index reset in cleanup; runs in CI /
 # isolated worktree, never operator-main.
-DR_Q248="$REPO_ROOT/.test-que248-unreadable-$$-${RANDOM:-x}.md"
+DR_Q248="$REPO_ROOT/.test-t248-unreadable-$$-${RANDOM:-x}.md"
 if [ -e "$DR_Q248" ]; then
   _skip "check-drift.sh fails closed on an unreadable listed file" "fixture collision: $DR_Q248"
 else

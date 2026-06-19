@@ -51,7 +51,7 @@ if (-not (Test-Path -LiteralPath $INSTALL_PS1 -PathType Leaf)) {
 # pwsh's New-TemporaryFile gives us a file; we want a dir. Use [IO.Path] for
 # a cross-platform Temp dir + a New-Guid suffix so we can run alongside the
 # bash suite without collisions.
-$tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("que100-install-test-" + [Guid]::NewGuid().Guid.Substring(0,8))
+$tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("t100-install-test-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 
 $claudeTgt = Join-Path $tmpRoot 'claude-config'
@@ -292,7 +292,7 @@ try {
 # rejects it: exit 1, an actionable message naming the known set, and NO partial
 # filesystem mutation (the reject fires at the per-harness env-var switch default,
 # before any target resolution or build-dir creation).
-$hmRoot = Join-Path ([IO.Path]::GetTempPath()) ("que296-unknown-harness-reject-" + [Guid]::NewGuid().Guid.Substring(0,8))
+$hmRoot = Join-Path ([IO.Path]::GetTempPath()) ("t296-unknown-harness-reject-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $hmRoot -Force | Out-Null
 $hmTgt   = Join-Path $hmRoot 'claude-config'
 $hmEnv   = Join-Path $hmRoot 'fixture.local.env'

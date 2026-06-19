@@ -125,18 +125,18 @@ function New-OrphanSkill {
 $T1 = New-OrphanFixture 't1'
 Invoke-InstallClaude -EnvFile $T1.Env | Out-Null
 
-# Simulate a prior framework version that compiled an extra "que107-stale" skill:
+# Simulate a prior framework version that compiled an extra "t107-stale" skill:
 # render its subdir, then record its ACTUAL on-disk hash in the OLD manifest.
-$t1Orphan = New-OrphanSkill -Tgt $T1.Tgt -Base 'que107-stale' `
-    -Body "---`nname: que107-stale`ndescription: stale framework skill`n---`nstale body`n"
+$t1Orphan = New-OrphanSkill -Tgt $T1.Tgt -Base 't107-stale' `
+    -Body "---`nname: t107-stale`ndescription: stale framework skill`n---`nstale body`n"
 $t1Hash = (Get-FileHash -LiteralPath (Join-Path $t1Orphan 'SKILL.md') -Algorithm SHA256).Hash.ToLower()
 Add-ManifestSkillEntry -ManifestPath (Join-Path $T1.Tgt '.build-manifest.json') `
-    -Key 'skills/que107-stale/SKILL.md' -Hash $t1Hash
+    -Key 'skills/t107-stale/SKILL.md' -Hash $t1Hash
 
 # Re-install — untouched-stale orphan (hash matches the OLD manifest) is removed.
 Invoke-InstallClaude -EnvFile $T1.Env | Out-Null
 if (Test-Path -LiteralPath $t1Orphan -PathType Container) {
-    _Fail 'install-orphan-hardening.test: T1: well-formed orphan with hash-match deleted' 'skills/que107-stale still present'
+    _Fail 'install-orphan-hardening.test: T1: well-formed orphan with hash-match deleted' 'skills/t107-stale still present'
 } else {
     _Pass 'install-orphan-hardening.test: T1: well-formed orphan with hash-match deleted'
 }
@@ -152,7 +152,7 @@ Invoke-InstallClaude -EnvFile $T2.Env | Out-Null
 
 # Sentinel directly under $TARGET (sibling of skills/) — its survival proves
 # $TARGET was not wiped by a traversal-driven recursive delete.
-[System.IO.File]::WriteAllText((Join-Path $T2.Tgt 'que107-sentinel.txt'), "sentinel content`n", $utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $T2.Tgt 't107-sentinel.txt'), "sentinel content`n", $utf8NoBom)
 
 # Build the `..` token at runtime so the source carries no literal `skills/../`.
 $t2Traversal = ('.' + '.')
@@ -161,7 +161,7 @@ Add-ManifestSkillEntry -ManifestPath (Join-Path $T2.Tgt '.build-manifest.json') 
 
 $cap2 = Invoke-InstallClaudeCapture -EnvFile $T2.Env
 Assert-File 'install-orphan-hardening.test: T2: $TARGET sentinel preserved against `..` orphan attack' `
-    (Join-Path $T2.Tgt 'que107-sentinel.txt')
+    (Join-Path $T2.Tgt 't107-sentinel.txt')
 Assert-Contains 'install-orphan-hardening.test: T2: install.ps1 emits warning on `..` orphan rejection' `
     $cap2.Out 'unsafe orphan'
 Assert-Eq 'install-orphan-hardening.test: T2: install.ps1 exit code on `..` orphan rejection is 0' '0' "$($cap2.Code)"
@@ -175,8 +175,8 @@ Remove-Item -LiteralPath $T2.Dir -Recurse -Force -ErrorAction SilentlyContinue
 $T3 = New-OrphanFixture 't3'
 Invoke-InstallClaude -EnvFile $T3.Env | Out-Null
 
-$t3Survivor = New-OrphanSkill -Tgt $T3.Tgt -Base 'que107-shape-c-survivor' `
-    -Body "---`nname: que107-shape-c-survivor`n---`nshape c body`n"
+$t3Survivor = New-OrphanSkill -Tgt $T3.Tgt -Base 't107-shape-c-survivor' `
+    -Body "---`nname: t107-shape-c-survivor`n---`nshape c body`n"
 
 # Single-dot token assembled at runtime (no literal `skills/./` in source).
 $t3Current = '.'
@@ -199,8 +199,8 @@ Remove-Item -LiteralPath $T3.Dir -Recurse -Force -ErrorAction SilentlyContinue
 $T4 = New-OrphanFixture 't4'
 Invoke-InstallClaude -EnvFile $T4.Env | Out-Null
 
-$t4Survivor = New-OrphanSkill -Tgt $T4.Tgt -Base 'que107-t4-survivor' `
-    -Body "---`nname: que107-t4-survivor`n---`nbody`n"
+$t4Survivor = New-OrphanSkill -Tgt $T4.Tgt -Base 't107-t4-survivor' `
+    -Body "---`nname: t107-t4-survivor`n---`nbody`n"
 
 # TAB-embedded subdir name (`t = TAB inside a double-quoted PS string).
 $t4TabName = "attacker`tname"
@@ -224,14 +224,14 @@ Remove-Item -LiteralPath $T4.Dir -Recurse -Force -ErrorAction SilentlyContinue
 $T5 = New-OrphanFixture 't5'
 Invoke-InstallClaude -EnvFile $T5.Env | Out-Null
 
-$t5Dir = Join-Path (Join-Path $T5.Tgt 'skills') 'que107-no-evidence'
+$t5Dir = Join-Path (Join-Path $T5.Tgt 'skills') 't107-no-evidence'
 New-Item -ItemType Directory -Path $t5Dir -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $t5Dir 'operator-file.md'), "operator content`n", $utf8NoBom)
 
 # No trailing path segment, so split("/")[1] yields the base but the inner
-# case-match "skills/que107-no-evidence/*" finds nothing.
+# case-match "skills/t107-no-evidence/*" finds nothing.
 Add-ManifestSkillEntry -ManifestPath (Join-Path $T5.Tgt '.build-manifest.json') `
-    -Key 'skills/que107-no-evidence' -Hash '0000abcd'
+    -Key 'skills/t107-no-evidence' -Hash '0000abcd'
 
 $t5Code = Invoke-InstallClaude -EnvFile $T5.Env
 Assert-File 'install-orphan-hardening.test: T5: orphan dir without hash evidence is preserved' `
@@ -249,11 +249,11 @@ Remove-Item -LiteralPath $T5.Dir -Recurse -Force -ErrorAction SilentlyContinue
 $T6 = New-OrphanFixture 't6'
 Invoke-InstallClaude -EnvFile $T6.Env | Out-Null
 
-$t6A = New-OrphanSkill -Tgt $T6.Tgt -Base 'que107-lf-half-a' -Body "half-a`n"
-$t6B = New-OrphanSkill -Tgt $T6.Tgt -Base 'que107-lf-half-b' -Body "half-b`n"
+$t6A = New-OrphanSkill -Tgt $T6.Tgt -Base 't107-lf-half-a' -Body "half-a`n"
+$t6B = New-OrphanSkill -Tgt $T6.Tgt -Base 't107-lf-half-b' -Body "half-b`n"
 
 # LF-bearing subdir name (`n = LF inside a double-quoted PS string).
-$t6LfName = "que107-lf-half-a`nque107-lf-half-b"
+$t6LfName = "t107-lf-half-a`nt107-lf-half-b"
 Add-ManifestSkillEntry -ManifestPath (Join-Path $T6.Tgt '.build-manifest.json') `
     -Key "skills/$t6LfName/z" -Hash 'deadbeef'
 
@@ -275,11 +275,11 @@ Remove-Item -LiteralPath $T6.Dir -Recurse -Force -ErrorAction SilentlyContinue
 $T7 = New-OrphanFixture 't7'
 Invoke-InstallClaude -EnvFile $T7.Env | Out-Null
 
-# Out-of-tree directory + a symlink into $TARGET/skills/que107-symlink.
-$t7Ext = Join-Path (Join-Path $T7.Dir 'external') 'que107-symlink-source'
+# Out-of-tree directory + a symlink into $TARGET/skills/t107-symlink.
+$t7Ext = Join-Path (Join-Path $T7.Dir 'external') 't107-symlink-source'
 New-Item -ItemType Directory -Path $t7Ext -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $t7Ext 'SKILL.md'), "external content`n", $utf8NoBom)
-$t7Link = Join-Path (Join-Path $T7.Tgt 'skills') 'que107-symlink'
+$t7Link = Join-Path (Join-Path $T7.Tgt 'skills') 't107-symlink'
 
 $t7SymlinkOk = $true
 try {
@@ -289,11 +289,11 @@ try {
 }
 
 if ($t7SymlinkOk) {
-    # Manifest key under skills/que107-symlink/ — validation would read the
+    # Manifest key under skills/t107-symlink/ — validation would read the
     # symlinked file, but the reparse-point rejection must fire first.
     $t7Hash = (Get-FileHash -LiteralPath (Join-Path $t7Link 'SKILL.md') -Algorithm SHA256).Hash.ToLower()
     Add-ManifestSkillEntry -ManifestPath (Join-Path $T7.Tgt '.build-manifest.json') `
-        -Key 'skills/que107-symlink/SKILL.md' -Hash $t7Hash
+        -Key 'skills/t107-symlink/SKILL.md' -Hash $t7Hash
 
     $cap7 = Invoke-InstallClaudeCapture -EnvFile $T7.Env
 
@@ -304,7 +304,7 @@ if ($t7SymlinkOk) {
         _Pass 'install-orphan-hardening.test: T7: symlink orphan preserved against deletion attempt'
     } else {
         _Fail 'install-orphan-hardening.test: T7: symlink orphan preserved against deletion attempt' `
-            "symlink at skills/que107-symlink removed or no longer a reparse point (exit=$($cap7.Code))"
+            "symlink at skills/t107-symlink removed or no longer a reparse point (exit=$($cap7.Code))"
     }
     Assert-File 'install-orphan-hardening.test: T7: external symlink target preserved' `
         (Join-Path $t7Ext 'SKILL.md')
@@ -361,18 +361,18 @@ $T8 = New-OrphanFixture 't8'
 Invoke-InstallClaude -EnvFile $T8.Env | Out-Null
 
 # Plant a GENUINE stale-orphan candidate, constructed EXACTLY like T1's deletion
-# target: render skills/que107-t8-orphan/SKILL.md and record its on-disk hash in
+# target: render skills/t107-t8-orphan/SKILL.md and record its on-disk hash in
 # the OLD manifest. On a VALID manifest this is the confirmed-stale shape T1
 # proves WOULD be deleted. (Authored for construction fidelity even though the
 # corruption below destroys the entry — see the block-header subtlety.)
-$t8Orphan = New-OrphanSkill -Tgt $T8.Tgt -Base 'que107-t8-orphan' `
-    -Body "---`nname: que107-t8-orphan`ndescription: stale framework skill`n---`nstale body`n"
+$t8Orphan = New-OrphanSkill -Tgt $T8.Tgt -Base 't107-t8-orphan' `
+    -Body "---`nname: t107-t8-orphan`ndescription: stale framework skill`n---`nstale body`n"
 $t8Hash = (Get-FileHash -LiteralPath (Join-Path $t8Orphan 'SKILL.md') -Algorithm SHA256).Hash.ToLower()
 Add-ManifestSkillEntry -ManifestPath (Join-Path $T8.Tgt '.build-manifest.json') `
-    -Key 'skills/que107-t8-orphan/SKILL.md' -Hash $t8Hash
+    -Key 'skills/t107-t8-orphan/SKILL.md' -Hash $t8Hash
 
 # Corrupt the OLD manifest with un-parseable text. This DESTROYS the
-# que107-t8-orphan entry just authored — the point: the candidate's would-be-
+# t107-t8-orphan entry just authored — the point: the candidate's would-be-
 # deleted property is carried by the T1-identical construction above, NOT by
 # anything readable now. The NEW manifest at $BUILD is fresh + well-formed;
 # only the OLD-manifest enumeration fails.

@@ -98,7 +98,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $env:REPO_ROOT 'docs' 'plan
 
 # --- Test 3: validate rejects in-scope file with missing lifecycle: ---
 $suf = Get-LcSuffix
-$LIFECYCLE_MISSING = "docs/plans/.test-que83-missing-lifecycle-$suf.md"
+$LIFECYCLE_MISSING = "docs/plans/.test-t83-missing-lifecycle-$suf.md"
 $missingPath = Join-Path $env:REPO_ROOT $LIFECYCLE_MISSING
 Write-LfFile $missingPath @'
 ---
@@ -116,7 +116,7 @@ Remove-Item -LiteralPath $missingPath -Force -ErrorAction SilentlyContinue
 
 # --- Test 4: validate rejects in-scope file with invalid lifecycle: value ---
 $suf = Get-LcSuffix
-$LIFECYCLE_INVALID = "docs/plans/.test-que83-invalid-lifecycle-$suf.md"
+$LIFECYCLE_INVALID = "docs/plans/.test-t83-invalid-lifecycle-$suf.md"
 $invalidPath = Join-Path $env:REPO_ROOT $LIFECYCLE_INVALID
 Write-LfFile $invalidPath @'
 ---
@@ -134,7 +134,7 @@ Remove-Item -LiteralPath $invalidPath -Force -ErrorAction SilentlyContinue
 
 # --- Test 5: validate rejects in-scope file with malformed frontmatter ---
 $suf = Get-LcSuffix
-$LIFECYCLE_MALFORMED = "docs/plans/.test-que83-malformed-lifecycle-$suf.md"
+$LIFECYCLE_MALFORMED = "docs/plans/.test-t83-malformed-lifecycle-$suf.md"
 $malformedPath = Join-Path $env:REPO_ROOT $LIFECYCLE_MALFORMED
 Write-LfFile $malformedPath @'
 ---
@@ -153,7 +153,7 @@ Remove-Item -LiteralPath $malformedPath -Force -ErrorAction SilentlyContinue
 $fiveFiles = @()
 foreach ($v in @('experimental','reviewed','shipped','superseded','sunset')) {
     $suf = Get-LcSuffix
-    $f = "docs/plans/.test-que83-value-$v-$suf.md"
+    $f = "docs/plans/.test-t83-value-$v-$suf.md"
     $fp = Join-Path $env:REPO_ROOT $f
     Write-LfFile $fp ("---`nlifecycle: $v`n---`n`n# Test fixture body — value=$v`n")
     Push-Location $env:REPO_ROOT
@@ -178,7 +178,7 @@ if ($five_rc -eq 0) {
 
 # --- Test 7: out-of-scope paths NOT enforced ---
 $suf = Get-LcSuffix
-$LIFECYCLE_OOS = "core/.test-que83-out-of-scope-$suf.md"
+$LIFECYCLE_OOS = "core/.test-t83-out-of-scope-$suf.md"
 $oosPath = Join-Path $env:REPO_ROOT $LIFECYCLE_OOS
 Write-LfFile $oosPath "# Out-of-scope test fixture — no frontmatter, no lifecycle: key`n"
 Push-Location $env:REPO_ROOT
@@ -218,7 +218,7 @@ if (-not (Test-Path -LiteralPath $lcDoc)) {
 
 # --- Test 10: duplicate-key coverage ---
 $suf = Get-LcSuffix
-$LIFECYCLE_DUPLICATE = "docs/plans/.test-que83-duplicate-lifecycle-$suf.md"
+$LIFECYCLE_DUPLICATE = "docs/plans/.test-t83-duplicate-lifecycle-$suf.md"
 $dupPath = Join-Path $env:REPO_ROOT $LIFECYCLE_DUPLICATE
 Write-LfFile $dupPath @'
 ---

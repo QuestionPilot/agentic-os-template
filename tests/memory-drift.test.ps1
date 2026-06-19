@@ -122,7 +122,7 @@ New-Item -ItemType Directory -Path $EMPTY_TMP -Force | Out-Null
 Assert-Exit 'memory-drift.test: empty dir exits 0' 0 -- pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $EMPTY_TMP
 
 # --- 4. Missing dir: exit 2 (usage error).
-$missingDir = '/tmp/definitely-does-not-exist-que114-' + [Guid]::NewGuid().Guid.Substring(0,8)
+$missingDir = '/tmp/definitely-does-not-exist-t114-' + [Guid]::NewGuid().Guid.Substring(0,8)
 Assert-Exit 'memory-drift.test: missing dir exits 2' 2 -- pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $missingDir
 
 # --- 5. No --memory-dir + no CLAUDE_CONFIG_DIR: exit 2.

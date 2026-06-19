@@ -65,13 +65,13 @@ $SC_ENV = Join-Path $SC_DIR 'local.env'
 Write-LocalEnvFixture -EnvFile $SC_ENV -ConfigDir $SC_TGT -VaultDir (Join-Path $SC_DIR 'vault')
 
 # Pre-seed a fresh Shape C skill (no counterpart under capabilities/).
-$shapeCDir = Join-Path $SC_TGT 'skills' 'que68-shape-c-fixture'
+$shapeCDir = Join-Path $SC_TGT 'skills' 't68-shape-c-fixture'
 New-Item -ItemType Directory -Path $shapeCDir -Force | Out-Null
 # Tracker-shaped token assembled at runtime (source carries no literal tracker id),
 # proving install preserves tracker-shaped operator content verbatim.
 $scTok = 'QUE' + '-68'
 [System.IO.File]::WriteAllText((Join-Path $shapeCDir 'SKILL.md'), `
-    "---`nname: que68-shape-c-fixture`ndescription: Shape C fixture ($scTok) preserved verbatim`n---`n# Body`n", `
+    "---`nname: t68-shape-c-fixture`ndescription: Shape C fixture ($scTok) preserved verbatim`n---`n# Body`n", `
     $utf8NoBom)
 
 $sc_status = Invoke-InstallClaude -EnvFile $SC_ENV
@@ -112,7 +112,7 @@ $sd_status = $LASTEXITCODE
 if ($sd_out -is [array]) { $sd_out = $sd_out -join "`n" }
 Assert-Eq 'install-shape-c.test: check-drift --manifest passes with Shape C present' '0' "$sd_status"
 Assert-NotContains 'install-shape-c.test: check-drift does not flag Shape C subdir as untracked' `
-    $sd_out 'que68-shape-c-fixture'
+    $sd_out 't68-shape-c-fixture'
 
 Remove-Item -LiteralPath $SC_DIR -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -128,27 +128,27 @@ Write-LocalEnvFixture -EnvFile $SC_OR_ENV -ConfigDir $SC_OR_TGT -VaultDir (Join-
 # First install — clean state with the current capability set.
 Invoke-InstallClaude -EnvFile $SC_OR_ENV | Out-Null
 
-# Simulate a previous framework version that compiled an extra "que68-orphan"
+# Simulate a previous framework version that compiled an extra "t68-orphan"
 # skill: create the rendered subdir + add it to the OLD manifest (managed),
 # recording its ACTUAL on-disk hash so the hash gate sees untouched-stale.
-$orphanDir = Join-Path $SC_OR_TGT 'skills' 'que68-orphan'
+$orphanDir = Join-Path $SC_OR_TGT 'skills' 't68-orphan'
 New-Item -ItemType Directory -Path $orphanDir -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $orphanDir 'SKILL.md'), `
-    "---`nname: que68-orphan`ndescription: simulated prior-install skill`n---`nold body`n", $utf8NoBom)
+    "---`nname: t68-orphan`ndescription: simulated prior-install skill`n---`nold body`n", $utf8NoBom)
 $orphanHash = (Get-FileHash -LiteralPath (Join-Path $orphanDir 'SKILL.md') -Algorithm SHA256).Hash.ToLower()
 Add-ManifestSkillEntry -ManifestPath (Join-Path $SC_OR_TGT '.build-manifest.json') `
-    -Key 'skills/que68-orphan/SKILL.md' -Hash $orphanHash
+    -Key 'skills/t68-orphan/SKILL.md' -Hash $orphanHash
 
 # Plant a true Shape C skill — must survive orphan cleanup.
-$survivorDir = Join-Path $SC_OR_TGT 'skills' 'que68-shape-c-survivor'
+$survivorDir = Join-Path $SC_OR_TGT 'skills' 't68-shape-c-survivor'
 New-Item -ItemType Directory -Path $survivorDir -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $survivorDir 'SKILL.md'), `
-    "---`nname: que68-shape-c-survivor`ndescription: operator-local survivor`n---`nshape c`n", $utf8NoBom)
+    "---`nname: t68-shape-c-survivor`ndescription: operator-local survivor`n---`nshape c`n", $utf8NoBom)
 
 # Re-install. Orphan must be removed (untouched-stale, hash matches); Shape C remains.
 Invoke-InstallClaude -EnvFile $SC_OR_ENV | Out-Null
 if (Test-Path -LiteralPath $orphanDir -PathType Container) {
-    _Fail 'install-shape-c.test: F-1: orphan skill subdir removed when source disappears' 'skills/que68-orphan still present'
+    _Fail 'install-shape-c.test: F-1: orphan skill subdir removed when source disappears' 'skills/t68-orphan still present'
 } else {
     _Pass 'install-shape-c.test: F-1: orphan skill subdir removed when source disappears'
 }
@@ -239,19 +239,19 @@ Write-LocalEnvFixture -EnvFile $HG_ENV -ConfigDir $HG_TGT -VaultDir (Join-Path $
 # First install — clean state.
 Invoke-InstallClaude -EnvFile $HG_ENV | Out-Null
 
-# Simulate a previous framework install of "que68-hash-gate" with a known body,
+# Simulate a previous framework install of "t68-hash-gate" with a known body,
 # recorded in the OLD manifest with the STALE body's hash.
-$hgDir = Join-Path $HG_TGT 'skills' 'que68-hash-gate'
+$hgDir = Join-Path $HG_TGT 'skills' 't68-hash-gate'
 New-Item -ItemType Directory -Path $hgDir -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $hgDir 'SKILL.md'), `
-    "---`nname: que68-hash-gate`ndescription: stale framework body`n---`nstale framework body`n", $utf8NoBom)
+    "---`nname: t68-hash-gate`ndescription: stale framework body`n---`nstale framework body`n", $utf8NoBom)
 $staleHash = (Get-FileHash -LiteralPath (Join-Path $hgDir 'SKILL.md') -Algorithm SHA256).Hash.ToLower()
 Add-ManifestSkillEntry -ManifestPath (Join-Path $HG_TGT '.build-manifest.json') `
-    -Key 'skills/que68-hash-gate/SKILL.md' -Hash $staleHash
+    -Key 'skills/t68-hash-gate/SKILL.md' -Hash $staleHash
 
 # NOW the operator overwrites with their own Shape C body — DIFFERENT hash.
 [System.IO.File]::WriteAllText((Join-Path $hgDir 'SKILL.md'), `
-    "---`nname: que68-hash-gate`ndescription: operator Shape C version`n---`noperator-authored Shape C body`n", $utf8NoBom)
+    "---`nname: t68-hash-gate`ndescription: operator Shape C version`n---`noperator-authored Shape C body`n", $utf8NoBom)
 
 # Re-install. Hash gate must detect the modification (hash mismatch) and PRESERVE.
 Invoke-InstallClaude -EnvFile $HG_ENV | Out-Null
@@ -347,11 +347,11 @@ Assert-File 'managed skills restored after rollback' `
 # run-private backup root but its replacement was never moved into place (its
 # live counterpart is missing). The NEXT install must restore it BEFORE the
 # swap loop and never blind-delete the only surviving copy (Codex adversarial F2).
-$recoverBak = Join-Path $BN_TGT '.install-bak.d' 'skills' 'que147-recover'
+$recoverBak = Join-Path $BN_TGT '.install-bak.d' 'skills' 't147-recover'
 New-Item -ItemType Directory -Path $recoverBak -Force | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $recoverBak 'SKILL.md'), `
-    "---`nname: que147-recover`ndescription: crashed-install backup body`n---`nrecovered body`n", $utf8NoBom)
-$recoverLive = Join-Path $BN_TGT 'skills' 'que147-recover'
+    "---`nname: t147-recover`ndescription: crashed-install backup body`n---`nrecovered body`n", $utf8NoBom)
+$recoverLive = Join-Path $BN_TGT 'skills' 't147-recover'
 if (Test-Path -LiteralPath $recoverLive) { Remove-Item -LiteralPath $recoverLive -Recurse -Force }
 $bn_rec_status = Invoke-InstallClaude -EnvFile $BN_ENV
 Assert-Eq 'install exits 0 after recovering a crashed prior install' '0' "$bn_rec_status"

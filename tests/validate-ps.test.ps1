@@ -50,7 +50,7 @@ if ($cleanExit -eq 0) {
 
 # Helper — build a minimal valid fixture repo
 function New-FixtureRepo {
-    $root = Join-Path ([IO.Path]::GetTempPath()) ("que100-validate-fixture-" + [Guid]::NewGuid().Guid.Substring(0,8))
+    $root = Join-Path ([IO.Path]::GetTempPath()) ("t100-validate-fixture-" + [Guid]::NewGuid().Guid.Substring(0,8))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
 
     # git init (lifecycle scan + local.env-gitignored need a git repo)
@@ -196,7 +196,7 @@ try {
 
 # Helper — plant a tracked.md fixture at $RelPath, git-add it.
 #
-# Fixture lifecycle: each AC builds a New-FixtureRepo under tmp/que100-
+# Fixture lifecycle: each AC builds a New-FixtureRepo under tmp/t100-
 # validate-fixture-<8-hex-guid>, runs the assertion, then Remove-Item
 # -Recurse. GUID collisions are practically impossible (8-hex × 2^32) but
 # cleanup is best-effort — a crash mid-AC leaves a tmp dir which the OS
@@ -239,7 +239,7 @@ try {
 # --- AC 8: broken local link rejected ---------------------------
 $ac8 = New-FixtureRepo
 try {
-    Add-MdFixture -FixtureRoot $ac8 -RelPath '.test-broken.md' -Content "# fixture`n`n[broken](does-not-exist-QUE124-SENTINEL.md)`n"
+    Add-MdFixture -FixtureRoot $ac8 -RelPath '.test-broken.md' -Content "# fixture`n`n[broken](does-not-exist-T124-SENTINEL.md)`n"
     $r = Invoke-ValidateFixture -FixtureRoot $ac8
     if ($r.Exit -eq 1) {
         _Pass 'validate-ps.test: broken internal markdown link rejected'
@@ -251,8 +251,8 @@ try {
 # --- AC 9: vendored/ allowlist permits broken link -----
 $ac9 = New-FixtureRepo
 try {
-    Add-MdFixture -FixtureRoot $ac9 -RelPath 'harnesses/claude/vendored/_test-que124/fixture.md' `
-        -Content "# vendored`n`n[broken upstream ref](../../docs/never-copied-QUE124-SENTINEL.md)`n"
+    Add-MdFixture -FixtureRoot $ac9 -RelPath 'harnesses/claude/vendored/_test-t124/fixture.md' `
+        -Content "# vendored`n`n[broken upstream ref](../../docs/never-copied-T124-SENTINEL.md)`n"
     $r = Invoke-ValidateFixture -FixtureRoot $ac9
     if ($r.Exit -eq 0) {
         _Pass 'validate-ps.test: vendored/ allowlist permits broken link'
@@ -270,7 +270,7 @@ try {
 # fixture
 
 ```markdown
-[example only](pretend-fenced-missing-QUE124-SENTINEL.md)
+[example only](pretend-fenced-missing-T124-SENTINEL.md)
 ```
 '@ + "`n"
     Add-MdFixture -FixtureRoot $ac10 -RelPath '.test-fenced.md' -Content $content
@@ -329,7 +329,7 @@ try {
     $content = @'
 # fixture
 
-Use `[example](pretend-inline-missing-QUE124-SENTINEL.md)` as the canonical syntax in docs.
+Use `[example](pretend-inline-missing-T124-SENTINEL.md)` as the canonical syntax in docs.
 '@ + "`n"
     Add-MdFixture -FixtureRoot $ac13 -RelPath '.test-inline.md' -Content $content
     $r = Invoke-ValidateFixture -FixtureRoot $ac13
@@ -347,7 +347,7 @@ try {
 # fixture
 
 ~~~markdown
-[example only](pretend-tilde-missing-QUE124-SENTINEL.md)
+[example only](pretend-tilde-missing-T124-SENTINEL.md)
 ~~~
 '@ + "`n"
     Add-MdFixture -FixtureRoot $ac14 -RelPath '.test-tilde.md' -Content $content
@@ -369,7 +369,7 @@ try {
 Example:
 
 ```
-[inside nested](pretend-nested-missing-QUE124-SENTINEL.md)
+[inside nested](pretend-nested-missing-T124-SENTINEL.md)
 ```
 
 End of nested block.
@@ -416,7 +416,7 @@ try {
 - [issues with query](../../issues?q=is:open)
 - [discussion anchor](../../discussions/7#discussioncomment-123)
 '@ + "`n"
-    Add-MdFixture -FixtureRoot $ac16 -RelPath '.test-que105.md' -Content $content
+    Add-MdFixture -FixtureRoot $ac16 -RelPath '.test-t105.md' -Content $content
     $r = Invoke-ValidateFixture -FixtureRoot $ac16
     if ($r.Exit -eq 0) {
         _Pass 'validate-ps.test: GitHub-platform skip-list (representative prefixes)'
@@ -431,8 +431,8 @@ try {
 # pattern (e.g. `../../issues*` prefix-match instead of bare + `/`).
 $ac17 = New-FixtureRepo
 try {
-    Add-MdFixture -FixtureRoot $ac17 -RelPath '.test-que105-neg.md' `
-        -Content "# fixture`n`n[broken near-prefix](../../issues-old/QUE105-NEAR-SENTINEL.md)`n"
+    Add-MdFixture -FixtureRoot $ac17 -RelPath '.test-t105-neg.md' `
+        -Content "# fixture`n`n[broken near-prefix](../../issues-old/T105-NEAR-SENTINEL.md)`n"
     $r = Invoke-ValidateFixture -FixtureRoot $ac17
     if ($r.Exit -eq 1) {
         _Pass 'validate-ps.test: negative regression — near-prefix still rejected'
@@ -462,7 +462,7 @@ try {
 # Select-String -EA Stop throws -> the new read-error flag fails closed. Pre-
 # -EA SilentlyContinue silently skipped it (failed OPEN). Non-.md
 # extension isolates the failure to the secret scan.
-$Q248_DEL = Join-Path $env:REPO_ROOT (".test-que248-unreadable-" + ([Guid]::NewGuid().Guid.Substring(0,8)) + ".txt")
+$Q248_DEL = Join-Path $env:REPO_ROOT (".test-t248-unreadable-" + ([Guid]::NewGuid().Guid.Substring(0,8)) + ".txt")
 if (Test-Path -LiteralPath $Q248_DEL) {
     _Skip 'validate-ps.test: secret scan fails closed on an unreadable listed file' "fixture collision: $Q248_DEL"
 } else {
@@ -486,7 +486,7 @@ if (Test-Path -LiteralPath $Q248_DEL) {
 # force-added fixture's unstage+remove is wrapped in try/finally so it ALWAYS
 # runs — even if validate throws or the run is interrupted — otherwise an
 # interrupted run orphans the fixture in the index + on disk.
-$Q248_NEST_DIR = Join-Path $env:REPO_ROOT (Join-Path 'tests' (Join-Path 'fixtures' ("que248-nested-" + ([Guid]::NewGuid().Guid.Substring(0,8)))))
+$Q248_NEST_DIR = Join-Path $env:REPO_ROOT (Join-Path 'tests' (Join-Path 'fixtures' ("t248-nested-" + ([Guid]::NewGuid().Guid.Substring(0,8)))))
 $Q248_NEST = Join-Path $Q248_NEST_DIR 'README.md'
 try {
     New-Item -ItemType Directory -Path $Q248_NEST_DIR -Force | Out-Null

@@ -59,20 +59,20 @@ make_local_env "$T1_ENV" "$T1_TGT"
 # First install — populates a clean state with current capability set.
 AI_CONFIG_LOCAL_ENV="$T1_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Simulate a previous framework version having compiled an extra "que107-stale"
+# Simulate a previous framework version having compiled an extra "t107-stale"
 # skill: add it to the manifest with its on-disk hash, then re-install.
-mkdir -p "$T1_TGT/skills/que107-stale"
-printf -- '---\nname: que107-stale\ndescription: stale framework skill\n---\nstale body\n' \
-  > "$T1_TGT/skills/que107-stale/SKILL.md"
-T1_HASH="$(shasum -a 256 "$T1_TGT/skills/que107-stale/SKILL.md" | cut -d' ' -f1)"
-jq --arg h "$T1_HASH" '.generated["skills/que107-stale/SKILL.md"] = $h' \
+mkdir -p "$T1_TGT/skills/t107-stale"
+printf -- '---\nname: t107-stale\ndescription: stale framework skill\n---\nstale body\n' \
+  > "$T1_TGT/skills/t107-stale/SKILL.md"
+T1_HASH="$(shasum -a 256 "$T1_TGT/skills/t107-stale/SKILL.md" | cut -d' ' -f1)"
+jq --arg h "$T1_HASH" '.generated["skills/t107-stale/SKILL.md"] = $h' \
   "$T1_TGT/.build-manifest.json" > "$T1_TGT/.build-manifest.json.tmp"
 mv "$T1_TGT/.build-manifest.json.tmp" "$T1_TGT/.build-manifest.json"
 
 AI_CONFIG_LOCAL_ENV="$T1_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-if [ -d "$T1_TGT/skills/que107-stale" ]; then
-  _fail "well-formed orphan with hash-match deleted" "skills/que107-stale still present"
+if [ -d "$T1_TGT/skills/t107-stale" ]; then
+  _fail "well-formed orphan with hash-match deleted" "skills/t107-stale still present"
 else
   _pass "well-formed orphan with hash-match deleted"
 fi
@@ -101,7 +101,7 @@ AI_CONFIG_LOCAL_ENV="$T2_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 
 # Sentinel: an unrelated file directly under $TARGET (a sibling of skills/)
 # whose survival proves $TARGET wasn't wiped by a traversal-driven rm.
-printf 'sentinel content\n' > "$T2_TGT/que107-sentinel.txt"
+printf 'sentinel content\n' > "$T2_TGT/t107-sentinel.txt"
 
 # The traversal token is built at runtime from non-matching halves so the test
 # source itself doesn't contain a literal `..` segment after `skills/`.
@@ -124,7 +124,7 @@ AI_CONFIG_LOCAL_ENV="$T2_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 # active rejection failed, POSIX rm should block; this is the catastrophic
 # floor).
 assert_file "\$TARGET sentinel preserved against \`..\` orphan attack" \
-  "$T2_TGT/que107-sentinel.txt"
+  "$T2_TGT/t107-sentinel.txt"
 
 # Active rejection: install.sh must emit a warning naming the unsafe orphan
 # value. The actual warning text is a contract detail of the hardening; the
@@ -150,9 +150,9 @@ AI_CONFIG_LOCAL_ENV="$T3_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 
 # Plant a Shape C operator-authored skill — its survival proves skills/ wasn't
 # wiped by the current-dir traversal.
-mkdir -p "$T3_TGT/skills/que107-shape-c-survivor"
-printf -- '---\nname: que107-shape-c-survivor\n---\nshape c body\n' \
-  > "$T3_TGT/skills/que107-shape-c-survivor/SKILL.md"
+mkdir -p "$T3_TGT/skills/t107-shape-c-survivor"
+printf -- '---\nname: t107-shape-c-survivor\n---\nshape c body\n' \
+  > "$T3_TGT/skills/t107-shape-c-survivor/SKILL.md"
 
 # Inject current-dir traversal token via runtime literal — same shape pattern
 # as T2 to avoid test-source `skills/./` literal.
@@ -168,7 +168,7 @@ T3_EXIT=0
 AI_CONFIG_LOCAL_ENV="$T3_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$T3_LOG" || T3_EXIT=$?
 
 assert_file "Shape C survivor preserved against \`.\` orphan attack" \
-  "$T3_TGT/skills/que107-shape-c-survivor/SKILL.md"
+  "$T3_TGT/skills/t107-shape-c-survivor/SKILL.md"
 T3_WARN="$(cat "$T3_LOG" 2>/dev/null || true)"
 assert_contains "install.sh emits warning on \`.\` orphan rejection" \
   "$T3_WARN" "unsafe orphan"
@@ -193,9 +193,9 @@ AI_CONFIG_LOCAL_ENV="$T4_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 
 # Plant a Shape C survivor — its preservation proves the control-char-named
 # orphan didn't sweep adjacent skills.
-mkdir -p "$T4_TGT/skills/que107-t4-survivor"
-printf -- '---\nname: que107-t4-survivor\n---\nbody\n' \
-  > "$T4_TGT/skills/que107-t4-survivor/SKILL.md"
+mkdir -p "$T4_TGT/skills/t107-t4-survivor"
+printf -- '---\nname: t107-t4-survivor\n---\nbody\n' \
+  > "$T4_TGT/skills/t107-t4-survivor/SKILL.md"
 
 # Construct a TAB-embedded subdir name at runtime ($'...' is a bash-only
 # literal but tests run under bash).
@@ -211,7 +211,7 @@ T4_EXIT=0
 AI_CONFIG_LOCAL_ENV="$T4_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$T4_LOG" || T4_EXIT=$?
 
 assert_file "survivor preserved against control-char orphan attack" \
-  "$T4_TGT/skills/que107-t4-survivor/SKILL.md"
+  "$T4_TGT/skills/t107-t4-survivor/SKILL.md"
 T4_WARN="$(cat "$T4_LOG" 2>/dev/null || true)"
 assert_contains "install.sh emits warning on control-char orphan rejection" \
   "$T4_WARN" "unsafe orphan"
@@ -240,14 +240,14 @@ make_local_env "$T5_ENV" "$T5_TGT"
 AI_CONFIG_LOCAL_ENV="$T5_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
 # Plant a dir with operator-authored content — should survive any cleanup.
-mkdir -p "$T5_TGT/skills/que107-no-evidence"
-printf 'operator content\n' > "$T5_TGT/skills/que107-no-evidence/operator-file.md"
+mkdir -p "$T5_TGT/skills/t107-no-evidence"
+printf 'operator content\n' > "$T5_TGT/skills/t107-no-evidence/operator-file.md"
 
-# Manifest key shape: "skills/que107-no-evidence" (no trailing path) so
-# split("/")[1] yields "que107-no-evidence" but the inner case-match
-# `skills/que107-no-evidence/*` finds nothing. This isolates the
+# Manifest key shape: "skills/t107-no-evidence" (no trailing path) so
+# split("/")[1] yields "t107-no-evidence" but the inner case-match
+# `skills/t107-no-evidence/*` finds nothing. This isolates the
 # all_stale-initial-1-survives bug from the hash-mismatch branch.
-jq --arg k "skills/que107-no-evidence" --arg h "0000abcd" \
+jq --arg k "skills/t107-no-evidence" --arg h "0000abcd" \
   '.generated[$k] = $h' \
   "$T5_TGT/.build-manifest.json" > "$T5_TGT/.build-manifest.json.tmp"
 mv "$T5_TGT/.build-manifest.json.tmp" "$T5_TGT/.build-manifest.json"
@@ -259,7 +259,7 @@ AI_CONFIG_LOCAL_ENV="$T5_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 # this orphan name means there's nothing for the loop to confirm-stale-against;
 # the hardened contract requires positive hash evidence before deletion.
 assert_file "orphan dir without hash evidence is preserved" \
-  "$T5_TGT/skills/que107-no-evidence/operator-file.md"
+  "$T5_TGT/skills/t107-no-evidence/operator-file.md"
 assert_eq "install.sh exit code on no-hash-evidence preservation is 0" "0" "$T5_EXIT"
 
 rm -rf "$T5_DIR"
@@ -283,13 +283,13 @@ AI_CONFIG_LOCAL_ENV="$T6_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 # Plant Shape C skills whose names happen to collide with the LF-halves; their
 # survival proves the LF-driven false-positive orphans were correctly preserved
 # by the empty-evidence guard.
-mkdir -p "$T6_TGT/skills/que107-lf-half-a"
-printf 'half-a\n' > "$T6_TGT/skills/que107-lf-half-a/SKILL.md"
-mkdir -p "$T6_TGT/skills/que107-lf-half-b"
-printf 'half-b\n' > "$T6_TGT/skills/que107-lf-half-b/SKILL.md"
+mkdir -p "$T6_TGT/skills/t107-lf-half-a"
+printf 'half-a\n' > "$T6_TGT/skills/t107-lf-half-a/SKILL.md"
+mkdir -p "$T6_TGT/skills/t107-lf-half-b"
+printf 'half-b\n' > "$T6_TGT/skills/t107-lf-half-b/SKILL.md"
 
 # Inject LF-bearing key at runtime.
-T6_LF_NAME=$(printf 'que107-lf-half-a\nque107-lf-half-b')
+T6_LF_NAME=$(printf 't107-lf-half-a\nt107-lf-half-b')
 T6_KEY="skills/${T6_LF_NAME}/z"
 jq --arg k "$T6_KEY" --arg h "deadbeef" '.generated[$k] = $h' \
   "$T6_TGT/.build-manifest.json" > "$T6_TGT/.build-manifest.json.tmp"
@@ -299,9 +299,9 @@ T6_EXIT=0
 AI_CONFIG_LOCAL_ENV="$T6_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1 || T6_EXIT=$?
 
 assert_file "LF-driven false-positive orphan half-a preserved" \
-  "$T6_TGT/skills/que107-lf-half-a/SKILL.md"
+  "$T6_TGT/skills/t107-lf-half-a/SKILL.md"
 assert_file "LF-driven false-positive orphan half-b preserved" \
-  "$T6_TGT/skills/que107-lf-half-b/SKILL.md"
+  "$T6_TGT/skills/t107-lf-half-b/SKILL.md"
 assert_eq "install.sh exit code on LF-driven preservation is 0" "0" "$T6_EXIT"
 
 rm -rf "$T6_DIR"
@@ -319,15 +319,15 @@ make_local_env "$T7_ENV" "$T7_TGT"
 
 AI_CONFIG_LOCAL_ENV="$T7_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
-# Plant an out-of-tree directory + symlink into $TARGET/skills/que107-symlink.
-mkdir -p "$T7_DIR/external/que107-symlink-source"
-printf 'external content\n' > "$T7_DIR/external/que107-symlink-source/SKILL.md"
-ln -s "$T7_DIR/external/que107-symlink-source" "$T7_TGT/skills/que107-symlink"
+# Plant an out-of-tree directory + symlink into $TARGET/skills/t107-symlink.
+mkdir -p "$T7_DIR/external/t107-symlink-source"
+printf 'external content\n' > "$T7_DIR/external/t107-symlink-source/SKILL.md"
+ln -s "$T7_DIR/external/t107-symlink-source" "$T7_TGT/skills/t107-symlink"
 
-# Inject manifest key under skills/que107-symlink/ — the validation would
+# Inject manifest key under skills/t107-symlink/ — the validation would
 # read the symlinked file, but the rejection must fire first.
-EXT_HASH="$(shasum -a 256 "$T7_TGT/skills/que107-symlink/SKILL.md" | cut -d' ' -f1)"
-jq --arg k "skills/que107-symlink/SKILL.md" --arg h "$EXT_HASH" \
+EXT_HASH="$(shasum -a 256 "$T7_TGT/skills/t107-symlink/SKILL.md" | cut -d' ' -f1)"
+jq --arg k "skills/t107-symlink/SKILL.md" --arg h "$EXT_HASH" \
   '.generated[$k] = $h' \
   "$T7_TGT/.build-manifest.json" > "$T7_TGT/.build-manifest.json.tmp"
 mv "$T7_TGT/.build-manifest.json.tmp" "$T7_TGT/.build-manifest.json"
@@ -337,15 +337,15 @@ T7_EXIT=0
 AI_CONFIG_LOCAL_ENV="$T7_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>"$T7_LOG" || T7_EXIT=$?
 
 # Symlink itself MUST survive (active rejection should fire before rm).
-if [ -L "$T7_TGT/skills/que107-symlink" ]; then
+if [ -L "$T7_TGT/skills/t107-symlink" ]; then
   _pass "symlink orphan preserved against deletion attempt"
 else
   _fail "symlink orphan preserved against deletion attempt" \
-    "symlink at skills/que107-symlink was removed (T7_EXIT=$T7_EXIT)"
+    "symlink at skills/t107-symlink was removed (T7_EXIT=$T7_EXIT)"
 fi
 # External target MUST also survive.
 assert_file "external symlink target preserved" \
-  "$T7_DIR/external/que107-symlink-source/SKILL.md"
+  "$T7_DIR/external/t107-symlink-source/SKILL.md"
 T7_WARN="$(cat "$T7_LOG" 2>/dev/null || true)"
 assert_contains "install.sh emits warning on symlink orphan rejection" \
   "$T7_WARN" "symlink"
@@ -396,22 +396,22 @@ make_local_env "$T8_ENV" "$T8_TGT"
 AI_CONFIG_LOCAL_ENV="$T8_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 
 # Plant a GENUINE stale-orphan candidate, constructed EXACTLY like the T1
-# deletion target: render skills/que107-t8-orphan/SKILL.md and record its
+# deletion target: render skills/t107-t8-orphan/SKILL.md and record its
 # on-disk hash in the OLD manifest. On a VALID manifest this is a confirmed
 # stale orphan — manifest-authored, hash-matched, absent from the NEW build —
 # i.e. the precise shape T1 proves WOULD be deleted. (We author the manifest
 # entry for construction fidelity even though the corruption below destroys it;
 # see the block-header subtlety.)
-mkdir -p "$T8_TGT/skills/que107-t8-orphan"
-printf -- '---\nname: que107-t8-orphan\ndescription: stale framework skill\n---\nstale body\n' \
-  > "$T8_TGT/skills/que107-t8-orphan/SKILL.md"
-T8_HASH="$(shasum -a 256 "$T8_TGT/skills/que107-t8-orphan/SKILL.md" | cut -d' ' -f1)"
-jq --arg h "$T8_HASH" '.generated["skills/que107-t8-orphan/SKILL.md"] = $h' \
+mkdir -p "$T8_TGT/skills/t107-t8-orphan"
+printf -- '---\nname: t107-t8-orphan\ndescription: stale framework skill\n---\nstale body\n' \
+  > "$T8_TGT/skills/t107-t8-orphan/SKILL.md"
+T8_HASH="$(shasum -a 256 "$T8_TGT/skills/t107-t8-orphan/SKILL.md" | cut -d' ' -f1)"
+jq --arg h "$T8_HASH" '.generated["skills/t107-t8-orphan/SKILL.md"] = $h' \
   "$T8_TGT/.build-manifest.json" > "$T8_TGT/.build-manifest.json.tmp"
 mv "$T8_TGT/.build-manifest.json.tmp" "$T8_TGT/.build-manifest.json"
 
 # Corrupt the manifest: replace with un-parseable text. This DESTROYS the
-# que107-t8-orphan entry just authored — which is the point: the candidate's
+# t107-t8-orphan entry just authored — which is the point: the candidate's
 # would-be-deleted property is carried by the T1-identical construction above,
 # NOT by anything readable now. The OLD manifest is what install.sh reads to
 # enumerate orphans; the NEW manifest at $BUILD/... is fresh and well-formed.
@@ -427,7 +427,7 @@ AI_CONFIG_LOCAL_ENV="$T8_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 # proves is deletable on a valid manifest is the meaningful signal — an
 # unrelated Shape C file would have survived regardless and proved nothing.
 assert_file "stale-orphan candidate preserved on corrupt-manifest path" \
-  "$T8_TGT/skills/que107-t8-orphan/SKILL.md"
+  "$T8_TGT/skills/t107-t8-orphan/SKILL.md"
 # A warning explaining the skip MUST be printed.
 T8_WARN="$(cat "$T8_LOG" 2>/dev/null || true)"
 assert_contains "install.sh emits warning on corrupt-manifest enumeration" \

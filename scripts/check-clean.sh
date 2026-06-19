@@ -75,9 +75,18 @@ fi
 fail=0
 
 # --- Patterns --------------------------------------------------------------
-# Tracker issue IDs. (`QUE-[0-9]+` does not match its own source: the literal is
-# followed by `[`, not a digit.)
-ISSUE_RE='QUE-[0-9]+'
+# Tracker issue IDs — case-insensitive, with OR without the hyphen, and BOUNDARY-
+# aware so ordinary words ending in "que" + digits (the `unique<N>` / `opaque<N>` /
+# `technique<N>` class) do NOT false-trip this fail-closed gate. An uppercase or
+# CamelCase `QUE`/`Que` is a deliberate token (no English word capitalizes mid-word),
+# so it matches in any context; a lowercase `que` matches only at a LEFT BOUNDARY
+# (start of line, or a non-letter before it). The old `QUE-[0-9]+` (uppercase +
+# required hyphen) let real issue numbers survive as lowercase / no-hyphen `que<NN>`.
+# Hyphenated arm keeps 1+ digits (single-digit `QUE-<n>` still caught); no-hyphen arm
+# requires 2+ digits. No self-match: the char-classes carry no contiguous `que`, and
+# every `QUE-<n>` reference here is followed by `<`, not a digit. Portable ERE — no
+# `\b` (BSD vs GNU grep differ); the `(^|[^A-Za-z])` prefix is the portable boundary.
+ISSUE_RE='(Q[Uu][Ee]|(^|[^A-Za-z])[Qq][Uu][Ee])(-[0-9]+|[0-9]{2,})'
 # Home paths carrying a REAL username segment. The username class begins with an
 # alphanumeric / dot / underscore, so angle-bracket or $-variable placeholders do
 # not match — and the pattern does not match its own source either. The Windows

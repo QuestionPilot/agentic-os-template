@@ -40,7 +40,7 @@ function Invoke-HermesInstall {
     return @{ exit = $code; err = $errText }
 }
 
-$IH_ROOT  = Join-Path ([IO.Path]::GetTempPath()) ("que296-hermes-test-" + [Guid]::NewGuid().Guid.Substring(0,8))
+$IH_ROOT  = Join-Path ([IO.Path]::GetTempPath()) ("t296-hermes-test-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $IH_ROOT -Force | Out-Null
 $IH_OUT   = Join-Path $IH_ROOT 'hermes-home'
 $IH_VAULT = Join-Path $IH_ROOT 'vault'

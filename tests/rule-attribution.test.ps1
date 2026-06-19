@@ -149,7 +149,11 @@ Assert-Eq 'rule-attribution.test: detector catches legacy (founding)' '0' (Test-
 Assert-Eq 'rule-attribution.test: detector catches legacy (harness-mechanic)' '0' (Test-ForbiddenMatch '- foo (harness-mechanic)')
 
 # Negative controls: benign text must NOT match.
-Assert-Eq 'rule-attribution.test: detector ignores lowercase key' '1' (Test-ForbiddenMatch '- foo (que-185)')
+# Lowercase variant of the runtime-built key — the detector matches UPPERCASE
+# tracker IDs, so the lowercase form must be ignored. Built by lowercasing
+# TRACKER_KEY so this source still carries no literal issue-shaped token.
+$lqid = $TRACKER_KEY.ToLower() + '-185'
+Assert-Eq 'rule-attribution.test: detector ignores lowercase key' '1' (Test-ForbiddenMatch "- foo ($lqid)")
 Assert-Eq 'rule-attribution.test: detector ignores the word ''founding'' in prose (no parens)' '1' (Test-ForbiddenMatch 'these are the founding rules')
 Assert-Eq 'rule-attribution.test: detector ignores an ordinary hyphenated word' '1' (Test-ForbiddenMatch '- a well-formed bullet')
 Assert-Eq 'rule-attribution.test: detector ignores a different team-key shape' '1' (Test-ForbiddenMatch '- foo (ABC-1)')
