@@ -43,6 +43,11 @@ bash scripts/bootstrap.sh --harness claude
 framework config, and prints the manual auth checklist. Pass `--dry-run` first to
 preview all changes without writing anything.
 
+The durable-knowledge vault (`OBSIDIAN_VAULT_PATH`) is **optional** — leave it
+empty to start. The framework builds and runs without it; the entrypoint renders an
+"unset" note and you can wire the layer later by setting the path in `local.env` and
+re-running install. See `obsidian/vault-guide.md`.
+
 By default config is **co-located**: a fresh clone renders into gitignored dirs
 *inside the repo* (`<repo>/.claude`, plus `<repo>/.codex` for the codex harness)
 and exports those paths to your shell, so everything runs self-contained from one

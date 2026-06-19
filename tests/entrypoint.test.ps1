@@ -139,21 +139,58 @@ Assert-Exit 'entrypoint.test: drift check passes on a clean build with entrypoin
 Assert-Exit 'entrypoint.test: drift check fails after CLAUDE.md is hand-edited' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $SWE_OUT
 Remove-Item -LiteralPath $SWE_DIR -Recurse -Force -ErrorAction SilentlyContinue
 
-# --- the build fails loudly when a path placeholder resolves empty ----------
+# --- the optional vault: omitting OBSIDIAN_VAULT_PATH BUILDS (exit 0) and renders
+# the unset sentinel, never a hard die. Mirrors the bash twin; the "required
+# placeholder resolves empty -> die" guard stays at install.sh:442 and is exercised
+# by install-render-stable.test's Assertion 0.
 $NV_DIR = Join-Path ([IO.Path]::GetTempPath()) ('ep-nv-' + [Guid]::NewGuid().Guid.Substring(0,8))
 $NV_OUT = Join-Path $NV_DIR 'out'
 New-Item -ItemType Directory -Path $NV_OUT -Force | Out-Null
 $NV_ENV = Join-Path $NV_DIR 'local.env'
-Write-LfFile $NV_ENV ("CLAUDE_CONFIG_DIR=$NV_OUT`n")  # OBSIDIAN_VAULT_PATH omitted
+Write-LfFile $NV_ENV ("CLAUDE_CONFIG_DIR=$NV_OUT`n")  # OBSIDIAN_VAULT_PATH omitted (it is optional)
 $env:AI_CONFIG_LOCAL_ENV = $NV_ENV
 try {
-    & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --build-only *>$null
+    $nv_out = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --build-only 2>&1
     $nv_status = $LASTEXITCODE
 } finally {
     Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
 }
-Assert-Eq 'entrypoint.test: build fails when a path placeholder is empty' '1' "$nv_status"
+Assert-Eq 'entrypoint.test: build succeeds when the optional vault is omitted (renders sentinel)' '0' "$nv_status"
+$nv_bd = @($nv_out | Where-Object { $_ -ne '' }) | Select-Object -Last 1
+if ($nv_bd -and (Test-Path -LiteralPath (Join-Path $nv_bd 'CLAUDE.md') -PathType Leaf)) {
+    $nv_md = Get-Content -Raw -LiteralPath (Join-Path $nv_bd 'CLAUDE.md')
+    if ($nv_md.Contains('@@OBSIDIAN_VAULT_PATH@@')) {
+        _Fail 'entrypoint.test: omitted-vault entrypoint has no unresolved vault token' 'found @@OBSIDIAN_VAULT_PATH@@ in the rendered entrypoint'
+    } else {
+        _Pass 'entrypoint.test: omitted-vault entrypoint has no unresolved vault token'
+    }
+    if ($nv_md.Contains('the durable-knowledge vault is optional')) {
+        _Pass 'entrypoint.test: omitted-vault entrypoint renders the unset sentinel'
+    } else {
+        _Fail 'entrypoint.test: omitted-vault entrypoint renders the unset sentinel' 'sentinel text not found in rendered entrypoint'
+    }
+    Remove-Item -LiteralPath $nv_bd -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    _Fail 'entrypoint.test: omitted-vault build produced an inspectable CLAUDE.md' "build path: [$nv_bd]"
+}
 Remove-Item -LiteralPath $NV_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
+# Structural guard for the die-on-empty protection the case above no longer
+# exercises behaviorally. Assert the Die guard is intact AND the sentinel exemption
+# is NARROW — only OBSIDIAN_VAULT_PATH may dodge the die. Catches the two regressions
+# a cross-model review flagged: the die being removed, or the exemption widening to a
+# genuinely-required placeholder. Mirrors install.sh in the .sh twin.
+$ep_install_ps1 = Get-Content -Raw -LiteralPath (Join-Path $env:REPO_ROOT 'scripts' 'install.ps1')
+if ($ep_install_ps1.Contains('placeholder @@${var}@@ resolves empty')) {
+    _Pass 'entrypoint.test: install.ps1 keeps the die-on-empty guard for required placeholders'
+} else {
+    _Fail 'entrypoint.test: install.ps1 keeps the die-on-empty guard for required placeholders' 'die-on-empty guard string not found'
+}
+if ($ep_install_ps1.Contains("`$var -eq 'OBSIDIAN_VAULT_PATH'")) {
+    _Pass 'entrypoint.test: install.ps1 sentinel exemption is narrowly scoped to the vault only'
+} else {
+    _Fail 'entrypoint.test: install.ps1 sentinel exemption is narrowly scoped to the vault only' 'narrow vault exemption guard not found'
+}
 
 # --- placeholder substitution survives '&' and spaces in a path -------------
 $SP_DIR = Join-Path ([IO.Path]::GetTempPath()) ('ep-sp-' + [Guid]::NewGuid().Guid.Substring(0,8))

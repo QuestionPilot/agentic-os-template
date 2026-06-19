@@ -143,16 +143,47 @@ assert_exit "drift check fails after CLAUDE.md is hand-edited" 1 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$SWE_OUT"
 rm -rf "$SWE_DIR"
 
-# --- the build fails loudly when a path placeholder resolves empty --------
+# --- the optional vault: omitting OBSIDIAN_VAULT_PATH BUILDS (exit 0) and renders
+# the unset sentinel, never a hard die. The vault is the framework's only OPTIONAL
+# path placeholder; the "a required placeholder resolving empty must die loudly"
+# guard stays in code at install.sh:442 and is exercised at PR time by
+# install-render-stable.test's Assertion 0 (every active-template @@VAR@@ must carry
+# a fixture value, so a new required placeholder cannot land valueless).
 NV_DIR="$(mktemp -d)"
 NV_OUT="$NV_DIR/out"; mkdir -p "$NV_OUT"
 NV_ENV="$NV_DIR/local.env"
-# CLAUDE_CONFIG_DIR only — OBSIDIAN_VAULT_PATH deliberately omitted.
+# CLAUDE_CONFIG_DIR only — OBSIDIAN_VAULT_PATH deliberately omitted (it is optional).
 printf 'CLAUDE_CONFIG_DIR=%s\n' "$NV_OUT" > "$NV_ENV"
 nv_status=0
-AI_CONFIG_LOCAL_ENV="$NV_ENV" bash "$REPO_ROOT/scripts/install.sh" --build-only >/dev/null 2>&1 || nv_status=$?
-assert_eq "build fails when a path placeholder is empty" "1" "$nv_status"
+nv_out="$(AI_CONFIG_LOCAL_ENV="$NV_ENV" bash "$REPO_ROOT/scripts/install.sh" --build-only 2>&1)" || nv_status=$?
+assert_eq "build succeeds when the optional vault is omitted (renders sentinel)" "0" "$nv_status"
+nv_build="$(printf '%s\n' "$nv_out" | grep -oE '/[^[:space:]]*\.install-build\.[A-Za-z0-9]+' | head -1)"
+if [ -n "$nv_build" ] && [ -f "$nv_build/CLAUDE.md" ]; then
+  if grep -q '@@OBSIDIAN_VAULT_PATH@@' "$nv_build/CLAUDE.md"; then
+    _fail "omitted-vault entrypoint has no unresolved vault token" "found @@OBSIDIAN_VAULT_PATH@@ in the rendered entrypoint"
+  else
+    _pass "omitted-vault entrypoint has no unresolved vault token"
+  fi
+  assert_contains "omitted-vault entrypoint renders the unset sentinel" \
+    "$(cat "$nv_build/CLAUDE.md")" "the durable-knowledge vault is optional"
+  rm -rf "$nv_build"
+else
+  _fail "omitted-vault build produced an inspectable CLAUDE.md" "build path: [$nv_build]"
+fi
 rm -rf "$NV_DIR"
+
+# Structural guard for the die-on-empty protection the case above no longer
+# exercises behaviorally (the vault was the only emptyable required placeholder, so
+# a behavioral trigger no longer exists). Assert the die guard is intact AND the
+# sentinel exemption is NARROW — only OBSIDIAN_VAULT_PATH may dodge the die. Catches
+# the two regressions a cross-model review flagged: the die being removed, or the
+# exemption widening to a genuinely-required placeholder. Mirrors install.ps1 in the
+# .ps1 twin.
+ep_install_sh="$(cat "$REPO_ROOT/scripts/install.sh")"
+assert_contains "install.sh keeps the die-on-empty guard for required placeholders" \
+  "$ep_install_sh" 'placeholder $token resolves empty'
+assert_contains "install.sh sentinel exemption is narrowly scoped to the vault only" \
+  "$ep_install_sh" '[ "$var" = "OBSIDIAN_VAULT_PATH" ]'
 
 # --- placeholder substitution survives '&' and spaces in a path -----------
 SP_DIR="$(mktemp -d)"

@@ -1051,3 +1051,41 @@ _test_f1_localenv_not_sourced() {
   fi
 }
 _test_f1_localenv_not_sourced
+
+# --- UNSCORED pillars: a clean clone with NO operator surfaces (no Linear, no
+# memory dir, no vault) must NOT manufacture a false ~100/100. A pillar that can
+# run zero real checks is floored to 0 and flagged UNSCORED (core/verification.md:
+# a check that cannot run must fail, never pass), so the total lands well below the
+# ~95-100 "in good shape" band the seed-20 bug produced.
+_test_unscored_pillars_no_false_100() {
+  command -v jq >/dev/null 2>&1 || { _skip "unscored-pillars false-100 test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  # No --memory-dir, no --vault-dir, --isolated (no lineark) → the cross-layer and
+  # memory pillars can measure nothing.
+  local out p1 p2 p1u p2u uc total
+  out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR -u CLAUDE_CONFIG_DIR \
+          bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --isolated --json 2>/dev/null)"
+  p1="$(_sa_pillar_score "$out" "cross-layer-handoffs")"
+  p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  p1u="$(printf '%s' "$out" | jq -r '.pillars["cross-layer-handoffs"].unscored')"
+  p2u="$(printf '%s' "$out" | jq -r '.pillars["memory-hygiene"].unscored')"
+  uc="$(printf '%s' "$out" | jq -r '.unscored_count')"
+  total="$(printf '%s' "$out" | jq -r '.total')"
+  rm -rf "$fixture"
+  assert_eq "unscored: cross-layer pillar floored to 0 when no surface reachable" "0" "$p1"
+  assert_eq "unscored: memory pillar floored to 0 when no surface reachable" "0" "$p2"
+  assert_eq "unscored: cross-layer pillar flagged unscored=true" "true" "$p1u"
+  assert_eq "unscored: memory pillar flagged unscored=true" "true" "$p2u"
+  assert_eq "unscored: unscored_count counts both unmeasured pillars" "2" "$uc"
+  # Two UNSCORED pillars cap the achievable total at 60 → cannot reach the
+  # ~95-100 "in good shape" band that the false-100 bug reported.
+  if [ "$total" -lt 95 ]; then
+    _pass "unscored: no-surface clone total ($total) is below the 'in good shape' band"
+  else
+    _fail "unscored: no-surface clone total below 'in good shape' band" \
+          "got total=$total (expected <95)"
+  fi
+}
+_test_unscored_pillars_no_false_100

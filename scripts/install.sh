@@ -118,6 +118,13 @@ set -a
 set +a
 AI_CONFIG_DIR="${AI_CONFIG_DIR:-$repo_root}"
 
+# The durable-knowledge vault is OPTIONAL — the framework degrades gracefully when
+# OBSIDIAN_VAULT_PATH is unset (core/operating-system.md / README: never fail
+# closed). compile_entrypoint + install_hook_script_only render this ASCII sentinel
+# in place of an empty vault path so a fresh clone with no vault still builds; every
+# OTHER path placeholder stays required and still dies on empty.
+VAULT_UNSET_SENTINEL='(unset - the durable-knowledge vault is optional; set OBSIDIAN_VAULT_PATH in local.env and re-run install to enable it)'
+
 # --harness is repeatable. Default to claude when none was given. With more than
 # one harness, build each in one pass. Each harness has its OWN target dir, so
 # --out / --build-only (single-target operations) are rejected here. PREFLIGHT
@@ -439,6 +446,11 @@ compile_entrypoint() {
     var="${token#@@}"; var="${var%@@}"
     [ "$var" = "CAPABILITY_CATALOG" ] && continue
     val="${!var:-}"
+    # The vault is optional: render the unset sentinel rather than dying so a
+    # no-vault clone still builds. Every other path placeholder stays required.
+    if [ -z "$val" ] && [ "$var" = "OBSIDIAN_VAULT_PATH" ]; then
+      val="$VAULT_UNSET_SENTINEL"
+    fi
     [ -n "$val" ] || die "entrypoint $out: placeholder $token resolves empty — set $var in local.env"
     content="${content//"$token"/$val}"
   done
@@ -482,12 +494,10 @@ install_hook_script_only() {
     local content
     content="$(cat "$src")"
     content="${content//@@AI_CONFIG_DIR@@/$AI_CONFIG_DIR}"
-    # Substitute the vault path only when set — an empty value would silently
-    # bake a broken path, so leave the token in place and let validate_build's
-    # unresolved-placeholder gate fail the build loudly instead.
-    if [ -n "${OBSIDIAN_VAULT_PATH:-}" ]; then
-      content="${content//@@OBSIDIAN_VAULT_PATH@@/$OBSIDIAN_VAULT_PATH}"
-    fi
+    # The vault is optional: substitute the configured path, or the unset sentinel
+    # when no vault is set. The steward hook guards on the vault dir existing, so a
+    # sentinel path simply no-ops; leaving the token unresolved would trip validate_build.
+    content="${content//@@OBSIDIAN_VAULT_PATH@@/${OBSIDIAN_VAULT_PATH:-$VAULT_UNSET_SENTINEL}}"
     printf '%s\n' "$content" > "$BUILD/hooks/$script"
     chmod +x "$BUILD/hooks/$script"
   fi
