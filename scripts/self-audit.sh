@@ -842,13 +842,25 @@ score_closeout_spine_discipline() {
   # Sub-check 5.2: Recent project memory entries should carry a State Deltas
   # section.
   if [ -n "$MEMORY_DIR" ] && [ -d "$MEMORY_DIR" ]; then
-    local missing_sd=0 f
+    local missing_sd=0 f m
+    # Epoch-based 7-day cutoff (integer seconds), NOT `find -mtime -7`: GNU find
+    # truncates the age to whole days while BSD/macOS find rounds it UP, so the
+    # same flag spans a 6- vs 7-day window across platforms — and neither matches
+    # the PS twin's exact-instant compare. Computing `now - 7*86400` and comparing
+    # each file's mtime epoch makes bash and PS agree to the second. Portable
+    # mtime: GNU `stat -c %Y` else BSD `stat -f %m`.
+    local _now_epoch _cutoff_epoch
+    _now_epoch=$(date +%s)
+    _cutoff_epoch=$(( _now_epoch - 7 * 86400 ))
     while IFS= read -r -d '' f; do
       [ -f "$f" ] || continue
+      m=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+      [ -n "$m" ] || continue
+      [ "$m" -ge "$_cutoff_epoch" ] || continue
       if ! grep -qE '^## State Deltas' "$f"; then
         missing_sd=$((missing_sd+1))
       fi
-    done < <(find "$MEMORY_DIR" -maxdepth 1 -name 'project_*.md' -mtime -7 -print0 2>/dev/null)
+    done < <(find "$MEMORY_DIR" -maxdepth 1 -name 'project_*.md' -print0 2>/dev/null)
     if [ "$missing_sd" -gt 0 ]; then
       local pen=$(( missing_sd * 4 ))
       [ "$pen" -gt 8 ] && pen=8

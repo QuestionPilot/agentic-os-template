@@ -24,6 +24,11 @@
 # - When a new hook lands without a twin, this test fails with a precise
 # message naming the missing file — the fix is to author the twin.
 
+# On a CI lane that MUST run the bash<->PS cross-check, a missing pwsh is a hard
+# failure, not a silent skip (PARITY_REQUIRE_PWSH=1 set on the acceptance lanes).
+# The pwsh-only behavioral sections below (3a–3i) otherwise just _pass-skip.
+_require_pwsh_or_fail "hooks-ps-parity"
+
 # Enumerate every hook source file across all harnesses. Use a glob via
 # `find` so the test scales to N harnesses without per-harness wiring.
 hkps_root="$REPO_ROOT/harnesses"

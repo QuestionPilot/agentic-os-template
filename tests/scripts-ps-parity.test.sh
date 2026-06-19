@@ -38,6 +38,47 @@ if command -v pwsh >/dev/null 2>&1; then
   _have_pwsh=1
 fi
 
+# On a CI lane that MUST run the bash<->PS cross-check, a missing pwsh is a hard
+# failure, not a silent skip (PARITY_REQUIRE_PWSH=1 set on the acceptance lanes).
+_require_pwsh_or_fail "scripts-ps-parity"
+
+# ---------------------------------------------------------------------------
+# Meta-test: the PARITY_REQUIRE_PWSH gate itself. Proves that on a lane which
+# MUST run the bash<->PS cross-check (PARITY_REQUIRE_PWSH=1), a missing pwsh is a
+# LOUD _fail, not a silent skip — without needing an actual pwsh-less runner.
+# We simulate "pwsh absent" with an empty PATH in a child shell (command -v finds
+# nothing); lib.sh is pure-bash so it still sources and the helper is all builtins.
+# The converse (no REQUIRE => silent) is asserted too so the gate stays opt-in for
+# local dev. Runs on every lane (not pwsh-gated) — it is the regression guard for
+# the gate that all the other parity assertions now lean on.
+# ---------------------------------------------------------------------------
+_mp_lib="$REPO_ROOT/tests/lib.sh"
+# Simulate "pwsh absent" by shadowing `command -v pwsh` to fail — NOT by clearing
+# PATH. An empty PATH would break sourcing lib.sh the moment it gains any load-time
+# external call (and dump 'command not found' into the captured output, false-failing
+# the silent-skip case). The shim keeps PATH intact and only intercepts the one probe.
+_mp_shim='command() { if [ "$1" = "-v" ] && [ "$2" = "pwsh" ]; then return 1; fi; builtin command "$@"; }'
+_mp_required="$(PARITY_REQUIRE_PWSH=1 "$BASH" --noprofile --norc -c \
+  "$_mp_shim; . \"$_mp_lib\"; _require_pwsh_or_fail meta-test" 2>&1)"
+case "$_mp_required" in
+  *FAIL*"pwsh REQUIRED"*)
+    _pass "PARITY_REQUIRE_PWSH=1 + no pwsh => hard FAIL (cross-check cannot silently skip)" ;;
+  *)
+    _fail "PARITY_REQUIRE_PWSH=1 + no pwsh should emit a hard FAIL" "got: ${_mp_required:-<empty>}" ;;
+esac
+# Explicitly clear PARITY_REQUIRE_PWSH in the child so this case is hermetic even
+# when the whole suite runs under PARITY_REQUIRE_PWSH=1 (as the CI lanes do) — an
+# inherited =1 would otherwise make the "should stay silent" case fire the fail.
+_mp_optional="$(PARITY_REQUIRE_PWSH= "$BASH" --noprofile --norc -c \
+  "$_mp_shim; . \"$_mp_lib\"; _require_pwsh_or_fail meta-test" 2>&1)"
+case "$_mp_optional" in
+  '')
+    _pass "PARITY_REQUIRE_PWSH unset + no pwsh => silent skip (local-dev convenience preserved)" ;;
+  *)
+    _fail "PARITY_REQUIRE_PWSH unset + no pwsh should stay silent" "got: $_mp_optional" ;;
+esac
+unset _mp_lib _mp_shim _mp_required _mp_optional
+
 # ---------------------------------------------------------------------------
 # Normalization helper. Reads a file (or stdin), applies the Issue 5B rules,
 # writes to stdout.
@@ -227,6 +268,129 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 1b: check-memory-drift parity — QUOTED `name:` self-link recognition.
+#
+# A CLOSED project whose body self-links to its OWN name must NOT be flagged as
+# drift (a self-link is not a follow-on pointer). When the `name:` value is
+# QUOTED, the bash twin used to keep the quotes while the PS twin stripped them,
+# so the self-link compare diverged: bash saw `"x"` != `x` → false drift (exit 1)
+# while PS saw `x` == `x` → no drift (exit 0) — OPPOSITE verdicts. With the bash
+# own_name parser now stripping quotes (matching Get-FmField), both reach exit 0.
+# Pre-fix this fixture trips the exit-code assertions; post-fix it passes — the
+# regression pin for the quote-strip parity fix.
+# ---------------------------------------------------------------------------
+
+if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts/check-memory-drift.ps1" ]; then
+  CMD_QUOTED="$PARITY_TMP/cmd-quoted"
+  mkdir -p "$CMD_QUOTED"
+  # Quoted name + CLOSED headline + body links ONLY to its own (quoted) name.
+  cat > "$CMD_QUOTED/project_selflink.md" <<'EOF'
+---
+name: "project_selflink"
+description: "Self-referential project — CLOSED 2026-01-01. Sealed."
+---
+
+Body mentions only [[project_selflink]] (its own name) — no follow-on pointer.
+EOF
+
+  q_bash_out="$PARITY_TMP/cmd-quoted-bash.out"
+  bash "$REPO_ROOT/scripts/check-memory-drift.sh" --memory-dir "$CMD_QUOTED" \
+    > "$q_bash_out" 2>&1
+  q_bash_rc=$?
+  assert_eq "check-memory-drift bash: quoted-name self-link is NOT drift (exit 0)" 0 "$q_bash_rc"
+
+  if [ "$_have_pwsh" -eq 1 ]; then
+    q_ps_out="$PARITY_TMP/cmd-quoted-ps.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-memory-drift.ps1" \
+      -MemoryDir "$CMD_QUOTED" > "$q_ps_out" 2>&1
+    q_ps_rc=$?
+    assert_eq "check-memory-drift ps: quoted-name self-link is NOT drift (exit 0)" 0 "$q_ps_rc"
+    assert_eq "check-memory-drift parity: quoted-name self-link exit codes match (quote-strip)" \
+      "$q_bash_rc" "$q_ps_rc"
+  else
+    _skip "check-memory-drift ps: quoted-name self-link is NOT drift (exit 0)" "pwsh not installed"
+    _skip "check-memory-drift parity: quoted-name self-link exit codes match (quote-strip)" "pwsh not installed"
+  fi
+else
+  _skip "check-memory-drift bash: quoted-name self-link is NOT drift (exit 0)" "scripts not present"
+  _skip "check-memory-drift ps: quoted-name self-link is NOT drift (exit 0)" "scripts not present"
+  _skip "check-memory-drift parity: quoted-name self-link exit codes match (quote-strip)" "scripts not present"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 1c: check-memory-drift parity — single-quoted `name:` symmetry.
+#
+# PS Get-FmField strips only DOUBLE quotes (it is not a YAML engine), and so does the
+# bash own_name parser. A single-quoted `name: 'x'` is therefore handled IDENTICALLY
+# by both (single quotes retained) — they reach the SAME verdict even though neither
+# strips single quotes. Pin the SYMMETRY (assert parity, not a specific exit value, so
+# a future symmetric single-quote fix keeps this green). Refutes the review assumption
+# that the twins diverge on single quotes.
+# ---------------------------------------------------------------------------
+
+if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts/check-memory-drift.ps1" ]; then
+  CMD_SQUOTE="$PARITY_TMP/cmd-squote"
+  mkdir -p "$CMD_SQUOTE"
+  cat > "$CMD_SQUOTE/project_squote.md" <<'EOF'
+---
+name: 'project_squote'
+description: "Single-quoted name project — CLOSED 2026-01-01. Sealed."
+---
+
+Body links only [[project_squote]] (its own name).
+EOF
+  sq_bash_out="$PARITY_TMP/cmd-squote-bash.out"
+  bash "$REPO_ROOT/scripts/check-memory-drift.sh" --memory-dir "$CMD_SQUOTE" \
+    > "$sq_bash_out" 2>&1; sq_bash_rc=$?
+  if [ "$_have_pwsh" -eq 1 ]; then
+    sq_ps_out="$PARITY_TMP/cmd-squote-ps.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-memory-drift.ps1" \
+      -MemoryDir "$CMD_SQUOTE" > "$sq_ps_out" 2>&1; sq_ps_rc=$?
+    assert_eq "check-memory-drift parity: single-quoted name self-link — exit codes match (twins symmetric)" \
+      "$sq_bash_rc" "$sq_ps_rc"
+  else
+    _skip "check-memory-drift parity: single-quoted name self-link — exit codes match (twins symmetric)" "pwsh not installed"
+  fi
+else
+  _skip "check-memory-drift parity: single-quoted name self-link — exit codes match (twins symmetric)" "scripts not present"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 1d: check-memory-drift parity — UTF-8 BOM'd project file.
+#
+# A BOM ahead of the first `---` made the bash DRIFT parsers (description / own_name)
+# miss the frontmatter entirely (their `/^---$/` gate never matched the BOM'd line),
+# so a CLOSED BOM'd project that drifts was silently NOT flagged in bash while PS
+# (ReadAllLines strips the BOM) flagged it — opposite verdicts. The bash parsers now
+# strip a leading BOM (matching the in-file frontmatter scan + PS). Pin: a BOM'd
+# CLOSED project linking to a DIFFERENT project must drift in bash (exit 1) and match
+# the PS twin. (Pre-fix this fixture trips the bash sanity assertion.)
+# ---------------------------------------------------------------------------
+
+if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts/check-memory-drift.ps1" ]; then
+  CMD_BOM="$PARITY_TMP/cmd-bom"
+  mkdir -p "$CMD_BOM"
+  printf '\xef\xbb\xbf---\nname: project_bom\ndescription: "BOM project — CLOSED 2026-01-01."\n---\n\nSuccessor [[project_other]] carries the live work.\n' \
+    > "$CMD_BOM/project_bom.md"
+  bom_bash_out="$PARITY_TMP/cmd-bom-bash.out"
+  bash "$REPO_ROOT/scripts/check-memory-drift.sh" --memory-dir "$CMD_BOM" \
+    > "$bom_bash_out" 2>&1; bom_bash_rc=$?
+  assert_eq "check-memory-drift bash: BOM'd CLOSED project still detects drift (BOM strip)" 1 "$bom_bash_rc"
+  if [ "$_have_pwsh" -eq 1 ]; then
+    bom_ps_out="$PARITY_TMP/cmd-bom-ps.out"
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-memory-drift.ps1" \
+      -MemoryDir "$CMD_BOM" > "$bom_ps_out" 2>&1; bom_ps_rc=$?
+    assert_eq "check-memory-drift parity: BOM'd project exit codes match (BOM strip)" \
+      "$bom_bash_rc" "$bom_ps_rc"
+  else
+    _skip "check-memory-drift parity: BOM'd project exit codes match (BOM strip)" "pwsh not installed"
+  fi
+else
+  _skip "check-memory-drift bash: BOM'd CLOSED project still detects drift (BOM strip)" "scripts not present"
+  _skip "check-memory-drift parity: BOM'd project exit codes match (BOM strip)" "scripts not present"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 2: scripts/self-audit.{sh,ps1}
 #
 # Run with --isolated (no operator-env fallbacks) + --json so the output is
@@ -298,6 +462,89 @@ if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-au
   fi
 else
   _skip "self-audit bash exits 0 on isolated fixture" "scripts not present"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 2b: self-audit parity — freshness window at the 7-day boundary.
+#
+# Pillar 5 flags recent project_*.md (mtime within 7 days) that lack a
+# `## State Deltas` section. The bash twin used `find -mtime -7`, which rounds the
+# age by whole days — and BSD/macOS find rounds UP while GNU/Linux truncates, so a
+# ~6.5-day-old file landed INSIDE the window on Linux but OUTSIDE on macOS,
+# disagreeing with the PS twin's instant compare → a per-platform pillar-score
+# flake. Both twins now use an integer-second epoch cutoff, so a 6.5-day file is
+# counted on every platform. Pin it: one boundary file (no State Deltas) must drive
+# the SAME closeout-spine-discipline pillar score in both twins. Pre-fix this trips
+# on the macOS lane (BSD round-up); post-fix it is green everywhere. Requires perl
+# (portable utime) to set the mtime; skips cleanly if absent. Reuses Test 2's
+# SA_FIX repo-root so the only Pillar-5 delta is the freshness sub-check.
+# ---------------------------------------------------------------------------
+
+if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-audit.ps1" ] \
+   && command -v perl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [ -d "${SA_FIX:-}" ]; then
+  SA_MEM="$PARITY_TMP/sa-mem-boundary"
+  mkdir -p "$SA_MEM"
+  # A project memory file ~6.5 days old (inside the 7-day window on an epoch basis)
+  # with NO `## State Deltas` — both twins must count it as a recent miss.
+  cat > "$SA_MEM/project_boundary.md" <<'EOF'
+---
+name: project_boundary
+description: "Recent project — In Progress."
+---
+
+Body without a State Deltas section.
+EOF
+  # Score the closeout-spine-discipline pillar from both twins after setting the
+  # boundary file's mtime to $1 days old. Echoes "bash_score ps_score".
+  _sa_score_at() { # $1 = age in days
+    perl -e 'my $t = time - int($ARGV[1]*86400); utime $t, $t, $ARGV[0] or die "utime: $!"' \
+      "$SA_MEM/project_boundary.md" "$1"
+    local b p
+    b="$(bash "$REPO_ROOT/scripts/self-audit.sh" --json --isolated \
+      --repo-root "$SA_FIX" --memory-dir "$SA_MEM" 2>/dev/null \
+      | jq -r '.pillars["closeout-spine-discipline"].score' 2>/dev/null)"
+    if [ "$_have_pwsh" -eq 1 ]; then
+      p="$(pwsh -NoProfile -File "$REPO_ROOT/scripts/self-audit.ps1" --json --isolated \
+        --repo-root "$SA_FIX" --memory-dir "$SA_MEM" 2>/dev/null \
+        | jq -r '.pillars["closeout-spine-discipline"].score' 2>/dev/null)"
+    else
+      p='(skip)'
+    fi
+    printf '%s %s' "$b" "$p"
+  }
+
+  read -r in_b in_p <<<"$(_sa_score_at 6.5)"    # INSIDE the 7-day window
+  read -r out_b out_p <<<"$(_sa_score_at 7.5)"  # OUTSIDE the 7-day window
+
+  # The boundary file must be COUNTED inside 7 days and EXCLUDED outside, so the
+  # pillar deducts exactly one State-Deltas penalty (4) MORE at 6.5d than at 7.5d.
+  # Asserting the DELTA (not the absolute 16 vs 20) locks the epoch cutoff while
+  # staying robust to an unrelated baseline shift — a "score != 20" check would pass
+  # even if the file were never counted but some other sub-check moved the score.
+  case "$in_b$out_b" in
+    ''|*[!0-9]*)
+      _fail "self-audit bash: 6.5d counted / 7.5d excluded — one State-Deltas penalty (epoch cutoff)" \
+        "non-numeric pillar scores: in(6.5d)=$in_b out(7.5d)=$out_b" ;;
+    *)
+      assert_eq "self-audit bash: 6.5d counted / 7.5d excluded — one State-Deltas penalty (epoch cutoff)" \
+        "4" "$(( out_b - in_b ))" ;;
+  esac
+
+  if [ "$_have_pwsh" -eq 1 ]; then
+    assert_eq "self-audit parity: 6.5-day (inside) pillar score matches (epoch freshness)" "$in_b" "$in_p"
+    assert_eq "self-audit parity: 7.5-day (outside) pillar score matches (epoch freshness)" "$out_b" "$out_p"
+  else
+    _skip "self-audit parity: 6.5-day (inside) pillar score matches (epoch freshness)" "pwsh not installed"
+    _skip "self-audit parity: 7.5-day (outside) pillar score matches (epoch freshness)" "pwsh not installed"
+  fi
+  unset -f _sa_score_at
+else
+  _skip "self-audit bash: 6.5d counted / 7.5d excluded — one State-Deltas penalty (epoch cutoff)" \
+    "scripts/perl/jq missing or SA_FIX unbuilt"
+  _skip "self-audit parity: 6.5-day (inside) pillar score matches (epoch freshness)" \
+    "scripts/perl/jq missing or SA_FIX unbuilt"
+  _skip "self-audit parity: 7.5-day (outside) pillar score matches (epoch freshness)" \
+    "scripts/perl/jq missing or SA_FIX unbuilt"
 fi
 
 # ---------------------------------------------------------------------------

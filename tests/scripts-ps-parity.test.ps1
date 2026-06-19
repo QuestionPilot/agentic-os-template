@@ -4,7 +4,7 @@
 #
 # Bash↔pwsh byte-parity for script ports.
 #
-# **All 38 assertions are SKIPped on the Windows lane** because the parity
+# **All 50 assertions are SKIPped on the Windows lane** because the parity
 # comparison requires BOTH `bash` AND `pwsh` to be present, and the Windows
 # lane intentionally has no bash. The bash twin already runs this exact
 # comparison on the macOS/Linux lane — running it again from the PS side
@@ -25,10 +25,22 @@
 $reason = 'bash↔pwsh parity comparison is intentionally only run by the bash twin on macOS/Linux lanes — PS-side behavior is covered end-to-end by sibling tests (drift / memory-drift / self-audit)'
 
 # Mirror every bash-twin label exactly so the AC count matches.
+# The PARITY_REQUIRE_PWSH meta-test + the quoted-name / freshness-boundary parity
+# fixtures below are bash-lane-only (the gate guards the bash twin; the Windows
+# lane runs PS tests in isolation with no bash<->PS cross-check to gate).
+$reasonGate = 'the PARITY_REQUIRE_PWSH gate + the boundary parity fixtures run only on the bash twin (macOS/Linux) — the Windows lane has no bash to cross-check against'
+_Skip 'scripts-ps-parity.test: PARITY_REQUIRE_PWSH=1 + no pwsh => hard FAIL (cross-check cannot silently skip)' $reasonGate
+_Skip 'scripts-ps-parity.test: PARITY_REQUIRE_PWSH unset + no pwsh => silent skip (local-dev convenience preserved)' $reasonGate
 _Skip 'scripts-ps-parity.test: check-memory-drift parity: exit codes match (drift fixture)' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift parity: sorted output-classes match' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift bash exits 0 on clean fixture' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift ps exits 0 on clean fixture' $reason
+_Skip 'scripts-ps-parity.test: check-memory-drift bash: quoted-name self-link is NOT drift (exit 0)' $reasonGate
+_Skip 'scripts-ps-parity.test: check-memory-drift ps: quoted-name self-link is NOT drift (exit 0)' $reasonGate
+_Skip 'scripts-ps-parity.test: check-memory-drift parity: quoted-name self-link exit codes match (quote-strip)' $reasonGate
+_Skip 'scripts-ps-parity.test: check-memory-drift parity: single-quoted name self-link — exit codes match (twins symmetric)' $reasonGate
+_Skip 'scripts-ps-parity.test: check-memory-drift bash: BOM''d CLOSED project still detects drift (BOM strip)' $reasonGate
+_Skip 'scripts-ps-parity.test: check-memory-drift parity: BOM''d project exit codes match (BOM strip)' $reasonGate
 _Skip 'scripts-ps-parity.test: self-audit bash exits 0 on isolated fixture' $reason
 _Skip 'scripts-ps-parity.test: self-audit bash emits parseable total' $reason
 _Skip 'scripts-ps-parity.test: self-audit ps exits 0 on isolated fixture' $reason
@@ -38,6 +50,9 @@ _Skip 'scripts-ps-parity.test: self-audit parity: pillar memory-hygiene score' $
 _Skip 'scripts-ps-parity.test: self-audit parity: pillar folder-hygiene score' $reason
 _Skip 'scripts-ps-parity.test: self-audit parity: pillar verification-coverage score' $reason
 _Skip 'scripts-ps-parity.test: self-audit parity: pillar closeout-spine-discipline score' $reason
+_Skip 'scripts-ps-parity.test: self-audit bash: 6.5d counted / 7.5d excluded — one State-Deltas penalty (epoch cutoff)' $reasonGate
+_Skip 'scripts-ps-parity.test: self-audit parity: 6.5-day (inside) pillar score matches (epoch freshness)' $reasonGate
+_Skip 'scripts-ps-parity.test: self-audit parity: 7.5-day (outside) pillar score matches (epoch freshness)' $reasonGate
 _Skip 'scripts-ps-parity.test: check-drift bash --manifest exits 0 on clean fixture' $reason
 _Skip 'scripts-ps-parity.test: check-drift ps --manifest exits 0 on clean fixture' $reason
 _Skip 'scripts-ps-parity.test: check-drift parity: exit codes match (clean manifest)' $reason

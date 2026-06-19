@@ -210,8 +210,9 @@ while IFS= read -r -d '' f; do
   scanned=$((scanned + 1))
 
   # Parse frontmatter (between the first two `---` lines).
-  description=$(awk '
+  description=$(LC_ALL=C awk '
     BEGIN { in_fm=0; saw_sep=0 }
+    NR==1 && substr($0,1,3) == "\357\273\277" { $0 = substr($0,4) }  # strip UTF-8 BOM (PS ReadAllLines does; parity)
     /^---$/ { saw_sep++; if (saw_sep==1) { in_fm=1; next } else { exit } }
     in_fm && /^description:/ {
       sub(/^description:[[:space:]]*/, "")
@@ -222,10 +223,25 @@ while IFS= read -r -d '' f; do
     }
   ' "$f")
 
-  own_name=$(awk '
+  # Strip a surrounding double-quote pair + trailing whitespace, exactly like the
+  # description parser above and the PS twin's Get-FmField (strip leading ", strip
+  # trailing " + ws, then TrimEnd). Without this, a quoted `name: "x"` kept its
+  # quotes here while the PS twin stripped them — so a CLOSED project whose body
+  # self-links [[x]] reached OPPOSITE drift verdicts (bash failed to recognize the
+  # self-link → false drift; PS skipped it). The self-link compare at the bottom of
+  # this loop needs the bare name.
+  own_name=$(LC_ALL=C awk '
     BEGIN { in_fm=0; saw_sep=0 }
+    NR==1 && substr($0,1,3) == "\357\273\277" { $0 = substr($0,4) }  # strip UTF-8 BOM (PS ReadAllLines does; parity)
     /^---$/ { saw_sep++; if (saw_sep==1) { in_fm=1; next } else { exit } }
-    in_fm && /^name:/ { sub(/^name:[[:space:]]*/, ""); print; exit }
+    in_fm && /^name:/ {
+      sub(/^name:[[:space:]]*/, "")
+      sub(/^"/, "")
+      sub(/"[[:space:]]*$/, "")
+      sub(/[[:space:]]+$/, "")
+      print
+      exit
+    }
   ' "$f")
 
   # Heuristic trigger: headline claims closed state.
@@ -241,8 +257,9 @@ while IFS= read -r -d '' f; do
 
   # Inspect body for [[project_*]] links to a DIFFERENT project.
   # awk: print everything after the second `---`.
-  body=$(awk '
+  body=$(LC_ALL=C awk '
     BEGIN { saw_sep=0 }
+    NR==1 && substr($0,1,3) == "\357\273\277" { $0 = substr($0,4) }  # strip UTF-8 BOM (PS ReadAllLines does; parity)
     /^---$/ { saw_sep++; next }
     saw_sep>=2 { print }
   ' "$f")

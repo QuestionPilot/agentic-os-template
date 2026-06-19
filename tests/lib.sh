@@ -85,6 +85,21 @@ make_hermes_env() {
 # _skip <label> [<reason>]
 _skip() { TESTS_RUN=$((TESTS_RUN + 1)); printf '  SKIP %s (%s)\n' "$1" "${2:-not applicable}"; }
 
+# _require_pwsh_or_fail <label-prefix>
+# The bash<->PS cross-twin parity comparisons SKIP silently when pwsh is absent
+# (a dev convenience on a box without pwsh on PATH). On a CI lane that MUST run
+# the cross-check, that silent skip would let a PS-only behavioral regression
+# merge green if pwsh ever vanished from the runner image. Set PARITY_REQUIRE_PWSH=1
+# on such a lane and a missing pwsh becomes a LOUD failure instead of a silent
+# skip, so the cross-check can never silently disappear. No-op when pwsh is
+# present (the normal case on every lane today). Call once per parity test file.
+_require_pwsh_or_fail() {
+  command -v pwsh >/dev/null 2>&1 && return 0
+  [ "${PARITY_REQUIRE_PWSH:-0}" = "1" ] || return 0
+  _fail "${1:-parity}: pwsh REQUIRED here (PARITY_REQUIRE_PWSH=1) but not found on PATH" \
+    "this lane must execute the bash<->PS cross-twin comparison; the silent-skip path is disabled here — install pwsh or unset PARITY_REQUIRE_PWSH"
+}
+
 # make_stub_cli <dir> <name> <version-output>
 # Creates <dir>/<name> as a stub that prints <version-output> and exits 0.
 # get_cli_version uses grep -oE so the version just needs the number somewhere.
