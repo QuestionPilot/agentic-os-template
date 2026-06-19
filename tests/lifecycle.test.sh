@@ -13,7 +13,7 @@
 # (which walks `git ls-files '*.md'` or the in-scope globs) sees them, and clean
 # up inline (no trap EXIT — tests/run.sh sources files, traps would leak across
 # siblings). Sentinel names include $$-${RANDOM:-x} to avoid collisions across
-# parallel runs and obvious.test-que83- prefixes to make stragglers easy to find.
+# parallel runs and obvious.test-t83- prefixes to make stragglers easy to find.
 #
 # Per reference_shell_grep_overlay: use /usr/bin/grep explicitly where POSIX
 # regex semantics matter. Per reference_awk_portability: wrap awk in LC_ALL=C.
@@ -82,9 +82,9 @@ fi
 mkdir -p "$REPO_ROOT/docs/plans"
 
 # --- Test 3: validate rejects in-scope file with missing lifecycle: ---
-# Inject a docs/plans/.test-que83-*.md with frontmatter but no lifecycle key.
+# Inject a docs/plans/.test-t83-*.md with frontmatter but no lifecycle key.
 # Validate must exit non-zero.
-LIFECYCLE_MISSING="docs/plans/.test-que83-missing-lifecycle-$$-${RANDOM:-x}.md"
+LIFECYCLE_MISSING="docs/plans/.test-t83-missing-lifecycle-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LIFECYCLE_MISSING" <<'MD'
 ---
 title: test fixture — missing lifecycle key
@@ -99,7 +99,7 @@ git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_MISSING"
 rm -f "$REPO_ROOT/$LIFECYCLE_MISSING"
 
 # --- Test 4: validate rejects in-scope file with invalid lifecycle: value ---
-LIFECYCLE_INVALID="docs/plans/.test-que83-invalid-lifecycle-$$-${RANDOM:-x}.md"
+LIFECYCLE_INVALID="docs/plans/.test-t83-invalid-lifecycle-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LIFECYCLE_INVALID" <<'MD'
 ---
 lifecycle: bogus-value
@@ -114,7 +114,7 @@ git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_INVALID"
 rm -f "$REPO_ROOT/$LIFECYCLE_INVALID"
 
 # --- Test 5: validate rejects in-scope file with malformed (unterminated) frontmatter ---
-LIFECYCLE_MALFORMED="docs/plans/.test-que83-malformed-lifecycle-$$-${RANDOM:-x}.md"
+LIFECYCLE_MALFORMED="docs/plans/.test-t83-malformed-lifecycle-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LIFECYCLE_MALFORMED" <<'MD'
 ---
 lifecycle: shipped
@@ -134,7 +134,7 @@ _test_all_five_values_accepted() {
   local v files=()
   local fail=0
   for v in experimental reviewed shipped superseded sunset; do
-    local f="docs/plans/.test-que83-value-${v}-$$-${RANDOM:-x}.md"
+    local f="docs/plans/.test-t83-value-${v}-$$-${RANDOM:-x}.md"
     cat > "$REPO_ROOT/$f" <<MD
 ---
 lifecycle: $v
@@ -164,7 +164,7 @@ fi
 # Inject a tracked.md under an out-of-scope path with NO lifecycle: frontmatter.
 # validate.sh must still exit 0 — proving the scope is narrow.
 # core/ is out-of-scope per core/lifecycle.md applicability matrix.
-LIFECYCLE_OOS="core/.test-que83-out-of-scope-$$-${RANDOM:-x}.md"
+LIFECYCLE_OOS="core/.test-t83-out-of-scope-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LIFECYCLE_OOS" <<'MD'
 # Out-of-scope test fixture — no frontmatter, no lifecycle: key
 MD
@@ -242,7 +242,7 @@ fi
 # behavior matches "any valid lifecycle: line present = pass" which is
 # documented here. If this becomes a real-world problem, the fix is to use
 # a YAML parser (yq/awk-state-machine) instead of regex.
-LIFECYCLE_DUPLICATE="docs/plans/.test-que83-duplicate-lifecycle-$$-${RANDOM:-x}.md"
+LIFECYCLE_DUPLICATE="docs/plans/.test-t83-duplicate-lifecycle-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LIFECYCLE_DUPLICATE" <<'MD'
 ---
 lifecycle: bogus-value
@@ -264,7 +264,7 @@ rm -f "$REPO_ROOT/$LIFECYCLE_DUPLICATE"
 # Per Codex review missing-test: confirm the README skip applies to ANY
 # in-scope dir, not just capabilities/. Inject docs/plans/README.md without
 # lifecycle: → validate.sh must still pass.
-LIFECYCLE_README="docs/plans/README.md.test-que83-$$-${RANDOM:-x}"
+LIFECYCLE_README="docs/plans/README.md.test-t83-$$-${RANDOM:-x}"
 # Bypass the existing-README check by using a unique sentinel name, then
 # rename to README.md transiently for the test.
 LIFECYCLE_README_TGT="docs/plans/README.md"

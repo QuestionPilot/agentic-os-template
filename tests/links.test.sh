@@ -18,7 +18,7 @@
 # (which walks `git ls-files '*.md'`) sees them, and clean up inline (no
 # trap EXIT — tests/run.sh sources files, traps would leak across siblings).
 # Sentinel names include $$-${RANDOM:-x} to avoid collisions across parallel
-# runs and obvious.test-que53- prefixes to make stragglers easy to find.
+# runs and obvious.test-t53- prefixes to make stragglers easy to find.
 
 # --- Test 1: baseline — validate passes on the unmodified repo ---
 # Regression guard: if any pre-existing tracked.md has a broken internal link
@@ -29,7 +29,7 @@ assert_exit "validate.sh passes on unmodified repo" 0 -- \
 # --- Test 2: broken internal link rejected ---
 # A tracked.md outside the vendored allowlist with [text](missing.md) must
 # trigger a FAIL from check_internal_links.
-LINK_BROKEN=".test-que53-links-broken-$$-${RANDOM:-x}.md"
+LINK_BROKEN=".test-t53-links-broken-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_BROKEN" <<'MD'
 # Test fixture
 This points to a [missing file](does-not-exist-anywhere.md) on purpose.
@@ -43,7 +43,7 @@ rm -f "$REPO_ROOT/$LINK_BROKEN"
 # --- Test 3: broken link inside vendored/ allowlist is permitted ---
 # Vendored snapshots are immutable. A broken ref inside
 # harnesses/<h>/vendored/** must NOT trip the check.
-LINK_VENDORED_DIR="harnesses/claude/vendored/_test-que53-$$-${RANDOM:-x}"
+LINK_VENDORED_DIR="harnesses/claude/vendored/_test-t53-$$-${RANDOM:-x}"
 LINK_VENDORED_FILE="$LINK_VENDORED_DIR/fixture.md"
 mkdir -p "$REPO_ROOT/$LINK_VENDORED_DIR"
 cat > "$REPO_ROOT/$LINK_VENDORED_FILE" <<'MD'
@@ -59,7 +59,7 @@ rm -rf "$REPO_ROOT/$LINK_VENDORED_DIR"
 # --- Test 4: links inside code fences are skipped ---
 # A ```fenced block``` containing [foo](missing.md) is documentation, not a
 # real link. The scanner must not false-positive.
-LINK_FENCED=".test-que53-links-fenced-$$-${RANDOM:-x}.md"
+LINK_FENCED=".test-t53-links-fenced-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_FENCED" <<'MD'
 # Test fixture
 Here is a code example:
@@ -78,7 +78,7 @@ rm -f "$REPO_ROOT/$LINK_FENCED"
 
 # --- Test 5: external schemes and pure anchors are skipped ---
 # [foo](https://...), [foo](mailto:...), [foo](#section) must not be checked.
-LINK_EXTERNAL=".test-que53-links-external-$$-${RANDOM:-x}.md"
+LINK_EXTERNAL=".test-t53-links-external-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_EXTERNAL" <<'MD'
 # Test fixture
 - [Example](https://example.com/owner/repo)
@@ -96,7 +96,7 @@ rm -f "$REPO_ROOT/$LINK_EXTERNAL"
 # so an engineer can fix it without re-running with -x.
 # Uses assert_contains (the only public string-assertion helper in tests/lib.sh)
 # split across two assertions — file path AND target each verified independently.
-LINK_DIAG=".test-que53-links-diag-$$-${RANDOM:-x}.md"
+LINK_DIAG=".test-t53-links-diag-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_DIAG" <<'MD'
 # Test fixture
 [diagnostic broken](path-DIAG-SENTINEL.md)
@@ -123,7 +123,7 @@ rm -f "$REPO_ROOT/$LINK_DIAG"
 # backticks is documentation, not a real link. Pre-fix: false-fails because
 # the scanner doesn't strip inline-code spans before extraction. Post-fix:
 # inline `…` spans are stripped, so example links inside backtick prose pass.
-LINK_INLINE_CODE=".test-que63-links-inline-code-$$-${RANDOM:-x}.md"
+LINK_INLINE_CODE=".test-t63-links-inline-code-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_INLINE_CODE" <<'MD'
 # Test fixture
 
@@ -140,7 +140,7 @@ rm -f "$REPO_ROOT/$LINK_INLINE_CODE"
 # pre-fix awk toggle only matches backtick fences; ~~~ contents leak into
 # the scan. Post-fix: the parser tracks fence char + length and recognizes
 # both delimiters.
-LINK_TILDE_FENCE=".test-que63-links-tilde-fence-$$-${RANDOM:-x}.md"
+LINK_TILDE_FENCE=".test-t63-links-tilde-fence-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_TILDE_FENCE" <<'MD'
 # Test fixture
 
@@ -158,7 +158,7 @@ rm -f "$REPO_ROOT/$LINK_TILDE_FENCE"
 # Per CommonMark, code fences may be indented up to 3 spaces. The pre-fix
 # regex requires fence at column 1 (^```), so an indented fence is not
 # recognized and its contents leak into the scan.
-LINK_INDENTED_FENCE=".test-que63-links-indented-fence-$$-${RANDOM:-x}.md"
+LINK_INDENTED_FENCE=".test-t63-links-indented-fence-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_INDENTED_FENCE" <<'MD'
 # Test fixture
 
@@ -179,7 +179,7 @@ rm -f "$REPO_ROOT/$LINK_INDENTED_FENCE"
 # inside a 4-backtick fence is content, not a close. Pre-fix: naive
 # ^```/ toggle treats the 3-backtick line as a close, leaking the rest of
 # the file into scan.
-LINK_NESTED_FENCE=".test-que63-links-nested-fence-$$-${RANDOM:-x}.md"
+LINK_NESTED_FENCE=".test-t63-links-nested-fence-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_NESTED_FENCE" <<'MD'
 # Test fixture
 
@@ -205,7 +205,7 @@ rm -f "$REPO_ROOT/$LINK_NESTED_FENCE"
 # tracked. This test pins that behavior — a broken reference-style link does
 # NOT trip the gate. Documenting this prevents future "obvious bug" reports
 # and signals the limitation to operators.
-LINK_REFSTYLE=".test-que63-links-ref-style-$$-${RANDOM:-x}.md"
+LINK_REFSTYLE=".test-t63-links-ref-style-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_REFSTYLE" <<'MD'
 # Test fixture
 
@@ -225,7 +225,7 @@ rm -f "$REPO_ROOT/$LINK_REFSTYLE"
 #) — escaped or not — producing a truncated target like "foo\(bar\". The
 # truncated target won't exist on disk, so the gate FAILs. Pin this current
 # behavior; a future enhancement could parse balanced/escaped parens.
-LINK_ESC_PAREN=".test-que63-links-esc-paren-$$-${RANDOM:-x}.md"
+LINK_ESC_PAREN=".test-t63-links-esc-paren-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_ESC_PAREN" <<'MD'
 # Test fixture
 
@@ -245,7 +245,7 @@ rm -f "$REPO_ROOT/$LINK_ESC_PAREN"
 # parser handles those correctly, so the allowlist is narrowed/removed. This
 # test plants a genuinely broken link in a temp plan file and confirms it IS
 # caught.
-LINK_PLAN_BROKEN="docs/plans/.test-que63-plan-broken-$$-${RANDOM:-x}.md"
+LINK_PLAN_BROKEN="docs/plans/.test-t63-plan-broken-$$-${RANDOM:-x}.md"
 mkdir -p "$REPO_ROOT/docs/plans"
 cat > "$REPO_ROOT/$LINK_PLAN_BROKEN" <<'MD'
 # Test fixture
@@ -275,7 +275,7 @@ rm -f "$REPO_ROOT/$LINK_PLAN_BROKEN"
 # closing patterns use the same ("```\`*"|"~~~~*") alternation that
 # enforces homogeneous fence character, plus a manual scan that counts
 # only consecutive same-character chars from the start.
-LINK_MIXED_CLOSE=".test-que63-links-mixed-close-$$-${RANDOM:-x}.md"
+LINK_MIXED_CLOSE=".test-t63-links-mixed-close-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_MIXED_CLOSE" <<'MD'
 # Test fixture
 
@@ -299,7 +299,7 @@ rm -f "$REPO_ROOT/$LINK_MIXED_CLOSE"
 # containing link syntax (e.g. ``[link](path)``) leaked their content
 # to the link extractor. After: three longest-first gsub passes strip
 # triple, double, and single-backtick spans.
-LINK_MULTI_INLINE=".test-que63-links-multi-inline-$$-${RANDOM:-x}.md"
+LINK_MULTI_INLINE=".test-t63-links-multi-inline-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_MULTI_INLINE" <<'MD'
 # Test fixture
 
@@ -317,7 +317,7 @@ rm -f "$REPO_ROOT/$LINK_MULTI_INLINE"
 # subsequent content as "inside fence" would hide real broken links. This
 # test plants a clean fenced block followed by a genuinely broken link
 # and confirms the broken link IS caught (exit 1).
-LINK_AFTER_FENCE=".test-que63-links-after-fence-$$-${RANDOM:-x}.md"
+LINK_AFTER_FENCE=".test-t63-links-after-fence-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_AFTER_FENCE" <<'MD'
 # Test fixture
 
@@ -384,7 +384,7 @@ fi
 # parser change re-introduces a GNU-awk fence-detection divergence on
 # 4-backtick fences, this fails first with a clearly-named assertion.
 if command -v gawk >/dev/null 2>&1; then
-  LINK_GAWK_4TICK=".test-que88-gawk-4tick-fence-$$-${RANDOM:-x}.md"
+  LINK_GAWK_4TICK=".test-t88-gawk-4tick-fence-$$-${RANDOM:-x}.md"
   cat > "$REPO_ROOT/$LINK_GAWK_4TICK" <<'MD'
 # Test fixture
 
@@ -414,7 +414,7 @@ fi
 # awk invocation; this test pins that fix by deliberately blanking LANG /
 # LC_ALL / LC_CTYPE before invoking validate.sh.
 if command -v gawk >/dev/null 2>&1; then
-  LINK_GAWK_INLINE=".test-que88-gawk-inline-code-$$-${RANDOM:-x}.md"
+  LINK_GAWK_INLINE=".test-t88-gawk-inline-code-$$-${RANDOM:-x}.md"
   cat > "$REPO_ROOT/$LINK_GAWK_INLINE" <<'MD'
 # Test fixture
 
@@ -454,7 +454,7 @@ fi
 # Plant a tracked.md with the canonical GitHub-platform issue-tracker
 # link. Pre-fix: FAIL (link check resolves `../../issues` as a local path
 # and finds nothing). Post-fix: PASS (case glob skips the prefix).
-LINK_GH_ISSUES=".test-que105-gh-issues-$$-${RANDOM:-x}.md"
+LINK_GH_ISSUES=".test-t105-gh-issues-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_ISSUES" <<'MD'
 # Test fixture
 
@@ -468,7 +468,7 @@ rm -f "$REPO_ROOT/$LINK_GH_ISSUES"
 
 # --- Test 22: `../../issues/123` (specific issue) is external ---
 # The `/*` suffix glob must catch numbered sub-paths the same way.
-LINK_GH_ISSUE_N=".test-que105-gh-issue-n-$$-${RANDOM:-x}.md"
+LINK_GH_ISSUE_N=".test-t105-gh-issue-n-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_ISSUE_N" <<'MD'
 # Test fixture
 
@@ -483,7 +483,7 @@ rm -f "$REPO_ROOT/$LINK_GH_ISSUE_N"
 # --- Test 23: `../../wiki`, `../../pulls`, `../../releases` are external ---
 # Bundle the remaining canonical GitHub-platform prefixes in one fixture so
 # a regression in any one of them surfaces a single named assertion.
-LINK_GH_MISC=".test-que105-gh-misc-$$-${RANDOM:-x}.md"
+LINK_GH_MISC=".test-t105-gh-misc-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_MISC" <<'MD'
 # Test fixture
 
@@ -515,35 +515,35 @@ rm -f "$REPO_ROOT/$LINK_GH_MISC"
 # relative links. A `[text](does-not-exist.md)` in a tracked.md must still
 # trigger a FAIL exactly as before. If this fails GREEN it means the
 # skip-list is over-broad and we've lost the gate's value.
-LINK_QUE105_BROKEN=".test-que105-still-broken-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_QUE105_BROKEN" <<'MD'
+LINK_T105_BROKEN=".test-t105-still-broken-$$-${RANDOM:-x}.md"
+cat > "$REPO_ROOT/$LINK_T105_BROKEN" <<'MD'
 # Test fixture
 
-This is a [genuinely broken local link](does-not-exist-QUE105-SENTINEL.md).
+This is a [genuinely broken local link](does-not-exist-T105-SENTINEL.md).
 MD
-git -C "$REPO_ROOT" add -f "$LINK_QUE105_BROKEN"
+git -C "$REPO_ROOT" add -f "$LINK_T105_BROKEN"
 assert_exit "validate.sh still rejects regular broken local links" 1 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_QUE105_BROKEN"
-rm -f "$REPO_ROOT/$LINK_QUE105_BROKEN"
+git -C "$REPO_ROOT" rm -f --quiet "$LINK_T105_BROKEN"
+rm -f "$REPO_ROOT/$LINK_T105_BROKEN"
 
 # --- Test 25: broken local link with `../` prefix STILL fails ---
 # Specifically guard against a regression where the skip-list pattern
 # over-matches plain `../`-prefixed local paths. `../does-not-exist.md`
 # from a tracked.md must still fail — only the listed GitHub-platform
 # segments are skipped.
-LINK_QUE105_PARENT="docs/.test-que105-parent-broken-$$-${RANDOM:-x}.md"
+LINK_T105_PARENT="docs/.test-t105-parent-broken-$$-${RANDOM:-x}.md"
 mkdir -p "$REPO_ROOT/docs"
-cat > "$REPO_ROOT/$LINK_QUE105_PARENT" <<'MD'
+cat > "$REPO_ROOT/$LINK_T105_PARENT" <<'MD'
 # Test fixture
 
-See [parent ref](../never-existed-QUE105-PARENT-SENTINEL.md) for details.
+See [parent ref](../never-existed-T105-PARENT-SENTINEL.md) for details.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_QUE105_PARENT"
+git -C "$REPO_ROOT" add -f "$LINK_T105_PARENT"
 assert_exit "validate.sh still rejects ../ broken local links" 1 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_QUE105_PARENT"
-rm -f "$REPO_ROOT/$LINK_QUE105_PARENT"
+git -C "$REPO_ROOT" rm -f --quiet "$LINK_T105_PARENT"
+rm -f "$REPO_ROOT/$LINK_T105_PARENT"
 
 # --- Test 26: bare `../../tree` and `../../blob` ---
 # Codex confirmation review F-1 (cross-model, 2026-05-27): the initial
@@ -553,7 +553,7 @@ rm -f "$REPO_ROOT/$LINK_QUE105_PARENT"
 # default-branch tree view; `/blob` is less common as a bare path but
 # included for symmetry. The case-arm was widened to also match the
 # bare segment. This test pins both forms.
-LINK_GH_TREE_BLOB_BARE=".test-que105-gh-tree-blob-bare-$$-${RANDOM:-x}.md"
+LINK_GH_TREE_BLOB_BARE=".test-t105-gh-tree-blob-bare-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_TREE_BLOB_BARE" <<'MD'
 # Test fixture
 
@@ -580,14 +580,14 @@ rm -f "$REPO_ROOT/$LINK_GH_TREE_BLOB_BARE"
 # trigger the broken-link failure — the gate only fails once if ANY
 # is unresolved, so this verifies the overall behavior; per-shape
 # coverage would require three separate fixtures.
-LINK_GH_NEAR_PREFIX=".test-que105-gh-near-prefix-$$-${RANDOM:-x}.md"
+LINK_GH_NEAR_PREFIX=".test-t105-gh-near-prefix-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_NEAR_PREFIX" <<'MD'
 # Test fixture
 
 These near-prefixes should each be treated as a local-resolution attempt:
-- [broken with dash suffix](../../issues-old/QUE105-NEAR-SENTINEL.md)
-- [broken with bare suffix](../../wikifoo/QUE105-NEAR-SENTINEL.md)
-- [broken with bare suffix on plural](../../pullsbar/QUE105-NEAR-SENTINEL.md)
+- [broken with dash suffix](../../issues-old/T105-NEAR-SENTINEL.md)
+- [broken with bare suffix](../../wikifoo/T105-NEAR-SENTINEL.md)
+- [broken with bare suffix on plural](../../pullsbar/T105-NEAR-SENTINEL.md)
 MD
 git -C "$REPO_ROOT" add -f "$LINK_GH_NEAR_PREFIX"
 assert_exit "validate.sh still rejects GitHub-platform near-prefixes" 1 -- \
@@ -602,7 +602,7 @@ rm -f "$REPO_ROOT/$LINK_GH_NEAR_PREFIX"
 # BEFORE the case-arm runs, so `../../issues?q=is:open` becomes
 # `../../issues` and matches the GH_ISSUES skip-list. This test pins
 # that the two strip steps + the new skip-list compose correctly.
-LINK_GH_QUERY_ANCHOR=".test-que105-gh-query-anchor-$$-${RANDOM:-x}.md"
+LINK_GH_QUERY_ANCHOR=".test-t105-gh-query-anchor-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_QUERY_ANCHOR" <<'MD'
 # Test fixture
 
@@ -624,7 +624,7 @@ rm -f "$REPO_ROOT/$LINK_GH_QUERY_ANCHOR"
 # ./../commit/<sha> are legitimate GitHub-platform links that this gate
 # was incorrectly rejecting. Case-arm widened to cover both singular and
 # plural forms; this test pins the new coverage.
-LINK_GH_SINGULAR=".test-que105-gh-singular-$$-${RANDOM:-x}.md"
+LINK_GH_SINGULAR=".test-t105-gh-singular-$$-${RANDOM:-x}.md"
 cat > "$REPO_ROOT/$LINK_GH_SINGULAR" <<'MD'
 # Test fixture
 
@@ -640,7 +640,7 @@ assert_exit "validate.sh recognizes singular ../../pull/N and ../../commit/SHA" 
 git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_SINGULAR"
 rm -f "$REPO_ROOT/$LINK_GH_SINGULAR"
 
-# --- T-QUE89: explicit existence of the Setup pages ---
+# --- T-T89: explicit existence of the Setup pages ---
 # linear-setup.md, obsidian/vault-guide.md.
 # Pinned explicitly so a future delete/rename breaks with a named assertion,
 # not just a generic broken-link sweep.

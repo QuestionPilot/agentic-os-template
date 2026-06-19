@@ -75,7 +75,18 @@ if ([string]::IsNullOrEmpty($tokens)) {
 $script:fail = 0
 
 # --- Patterns --------------------------------------------------------------
-$issueRe = 'QUE-[0-9]+'
+# Tracker issue IDs — case-insensitive, with OR without the hyphen, and BOUNDARY-
+# aware so ordinary words ending in "que" + digits (the `unique<N>` / `opaque<N>` /
+# `technique<N>` class) do NOT false-trip this fail-closed gate. An uppercase or
+# CamelCase `QUE`/`Que` is a deliberate token (no English word capitalizes mid-word),
+# so it matches in any context; a lowercase `que` matches only at a LEFT BOUNDARY
+# (start, or a non-letter before it). The old `QUE-[0-9]+` (uppercase + required
+# hyphen) let real issue numbers survive as lowercase / no-hyphen `que<NN>`.
+# Hyphenated arm keeps 1+ digits (single-digit `QUE-<n>` still caught); no-hyphen arm
+# requires 2+ digits. No self-match: char-classes carry no contiguous `que`, and every
+# `QUE-<n>` reference is followed by `<`, not a digit. Kept ERE-shape for bash<->PS
+# parity; `(^|[^A-Za-z])` is the portable boundary (no `\b`).
+$issueRe = '(Q[Uu][Ee]|(^|[^A-Za-z])[Qq][Uu][Ee])(-[0-9]+|[0-9]{2,})'
 # Home paths carrying a REAL username segment (angle-bracket or $-variable
 # placeholders do not match). The Windows arm accepts ONE OR MORE backslashes, so
 # simple, JSON-escaped, and nested source-of-JSON profile paths (one, two, or

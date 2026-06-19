@@ -122,7 +122,7 @@ Assert-Exit 'links.test: validate.ps1 passes on unmodified repo' 0 -- `
     pwsh -NoProfile -File $VALIDATE_PS1
 
 # --- Test 2: broken internal link rejected ---------------------------------
-$rel = (_LinkSentinel 'que53-links-broken') + '.md'
+$rel = (_LinkSentinel 't53-links-broken') + '.md'
 _LinkFixture 'links.test: validate.ps1 fails on broken internal markdown link' 1 `
     ".test-$rel" (@'
 # Test fixture
@@ -130,7 +130,7 @@ This points to a [missing file](does-not-exist-anywhere.md) on purpose.
 '@ + "`n")
 
 # --- Test 3: broken link inside vendored/ permitted ------------------------
-$vendDir = 'harnesses/claude/vendored/_test-' + (_LinkSentinel 'que53')
+$vendDir = 'harnesses/claude/vendored/_test-' + (_LinkSentinel 't53')
 _LinkFixture 'links.test: validate.ps1 allows broken links inside vendored/' 0 `
     "$vendDir/fixture.md" (@'
 # Vendored fixture
@@ -141,7 +141,7 @@ Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $vendDir) -Recurse -Force -Er
 
 # --- Test 4: links inside code fences skipped ------------------------------
 _LinkFixture 'links.test: validate.ps1 ignores links inside code fences' 0 `
-    (".test-" + (_LinkSentinel 'que53-links-fenced') + '.md') (@'
+    (".test-" + (_LinkSentinel 't53-links-fenced') + '.md') (@'
 # Test fixture
 Here is a code example:
 
@@ -154,7 +154,7 @@ End of file.
 
 # --- Test 5: external schemes + pure anchors skipped -----------------------
 _LinkFixture 'links.test: validate.ps1 ignores external schemes + pure anchors' 0 `
-    (".test-" + (_LinkSentinel 'que53-links-external') + '.md') (@'
+    (".test-" + (_LinkSentinel 't53-links-external') + '.md') (@'
 # Test fixture
 - [Example](https://example.com/owner/repo)
 - [Email](mailto:nobody@example.com)
@@ -162,7 +162,7 @@ _LinkFixture 'links.test: validate.ps1 ignores external schemes + pure anchors' 
 '@ + "`n")
 
 # --- Tests 6 + 7: failure message names the file AND the broken target -----
-$diagRel = ".test-" + (_LinkSentinel 'que53-links-diag') + '.md'
+$diagRel = ".test-" + (_LinkSentinel 't53-links-diag') + '.md'
 _LinkDiag `
     'links.test: validate.ps1 failure message names the file' `
     'links.test: validate.ps1 failure message names the broken target' `
@@ -174,7 +174,7 @@ _LinkDiag `
 
 # --- Test 8: inline-code spans containing [link](path) skipped -
 _LinkFixture 'links.test: validate.ps1 skips links inside inline-code spans' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-inline-code') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-inline-code') + '.md') (@'
 # Test fixture
 
 Use `[example](pretend-inline-missing.md)` as the canonical syntax in docs.
@@ -182,7 +182,7 @@ Use `[example](pretend-inline-missing.md)` as the canonical syntax in docs.
 
 # --- Test 9: tilde-fenced code blocks recognized --------------
 _LinkFixture 'links.test: validate.ps1 recognizes ~~~ fences' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-tilde-fence') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-tilde-fence') + '.md') (@'
 # Test fixture
 
 ~~~markdown
@@ -192,7 +192,7 @@ _LinkFixture 'links.test: validate.ps1 recognizes ~~~ fences' 0 `
 
 # --- Test 10: fences indented 1-3 spaces recognized -----------
 _LinkFixture 'links.test: validate.ps1 recognizes fences indented 1-3 spaces' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-indented-fence') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-indented-fence') + '.md') (@'
 # Test fixture
 
    ```markdown
@@ -202,7 +202,7 @@ _LinkFixture 'links.test: validate.ps1 recognizes fences indented 1-3 spaces' 0 
 
 # --- Test 11: nested 3-backticks inside 4-backtick fence ------
 _LinkFixture 'links.test: validate.ps1 handles nested triple-backticks inside 4-backtick fence' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-nested-fence') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-nested-fence') + '.md') (@'
 # Test fixture
 
 ````markdown
@@ -218,7 +218,7 @@ End of nested block.
 
 # --- Test 12: reference-style links not checked --------
 _LinkFixture 'links.test: validate.ps1 does not check reference-style links' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-ref-style') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-ref-style') + '.md') (@'
 # Test fixture
 
 See [the example][ex] for details.
@@ -228,14 +228,14 @@ See [the example][ex] for details.
 
 # --- Test 13: escaped parens treated as broken ---------
 _LinkFixture 'links.test: validate.ps1 treats escaped-paren destinations as broken' 1 `
-    (".test-" + (_LinkSentinel 'que63-links-esc-paren') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-esc-paren') + '.md') (@'
 # Test fixture
 
 This uses [escaped parens](foo\(bar\).md) in the destination.
 '@ + "`n")
 
 # --- Test 14: broken links under docs/plans/ ------------------
-$planRel = "docs/plans/.test-" + (_LinkSentinel 'que63-plan-broken') + '.md'
+$planRel = "docs/plans/.test-" + (_LinkSentinel 't63-plan-broken') + '.md'
 _LinkFixture 'links.test: validate.ps1 catches broken links under docs/plans/ after allowlist narrowing' 1 `
     $planRel (@'
 ---
@@ -249,7 +249,7 @@ This plan references a [genuinely missing target](does-not-exist-PLAN-SENTINEL.m
 
 # --- Test 15: mixed-character fence-like lines = content -
 _LinkFixture 'links.test: validate.ps1 treats mixed-char fence-like lines as content' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-mixed-close') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-mixed-close') + '.md') (@'
 # Test fixture
 
 ~~~markdown
@@ -261,7 +261,7 @@ _LinkFixture 'links.test: validate.ps1 treats mixed-char fence-like lines as con
 
 # --- Test 16: multi-backtick inline-code spans stripped --
 _LinkFixture 'links.test: validate.ps1 strips multi-backtick inline-code spans' 0 `
-    (".test-" + (_LinkSentinel 'que63-links-multi-inline') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-multi-inline') + '.md') (@'
 # Test fixture
 
 Both forms should be stripped: ``[double-tick link](pretend-double-missing.md)`` and `[single-tick link](pretend-single-missing.md)`.
@@ -269,7 +269,7 @@ Both forms should be stripped: ``[double-tick link](pretend-double-missing.md)``
 
 # --- Test 17: real broken links AFTER a fenced block ---
 _LinkFixture 'links.test: validate.ps1 detects real broken links after a fenced block' 1 `
-    (".test-" + (_LinkSentinel 'que63-links-after-fence') + '.md') (@'
+    (".test-" + (_LinkSentinel 't63-links-after-fence') + '.md') (@'
 # Test fixture
 
 ```bash
@@ -303,7 +303,7 @@ _Skip 'links.test: validate.ps1 strips inline-code spans under GNU awk in blank 
 
 # --- Test 22: `../../issues` treated as external -----------------
 _LinkFixture 'links.test: validate.ps1 recognizes ../../issues as a GitHub-platform link' 0 `
-    (".test-" + (_LinkSentinel 'que105-gh-issues') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-issues') + '.md') (@'
 # Test fixture
 
 Open an [issue](../../issues) on this repository.
@@ -311,7 +311,7 @@ Open an [issue](../../issues) on this repository.
 
 # --- Test 23: `../../issues/123` sub-path also external ----------
 _LinkFixture 'links.test: validate.ps1 recognizes ../../issues/123 as a GitHub-platform link' 0 `
-    (".test-" + (_LinkSentinel 'que105-gh-issue-n') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-issue-n') + '.md') (@'
 # Test fixture
 
 See [the broken-link bug](../../issues/123) for the full incident write-up.
@@ -319,7 +319,7 @@ See [the broken-link bug](../../issues/123) for the full incident write-up.
 
 # --- Test 24: all 13 canonical prefixes recognized ---------------
 _LinkFixture 'links.test: validate.ps1 recognizes all canonical GitHub-platform prefixes' 0 `
-    (".test-" + (_LinkSentinel 'que105-gh-misc') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-misc') + '.md') (@'
 # Test fixture
 
 - [Wiki home](../../wiki)
@@ -342,24 +342,24 @@ _LinkFixture 'links.test: validate.ps1 recognizes all canonical GitHub-platform 
 
 # --- Test 25: regular broken local links still fail -----
 _LinkFixture 'links.test: validate.ps1 still rejects regular broken local links' 1 `
-    (".test-" + (_LinkSentinel 'que105-still-broken') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-still-broken') + '.md') (@'
 # Test fixture
 
-This is a [genuinely broken local link](does-not-exist-QUE105-SENTINEL.md).
+This is a [genuinely broken local link](does-not-exist-T105-SENTINEL.md).
 '@ + "`n")
 
 # --- Test 26:../ broken local links still fail ---------
-$parentRel = "docs/.test-" + (_LinkSentinel 'que105-parent-broken') + '.md'
+$parentRel = "docs/.test-" + (_LinkSentinel 't105-parent-broken') + '.md'
 _LinkFixture 'links.test: validate.ps1 still rejects ../ broken local links' 1 `
     $parentRel (@'
 # Test fixture
 
-See [parent ref](../never-existed-QUE105-PARENT-SENTINEL.md) for details.
+See [parent ref](../never-existed-T105-PARENT-SENTINEL.md) for details.
 '@ + "`n")
 
 # --- Test 27: bare `../../tree` and `../../blob` -------------
 _LinkFixture 'links.test: validate.ps1 recognizes bare ../../tree and ../../blob' 0 `
-    (".test-" + (_LinkSentinel 'que105-gh-tree-blob-bare') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-tree-blob-bare') + '.md') (@'
 # Test fixture
 
 - [Default branch tree](../../tree)
@@ -368,18 +368,18 @@ _LinkFixture 'links.test: validate.ps1 recognizes bare ../../tree and ../../blob
 
 # --- Test 28: near-prefixes still fail -------------
 _LinkFixture 'links.test: validate.ps1 still rejects GitHub-platform near-prefixes' 1 `
-    (".test-" + (_LinkSentinel 'que105-gh-near-prefix') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-near-prefix') + '.md') (@'
 # Test fixture
 
 These near-prefixes should each be treated as a local-resolution attempt:
-- [broken with dash suffix](../../issues-old/QUE105-NEAR-SENTINEL.md)
-- [broken with bare suffix](../../wikifoo/QUE105-NEAR-SENTINEL.md)
-- [broken with bare suffix on plural](../../pullsbar/QUE105-NEAR-SENTINEL.md)
+- [broken with dash suffix](../../issues-old/T105-NEAR-SENTINEL.md)
+- [broken with bare suffix](../../wikifoo/T105-NEAR-SENTINEL.md)
+- [broken with bare suffix on plural](../../pullsbar/T105-NEAR-SENTINEL.md)
 '@ + "`n")
 
 # --- Test 29: GitHub-platform links with query + anchor -----
 _LinkFixture 'links.test: validate.ps1 recognizes GitHub-platform links with query/anchor' 0 `
-    (".test-" + (_LinkSentinel 'que105-gh-query-anchor') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-query-anchor') + '.md') (@'
 # Test fixture
 
 - [Open issues](../../issues?q=is:open)
@@ -389,7 +389,7 @@ _LinkFixture 'links.test: validate.ps1 recognizes GitHub-platform links with que
 
 # --- Test 30: singular `pull/N` + `commit/<sha>` -------------
 _LinkFixture 'links.test: validate.ps1 recognizes singular ../../pull/N and ../../commit/SHA' 0 `
-    (".test-" + (_LinkSentinel 'que105-gh-singular') + '.md') (@'
+    (".test-" + (_LinkSentinel 't105-gh-singular') + '.md') (@'
 # Test fixture
 
 - [Specific PR (singular)](../../pull/123)

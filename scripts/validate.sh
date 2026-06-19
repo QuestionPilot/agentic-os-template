@@ -424,7 +424,7 @@ check_lifecycle() {
   local found=0 rel file base fm fm_out fm_closed
   # Use git ls-files (matches tests/links.test.sh) so dotfile sentinels
   # injected by tests/lifecycle.test.sh are scanned too. Bash's default `*.md`
-  # glob skips dotfiles, which would silently exclude `.test-que83-*.md`
+  # glob skips dotfiles, which would silently exclude `.test-t83-*.md`
   # fixtures and false-PASS the negative tests.
   #
   # In-scope path predicates: docs/plans/*.md OR

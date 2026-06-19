@@ -133,18 +133,18 @@ if (Test-Path -LiteralPath $mcpPath) {
 }
 
 # --- a home path inside harness gitlink does NOT false-trip ---
-$DR_QUE66_FAKE_WT = Join-Path $env:REPO_ROOT '.claude' 'worktrees' (".test-que66-c1-fake-wt-" + [Guid]::NewGuid().Guid.Substring(0,4))
-if (Test-Path -LiteralPath $DR_QUE66_FAKE_WT) {
+$DR_T66_FAKE_WT = Join-Path $env:REPO_ROOT '.claude' 'worktrees' (".test-t66-c1-fake-wt-" + [Guid]::NewGuid().Guid.Substring(0,4))
+if (Test-Path -LiteralPath $DR_T66_FAKE_WT) {
     _Skip 'drift.test: check-drift.ps1 skips /Users/ inside harness gitlink' `
         'collision with real worktree path — refusing to overwrite'
 } else {
-    New-Item -ItemType Directory -Path $DR_QUE66_FAKE_WT -Force | Out-Null
+    New-Item -ItemType Directory -Path $DR_T66_FAKE_WT -Force | Out-Null
     $c1_prefix = '/U'
-    $c1_path_body = 'sers/test-que66-c1/.test-claude-config/repo.git/worktrees/branch'
+    $c1_path_body = 'sers/test-t66-c1/.test-claude-config/repo.git/worktrees/branch'
     $c1_full = $c1_prefix + $c1_path_body
-    Write-LfFile (Join-Path $DR_QUE66_FAKE_WT '.git') ('gitdir: ' + $c1_full + "`n")
+    Write-LfFile (Join-Path $DR_T66_FAKE_WT '.git') ('gitdir: ' + $c1_full + "`n")
     Assert-Exit 'drift.test: check-drift.ps1 skips /Users/ inside harness gitlink' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-    Remove-Item -LiteralPath $DR_QUE66_FAKE_WT -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $DR_T66_FAKE_WT -Recurse -Force -ErrorAction SilentlyContinue
     $worktreesDir = Join-Path $env:REPO_ROOT '.claude' 'worktrees'
     if ((Test-Path -LiteralPath $worktreesDir -PathType Container) -and `
         (@(Get-ChildItem -LiteralPath $worktreesDir -Force -ErrorAction SilentlyContinue).Count -eq 0)) {
@@ -161,35 +161,35 @@ if (Test-Path -LiteralPath $DR_QUE66_FAKE_WT) {
 function Get-DrSuffix { return ("$PID-" + [Guid]::NewGuid().Guid.Substring(0,4)) }
 
 # Positive: mac home prefix + user + trailing path.
-$DR_C1_POS_M = Join-Path $env:REPO_ROOT (".test-que66-c1-mac-pos-" + (Get-DrSuffix) + ".md")
-$c1_p = '/Us'; $c1_b = 'ers/test-que66-c1-pos/path'
+$DR_C1_POS_M = Join-Path $env:REPO_ROOT (".test-t66-c1-mac-pos-" + (Get-DrSuffix) + ".md")
+$c1_p = '/Us'; $c1_b = 'ers/test-t66-c1-pos/path'
 Write-LfFile $DR_C1_POS_M ($c1_p + $c1_b + "`n")
 Assert-Exit 'drift.test: check-drift catches mac home prefix + user + path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
 Remove-Item -LiteralPath $DR_C1_POS_M -Force -ErrorAction SilentlyContinue
 
 # Positive: linux home prefix + user + trailing path.
-$DR_C1_POS_L = Join-Path $env:REPO_ROOT (".test-que66-c1-linux-pos-" + (Get-DrSuffix) + ".md")
-$c1_p = '/h'; $c1_b = 'ome/test-que66-c1-pos/path'
+$DR_C1_POS_L = Join-Path $env:REPO_ROOT (".test-t66-c1-linux-pos-" + (Get-DrSuffix) + ".md")
+$c1_p = '/h'; $c1_b = 'ome/test-t66-c1-pos/path'
 Write-LfFile $DR_C1_POS_L ($c1_p + $c1_b + "`n")
 Assert-Exit 'drift.test: check-drift catches linux home prefix + user + path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
 Remove-Item -LiteralPath $DR_C1_POS_L -Force -ErrorAction SilentlyContinue
 
 # Positive: mac home prefix + user, no trailing slash.
-$DR_C1_POS_NS = Join-Path $env:REPO_ROOT (".test-que66-c1-no-trail-" + (Get-DrSuffix) + ".md")
-$c1_p = '/Us'; $c1_b = 'ers/test-que66-c1-no-trail'
+$DR_C1_POS_NS = Join-Path $env:REPO_ROOT (".test-t66-c1-no-trail-" + (Get-DrSuffix) + ".md")
+$c1_p = '/Us'; $c1_b = 'ers/test-t66-c1-no-trail'
 Write-LfFile $DR_C1_POS_NS ($c1_p + $c1_b + "`n")
 Assert-Exit 'drift.test: check-drift catches mac home prefix + user with no trailing slash' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
 Remove-Item -LiteralPath $DR_C1_POS_NS -Force -ErrorAction SilentlyContinue
 
 # Positive: Windows drive home prefix.
-$DR_C1_POS_W = Join-Path $env:REPO_ROOT (".test-que66-c1-win-pos-" + (Get-DrSuffix) + ".md")
-$c1_drive = 'C:'; $c1_p = '\Us'; $c1_b = 'ers\test-que66-c1-pos\path'
+$DR_C1_POS_W = Join-Path $env:REPO_ROOT (".test-t66-c1-win-pos-" + (Get-DrSuffix) + ".md")
+$c1_drive = 'C:'; $c1_p = '\Us'; $c1_b = 'ers\test-t66-c1-pos\path'
 Write-LfFile $DR_C1_POS_W ($c1_drive + $c1_p + $c1_b + "`n")
 Assert-Exit 'drift.test: check-drift catches Windows drive home prefix + user + path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
 Remove-Item -LiteralPath $DR_C1_POS_W -Force -ErrorAction SilentlyContinue
 
 # Negative: bare home prefix without user segment.
-$DR_C1_NEG_M = Join-Path $env:REPO_ROOT (".test-que66-c1-bare-mac-neg-" + (Get-DrSuffix) + ".md")
+$DR_C1_NEG_M = Join-Path $env:REPO_ROOT (".test-t66-c1-bare-mac-neg-" + (Get-DrSuffix) + ".md")
 $c1_p = '/Us'; $c1_b = 'ers/'
 Write-LfFile $DR_C1_NEG_M ($c1_p + $c1_b + "`n")
 Assert-Exit 'drift.test: check-drift skips bare mac home with no user segment' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
@@ -199,26 +199,26 @@ Remove-Item -LiteralPath $DR_C1_NEG_M -Force -ErrorAction SilentlyContinue
 # docs/ is excluded from the public template ship-set, so docs/plans/ may not
 # exist on a fresh template clone — create it so the fixture can be planted.
 New-Item -ItemType Directory -Force -Path (Join-Path $env:REPO_ROOT 'docs' 'plans') | Out-Null
-$H6_INJECT = Join-Path $env:REPO_ROOT 'docs' 'plans' 'test-que52-h6-leak.md'
-$h6_prefix = '/U'; $h6_body = 'sers/test-que52-h6/sentinel'
+$H6_INJECT = Join-Path $env:REPO_ROOT 'docs' 'plans' 'test-t52-h6-leak.md'
+$h6_prefix = '/U'; $h6_body = 'sers/test-t52-h6/sentinel'
 Write-LfFile $H6_INJECT ($h6_prefix + $h6_body + "`n")
 Assert-Exit 'drift.test: check-drift.ps1 catches concrete-home-prefix path in docs/plans/' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
 Remove-Item -LiteralPath $H6_INJECT -Force -ErrorAction SilentlyContinue
 
 # --- cross-model-out/ runtime artifacts are pruned ---
-$DR_QUE87_DIR = Join-Path $env:REPO_ROOT 'cross-model-out' (".test-que87-leak-" + (Get-DrSuffix))
-if (Test-Path -LiteralPath $DR_QUE87_DIR) {
+$DR_T87_DIR = Join-Path $env:REPO_ROOT 'cross-model-out' (".test-t87-leak-" + (Get-DrSuffix))
+if (Test-Path -LiteralPath $DR_T87_DIR) {
     _Skip 'drift.test: check-drift.ps1 prunes cross-model-out/ runtime artifacts' `
-        "fixture collision: $DR_QUE87_DIR exists"
+        "fixture collision: $DR_T87_DIR exists"
 } else {
-    New-Item -ItemType Directory -Path $DR_QUE87_DIR -Force | Out-Null
-    $cmr_prefix = '/U'; $cmr_body = 'sers/test-que87/Claude - Local/agentic-os-template'
+    New-Item -ItemType Directory -Path $DR_T87_DIR -Force | Out-Null
+    $cmr_prefix = '/U'; $cmr_body = 'sers/test-t87/Claude - Local/agentic-os-template'
     $hd_a = 'Hen'; $hd_b = 'do'
     $body = ('workdir: ' + $cmr_prefix + $cmr_body + "`nmodel: gpt-5.5`n`n") +
             ('# Review repo by ' + $hd_a + $hd_b + "`n")
-    Write-LfFile (Join-Path $DR_QUE87_DIR 'codex-review.md') $body
+    Write-LfFile (Join-Path $DR_T87_DIR 'codex-review.md') $body
     Assert-Exit 'drift.test: check-drift.ps1 prunes cross-model-out/ runtime artifacts' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-    Remove-Item -LiteralPath $DR_QUE87_DIR -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $DR_T87_DIR -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 # --- the broad content scans enumerate the COMMITTABLE set
@@ -228,14 +228,14 @@ if (Test-Path -LiteralPath $DR_QUE87_DIR) {
 # halves so this test source does not self-trip the scan (per
 # feedback_self_tripping_test_source). Each fixture asserts its gitignore
 # precondition before the behavioral assertion. ---
-$q213_prefix = '/U'; $q213_body = 'sers/test-que213/Projects/foo/bar.js'
+$q213_prefix = '/U'; $q213_body = 'sers/test-t213/Projects/foo/bar.js'
 $q213_home = $q213_prefix + $q213_body
 
 # (a) a gitignored.codegraph/*.log carrying an absolute home path (the field
 # case: codegraph's.codegraph/daemon.log) is PRUNED -> exit 0. Unique filename
 # remove-if-created so a real codegraph install's state is never touched.
 $DR_Q213_IGN_DIR = Join-Path $env:REPO_ROOT '.codegraph'
-$DR_Q213_IGN = Join-Path $DR_Q213_IGN_DIR (".test-que213-daemon-" + (Get-DrSuffix) + ".log")
+$DR_Q213_IGN = Join-Path $DR_Q213_IGN_DIR (".test-t213-daemon-" + (Get-DrSuffix) + ".log")
 $DR_Q213_MADE_DIR = $false
 if (-not (Test-Path -LiteralPath $DR_Q213_IGN_DIR)) {
     New-Item -ItemType Directory -Path $DR_Q213_IGN_DIR -Force | Out-Null
@@ -257,7 +257,7 @@ if ($DR_Q213_MADE_DIR) { Remove-Item -LiteralPath $DR_Q213_IGN_DIR -Force -Error
 
 # (b) a gitignored *.log anywhere proves it is the.gitignore decision, not a
 # hardcoded.codegraph special-case -> exit 0.
-$DR_Q213_LOG = Join-Path $env:REPO_ROOT (".test-que213-stray-" + (Get-DrSuffix) + ".log")
+$DR_Q213_LOG = Join-Path $env:REPO_ROOT (".test-t213-stray-" + (Get-DrSuffix) + ".log")
 if (Test-Path -LiteralPath $DR_Q213_LOG) {
     _Skip 'drift.test: check-drift.ps1 prunes a gitignored *.log file' "fixture collision: $DR_Q213_LOG"
 } else {
@@ -274,7 +274,7 @@ if (Test-Path -LiteralPath $DR_Q213_LOG) {
 # (c) REGRESSION GUARD: an untracked-but-NOT-ignored (committable) file with the
 # same machine path is STILL caught -> exit 1. Pins that narrowed the scan
 # to gitignored-only; a future "tracked-only" switch would false-PASS here.
-$DR_Q213_COMMIT = Join-Path $env:REPO_ROOT (".test-que213-committable-" + (Get-DrSuffix) + ".md")
+$DR_Q213_COMMIT = Join-Path $env:REPO_ROOT (".test-t213-committable-" + (Get-DrSuffix) + ".md")
 if (Test-Path -LiteralPath $DR_Q213_COMMIT) {
     _Skip 'drift.test: check-drift.ps1 still catches a committable machine path' "fixture collision: $DR_Q213_COMMIT"
 } else {
@@ -291,7 +291,7 @@ if (Test-Path -LiteralPath $DR_Q213_COMMIT) {
 # (d) AC literal + Codex adversarial F4: a TRACKED file with the machine path is
 # STILL caught -> exit 1. Staged via `git add -f`, then unstaged + removed
 # immediately so no orphan survives. Runs in CI (fresh clone) / isolated worktree.
-$DR_Q213_TRACKED = Join-Path $env:REPO_ROOT (".test-que213-tracked-" + (Get-DrSuffix) + ".md")
+$DR_Q213_TRACKED = Join-Path $env:REPO_ROOT (".test-t213-tracked-" + (Get-DrSuffix) + ".md")
 if (Test-Path -LiteralPath $DR_Q213_TRACKED) {
     _Skip 'drift.test: check-drift.ps1 catches a TRACKED machine path' "fixture collision: $DR_Q213_TRACKED"
 } else {
@@ -310,7 +310,7 @@ if (Test-Path -LiteralPath $DR_Q213_TRACKED) {
 # fails closed to match the bash twin (grep exit-2). Parity sibling of
 # drift.test.sh. Content carries no machine path so the unreadable file is the
 # sole failure cause. Index reset in cleanup; runs in CI / isolated worktree.
-$DR_Q248 = Join-Path $env:REPO_ROOT (".test-que248-unreadable-" + (Get-DrSuffix) + ".md")
+$DR_Q248 = Join-Path $env:REPO_ROOT (".test-t248-unreadable-" + (Get-DrSuffix) + ".md")
 if (Test-Path -LiteralPath $DR_Q248) {
     _Skip 'drift.test: check-drift.ps1 fails closed on an unreadable listed file' "fixture collision: $DR_Q248"
 } else {

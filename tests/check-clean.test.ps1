@@ -41,6 +41,21 @@ $ccQ = Join-Path $CC_TMP 'q'; New-Item -ItemType Directory -Path $ccQ -Force | O
 Set-Content -LiteralPath (Join-Path $ccQ 'a.md') -Value "see ${CC_QUE}-1 detail"
 Assert-Exit 'issue-ID alone FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccQ
 
+# Lowercase, no-hyphen tracker token (que<NN>) — the class the old uppercase +
+# required-hyphen regex missed. Built at runtime so this source carries no
+# contiguous trip-shape.
+$ccQueLc = 'qu' + 'e'
+$ccQlc = Join-Path $CC_TMP 'qlc'; New-Item -ItemType Directory -Path $ccQlc -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $ccQlc 'a.md') -Value "stale skill named ${ccQueLc}107-stale here"
+Assert-Exit 'lowercase no-hyphen issue-ID (que<NN>) FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccQlc
+
+# Boundary: ordinary words ending in "que" + digits (unique/opaque/technique class)
+# must NOT trip this fail-closed gate — the lowercase arm requires a left boundary.
+# Assembled at runtime so this source carries no contiguous trip-shape.
+$ccOk = Join-Path $CC_TMP 'ok'; New-Item -ItemType Directory -Path $ccOk -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $ccOk 'a.md') -Value "uni${ccQueLc}100 opa${ccQueLc}22 techni${ccQueLc}5 here"
+Assert-Exit "benign words ending in 'que'+digits do NOT trip (word boundary)" 0 -- pwsh -NoProfile -File $CC_SUT $ccOk
+
 $ccP = Join-Path $CC_TMP 'p'; New-Item -ItemType Directory -Path $ccP -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $ccP 'a.md') -Value "path /$CC_USERS/realperson/x"
 Assert-Exit 'home-path alone FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccP

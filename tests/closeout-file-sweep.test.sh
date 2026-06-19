@@ -170,7 +170,7 @@ fi
 # index. Q7a deliberately lives as a same-question sub-step (not a 9th
 # top-level question) so the canonical "8 closeout questions" wording +
 # frontmatter summary stay unchanged — see
-# docs/superpowers/plans/2026-05-28-que-126-* for the A-vs-B decision
+# docs/superpowers/plans/2026-05-28-t-126-* for the A-vs-B decision
 # rationale. (The harness Stop hook that also carried this count string was
 # removed — closeout is now manual-fire.)
 #
@@ -179,7 +179,7 @@ fi
 # - core/self-improvement.md mirrors Q7a + 3 check commands
 # - linear/closeout-format.md shows verified-clean shape in ## State Deltas
 #
-# Scoping: per Codex F-1 + F-2 review (cross-model-out/2026-05-28-que-126-*),
+# Scoping: per Codex F-1 + F-2 review (cross-model-out/2026-05-28-t-126-*),
 # walk-body assertions slice the file between the Q7a anchor and the next
 # major boundary so a future edit that drops the Q7a walk body (while
 # leaving the three command strings in unrelated State Deltas / Q0 prose)

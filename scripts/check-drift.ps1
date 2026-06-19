@@ -918,7 +918,7 @@ Assert-Absent `
         'local.env', '.git', '.mcp.json',
         'drift.test.sh', 'drift.test.ps1',
         'scripts-ps-parity.test.sh',
-        '2026-05-22-que-50-windows-native-port.md',
+        '2026-05-22-t-50-windows-native-port.md',
         'check-clean.sh', 'check-clean.ps1'
     ) `
     -ExcludeDirs @('.claude', '.codex', '.agents', 'cross-model-out') `

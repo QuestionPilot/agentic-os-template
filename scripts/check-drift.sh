@@ -721,7 +721,7 @@ assert_absent 'machine-specific absolute path found in repository content' \
   --exclude=.mcp.json \
   --exclude=drift.test.sh \
   --exclude=drift.test.ps1 \
-  --exclude=2026-05-22-que-50-windows-native-port.md \
+  --exclude=2026-05-22-t-50-windows-native-port.md \
   --exclude=scripts-ps-parity.test.sh \
   --exclude=check-clean.sh \
   --exclude=check-clean.ps1 \

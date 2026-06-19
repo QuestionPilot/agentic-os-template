@@ -36,7 +36,7 @@ function Write-LfFile {
 Assert-Exit 'validate.test: validate.ps1 passes from $REPO_ROOT' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
 
 # --- Test 2: hand-edit-only child rejected ---
-$VAL_HAND_EDIT = ".test-que60-hand-edit-$(Get-VtSuffix)"
+$VAL_HAND_EDIT = ".test-t60-hand-edit-$(Get-VtSuffix)"
 $claudeDir = Join-Path $env:REPO_ROOT '.claude'
 New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
 Write-LfFile (Join-Path $claudeDir $VAL_HAND_EDIT) "simulated hand-edit`n"
@@ -45,7 +45,7 @@ Remove-Item -LiteralPath (Join-Path $claudeDir $VAL_HAND_EDIT) -Force -ErrorActi
 Remove-IfEmpty $claudeDir
 
 # --- Test 3:.claude/worktrees/ as the only child must PASS ---
-$wtName = '.test-que60-fake-worktree-' + (Get-VtSuffix)
+$wtName = '.test-t60-fake-worktree-' + (Get-VtSuffix)
 $wtPath = Join-Path $claudeDir 'worktrees' $wtName
 New-Item -ItemType Directory -Path $wtPath -Force | Out-Null
 Assert-Exit 'validate.test: validate.ps1 passes when .claude/ has only worktrees/' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
@@ -99,7 +99,7 @@ foreach ($ct_base in @('.claude', '.codex', '.agents')) {
             "real ${ct_base}/skills/ present at `$REPO_ROOT — refusing to overwrite"
         continue
     }
-    $fakeSkill = Join-Path $skillsDir (".test-que70-fake-skill-" + (Get-VtSuffix))
+    $fakeSkill = Join-Path $skillsDir (".test-t70-fake-skill-" + (Get-VtSuffix))
     New-Item -ItemType Directory -Path $fakeSkill -Force | Out-Null
     $val_skills_output = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
     $val_skills_exit = $LASTEXITCODE
@@ -123,7 +123,7 @@ if (Test-Path -LiteralPath $coloDir) {
     _Skip 'validate.test: validate.ps1 recognizes a co-located CLAUDE_CONFIG_DIR' `
         'real .claude/ present at $REPO_ROOT — refusing to co-opt as a config target'
 } else {
-    $coloSkill = Join-Path $coloDir 'skills' ('.test-que285-skill-' + (Get-VtSuffix))
+    $coloSkill = Join-Path $coloDir 'skills' ('.test-t285-skill-' + (Get-VtSuffix))
     New-Item -ItemType Directory -Path $coloSkill -Force | Out-Null
     Write-LfFile (Join-Path $coloDir 'settings.json') "{}`n"
     $savedCfg = $env:CLAUDE_CONFIG_DIR
@@ -131,7 +131,7 @@ if (Test-Path -LiteralPath $coloDir) {
     $env:CLAUDE_CONFIG_DIR = $coloDir
     Assert-Exit 'validate.test: validate.ps1 recognizes a co-located CLAUDE_CONFIG_DIR (skills/+settings.json PASS)' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
     # (b) config dir is a DIFFERENT existing dir → not recognized → still FAILS
-    $coloElse = Join-Path $env:REPO_ROOT ('.test-que285-elsewhere-' + (Get-VtSuffix))
+    $coloElse = Join-Path $env:REPO_ROOT ('.test-t285-elsewhere-' + (Get-VtSuffix))
     New-Item -ItemType Directory -Path $coloElse -Force | Out-Null
     $env:CLAUDE_CONFIG_DIR = $coloElse
     $colo_out = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
@@ -148,10 +148,10 @@ if (Test-Path -LiteralPath $coloDir) {
 }
 
 # --- Test 5: mixed (worktrees/ + hand-edit) must FAIL ---
-$wtName = '.test-que60-fake-worktree-' + (Get-VtSuffix)
+$wtName = '.test-t60-fake-worktree-' + (Get-VtSuffix)
 $wtPath = Join-Path $claudeDir 'worktrees' $wtName
 New-Item -ItemType Directory -Path $wtPath -Force | Out-Null
-$VAL_MIXED_EDIT = ".test-que60-mixed-$(Get-VtSuffix)"
+$VAL_MIXED_EDIT = ".test-t60-mixed-$(Get-VtSuffix)"
 Write-LfFile (Join-Path $claudeDir $VAL_MIXED_EDIT) "mixed hand-edit`n"
 Assert-Exit 'validate.test: validate.ps1 fails on mixed .claude/ (worktrees + hand-edit)' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
 Remove-Item -LiteralPath (Join-Path $claudeDir $VAL_MIXED_EDIT) -Force -ErrorAction SilentlyContinue
@@ -161,7 +161,7 @@ Remove-IfEmpty $claudeDir
 
 # --- Test 6: failure message surfaces the leaked path ---
 New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
-$VAL_DIAG_NAME = ".test-que60-diag-$(Get-VtSuffix)"
+$VAL_DIAG_NAME = ".test-t60-diag-$(Get-VtSuffix)"
 Write-LfFile (Join-Path $claudeDir $VAL_DIAG_NAME) "diag content`n"
 $val_output = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
 $val_exit = $LASTEXITCODE
@@ -179,7 +179,7 @@ foreach ($ct_base in @('.codex', '.agents')) {
             "real ${ct_base}/ present at `$REPO_ROOT — refusing to inject"
         continue
     }
-    $CT_INJECT = ".test-que60-${ct_base}-$(Get-VtSuffix)"
+    $CT_INJECT = ".test-t60-${ct_base}-$(Get-VtSuffix)"
     New-Item -ItemType Directory -Path $ct_dir -Force | Out-Null
     Write-LfFile (Join-Path $ct_dir $CT_INJECT) "simulated hand-edit`n"
     Assert-Exit "validate.test: validate.ps1 fails on hand-edit in ${ct_base}/" 1 -- pwsh -NoProfile -File $VALIDATE_PS1
@@ -189,7 +189,7 @@ foreach ($ct_base in @('.codex', '.agents')) {
 
 # --- other scans must prune harness-managed worktrees ---
 # Test 7:.DS_Store inside.claude/worktrees/<name>/ must NOT trip validate.
-$wtName = '.test-que61-fake-wt-' + (Get-VtSuffix)
+$wtName = '.test-t61-fake-wt-' + (Get-VtSuffix)
 $wtPath = Join-Path $claudeDir 'worktrees' $wtName
 New-Item -ItemType Directory -Path $wtPath -Force | Out-Null
 Write-LfFile (Join-Path $wtPath '.DS_Store') ''
@@ -199,12 +199,12 @@ Remove-IfEmpty (Join-Path $claudeDir 'worktrees')
 Remove-IfEmpty $claudeDir
 
 # Test 8: secret-shaped fixture inside.claude/worktrees/<name>/ must NOT trip.
-$secName = '.test-que61-sec-' + (Get-VtSuffix)
+$secName = '.test-t61-sec-' + (Get-VtSuffix)
 $secPath = Join-Path $claudeDir 'worktrees' $secName
 New-Item -ItemType Directory -Path $secPath -Force | Out-Null
-$val_que61_prefix = 'sk-'
-$val_que61_body = 'fakefake1234567890_abcdefghij_test'
-Write-LfFile (Join-Path $secPath 'fixture-secret.txt') ($val_que61_prefix + $val_que61_body + "`n")
+$val_t61_prefix = 'sk-'
+$val_t61_body = 'fakefake1234567890_abcdefghij_test'
+Write-LfFile (Join-Path $secPath 'fixture-secret.txt') ($val_t61_prefix + $val_t61_body + "`n")
 Assert-Exit 'validate.test: validate.ps1 ignores secret-shaped strings inside .claude/worktrees/' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
 Remove-Item -LiteralPath $secPath -Recurse -Force -ErrorAction SilentlyContinue
 Remove-IfEmpty (Join-Path $claudeDir 'worktrees')
@@ -220,19 +220,19 @@ foreach ($ct_base in @('.codex', '.agents')) {
             "real ${ct_base}/ present at `$REPO_ROOT — refusing to inject"
         continue
     }
-    $CT_WT_NAME = ".test-que61-fb-wt-${ct_base}-$(Get-VtSuffix)"
+    $CT_WT_NAME = ".test-t61-fb-wt-${ct_base}-$(Get-VtSuffix)"
     $wtPathLocal = Join-Path $ct_dir 'worktrees' $CT_WT_NAME
     New-Item -ItemType Directory -Path $wtPathLocal -Force | Out-Null
     Write-LfFile (Join-Path $wtPathLocal '.DS_Store') ''
     Assert-Exit "validate.test: validate.ps1 ignores .DS_Store inside ${ct_base}/worktrees/" 0 -- pwsh -NoProfile -File $VALIDATE_PS1
     Remove-Item -LiteralPath $wtPathLocal -Recurse -Force -ErrorAction SilentlyContinue
 
-    $CT_SEC_NAME = ".test-que61-fb-sec-${ct_base}-$(Get-VtSuffix)"
+    $CT_SEC_NAME = ".test-t61-fb-sec-${ct_base}-$(Get-VtSuffix)"
     $secPathLocal = Join-Path $ct_dir 'worktrees' $CT_SEC_NAME
     New-Item -ItemType Directory -Path $secPathLocal -Force | Out-Null
-    $val_que61fb_prefix = 'sk-'
-    $val_que61fb_body = 'fakefake1234567890_abcdefghij_test'
-    Write-LfFile (Join-Path $secPathLocal 'fixture-secret.txt') ($val_que61fb_prefix + $val_que61fb_body + "`n")
+    $val_t61fb_prefix = 'sk-'
+    $val_t61fb_body = 'fakefake1234567890_abcdefghij_test'
+    Write-LfFile (Join-Path $secPathLocal 'fixture-secret.txt') ($val_t61fb_prefix + $val_t61fb_body + "`n")
     Assert-Exit "validate.test: validate.ps1 ignores secret-shaped strings inside ${ct_base}/worktrees/" 0 -- pwsh -NoProfile -File $VALIDATE_PS1
     Remove-Item -LiteralPath $secPathLocal -Recurse -Force -ErrorAction SilentlyContinue
     Remove-IfEmpty (Join-Path $ct_dir 'worktrees')
@@ -246,17 +246,17 @@ foreach ($ct_base in @('.codex', '.agents')) {
 # TRACKED (force-added) file, which CAN be committed and MUST be scanned. The
 # index is reset in cleanup so the force-added fixture leaves no staged orphan.
 $suffix = Get-VtSuffix
-$VAL_QUE66_FA_PARENT = "tests/fixtures/que66-fa-$suffix"
-$VAL_QUE66_FA_DIR = "$VAL_QUE66_FA_PARENT/worktrees"
-$secPath = Join-Path $env:REPO_ROOT $VAL_QUE66_FA_DIR
+$VAL_T66_FA_PARENT = "tests/fixtures/t66-fa-$suffix"
+$VAL_T66_FA_DIR = "$VAL_T66_FA_PARENT/worktrees"
+$secPath = Join-Path $env:REPO_ROOT $VAL_T66_FA_DIR
 New-Item -ItemType Directory -Path $secPath -Force | Out-Null
-$val_que66fa_prefix = 'sk-'
-$val_que66fa_body = 'fakefake1234567890_abcdefghij_test'
-Write-LfFile (Join-Path $secPath 'secret.txt') ($val_que66fa_prefix + $val_que66fa_body + "`n")
-& git -C $env:REPO_ROOT add -f "$VAL_QUE66_FA_DIR/secret.txt" 2>$null | Out-Null
+$val_t66fa_prefix = 'sk-'
+$val_t66fa_body = 'fakefake1234567890_abcdefghij_test'
+Write-LfFile (Join-Path $secPath 'secret.txt') ($val_t66fa_prefix + $val_t66fa_body + "`n")
+& git -C $env:REPO_ROOT add -f "$VAL_T66_FA_DIR/secret.txt" 2>$null | Out-Null
 Assert-Exit 'validate.test: validate.ps1 catches secrets in a tracked non-harness worktrees/ dir' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
-& git -C $env:REPO_ROOT reset -q -- "$VAL_QUE66_FA_DIR/secret.txt" 2>$null | Out-Null
-Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $VAL_QUE66_FA_PARENT) -Recurse -Force -ErrorAction SilentlyContinue
+& git -C $env:REPO_ROOT reset -q -- "$VAL_T66_FA_DIR/secret.txt" 2>$null | Out-Null
+Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $VAL_T66_FA_PARENT) -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- gitignored runtime-artifact dir cross-model-out/ pruned from the
 # secret-pattern scan ---
@@ -266,14 +266,14 @@ Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $VAL_QUE66_FA_PARENT) -Recurs
 # non-log cross-model artifact (codex-review.md) to assert the DIRECTORY is pruned
 # for ANY file under it (root-anchored exclusion), not just *.log.
 # Secret CONSTRUCTED at runtime per [[feedback_self_tripping_test_source]].
-$VAL_QUE244_DIR = "cross-model-out/.test-que244-$(Get-VtSuffix)"
-$que244Path = Join-Path $env:REPO_ROOT $VAL_QUE244_DIR
-New-Item -ItemType Directory -Path $que244Path -Force | Out-Null
-$val_que244_prefix = 'sk-'
-$val_que244_body = 'fakefake1234567890_abcdefghij_test'
-Write-LfFile (Join-Path $que244Path 'codex-review.md') ($val_que244_prefix + $val_que244_body + "`n")
+$VAL_T244_DIR = "cross-model-out/.test-t244-$(Get-VtSuffix)"
+$t244Path = Join-Path $env:REPO_ROOT $VAL_T244_DIR
+New-Item -ItemType Directory -Path $t244Path -Force | Out-Null
+$val_t244_prefix = 'sk-'
+$val_t244_body = 'fakefake1234567890_abcdefghij_test'
+Write-LfFile (Join-Path $t244Path 'codex-review.md') ($val_t244_prefix + $val_t244_body + "`n")
 Assert-Exit 'validate.test: validate.ps1 ignores secret-shaped strings inside cross-model-out/' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
-Remove-Item -LiteralPath $que244Path -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $t244Path -Recurse -Force -ErrorAction SilentlyContinue
 # Remove cross-model-out/ only if empty — preserve any real one the operator owns.
 Remove-IfEmpty (Join-Path $env:REPO_ROOT 'cross-model-out')
 
@@ -283,21 +283,21 @@ Remove-IfEmpty (Join-Path $env:REPO_ROOT 'cross-model-out')
 # cross-model-out-archive/) is NOT gitignored and MUST still be scanned — a
 # bare StartsWith (no separator) would over-match and skip it (a real blind
 # spot). Sentinel constructed at runtime.
-$VAL_QUE244_SIB = "cross-model-out-.test-que244-sib-$(Get-VtSuffix)"
-$que244SibPath = Join-Path $env:REPO_ROOT $VAL_QUE244_SIB
-New-Item -ItemType Directory -Path $que244SibPath -Force | Out-Null
-$val_que244sib_prefix = 'sk-'
-$val_que244sib_body = 'fakefake1234567890_abcdefghij_test'
-Write-LfFile (Join-Path $que244SibPath 'secret.txt') ($val_que244sib_prefix + $val_que244sib_body + "`n")
+$VAL_T244_SIB = "cross-model-out-.test-t244-sib-$(Get-VtSuffix)"
+$t244SibPath = Join-Path $env:REPO_ROOT $VAL_T244_SIB
+New-Item -ItemType Directory -Path $t244SibPath -Force | Out-Null
+$val_t244sib_prefix = 'sk-'
+$val_t244sib_body = 'fakefake1234567890_abcdefghij_test'
+Write-LfFile (Join-Path $t244SibPath 'secret.txt') ($val_t244sib_prefix + $val_t244sib_body + "`n")
 Assert-Exit 'validate.test: validate.ps1 still catches secrets in a cross-model-out* sibling dir' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
-Remove-Item -LiteralPath $que244SibPath -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $t244SibPath -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- a TRACKED file whose NAME matches a gitignore rule is still
 # scanned.
 # git ls-files --cached lists tracked files regardless of.gitignore, so a
 # force-added daemon.log /.mcp.json carrying a secret IS in scope; a basename
 # --exclude would have skipped them (a false negative). Index reset in cleanup. ---
-foreach ($q246name in @("fixture-que246-$(Get-VtSuffix).log", ".test-que246-$(Get-VtSuffix).mcp.json")) {
+foreach ($q246name in @("fixture-t246-$(Get-VtSuffix).log", ".test-t246-$(Get-VtSuffix).mcp.json")) {
     $q246prefix = 'sk-'
     $q246body = 'fakefake1234567890_abcdefghij_test'
     Write-LfFile (Join-Path $env:REPO_ROOT $q246name) ($q246prefix + $q246body + "`n")

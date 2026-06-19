@@ -22,7 +22,7 @@
 # reads the FIXTURE file (not the live env) so ambient-env vars cannot
 # mask a missing entry.
 # - F2 regex-mismatch: install.sh's placeholder gate uses [A-Z_]+ — a
-# template token containing digits (@@VAR2@@, @@QUE80_FOO@@) would
+# template token containing digits (@@VAR2@@, @@T80_FOO@@) would
 # neither be substituted nor flagged by the empty-placeholder check.
 # Assertion 0's well-formedness check refuses to be silent about a
 # template token install.sh's narrow regex cannot see.

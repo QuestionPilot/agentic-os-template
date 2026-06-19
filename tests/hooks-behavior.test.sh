@@ -184,7 +184,7 @@ QM_STUB="$(mktemp -d)"
 # `printf` deliberately excluded — it's a bash builtin (and `command -v printf`
 # returns the bare name, not a path), so `ln -s` would create a self-referential
 # symlink. Bash uses its internal builtin regardless, so the symlink is inert
-# and just confusing. (Cross-model review 2026-05-24-que-59-pr14, Gemini F1.)
+# and just confusing. (Cross-model review 2026-05-24-t-59-pr14, Gemini F1.)
 for _b in bash cat grep sed jq env git find awk tr sort uniq wc head tail; do
   _p="$(command -v "$_b" 2>/dev/null)" && ln -s "$_p" "$QM_STUB/$_b"
 done

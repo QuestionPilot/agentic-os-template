@@ -44,7 +44,7 @@ function Write-DualEnvFixture {
     [System.IO.File]::WriteAllText($EnvFile, (($lines -join "`n") + "`n"), $utf8NoBom)
 }
 
-$tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("que250-multi-harness-" + [Guid]::NewGuid().Guid.Substring(0,8))
+$tmpRoot = Join-Path ([IO.Path]::GetTempPath()) ("t250-multi-harness-" + [Guid]::NewGuid().Guid.Substring(0,8))
 New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
 
 try {

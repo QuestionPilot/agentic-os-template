@@ -840,15 +840,15 @@ function Test-InternalLinks {
                     # (case-sensitive) + `Ordinal` StartsWith so `../../ISSUES`
                     # falls through to local resolution as it would under
                     # bash POSIX `case`.
-                    $skipQue105 = $false
+                    $skipT105 = $false
                     foreach ($seg in $script:GhPlatformSegments) {
                         if ($target -ceq "../../$seg" -or
                             $target.StartsWith("../../$seg/", [StringComparison]::Ordinal)) {
-                            $skipQue105 = $true
+                            $skipT105 = $true
                             break
                         }
                     }
-                    if ($skipQue105) { continue }
+                    if ($skipT105) { continue }
 
                     # Resolve relative to the source file's directory
                     if ($fileDir) {
