@@ -204,6 +204,12 @@ PILLAR_LABELS=(
 # pillar_set_* helpers below; never indexed by key directly elsewhere.
 PILLAR_SCORES=(20 20 20 20 20)
 PILLAR_NOTES=("clean" "clean" "clean" "clean" "clean")
+# 1 = the pillar could not run a single real check (its surface — Linear/memory/
+# vault — was absent). Such a pillar is floored to 0 and rendered UNSCORED, never
+# left at the seeded 20: core/verification.md requires that a check which cannot
+# run must fail, never pass. Without this, a fresh clone with no operator surfaces
+# summed to a false ~100/100 "in good shape".
+PILLAR_UNSCORED=(0 0 0 0 0)
 
 # pillar_idx <key>  → index (0..4) on stdout; return 1 on unknown key.
 pillar_idx() {
@@ -262,6 +268,16 @@ skip_surface() {
   SKIPPED+=("$1")
 }
 
+mark_unscored() {
+  # mark_unscored <pillar-key> <reason> — floor a pillar that ran zero real
+  # checks to 0 and flag it UNSCORED, so the aggregate never counts an unmeasured
+  # surface as a clean 20 (core/verification.md: a cannot-run check must fail, not pass).
+  local idx; idx="$(pillar_idx "$1")" || return 1
+  PILLAR_SCORES[$idx]=0
+  PILLAR_UNSCORED[$idx]=1
+  pillar_set_note "$1" "UNSCORED — $2"
+}
+
 # fm_get <file> <key>  → first matching value, trimmed leading + trailing.
 # Codex N-1: original implementation only trimmed leading whitespace, so a key
 # written as `kind: native ` with a trailing space would fail downstream equality
@@ -311,11 +327,16 @@ score_cross_layer_handoffs() {
     need_jq_warned=1
   fi
 
+  # Track whether ANY sub-check actually measured something. A pillar that
+  # measured nothing (no reachable surface) is UNSCORED at finalize, not a free 20.
+  local ran=0
+
   # Sub-check 1.1: For each active Linear project, a matching project_*.md memory file.
   # Codex B-2: pass --format json explicitly. Today's lineark v3.0.2 emits JSON
   # by default, but pinning the flag protects against a future default change
   # that would otherwise produce human prose jq can't parse (silent false-clean).
   if [ "$lineark_avail" -eq 1 ] && [ "$memory_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
+    ran=1
     local projects_json
     projects_json="$(lineark projects list --format json 2>/dev/null || true)"
     if [ -n "$projects_json" ]; then
@@ -344,6 +365,7 @@ score_cross_layer_handoffs() {
   # Sub-check 1.2: For each active Linear project, a matching vault Handshake.
   # Same `--format json` defense as 1.1 (Codex B-2).
   if [ "$lineark_avail" -eq 1 ] && [ "$vault_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
+    ran=1
     local projects_json
     projects_json="$(lineark projects list --format json 2>/dev/null || true)"
     if [ -n "$projects_json" ]; then
@@ -373,6 +395,7 @@ score_cross_layer_handoffs() {
   # forms. Broaden to `[^)]+\.md(#[^)]*)?` then strip the #anchor before
   # existence-checking the file.
   if [ "$memory_avail" -eq 1 ] && [ -f "$MEMORY_DIR/MEMORY.md" ]; then
+    ran=1
     local broken=0
     while IFS= read -r target; do
       [ -n "$target" ] || continue
@@ -395,7 +418,12 @@ score_cross_layer_handoffs() {
     fi
   fi
 
-  # Finalize note.
+  # Finalize note. A pillar that ran zero sub-checks (no reachable cross-layer
+  # surface) is UNSCORED — not a free 20.
+  if [ "$ran" -eq 0 ]; then
+    mark_unscored "$key" "no cross-layer surface reachable (lineark/memory/vault)"
+    return
+  fi
   local s; s="$(pillar_score "$key")"
   if [ "$s" -eq 20 ]; then
     pillar_set_note "$key" "clean"
@@ -409,7 +437,7 @@ score_memory_hygiene() {
   local key="memory-hygiene"
   if [ -z "$MEMORY_DIR" ] || [ ! -d "$MEMORY_DIR" ]; then
     skip_surface "memory dir not resolved — memory hygiene checks skipped"
-    pillar_set_note "$key" "skipped (no memory dir)"
+    mark_unscored "$key" "no memory dir"
     return 0
   fi
 
@@ -849,8 +877,10 @@ score_closeout_spine_discipline
 
 # --- aggregate ---------------------------------------------------------------
 TOTAL=0
+UNSCORED_COUNT=0
 for i in 0 1 2 3 4; do
   TOTAL=$(( TOTAL + ${PILLAR_SCORES[$i]} ))
+  [ "${PILLAR_UNSCORED[$i]}" -eq 1 ] && UNSCORED_COUNT=$(( UNSCORED_COUNT + 1 ))
 done
 
 DATE="$(date -u +%Y-%m-%d)"
@@ -859,11 +889,18 @@ DATE="$(date -u +%Y-%m-%d)"
 emit_markdown() {
   printf '# /self-audit scorecard — %s\n\n' "$DATE"
   printf '**Total: %s/100**\n\n' "$TOTAL"
+  if [ "$UNSCORED_COUNT" -gt 0 ]; then
+    printf '> **%s of 5 pillars UNSCORED** — surface not configured (Linear/memory/vault); a check that cannot run scores 0, never a free 20. Do not read this total as health until the surface is wired, then re-audit.\n\n' "$UNSCORED_COUNT"
+  fi
   printf '| Pillar | Score | Notes |\n'
   printf '| --- | --- | --- |\n'
   local i
   for i in 0 1 2 3 4; do
-    printf '| %s | %s/20 | %s |\n' "${PILLAR_LABELS[$i]}" "${PILLAR_SCORES[$i]}" "${PILLAR_NOTES[$i]}"
+    if [ "${PILLAR_UNSCORED[$i]}" -eq 1 ]; then
+      printf '| %s | UNSCORED | %s |\n' "${PILLAR_LABELS[$i]}" "${PILLAR_NOTES[$i]}"
+    else
+      printf '| %s | %s/20 | %s |\n' "${PILLAR_LABELS[$i]}" "${PILLAR_SCORES[$i]}" "${PILLAR_NOTES[$i]}"
+    fi
   done
 
   printf '\n## Top gaps (leverage-weighted)\n\n'
@@ -898,14 +935,17 @@ emit_markdown() {
 emit_json() {
   command -v jq >/dev/null 2>&1 || { printf '{"error":"jq required for --json"}\n'; return 1; }
 
-  local pillars_obj='{}' i
+  local pillars_obj='{}' i unscored_bool
   for i in 0 1 2 3 4; do
+    unscored_bool=false
+    [ "${PILLAR_UNSCORED[$i]}" -eq 1 ] && unscored_bool=true
     pillars_obj="$(printf '%s' "$pillars_obj" | jq \
       --arg key   "${PILLAR_KEYS[$i]}" \
       --arg label "${PILLAR_LABELS[$i]}" \
       --argjson score "${PILLAR_SCORES[$i]}" \
+      --argjson unscored "$unscored_bool" \
       --arg note  "${PILLAR_NOTES[$i]}" \
-      '.[$key] = {label: $label, score: $score, notes: $note}')"
+      '.[$key] = {label: $label, score: $score, unscored: $unscored, notes: $note}')"
   done
 
   local gaps_arr='[]' g pillar lev title detail fix sorted
@@ -930,10 +970,11 @@ emit_json() {
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
+    --argjson unscored_count "$UNSCORED_COUNT" \
     --argjson pillars "$pillars_obj" \
     --argjson gaps "$gaps_arr" \
     --argjson skipped "$skipped_arr" \
-    '{date: $date, total: $total, pillars: $pillars, gaps: $gaps, skipped: $skipped}'
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, gaps: $gaps, skipped: $skipped}'
 }
 
 OUTPUT=""

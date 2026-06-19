@@ -38,6 +38,16 @@ manually (closeout's `Stop` gate was removed in <TEAM>-211).
 Each pillar is scored 0–20. Total is 0–100. Below ~80 is "actively thinning";
 ~80–95 is "healthy with named gaps"; ~95–100 is "actually in good shape".
 
+**UNSCORED pillars depress the total by design.** A pillar whose surface is not
+configured (no Linear/`lineark`, no memory dir, no vault) cannot be measured, so it
+is **floored to 0 and flagged `UNSCORED`** — never left at the seeded 20. This
+follows `core/verification.md`: a check that cannot run must fail, never pass.
+Consequence: a fresh clone with operator surfaces unwired lands well below 95 (e.g.
+two UNSCORED pillars cap the total at 60), and the scorecard prints a one-line
+`N of 5 pillars UNSCORED` banner. Do **not** read a number near the bottom of the
+range as "thinning" when the cause is UNSCORED pillars — wire the surface and
+re-audit to score them. The bands above describe a fully-measured run.
+
 | Pillar | What it scores |
 | --- | --- |
 | **1. Cross-layer handoffs** | Each Active Linear project has a project memory file + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
@@ -214,10 +224,12 @@ The script emits a markdown scorecard. Its skeleton:
 
 Total: <N>/100
 
+> **<N> of 5 pillars UNSCORED** — surface not configured … (only when N > 0)
+
 | Pillar | Score | Notes |
 | --- | --- | --- |
-| 1. Cross-layer handoffs            | <N>/20 | <one line> |
-| 2. Memory hygiene                  | <N>/20 | <one line> |
+| 1. Cross-layer handoffs            | <N>/20 or UNSCORED | <one line> |
+| 2. Memory hygiene                  | <N>/20 or UNSCORED | <one line> |
 | 3. Folder hygiene                  | <N>/20 | <one line> |
 | 4. Verification coverage           | <N>/20 | <one line> |
 | 5. Closeout / spine discipline     | <N>/20 | <one line> |
@@ -235,9 +247,10 @@ Total: <N>/100
 ```
 
 If `--json` is passed, the script emits a structured JSON object with
-`{total, pillars[name].score, pillars[name].notes, gaps[] }` — used by the
-upstream acceptance suite's `tests/self-audit.test.sh` to assert against
-specific scores.
+`{total, unscored_count, pillars[name].score, pillars[name].unscored,
+pillars[name].notes, gaps[] }` — used by the upstream acceptance suite's
+`tests/self-audit.test.sh` to assert against specific scores. An UNSCORED pillar
+reports `score: 0, unscored: true`; the history helper records that 0 truthfully.
 
 ## Limits
 

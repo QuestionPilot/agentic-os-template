@@ -947,6 +947,39 @@ if ($jqAvail) {
     _Skip 'self-audit.test: F1 PS local.env-as-data test' 'jq not installed'
 }
 
+# --- UNSCORED pillars: a clean clone with NO operator surfaces (no Linear, no
+# memory dir, no vault) must NOT manufacture a false ~100/100. A pillar that can
+# run zero real checks is floored to 0 and flagged UNSCORED (core/verification.md:
+# a check that cannot run must fail, never pass), so the total lands well below the
+# ~95-100 "in good shape" band the seed-20 bug produced. Mirrors the bash twin.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    # --isolated nullifies ambient CLAUDE_CONFIG_DIR + OBSIDIAN_VAULT_PATH and skips
+    # lineark detection → the cross-layer + memory pillars can measure nothing.
+    $out = Invoke-SelfAudit @('--repo-root', $fixture, '--isolated', '--json')
+    $obj = $out | ConvertFrom-Json
+    $p1  = Get-SaPillarScore $out 'cross-layer-handoffs'
+    $p2  = Get-SaPillarScore $out 'memory-hygiene'
+    $p1u = "$($obj.pillars.'cross-layer-handoffs'.unscored)"
+    $p2u = "$($obj.pillars.'memory-hygiene'.unscored)"
+    $uc  = "$($obj.unscored_count)"
+    $tot = [int]$obj.total
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: unscored cross-layer pillar floored to 0 when no surface reachable' '0' $p1
+    Assert-Eq 'self-audit.test: unscored memory pillar floored to 0 when no surface reachable' '0' $p2
+    Assert-Eq 'self-audit.test: unscored cross-layer pillar flagged unscored=true' 'True' $p1u
+    Assert-Eq 'self-audit.test: unscored memory pillar flagged unscored=true' 'True' $p2u
+    Assert-Eq 'self-audit.test: unscored_count counts both unmeasured pillars' '2' $uc
+    if ($tot -lt 95) {
+        _Pass "self-audit.test: unscored no-surface clone total ($tot) is below the 'in good shape' band"
+    } else {
+        _Fail "self-audit.test: unscored no-surface clone total below 'in good shape' band" "got total=$tot (expected <95)"
+    }
+} else {
+    _Skip 'self-audit.test: unscored-pillars false-100 test' 'jq not installed'
+}
+
 # --- Read-only contract regression guard.
 $SA_CAP_CONTENT = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'capabilities' 'self-audit.md') -Raw
 $SA_VER_CONTENT = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'verification' 'self-audit.md') -Raw

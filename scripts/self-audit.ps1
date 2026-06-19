@@ -299,9 +299,15 @@ $pillarLabels = [ordered]@{
 }
 $pillarScores = [ordered]@{}
 $pillarNotes  = [ordered]@{}
+# 1/$true = the pillar could not run a single real check (its surface — Linear/
+# memory/vault — was absent). Floored to 0 and rendered UNSCORED at aggregate,
+# never left at the seeded 20 (core/verification.md: a check that cannot run must
+# fail, never pass). Mirrors the bash twin's PILLAR_UNSCORED.
+$pillarUnscored = [ordered]@{}
 foreach ($k in $pillarLabels.Keys) {
-    $pillarScores[$k] = 20
-    $pillarNotes[$k]  = 'clean'
+    $pillarScores[$k]   = 20
+    $pillarNotes[$k]    = 'clean'
+    $pillarUnscored[$k] = $false
 }
 
 $skipped = New-Object System.Collections.Generic.List[string]
@@ -311,6 +317,16 @@ $gaps    = New-Object System.Collections.Generic.List[object]
 function Add-Skip {
     param([string]$Msg)
     [void]$skipped.Add($Msg)
+}
+
+function Set-Unscored {
+    # Bash twin name: `mark_unscored`. Floor a pillar that ran zero real checks to
+    # 0 and flag it UNSCORED, so the aggregate never counts an unmeasured surface
+    # as a clean 20 (core/verification.md: a cannot-run check must fail, not pass).
+    param([string]$Key, [string]$Reason)
+    $pillarScores[$Key]   = 0
+    $pillarUnscored[$Key] = $true
+    $pillarNotes[$Key]    = "UNSCORED — $Reason"
 }
 
 function Add-Gap {
@@ -421,8 +437,13 @@ function Invoke-Pillar1 {
         }
     }
 
+    # Track whether ANY sub-check actually measured something. A pillar that
+    # measured nothing (no reachable surface) is UNSCORED at finalize, not a free 20.
+    $ran = 0
+
     # Sub-check 1.1 — for each active project, a matching memory file.
     if ($linearkAvail -eq 1 -and $memoryAvail -eq 1 -and (Test-Command 'jq')) {
+        $ran = 1
         foreach ($pname in (_Get-ActiveProjectNames)) {
             if ([string]::IsNullOrEmpty($pname)) { continue }
             $matched = $false
@@ -442,6 +463,7 @@ function Invoke-Pillar1 {
 
     # Sub-check 1.2 — for each active project, a matching vault handshake.
     if ($linearkAvail -eq 1 -and $vaultAvail -eq 1 -and (Test-Command 'jq')) {
+        $ran = 1
         $hsRoot = Join-Path $VaultDir '01-Projects'
         foreach ($pname in (_Get-ActiveProjectNames)) {
             if ([string]::IsNullOrEmpty($pname)) { continue }
@@ -470,6 +492,7 @@ function Invoke-Pillar1 {
     # Sub-check 1.3 — MEMORY.md link integrity.
     $memoryIndex = if (-not [string]::IsNullOrEmpty($MemoryDir)) { Join-Path $MemoryDir 'MEMORY.md' } else { $null }
     if ($memoryAvail -eq 1 -and $memoryIndex -and (Test-Path -LiteralPath $memoryIndex -PathType Leaf)) {
+        $ran = 1
         $broken = 0
         $idxTxt = [System.IO.File]::ReadAllText($memoryIndex)
         $linkMatches = [regex]::Matches($idxTxt, '\]\(([^)]+\.md)(#[^)]*)?\)')
@@ -497,7 +520,12 @@ function Invoke-Pillar1 {
         }
     }
 
-    # Finalize note.
+    # Finalize note. A pillar that ran zero sub-checks (no reachable cross-layer
+    # surface) is UNSCORED — not a free 20.
+    if ($ran -eq 0) {
+        Set-Unscored $key 'no cross-layer surface reachable (lineark/memory/vault)'
+        return
+    }
     $s = $pillarScores[$key]
     if ($s -eq 20) { $pillarNotes[$key] = 'clean' }
     else { $pillarNotes[$key] = "$((20 - $s)) pts deducted; see top gaps" }
@@ -510,7 +538,7 @@ function Invoke-Pillar2 {
     $key = 'memory-hygiene'
     if ([string]::IsNullOrEmpty($MemoryDir) -or -not (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
         Add-Skip 'memory dir not resolved — memory hygiene checks skipped'
-        $pillarNotes[$key] = 'skipped (no memory dir)'
+        Set-Unscored $key 'no memory dir'
         return
     }
 
@@ -938,7 +966,11 @@ Invoke-Pillar5
 # Aggregate
 # ---------------------------------------------------------------------------
 $total = 0
-foreach ($k in $pillarScores.Keys) { $total += $pillarScores[$k] }
+$unscoredCount = 0
+foreach ($k in $pillarScores.Keys) {
+    $total += $pillarScores[$k]
+    if ($pillarUnscored[$k]) { $unscoredCount++ }
+}
 $dateStr = [DateTime]::UtcNow.ToString('yyyy-MM-dd')
 
 # ---------------------------------------------------------------------------
@@ -950,10 +982,18 @@ function Get-MarkdownOutput {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine("**Total: $total/100**")
     [void]$sb.AppendLine('')
+    if ($unscoredCount -gt 0) {
+        [void]$sb.AppendLine("> **$unscoredCount of 5 pillars UNSCORED** — surface not configured (Linear/memory/vault); a check that cannot run scores 0, never a free 20. Do not read this total as health until the surface is wired, then re-audit.")
+        [void]$sb.AppendLine('')
+    }
     [void]$sb.AppendLine('| Pillar | Score | Notes |')
     [void]$sb.AppendLine('| --- | --- | --- |')
     foreach ($k in $pillarLabels.Keys) {
-        [void]$sb.AppendLine("| $($pillarLabels[$k]) | $($pillarScores[$k])/20 | $($pillarNotes[$k]) |")
+        if ($pillarUnscored[$k]) {
+            [void]$sb.AppendLine("| $($pillarLabels[$k]) | UNSCORED | $($pillarNotes[$k]) |")
+        } else {
+            [void]$sb.AppendLine("| $($pillarLabels[$k]) | $($pillarScores[$k])/20 | $($pillarNotes[$k]) |")
+        }
     }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Top gaps (leverage-weighted)')
@@ -991,9 +1031,10 @@ function Get-JsonOutput {
     $pillarsObj = [ordered]@{}
     foreach ($k in $pillarLabels.Keys) {
         $pillarsObj[$k] = [ordered]@{
-            label = $pillarLabels[$k]
-            score = $pillarScores[$k]
-            notes = $pillarNotes[$k]
+            label    = $pillarLabels[$k]
+            score    = $pillarScores[$k]
+            unscored = $pillarUnscored[$k]
+            notes    = $pillarNotes[$k]
         }
     }
     $sortedGaps = @($gaps | Sort-Object -Property leverage -Descending | ForEach-Object {
@@ -1006,11 +1047,12 @@ function Get-JsonOutput {
         }
     })
     $obj = [ordered]@{
-        date    = $dateStr
-        total   = $total
-        pillars = $pillarsObj
-        gaps    = $sortedGaps
-        skipped = @($skipped)
+        date           = $dateStr
+        total          = $total
+        unscored_count = $unscoredCount
+        pillars        = $pillarsObj
+        gaps           = $sortedGaps
+        skipped        = @($skipped)
     }
     return ($obj | ConvertTo-Json -Depth 6)
 }

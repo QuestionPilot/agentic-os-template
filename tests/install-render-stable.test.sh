@@ -245,4 +245,42 @@ else
     "build A path: [$irs_det_a]" "build B path: [$irs_det_b]"
 fi
 
+# --- Assertion 4: the durable-knowledge vault is OPTIONAL. A build with an EMPTY
+# OBSIDIAN_VAULT_PATH must SUCCEED (exit 0) and render the unset sentinel into the
+# entrypoint — never the raw @@OBSIDIAN_VAULT_PATH@@ token, and never a hard die.
+# This is the first-run promise: a newcomer with no vault still gets a working build.
+irs_nv_env="$IRS_DIR/novault.local.env"
+{
+  # Fixture content with the vault line stripped, then an EMPTY vault override
+  # (install.sh sources local.env, so the later empty assignment wins anyway) +
+  # the per-run build target.
+  grep -v '^OBSIDIAN_VAULT_PATH=' "$IRS_CI_FIXTURE"
+  printf 'OBSIDIAN_VAULT_PATH=\n'
+  printf 'CLAUDE_CONFIG_DIR=%q\n' "$IRS_DIR/novault-claude"
+} > "$irs_nv_env"
+
+irs_nv_status=0
+irs_nv_out="$(AI_CONFIG_LOCAL_ENV="$irs_nv_env" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness claude --build-only 2>&1)" \
+  || irs_nv_status=$?
+assert_eq "install.sh --harness claude --build-only exits 0 with an EMPTY vault (vault is optional)" \
+  "0" "$irs_nv_status"
+
+irs_nv_build="$(printf '%s\n' "$irs_nv_out" | grep -oE '/[^[:space:]]*\.install-build\.[A-Za-z0-9]+' | head -1)"
+if [ -n "$irs_nv_build" ] && [ -f "$irs_nv_build/CLAUDE.md" ]; then
+  if grep -q '@@OBSIDIAN_VAULT_PATH@@' "$irs_nv_build/CLAUDE.md"; then
+    _fail "empty-vault build renders the unset sentinel, not the raw token" \
+      "found unresolved @@OBSIDIAN_VAULT_PATH@@ in the rendered entrypoint"
+  elif grep -qF 'the durable-knowledge vault is optional' "$irs_nv_build/CLAUDE.md"; then
+    _pass "empty-vault build renders the unset sentinel, not the raw token"
+  else
+    _fail "empty-vault build renders the unset sentinel, not the raw token" \
+      "rendered entrypoint contains neither the sentinel nor the raw token"
+  fi
+  rm -rf "$irs_nv_build"
+else
+  _fail "empty-vault build produced an inspectable CLAUDE.md" \
+    "build path: [$irs_nv_build]; install output tail: $(printf '%s' "$irs_nv_out" | tail -3)"
+fi
+
 rm -rf "$IRS_DIR"

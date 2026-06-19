@@ -317,6 +317,13 @@ if (-not $env:AI_CONFIG_DIR) {
     $env:AI_CONFIG_DIR = $repoRoot
 }
 
+# The durable-knowledge vault is OPTIONAL — the framework degrades gracefully when
+# OBSIDIAN_VAULT_PATH is unset (core/operating-system.md / README: never fail
+# closed). Compile-Entrypoint + Add-HookScriptOnly render this ASCII sentinel in
+# place of an empty vault path so a fresh clone with no vault still builds; every
+# OTHER path placeholder stays required and still dies on empty. Mirrors install.sh.
+$VaultUnsetSentinel = '(unset - the durable-knowledge vault is optional; set OBSIDIAN_VAULT_PATH in local.env and re-run install to enable it)'
+
 # ---------------------------------------------------------------------------
 # Harness resolution
 # ---------------------------------------------------------------------------
@@ -433,9 +440,9 @@ function Add-Hook {
 # WITHOUT registering any event wiring (no HookBlocks record, so it never lands in
 # the generated hooks.yaml). For tooling shipped alongside the hooks whose
 # scheduling is a deliberate operator act (the hermes steward). Mirrors
-# install.sh:455-477. Substitutes @@AI_CONFIG_DIR@@ and — only when set —
-# @@OBSIDIAN_VAULT_PATH@@; an unset vault token is left in place so Test-Build's
-# unresolved-placeholder gate fails loudly rather than baking a broken path.
+# install.sh:455-477. Substitutes @@AI_CONFIG_DIR@@ and @@OBSIDIAN_VAULT_PATH@@
+# (the configured vault path, or the unset sentinel when no vault is set — the
+# vault is optional and the steward hook guards on the vault dir existing).
 function Add-HookScriptOnly {
     param([Parameter(Mandatory)][string]$Script)
     $src = Join-Path (Join-Path (Join-Path $repoRoot 'harnesses') $Harness 'hooks') $Script
@@ -450,9 +457,12 @@ function Add-HookScriptOnly {
     if (-not (Test-Path -LiteralPath $dst -PathType Leaf)) {
         $content = Get-RawText -Path $src
         $resolved = $content.Replace('@@AI_CONFIG_DIR@@', $env:AI_CONFIG_DIR)
-        if ($env:OBSIDIAN_VAULT_PATH) {
-            $resolved = $resolved.Replace('@@OBSIDIAN_VAULT_PATH@@', $env:OBSIDIAN_VAULT_PATH)
-        }
+        # The vault is optional: substitute the configured path, or the unset
+        # sentinel when no vault is set (the steward hook guards on the vault dir
+        # existing, so a sentinel path simply no-ops). Leaving the token unresolved
+        # would trip Test-Build's unresolved-placeholder gate.
+        $vaultVal = if ($env:OBSIDIAN_VAULT_PATH) { $env:OBSIDIAN_VAULT_PATH } else { $VaultUnsetSentinel }
+        $resolved = $resolved.Replace('@@OBSIDIAN_VAULT_PATH@@', $vaultVal)
         Write-LfFile -Path $dst -Content $resolved
     }
 }
@@ -698,6 +708,11 @@ function Compile-Entrypoint {
         # resolution note above; Get-Item env:$var throws on Windows for an
         # unset placeholder var instead of falling through to the clear die below.
         $val = [Environment]::GetEnvironmentVariable($var)
+        # The vault is optional: render the unset sentinel rather than dying so a
+        # no-vault clone still builds. Every other path placeholder stays required.
+        if (-not $val -and $var -eq 'OBSIDIAN_VAULT_PATH') {
+            $val = $VaultUnsetSentinel
+        }
         if (-not $val) {
             Die "entrypoint ${OutName}: placeholder @@${var}@@ resolves empty — set $var in local.env"
         }

@@ -280,7 +280,7 @@ seed_local_env() {
   info "Leave CLAUDE_CONFIG_DIR / CODEX_HOME empty to use the co-located defaults"
   info "(dirs under the framework folder); run with --scattered for ~/.claude, ~/.codex."
   info "Fill in the values you want to set in $local_env:"
-  info "  OBSIDIAN_VAULT_PATH   — path to your Obsidian vault (recommended)"
+  info "  OBSIDIAN_VAULT_PATH   — path to your durable-knowledge vault (optional; leave empty to start — the framework builds and runs without it)"
   info "  CLAUDE_CONFIG_DIR     — optional: override the co-located default for claude"
   info "  CODEX_HOME            — optional: override the co-located default for codex"
   if [ -t 0 ]; then

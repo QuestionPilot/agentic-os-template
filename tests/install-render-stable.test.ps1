@@ -166,4 +166,40 @@ if ($irs_det_a -and $irs_det_b -and `
     )
 }
 
+# --- Assertion 4: the durable-knowledge vault is OPTIONAL. A build with an EMPTY
+# OBSIDIAN_VAULT_PATH must SUCCEED (exit 0) and render the unset sentinel into the
+# entrypoint — never the raw @@OBSIDIAN_VAULT_PATH@@ token, and never a hard die.
+# Mirrors the bash twin's assertion 4 (the first-run promise: no vault still builds).
+$irsNvLines = @(Get-Content -LiteralPath $IRS_CI_FIXTURE | Where-Object { $_ -notmatch '^OBSIDIAN_VAULT_PATH=' })
+$irsNvEnv = Join-Path $IRS_DIR 'novault.local.env'
+$irsNvTgt = Join-Path $IRS_DIR 'novault-claude'
+$irsNvBody = ($irsNvLines -join "`n") + "`nOBSIDIAN_VAULT_PATH=`nCLAUDE_CONFIG_DIR=`"$irsNvTgt`"`n"
+[System.IO.File]::WriteAllText($irsNvEnv, $irsNvBody, $utf8NoBom)
+
+$env:AI_CONFIG_LOCAL_ENV = $irsNvEnv
+try {
+    $irsNvOut = & pwsh -NoProfile -File $INSTALL_PS1 --harness claude --build-only 2>&1
+    $irsNvStatus = $LASTEXITCODE
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+Assert-Eq 'install-render-stable.test: install.ps1 --harness claude --build-only exits 0 with an EMPTY vault (vault is optional)' '0' "$irsNvStatus"
+
+$irsNvBd = @($irsNvOut | Where-Object { $_ -ne '' }) | Select-Object -Last 1
+if ($irsNvBd -and (Test-Path -LiteralPath (Join-Path $irsNvBd 'CLAUDE.md') -PathType Leaf)) {
+    $irsNvMd = Get-Content -Raw -LiteralPath (Join-Path $irsNvBd 'CLAUDE.md')
+    if ($irsNvMd.Contains('@@OBSIDIAN_VAULT_PATH@@')) {
+        _Fail 'install-render-stable.test: empty-vault build renders the unset sentinel, not the raw token' `
+            'found unresolved @@OBSIDIAN_VAULT_PATH@@ in the rendered entrypoint'
+    } elseif ($irsNvMd.Contains('the durable-knowledge vault is optional')) {
+        _Pass 'install-render-stable.test: empty-vault build renders the unset sentinel, not the raw token'
+    } else {
+        _Fail 'install-render-stable.test: empty-vault build renders the unset sentinel, not the raw token' `
+            'rendered entrypoint contains neither the sentinel nor the raw token'
+    }
+    Remove-Item -LiteralPath $irsNvBd -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    _Fail 'install-render-stable.test: empty-vault build produced an inspectable CLAUDE.md' "build path: [$irsNvBd]"
+}
+
 Remove-Item -LiteralPath $IRS_DIR -Recurse -Force -ErrorAction SilentlyContinue
