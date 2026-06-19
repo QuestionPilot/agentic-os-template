@@ -1,8 +1,12 @@
 # agentic-os-template
 
-Lightweight operating framework for AI agents.
+**One operating framework that compiles itself into every AI coding agent you use.**
 
-This repository defines the shared AI operating system: how agents should work, learn, verify, and hand off context. Shared content stays harness-neutral — it carries no single-harness assumptions, tool names, hook names, plugin names, or harness-specific paths. Symmetric references to harness entrypoint conventions (`AGENTS.md` and `CLAUDE.md` named together) are fine, since naming both privileges neither. Single-harness details belong only in the matching root entrypoint file.
+Write a capability once — how the agent should orient, work, verify, or learn — and the framework's compiler emits it as *harness-native* config for each agent you run: a skill plus hooks for Claude Code, the matching artifacts for Codex, an entrypoint overlay for Hermes. Author once, run everywhere — no per-harness hand-wiring, no copy-paste drift.
+
+The framework also **hosts its own operating spine**. The loop every session runs — orient → work → close out → learn — isn't baked into any one tool; it's three compiled capabilities (`session-agent`, `closeout`, `self-audit`) built from the very same specs you author. The OS is self-hosting: it improves itself through the loop it gives your agents.
+
+New here? [**Quickstart**](#quickstart) is a first win in 10 minutes. [**A worked session**](#a-worked-session-end-to-end) shows the memory/closeout loop paying off across two sessions.
 
 ## Quickstart
 
@@ -90,9 +94,35 @@ classify lessons and route them to the right source of truth
 
 ---
 
+## A worked session, end to end
+
+Here is the loop on one real task — and what it saves the *next* time.
+
+**The task.** "Add size validation to the file-upload path." You open a session and type that one line.
+
+**Orient (automatic).** Before touching code, the `session-agent` capability fires. It loads your active-work tracker (one open issue already scopes this), your recent memory notes, and your vault. One note from a prior session reads: *uploads in this repo go through `lib/storage`, not the controller.* The agent routes straight to the storage layer instead of grepping blind.
+
+**Work.** The change lands in `lib/storage`. The agent runs the verification gate named for a code change — the test suite — and it passes. Along the way it finds that the validation helper rejects zero-byte files the product treats as valid, and works around it.
+
+**Close out.** You run the `closeout` capability. It classifies what happened and routes each piece to the layer that owns it:
+
+- the *zero-byte gotcha* → a durable lesson in the vault,
+- a *follow-up to fix the helper upstream* → a new tracker issue,
+- the *"validate at the storage layer, not the controller" rule* → reinforced in the operating core.
+
+Nothing is left to live only in your head.
+
+**The payoff — a week later.** A different task touches uploads. Orient surfaces both notes automatically, so the agent already knows where upload logic lives *and* that the helper has a zero-byte quirk. It skips the investigation that cost an hour last time and never re-discovers the same bug.
+
+That gap — re-deriving context every cold session versus starting warm — is exactly what this framework closes. The [Self-Improvement Standard](#self-improvement-standard) makes it a rule: a lesson isn't learned until it changes a future session.
+
+---
+
 ## Governance
 
 Do not modify shared framework content unless the user explicitly asks for it. Routine harness-specific edits are allowed only in the relevant root entrypoint file.
+
+Shared content stays harness-neutral — it carries no single-harness assumptions, tool names, hook names, plugin names, or harness-specific paths. Symmetric references to harness entrypoint conventions (`AGENTS.md` and `CLAUDE.md` named together) are fine, since naming both privileges neither. Single-harness details belong only in the matching root entrypoint file.
 
 - Shared framework: `core/`, `capabilities/`, `playbooks/`, `verification/`, `linear/`, `obsidian/`, `skills/`, `templates/`, and `scripts/`.
 - Harness entrypoints: `AGENTS.md` for Codex, `CLAUDE.md` for Claude Code, and `SOUL.md` (generated into the Hermes home) for Hermes Agent.
