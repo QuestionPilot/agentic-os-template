@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/scripts-ps-parity.test.sh — bash↔pwsh byte-parity for script ports.
 #
-# (Issue 5B-a — Windows-native scripts ports) ports five PowerShell
+# (Issue 5B-a — Windows-native scripts ports) ports the PowerShell
 # twins to existing bash scripts in scripts/. This test asserts byte-identical
 # output between each pair on common fixtures, applying the Issue 5B
 # normalization rules from the public-template-rewrite plan:
@@ -18,9 +18,6 @@
 # - scripts/self-audit.{sh,ps1}
 # - scripts/check-drift.{sh,ps1} (--manifest mode)
 # - scripts/build-public-snapshot.{sh,ps1} (stub: error-out symmetry only)
-# - scripts/sanitize-for-publish.{sh,ps1} (thin re-assertion that the.ps1
-# is still byte-parity with the bash twin post-fix/, so a
-# future leak surfaces here too).
 #
 # Per [[feedback_port_parity_vs_regression_split]] — this test catches PORT
 # REGRESSION (PS output diverges from bash on the same input). Threat-boundary
@@ -942,51 +939,6 @@ else
   _skip "build-public-snapshot.sh --help exits 0" "scripts not both present"
   _skip "build-public-snapshot.ps1 -Help exits 0" "scripts not both present"
   _skip "build-public-snapshot --help/-Help exit codes match" "scripts not both present"
-fi
-
-# ---------------------------------------------------------------------------
-# Test 5: sanitize-for-publish.ps1 byte-parity re-check (no-regression anchor)
-#
-# shipped both twins with bash↔pwsh byte-identity verified end-to-end.
-# The cure-soft-drift + orphan-skill-hardening changes landed later
-# and could have leaked deltas into check-drift's allowlist surface. Re-assert
-# that running both scrubbers on the same fixture still produces byte-identical
-# output. (A cheap anchor that re-fires here so the PR explicitly
-# proves no regression slid in.)
-# ---------------------------------------------------------------------------
-
-if [ -f "$REPO_ROOT/scripts/sanitize-for-publish.sh" ] && \
-   [ -f "$REPO_ROOT/scripts/sanitize-for-publish.ps1" ] && \
-   [ "$_have_pwsh" -eq 1 ]; then
-  # Use distinct fixture roots so each scrubber operates on its own tree;
-  # then diff the resulting trees.
-  SANI_BASH="$PARITY_TMP/sani-bash"
-  SANI_PS="$PARITY_TMP/sani-ps"
-  mkdir -p "$SANI_BASH/core" "$SANI_PS/core"
-
-  # Same leak content into both fixtures. Use runtime-construct sentinels to
-  # avoid self-tripping per [[feedback_self_tripping_test_source]].
-  _que='QU''E-'
-  _qp='Question''Pilot'
-  _ws='question''-pilot'
-  for d in "$SANI_BASH" "$SANI_PS"; do
-    {
-      printf 'Some refinement rule. (%s99)\n' "$_que"
-      printf 'See [%s100](https://linear.app/%s/issue/%s100) too.\n' "$_que" "$_ws" "$_que"
-      printf 'And the %s name.\n' "$_qp"
-    } > "$d/core/foo.md"
-  done
-
-  bash "$REPO_ROOT/scripts/sanitize-for-publish.sh" \
-    --root "$SANI_BASH" --report "$SANI_BASH/r.txt" >/dev/null 2>&1
-  pwsh -NoProfile -File "$REPO_ROOT/scripts/sanitize-for-publish.ps1" \
-    -Root "$SANI_PS" -Report "$SANI_PS/r.txt" >/dev/null 2>&1
-
-  bash_hash="$(LC_ALL=C tr -d '\r' < "$SANI_BASH/core/foo.md" | shasum -a 256 | awk '{print $1}')"
-  ps_hash="$(LC_ALL=C tr -d '\r' < "$SANI_PS/core/foo.md" | shasum -a 256 | awk '{print $1}')"
-  assert_eq "sanitize-for-publish parity holds" "$bash_hash" "$ps_hash"
-else
-  _skip "sanitize-for-publish parity holds" "pwsh missing or scripts not present"
 fi
 
 # ---------------------------------------------------------------------------

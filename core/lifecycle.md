@@ -104,7 +104,7 @@ name: <name>
 summary: <one line>
 triggers: [...]
 verification: <gate>
-harnesses: [claude, codex]
+harnesses: [claude, codex, hermes]
 kind: native
 enforcement: <class>
 lifecycle: shipped

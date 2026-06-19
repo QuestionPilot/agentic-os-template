@@ -15,13 +15,12 @@ by the `CODEX_HOME` environment variable. Codex itself defaults `CODEX_HOME` to
 `~/.codex`, but `install.sh` requires it to be set explicitly in `local.env` — the
 build does not assume the default.
 
-> **Scope note (<TEAM>-39 / M5.4, updated <TEAM>-68 + <TEAM>-71 + <TEAM>-75).** This adapter
+> **Scope note (M5.4).** This adapter
 > ships the **3 native** capabilities (`session-agent`, `closeout`, `self-audit`) — the spine
-> per <TEAM>-55 closure (3-shape
-> skill model). `route` + `skill-orchestrator` were consolidated into
-> `session-agent` in <TEAM>-71.
-> `cross-model-review` was removed from agentic-os-template in
-> <TEAM>-68 and now lives as a
+> per the 3-shape
+> skill model. `route` + `skill-orchestrator` were consolidated into
+> `session-agent`.
+> `cross-model-review` was removed from agentic-os-template and now lives as a
 > Shape C operator-local skill in each operator's harness config dir, never in
 > the framework. Any ex-vendored tool capabilities are operator-managed Shape C if retained at `$CLAUDE_CONFIG_DIR/skills/<name>/`.
 > agentic-os-template now authors exactly 3 spine capabilities × 3 harnesses
@@ -103,8 +102,8 @@ script in `harnesses/codex/hooks/`:
 | --- | --- | --- | --- | --- |
 | `pre-edit-gate` | `PreToolUse` | `apply_patch` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and a `Linear gate:` line was declared. Codex file edits report `tool_name: "apply_patch"`. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
 
-(The `session-end-gate` class — a `Stop` hook for `closeout` — was removed in
-<TEAM>-211; `closeout` is now manual-fire. `pre-edit-gate` is the only
+(The `session-end-gate` class — a `Stop` hook for `closeout` — was removed;
+`closeout` is now manual-fire. `pre-edit-gate` is the only
 capability-declared enforcement class today.)
 
 The build copies the named hook script into place and merges its `hooks.json`
@@ -116,8 +115,8 @@ block. Enforcement is **never code-generated** — the scripts are real files.
 `{"decision":"block","reason":"…"}` form (or a hard `exit 2` with the reason on
 stderr) — Codex honors **both** shapes on `PreToolUse`. This is a genuine
 **divergence from Claude Code**, where the legacy top-level `decision` is silently
-ignored on `PreToolUse` (only `hookSpecificOutput.permissionDecision` blocks — the
-<TEAM>-227 defect). **Verified against Codex CLI v0.132.0** (2026-06-06) from three
+ignored on `PreToolUse` (only `hookSpecificOutput.permissionDecision` blocks — a
+documented Codex `PreToolUse` defect). **Verified against Codex CLI v0.132.0** (2026-06-06) from three
 independent sources: (1) the bundled Rust binary's embedded
 `pre-tool-use.command.output` JSON schema declares `decision` (enum `approve|block`,
 via `PreToolUseDecisionWire`) and `reason` as first-class **top-level** properties
@@ -128,7 +127,7 @@ to `decision == Block` (with a non-empty top-level `reason`) to block when no
 `hookSpecificOutput` permission decision is present; (3) the official hooks docs
 (`developers.openai.com/codex/hooks`) state Codex "also accepts this older block
 shape." So the Codex twin's legacy fail-closed emission (Fact 2 `jq` contract below)
-genuinely blocks — do **not** retrofit the <TEAM>-227 Claude fix onto it. Context
+genuinely blocks — do **not** retrofit the Claude fix for that defect onto it. Context
 injection uses `hookSpecificOutput.additionalContext`, or plain stdout for
 `SessionStart` and `UserPromptSubmit`.
 
@@ -136,7 +135,7 @@ injection uses `hookSpecificOutput.additionalContext`, or plain stdout for
 any capability: `hooks/framework-surface.sh` runs on `SessionStart`
 (`matcher: "startup|clear|compact"`) and surfaces two context blocks as
 `additionalContext`: (a) recent `agentic-os-template` framework commits, and (b) the
-<TEAM>-71 session-agent invocation directive (the auto-fire mechanism for the
+session-agent invocation directive (the auto-fire mechanism for the
 spine capability — see `capabilities/session-agent.md` Mode 1). The build
 wires it unconditionally.
 
@@ -206,7 +205,7 @@ session verifies it. Reproduction recipe:
 4. `pre-edit-gate` — attempt an `apply_patch` edit before invoking `session-agent` →
    expect a `PreToolUse` **deny**.
 
-Tracked by **<TEAM>-47**. Once verified, replace this note with the confirmed
+This is pending verification. Once verified, replace this note with the confirmed
 result.
 
 ## Fact 3 — Capability invocation convention

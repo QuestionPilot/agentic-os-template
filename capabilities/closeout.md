@@ -133,7 +133,7 @@ classification machinery for work that should never have shipped is wasted.
    restore the dirty state inline BEFORE emitting the output block, OR
    (b) explicitly name the dirty state in the State Deltas line (e.g.
    `operator-main has 1 staged file: scripts/foo.sh (uncommitted)`).
-   **Silent claims of `clean` are forbidden.** The <TEAM>-125 false-RED case
+   **Silent claims of `clean` are forbidden.** A false-RED case
    study — a stray staged `scripts/check-drift.sh` removal slipping past a
    prior session's closeout and propagating as a false `make verify` failure
    into the next session — is what Q7a closes. See
@@ -495,8 +495,7 @@ logs are append-only archives, so its orphan check exempts the
   the session-agent kickoff orientation and the agent/operator remembering, not
   a gate.
   The prior auto-enforcement — a `Stop` hook with memory-path / Q7-cleanup
-  exemptions — was removed in <TEAM>-211 because it re-fired on closeout's own
+  exemptions — was removed because it re-fired on closeout's own
   protocol-prescribed writes (state-delta memory writes that cite framework
-  files; the Q7 cleanup `rm`), looping a normal session. Lineage: <TEAM>-57 /
-  <TEAM>-62 / <TEAM>-78 / <TEAM>-116 / <TEAM>-138 built the gate up; <TEAM>-211 removed it in
-  favor of discipline-backed closeout.
+  files; the Q7 cleanup `rm`), looping a normal session. The gate was built up
+  incrementally, then removed in favor of discipline-backed closeout.

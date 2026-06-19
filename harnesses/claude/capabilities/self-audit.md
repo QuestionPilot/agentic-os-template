@@ -9,7 +9,7 @@ lifecycle: shipped
 - **No auto-fire.** Unlike `session-agent` (which carries a SessionStart hook),
   `/self-audit` — like `closeout` — is opt-in only. Neither declares an
   `enforcement:` class, so `install.sh`'s hook-wiring step registers nothing for
-  them. (`closeout`'s `Stop` gate was removed in <TEAM>-211; it is now manual-fire.)
+  them. (`closeout`'s `Stop` gate was removed; it is now manual-fire.)
 - **Tool envelope:** `Read` and `Glob` for state inspection (memory files,
   capability surfaces, vault notes if available); `Bash` to invoke
   `scripts/self-audit.sh` and to optionally write a saved scorecard via the

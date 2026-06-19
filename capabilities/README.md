@@ -41,11 +41,10 @@ install: <one-line install method>
 - `enforcement` is a harness-neutral class name (e.g. `pre-edit-gate`). The
   harness adapter (`harnesses/<harness>/adapter.md`) maps the class to a concrete
   enforcement mechanism. A capability only *names* its class; it never describes
-  the mechanism. (The `session-end-gate` and `prompt-scan` classes were removed —
-  in <TEAM>-211 and <TEAM>-68 respectively — and are no longer declared by any
-  capability.)
+  the mechanism. (The `session-end-gate` and `prompt-scan` classes were removed
+  and are no longer declared by any capability.)
 - `harnesses` lists the harnesses that currently receive this capability. Each
   listed value must have a `harnesses/<value>/` adapter directory; the
-  framework ships two adapters today (`claude` and `codex`).
+  framework ships three adapters today (`claude`, `codex`, and `hermes`).
 
 `scripts/validate.sh` checks every header for completeness against this schema.

@@ -87,8 +87,8 @@ script in `harnesses/claude/hooks/`:
 | --- | --- | --- | --- | --- |
 | `pre-edit-gate` | `PreToolUse` | `Write\|Edit\|NotebookEdit` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and a `Linear gate:` line was declared. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
 
-(The `session-end-gate` class — a `Stop` hook for `closeout` — was removed in
-<TEAM>-211; `closeout` is now manual-fire. `pre-edit-gate` is the only
+(The `session-end-gate` class — a `Stop` hook for `closeout` — was removed;
+`closeout` is now manual-fire. `pre-edit-gate` is the only
 capability-declared enforcement class today.)
 
 The build copies the named hook script into place and merges its `settings.json`
@@ -98,7 +98,7 @@ block. Enforcement is **never code-generated** — the scripts are real files.
 capability: `hooks/framework-surface.sh` runs on `SessionStart`
 (`matcher: "startup|clear|compact"`) and surfaces three context blocks as
 `additionalContext`: (a) recent `agentic-os-template` framework commits, (b) the
-<TEAM>-59 MCP-health probe, and (c) the <TEAM>-71 session-agent invocation directive
+MCP-health probe, and (c) the session-agent invocation directive
 (the auto-fire mechanism for the spine capability — see
 `capabilities/session-agent.md` Mode 1). The build wires it unconditionally.
 

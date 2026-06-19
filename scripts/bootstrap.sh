@@ -250,13 +250,19 @@ set_zshenv_export() {
     return 0
   fi
   would_mutate "write '$export_line' to $zshenv" && return 0
-  local tmp; tmp="$(mktemp)"
+  # Create the temp file in the TARGET dir (not $TMPDIR) so the mv below is an
+  # atomic same-filesystem rename. mktemp-in-/tmp + mv to $HOME risks a
+  # non-atomic cross-volume copy that a crash could leave half-written.
+  local tmp; tmp="$(mktemp "${zshenv}.XXXXXX")"
   # Remove any existing NAME= line, then append.
   if [ -f "$zshenv" ]; then
     grep -vE "^(export )?${name}=" "$zshenv" > "$tmp" || true
   fi
-  printf '%s\n' "$export_line" >> "$tmp"
-  mv "$tmp" "$zshenv"
+  # Append the canonical line, then atomically replace. On any failure remove the
+  # sidecar temp so a half-written "$zshenv.XXXXXX" can't linger in $HOME.
+  if ! { printf '%s\n' "$export_line" >> "$tmp" && mv "$tmp" "$zshenv"; }; then
+    rm -f "$tmp"; warn "failed to update $zshenv"; return 1
+  fi
   info "Set $name in $zshenv"
 }
 # set_config_dir_env <dir> — idempotently export CLAUDE_CONFIG_DIR in ~/.zshenv.
@@ -310,7 +316,9 @@ persist_local_env_values() {
   for key in CLAUDE_CONFIG_DIR CODEX_HOME HERMES_HOME OBSIDIAN_VAULT_PATH; do
     eval "val=\"\${$key:-}\""
     [ -n "$val" ] || continue
-    tmp="$(mktemp)"
+    # Temp file in the TARGET dir so the mv below is an atomic same-filesystem
+    # rename (mktemp-in-$TMPDIR + mv to a different volume is non-atomic).
+    tmp="$(mktemp "${local_env}.XXXXXX")"
     wrote=0
     # Replace an existing (possibly empty) KEY= line; remove `export ` prefix
     # variants too so we don't end up with duplicate declarations.
@@ -326,7 +334,9 @@ persist_local_env_values() {
       esac
     done < "$local_env"
     [ "$wrote" -eq 0 ] && printf '%s=%q\n' "$key" "$val" >> "$tmp"
-    mv "$tmp" "$local_env"
+    # Atomically replace; on mv failure remove the sidecar temp so a
+    # "local.env.XXXXXX" can't linger in the repo root.
+    if ! mv "$tmp" "$local_env"; then rm -f "$tmp"; warn "failed to update $local_env"; return 1; fi
   done
 }
 # run_install — run install.sh for each harness.

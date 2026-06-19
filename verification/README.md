@@ -4,6 +4,8 @@ Use these recipes to choose the smallest proof pattern that actually verifies th
 
 Project-local scripts and current user instructions remain the source of truth. These recipes are framework defaults, not daily logs.
 
+**Recipes, not enforced gates.** These are honor-system *recipes* — proof patterns you choose and run by judgment. Most are not mechanically enforced; only a few checks actually block (for example, `make verify` and the CI cleanliness scan). Where a capability's routing says "name the verification gate," it means *pick the matching recipe here* — "gate" denotes the routing step, not an automated block.
+
 ## Recipes
 
 | Work type | Recipe |

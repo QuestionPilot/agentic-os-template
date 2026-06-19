@@ -14,7 +14,7 @@ Use the right layer for the right job.
 | Active work, owners, status, blockers, acceptance criteria, next actions | Linear |
 | Durable project memory, decisions, lessons, source summaries | Memory Vault |
 | Source code, deploy scripts, product docs that ship with the product | Project repos |
-| Local folder orientation for a harness | Root `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or equivalent |
+| Local folder orientation for a harness | Root `AGENTS.md`, `CLAUDE.md`, or equivalent |
 | Secrets, API keys, auth state, machine-specific config | Local secure config outside Drive |
 | Outside memory awaiting review | Original source until promoted through [[00-System/Fresh Start Policy]] |
 
