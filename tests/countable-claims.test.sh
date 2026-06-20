@@ -91,6 +91,30 @@ SELF_AUDIT_SH="$(cat "$REPO_ROOT/scripts/self-audit.sh")"
 assert_contains "self-audit.sh header pillar count matches PILLAR_KEYS ($pillar_count -> '$pillar_word')" \
   "$SELF_AUDIT_SH" "$pillar_word pillars"
 
+# === ground truth #4: README harness-compat matrix == adapter "Verified against"
+# The README's harness-compatibility table SUMMARIZES each adapter's "Verified
+# against vX.Y.Z" line and names the adapter as the source of truth. Pin the
+# summary to that source: extract each adapter's verified version and assert the
+# README matrix carries the same string. Bump an adapter without the README (or
+# vice-versa) and this goes RED — the same prose-vs-truth drift this file guards.
+for _h in claude codex hermes; do
+  _adapter="$REPO_ROOT/harnesses/$_h/adapter.md"
+  # The adapter's "Verified against **<Display Name> vX.Y.Z**" carries BOTH the
+  # harness display name and the version — extract both, so the README check can
+  # bind the version to the correctly-NAMED matrix row (a row-swap or a version
+  # that only appears in prose must fail, not just "version present somewhere").
+  _label="$(LC_ALL=C $GREP -oE 'Verified against \*\*[^*]*\*\*' "$_adapter" \
+    | head -1 | sed -E 's/^Verified against \*\*//; s/\*\*$//')"
+  _ver="$(printf '%s' "$_label" | $GREP -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  _name="$(printf '%s' "$_label" | sed -E 's/ v[0-9].*$//')"
+  assert_eq "$_h/adapter.md declares a Verified-against version (non-empty)" "yes" \
+    "$([ -n "$_ver" ] && echo yes || echo no)"
+  # The matrix ROW for this harness (a table line naming it) must carry its version.
+  _row="$(LC_ALL=C $GREP -E "^\|.*${_name}.*\|" "$REPO_ROOT/README.md" | head -1)"
+  assert_contains "README compat matrix row for '$_name' carries adapter version ($_ver)" \
+    "$_row" "$_ver"
+done
+
 # === negative regressions: the specific stale count claims stay fixed ========
 # File-scoped so the contextually-correct pairwise "two adapters" sentence in
 # harnesses/claude/adapter.md (this-file-vs-Codex) is intentionally NOT in scope.
