@@ -16,7 +16,10 @@
 #   5. .DS_Store is a WARN, never a FAIL (macOS/Drive spray it back, so gating
 #      on it would make a cloud-synced scaffold copy fail nondeterministically);
 #   6. an unlinked note surfaces as an orphan WARN, never a FAIL;
-#   7. a machine-specific absolute path in a note FAILs (keep the vault agnostic).
+#   7. a machine-specific absolute path in a note FAILs (keep the vault agnostic);
+#   8. a URL whose path contains a Users or home segment does NOT FAIL — the
+#      machine-path guard tells a URL path apart from a real machine path —
+#      while real macOS, Linux, and Windows home paths still FAIL.
 #
 # Runs against a TMP COPY of the scaffolding — never mutates the live repo
 # tree. Sourced by tests/run.sh; uses assert_* helpers from tests/lib.sh.
@@ -135,6 +138,57 @@ else
   assert_contains "a machine-specific absolute path surfaces as a FAIL line (not WARN)" \
     "$hi_mp_out" "FAIL machine-specific absolute path (keep vault agnostic): 10-Wiki/__machinepath-fixture__.md"
   rm -f "$HI_TMP2/10-Wiki/__machinepath-fixture__.md"
+  node "$HI_TMP2/$HI_GEN" >/dev/null 2>&1
+
+  # T9: a note containing a URL whose path includes a Users or home segment must
+  # NOT FAIL — checkAgnostic tells a URL path (the segment is preceded by an
+  # alphanumeric host char) apart from a real machine path. The URL is assembled
+  # from halves so the contiguous path never trips the repo-wide machine-path
+  # scan (feedback_self_tripping_test_source). Regenerate the index after the
+  # plant so a non-zero exit could ONLY come from checkAgnostic; assert exit 0
+  # AND that no machine-path FAIL names this note (a regression to the old bare
+  # substring regex would flag the URL and trip both).
+  _hi_url="https://example.com/home""/getting-started"
+  printf -- '---\ntitle: url fixture\n---\n\nSee [guide](%s) for setup.\n' "$_hi_url" \
+    > "$HI_TMP2/10-Wiki/__url-fixture__.md"
+  node "$HI_TMP2/$HI_GEN" >/dev/null 2>&1
+  hi_url_out="$(node "$HI_AUDIT2" 2>&1)"; hi_url_rc=$?
+  assert_eq "a URL with a home path segment does not FAIL the audit (exit 0)" 0 "$hi_url_rc"
+  assert_not_contains "a URL path is not flagged as a machine-specific path" \
+    "$hi_url_out" "machine-specific absolute path (keep vault agnostic): 10-Wiki/__url-fixture__.md"
+  rm -f "$HI_TMP2/10-Wiki/__url-fixture__.md"
+  node "$HI_TMP2/$HI_GEN" >/dev/null 2>&1
+
+  # T10: a real absolute Linux home path must still FAIL — the URL refinement
+  # must not disable the home-dir arm. Sentinel assembled from halves
+  # (feedback_self_tripping_test_source); regenerate the index after the plant so
+  # the FAIL is attributable to checkAgnostic. Assert the `FAIL ` prefix so a
+  # silent fail()->warn() downgrade is caught.
+  _hi_home="/home""/sentinel-user/notes"
+  printf -- '---\ntitle: homepath fixture\n---\n\nSee %s here.\n' "$_hi_home" \
+    > "$HI_TMP2/10-Wiki/__homepath-fixture__.md"
+  node "$HI_TMP2/$HI_GEN" >/dev/null 2>&1
+  hi_home_out="$(node "$HI_AUDIT2" 2>&1)"; hi_home_rc=$?
+  assert_eq "a real Linux home-dir path FAILs the audit (non-zero exit)" 1 "$hi_home_rc"
+  assert_contains "a real Linux home-dir path surfaces as a FAIL line (not WARN)" \
+    "$hi_home_out" "FAIL machine-specific absolute path (keep vault agnostic): 10-Wiki/__homepath-fixture__.md"
+  rm -f "$HI_TMP2/10-Wiki/__homepath-fixture__.md"
+  node "$HI_TMP2/$HI_GEN" >/dev/null 2>&1
+
+  # T11: a real Windows home path (drive, Users, name) must still FAIL — the
+  # tightened Windows arm requires a real user-folder segment, not a bare
+  # drive-colon-backslash. Sentinel assembled from halves so the contiguous
+  # Windows path never trips the repo-wide machine-path scan
+  # (feedback_self_tripping_test_source).
+  _hi_win="C:\\Users""\\sentineluser\\notes"
+  printf -- '---\ntitle: winpath fixture\n---\n\nSee %s here.\n' "$_hi_win" \
+    > "$HI_TMP2/10-Wiki/__winpath-fixture__.md"
+  node "$HI_TMP2/$HI_GEN" >/dev/null 2>&1
+  hi_win_out="$(node "$HI_AUDIT2" 2>&1)"; hi_win_rc=$?
+  assert_eq "a real Windows user-folder path FAILs the audit (non-zero exit)" 1 "$hi_win_rc"
+  assert_contains "a real Windows user-folder path surfaces as a FAIL line (not WARN)" \
+    "$hi_win_out" "FAIL machine-specific absolute path (keep vault agnostic): 10-Wiki/__winpath-fixture__.md"
+  rm -f "$HI_TMP2/10-Wiki/__winpath-fixture__.md"
 
   rm -rf "${HI_TMP2%/vault}"
 fi
