@@ -35,6 +35,26 @@ brew install --formula ripgrep   # provides rg
 npm install -g @openai/codex     # codex installs via npm, not brew
 ```
 
+**Harness compatibility.** A harness's hook schemas, hook-event names, and
+built-in tool names can change underneath the template between releases, so the
+framework records the exact version each harness was verified against. The
+per-harness adapter (`harnesses/<harness>/adapter.md` → its "Verified against"
+line) is the source of truth; this table summarizes them:
+
+| Harness | Verified against | Minimum enforced |
+| --- | --- | --- |
+| Claude Code | v2.1.153 | presence (default harness; assumed current) |
+| Codex CLI | v0.132.0 | **v0.132.0** — `bootstrap.sh` hard-floors it when `--harness codex` is targeted |
+| Hermes Agent | v0.16.0 | presence |
+
+Only the Codex CLI floor is version-gated (it is a required CLI for that harness —
+see `bootstrap.sh` `cli_min_version`); Claude Code and Hermes are presence-checked
+with the tested version documented rather than gated. Running a **newer** harness
+than the table lists will almost certainly still work, but it is unverified: re-run
+`make verify` after upgrading a harness, and if a hook or capability misbehaves,
+compare against the adapter's "Verified against" baseline and bump it in the same
+change once re-verified.
+
 ### 2. Clone and install
 
 ```bash

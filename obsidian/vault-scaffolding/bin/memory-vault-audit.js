@@ -60,9 +60,19 @@ function checkRequired() {
 }
 
 function checkNoiseAndSecrets() {
+  // .DS_Store is regenerated continuously by macOS / Finder / Google Drive, so
+  // gating on it makes the audit nondeterministic. Surface it as a WARN —
+  // flagged for cleanup, never a blocker — keeping the audit read-only. A
+  // scaffold copied onto a cloud-synced drive would otherwise fail this audit
+  // unpredictably as the OS sprays .DS_Store files back in.
+  files
+    .filter((f) => path.basename(f) === ".DS_Store")
+    .forEach((f) => warn(`OS noise — delete when convenient, not gated: ${rel(f)}`));
+
+  // Genuine disposable cruft below stays a hard FAIL.
   const noisy = files.filter((f) => {
     const name = path.basename(f);
-    return name === ".DS_Store" || name === "trace.zip" || name.endsWith(".har") || name.endsWith(".tmp") || name.endsWith(".log");
+    return name === "trace.zip" || name.endsWith(".har") || name.endsWith(".tmp") || name.endsWith(".log");
   });
   noisy.length ? noisy.forEach((f) => fail(`noisy artifact: ${rel(f)}`)) : pass("no noisy artifacts");
 
@@ -81,6 +91,23 @@ function checkNoiseAndSecrets() {
     }
   }
   if (!hits) pass("secret pattern scan clean");
+}
+
+function checkAgnostic() {
+  // Vault knowledge must stay machine/user-agnostic. Mirrors the framework's
+  // check-drift machine-path guard: machine-specific absolute paths do not
+  // belong in durable, cloud-synced notes that every harness reads.
+  const machinePath = /\/Users\/|\/home\/|[A-Za-z]:\\/;
+  const offenders = [];
+  for (const f of [...mdFiles, ...baseFiles]) {
+    const lines = fs.readFileSync(f, "utf8").split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (machinePath.test(line)) offenders.push(`${rel(f)}:${i + 1}`);
+    });
+  }
+  offenders.length
+    ? offenders.forEach((o) => fail(`machine-specific absolute path (keep vault agnostic): ${o}`))
+    : pass("no machine-specific absolute paths");
 }
 
 function checkWikilinks() {
@@ -103,6 +130,55 @@ function checkWikilinks() {
     }
   }
   broken.length ? broken.forEach((b) => fail(`broken wikilink: ${b}`)) : pass("wikilinks resolve");
+}
+
+function checkOrphans() {
+  // Orphan = a note with ZERO inbound wikilinks (nothing points to it), which
+  // makes it effectively unreachable. Detection is the inverse of checkWikilinks:
+  // build the set of every wikilink TARGET used across the vault, then flag any
+  // note none of whose names (full path, path-sans-ext, or basename) is targeted
+  // by some OTHER note. WARN-only — some pages are legitimately unlinked entry
+  // points (indexes, templates, roots like START/README), so an allowlist skips
+  // those and orphans never FAIL the audit.
+  const re = /!?\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g;
+  const refSources = new Map(); // wikilink target -> set of files that reference it
+  for (const f of mdFiles) {
+    const src = rel(f);
+    // Generated harness index views mechanically link every indexed note, which
+    // would mask genuine orphans — only human-woven links count.
+    if (src.startsWith("90-Indexes/Harness Index - ")) continue;
+    const text = fs.readFileSync(f, "utf8");
+    let m;
+    while ((m = re.exec(text))) {
+      const t = m[1].trim();
+      if (!refSources.has(t)) refSources.set(t, new Set());
+      refSources.get(t).add(src);
+    }
+  }
+  // Hub / root / scaffold pages that are legitimately unlinked: indexes,
+  // templates, and entry points (START/README + the harness AGENTS/CLAUDE roots).
+  const hubBasename = /^(_index|_template|index|README|START|AGENTS|CLAUDE|log|hot|sources)$/i;
+  // Deliverable / scaffold trees filed by path, not woven into the wiki graph —
+  // templates, indexes, the Outputs tree (dated briefings, run-logs), and the
+  // Sessions archive (append-only per-session closeout logs are leaf nodes by
+  // design — nothing links TO them) — which would otherwise emit unbounded
+  // orphan noise, one WARN per artifact.
+  const hubPrefix = /^(80-Templates\/|90-Indexes\/|50-Outputs\/|30-Archive\/Sessions\/)/;
+  const orphans = [];
+  for (const f of mdFiles) {
+    const r = rel(f);
+    const base = path.basename(f).replace(/\.md$/, "");
+    if (hubBasename.test(base) || hubPrefix.test(r)) continue;
+    const keys = [r, r.replace(/\.md$/, ""), base];
+    const linkedByOther = keys.some((k) => {
+      const s = refSources.get(k);
+      return s && [...s].some((src) => src !== r);
+    });
+    if (!linkedByOther) orphans.push(r);
+  }
+  orphans.length
+    ? orphans.forEach((o) => warn(`orphan page — no inbound wikilinks (link it from a hub or index): ${o}`))
+    : pass("no orphan pages");
 }
 
 function checkYamlWithRuby() {
@@ -199,7 +275,9 @@ function checkHarnessIndexViews() {
 
 checkRequired();
 checkNoiseAndSecrets();
+checkAgnostic();
 checkWikilinks();
+checkOrphans();
 checkYamlWithRuby();
 checkRawManifest();
 checkWikiSourceRefs();

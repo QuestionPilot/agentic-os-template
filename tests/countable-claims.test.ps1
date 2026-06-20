@@ -87,6 +87,32 @@ $selfAuditSh = Get-Content -LiteralPath (Join-Path $repo 'scripts/self-audit.sh'
 Assert-Contains "self-audit.sh header pillar count matches PILLAR_KEYS ($pillarCount -> '$pillarWord')" `
     $selfAuditSh "$pillarWord pillars"
 
+# === ground truth #4: README harness-compat matrix == adapter "Verified against"
+# Mirror of the bash twin: the README compat table summarizes each adapter's
+# "Verified against vX.Y.Z" line (the adapter is the source of truth), so pin the
+# summary to that source. Bump an adapter without the README (or vice-versa) and
+# this goes RED.
+$readmeLines = @(Get-Content -LiteralPath (Join-Path $repo 'README.md'))
+foreach ($h in @('claude', 'codex', 'hermes')) {
+    $adapterTxt = Get-Content -LiteralPath (Join-Path $repo "harnesses/$h/adapter.md") -Raw
+    # Extract BOTH the display name and the version from the adapter's
+    # "Verified against **<Display Name> vX.Y.Z**" so the README check binds the
+    # version to the correctly-NAMED matrix row (a row-swap or prose-only version
+    # must fail, not just "present somewhere").
+    $label = ''
+    $m = [regex]::Match($adapterTxt, 'Verified against \*\*([^*]*)\*\*')
+    if ($m.Success) { $label = $m.Groups[1].Value }
+    $ver = ''
+    $vm = [regex]::Match($label, 'v\d+\.\d+\.\d+')
+    if ($vm.Success) { $ver = $vm.Value }
+    $name = ($label -replace ' v\d.*$', '')
+    Assert-Eq "$h/adapter.md declares a Verified-against version (non-empty)" "yes" $(if ($ver) { 'yes' } else { 'no' })
+    # The matrix ROW for this harness (a table line naming it) must carry its version.
+    $row = @($readmeLines | Where-Object { $_ -match '^\|' -and $_ -like "*$name*" } | Select-Object -First 1)
+    Assert-Contains "README compat matrix row for '$name' carries adapter version ($ver)" `
+        ([string]$row) $ver
+}
+
 # === negative regressions: the specific stale count claims stay fixed ========
 Assert-NotContains "capabilities/README.md no longer claims 'two adapters'" `
     $capReadme "two adapters"
