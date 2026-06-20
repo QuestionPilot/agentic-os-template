@@ -6,7 +6,8 @@
 # (memory-vault-audit.js) behavior checks. Mirrors the bash twin 1:1: scope
 # filter, default-all, determinism, drift enforcement, planted-secret trip,
 # plus the backported audit behaviors — .DS_Store WARN (not FAIL), orphan WARN
-# (not FAIL), and machine-path FAIL.
+# (not FAIL), machine-path FAIL, and a URL whose path contains a Users or home
+# segment NOT failing (a URL path is told apart from a real machine path).
 #
 # Runs against a TMP COPY of the scaffolding — never mutates the live repo
 # tree. tests/lib.ps1 dot-sourced by tests/run.ps1; Assert-* + counters in
@@ -157,6 +158,60 @@ $hiKeyName=$hiKeyVal
     Assert-Contains 'harness-index.test: a machine-specific absolute path surfaces as a FAIL line (not WARN)' `
         $hiMpOut 'FAIL machine-specific absolute path (keep vault agnostic): 10-Wiki/__machinepath-fixture__.md'
     Remove-Item -LiteralPath $hiMpNote -Force -ErrorAction SilentlyContinue
+    node $hiGen2 *> $null
+
+    # T9: a note containing a URL whose path includes a Users or home segment must
+    # NOT FAIL — checkAgnostic tells a URL path (the segment is preceded by an
+    # alphanumeric host char) apart from a real machine path. The URL is assembled
+    # from halves so the contiguous path never trips the repo-wide machine-path
+    # scan (feedback_self_tripping_test_source). Regenerate the index after the
+    # plant so a non-zero exit could ONLY come from checkAgnostic; assert exit 0
+    # AND that no machine-path FAIL names this note (a regression to the old bare
+    # substring regex would flag the URL and trip both).
+    $hiUrl = 'https://example.com/home' + '/getting-started'
+    $hiUrlNote = Join-Path $HI_TMP2 '10-Wiki' '__url-fixture__.md'
+    Set-Content -LiteralPath $hiUrlNote -Value "---`ntitle: url fixture`n---`n`nSee [guide]($hiUrl) for setup.`n"
+    node $hiGen2 *> $null
+    $hiUrlOut = (& node $hiAudit2 2>&1) -join "`n"
+    $hiUrlRc = $LASTEXITCODE
+    Assert-Eq 'harness-index.test: a URL with a home path segment does not FAIL the audit (exit 0)' 0 $hiUrlRc
+    Assert-NotContains 'harness-index.test: a URL path is not flagged as a machine-specific path' `
+        $hiUrlOut 'machine-specific absolute path (keep vault agnostic): 10-Wiki/__url-fixture__.md'
+    Remove-Item -LiteralPath $hiUrlNote -Force -ErrorAction SilentlyContinue
+    node $hiGen2 *> $null
+
+    # T10: a real absolute Linux home path must still FAIL — the URL refinement
+    # must not disable the home-dir arm. Sentinel assembled from halves
+    # (feedback_self_tripping_test_source); regenerate the index after the plant so
+    # the FAIL is attributable to checkAgnostic. Assert the `FAIL ` prefix so a
+    # silent fail()->warn() downgrade is caught.
+    $hiHome = '/home' + '/sentinel-user/notes'
+    $hiHomeNote = Join-Path $HI_TMP2 '10-Wiki' '__homepath-fixture__.md'
+    Set-Content -LiteralPath $hiHomeNote -Value "---`ntitle: homepath fixture`n---`n`nSee $hiHome here.`n"
+    node $hiGen2 *> $null
+    $hiHomeOut = (& node $hiAudit2 2>&1) -join "`n"
+    $hiHomeRc = $LASTEXITCODE
+    Assert-Eq 'harness-index.test: a real Linux home-dir path FAILs the audit (non-zero exit)' 1 $hiHomeRc
+    Assert-Contains 'harness-index.test: a real Linux home-dir path surfaces as a FAIL line (not WARN)' `
+        $hiHomeOut 'FAIL machine-specific absolute path (keep vault agnostic): 10-Wiki/__homepath-fixture__.md'
+    Remove-Item -LiteralPath $hiHomeNote -Force -ErrorAction SilentlyContinue
+    node $hiGen2 *> $null
+
+    # T11: a real Windows home path (drive, Users, name) must still FAIL — the
+    # tightened Windows arm requires a real user-folder segment, not a bare
+    # drive-colon-backslash. Sentinel assembled from halves so the contiguous
+    # Windows path never trips the repo-wide machine-path scan
+    # (feedback_self_tripping_test_source).
+    $hiWin = 'C:\Users' + '\sentineluser\notes'
+    $hiWinNote = Join-Path $HI_TMP2 '10-Wiki' '__winpath-fixture__.md'
+    Set-Content -LiteralPath $hiWinNote -Value "---`ntitle: winpath fixture`n---`n`nSee $hiWin here.`n"
+    node $hiGen2 *> $null
+    $hiWinOut = (& node $hiAudit2 2>&1) -join "`n"
+    $hiWinRc = $LASTEXITCODE
+    Assert-Eq 'harness-index.test: a real Windows user-folder path FAILs the audit (non-zero exit)' 1 $hiWinRc
+    Assert-Contains 'harness-index.test: a real Windows user-folder path surfaces as a FAIL line (not WARN)' `
+        $hiWinOut 'FAIL machine-specific absolute path (keep vault agnostic): 10-Wiki/__winpath-fixture__.md'
+    Remove-Item -LiteralPath $hiWinNote -Force -ErrorAction SilentlyContinue
 
     Remove-Item -LiteralPath $HI_TMP2_PARENT -Recurse -Force -ErrorAction SilentlyContinue
 }

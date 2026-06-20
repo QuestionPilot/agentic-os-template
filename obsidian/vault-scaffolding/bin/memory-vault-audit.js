@@ -95,9 +95,25 @@ function checkNoiseAndSecrets() {
 
 function checkAgnostic() {
   // Vault knowledge must stay machine/user-agnostic. Mirrors the framework's
-  // check-drift machine-path guard: machine-specific absolute paths do not
-  // belong in durable, cloud-synced notes that every harness reads.
-  const machinePath = /\/Users\/|\/home\/|[A-Za-z]:\\/;
+  // check-drift machine-path guard (its username-segment tightening): machine-
+  // specific absolute home paths do not belong in durable, cloud-synced notes
+  // that every harness reads. Two refinements over a bare substring match:
+  //   (1) require a real username segment after the home root, so a lone
+  //       "Users" or "home" token in prose or a regex does not trip; and
+  //   (2) tell a filesystem path apart from a URL path. In a URL the path
+  //       segment is preceded by an alphanumeric host character (the host of an
+  //       https link sits right before it); a real absolute path instead begins
+  //       at a boundary — line start, whitespace, or a quote / paren / equals
+  //       delimiter. So a home path is flagged only when it is NOT immediately
+  //       preceded by a URL host character (an alphanumeric or a dot).
+  // The Windows arm likewise requires a real user-folder segment, not a bare
+  // drive-colon-backslash. (The regex source uses escaped/grouped slashes so it
+  // does not self-trip check-drift's machine-path scan of this file.)
+  // Accepted trade-offs (as in check-drift): matching is case-sensitive, and
+  // only a host-bearing URL is distinguished — a root-relative or bracketed
+  // link path shares syntax with a genuine parenthesized path and stays
+  // conservatively flagged (pre-existing; not widened here).
+  const machinePath = /(?:^|[^A-Za-z0-9.])\/(?:Users|home)\/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+/;
   const offenders = [];
   for (const f of [...mdFiles, ...baseFiles]) {
     const lines = fs.readFileSync(f, "utf8").split(/\r?\n/);
