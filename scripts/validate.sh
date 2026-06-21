@@ -6,78 +6,26 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 printf 'agentic-os-template validation\n'
 printf 'Repo: %s\n\n' "$repo_root"
 
-# Harness-managed worktrees (.claude/worktrees/, and the parallel .codex/ and
-# .agents/ paths if they ever exist) can legitimately contain .DS_Store from
-# macOS Finder visits or unrelated test fixtures. <TEAM>-60 allowlisted the
-# worktrees subtree in the forbidden-roots check; this scan does the same so
-# `bash scripts/validate.sh` runs clean from main repo root all the way
-# through. (<TEAM>-61.)
+# Co-located harness config-dir resolution (<TEAM>-285 recognition; hoisted by
+# <TEAM>-319). When the operator points a harness's config-dir variable at a
+# directory under the repo root (e.g. CLAUDE_CONFIG_DIR=$repo_root/.claude —
+# running every harness out of the framework folder), that directory holds the
+# harness's own compiled output + runtime state: plugin-marketplace clones that
+# carry their OWN .git (.claude/plugins/marketplaces/*/.git,
+# .codex/.tmp/plugins/.git), a Finder .DS_Store, settings.json, etc. It is
+# gitignored and never committable, so its contents are out of scope for the
+# leak scans below — exactly like the cross-model-out/ / .codegraph/ /
+# worktrees/ runtime dirs the scans already prune.
 #
-# Gitignored runtime-artifact dirs (cross-model-out/, .codegraph/) are pruned
-# the same way. They hold driver-local per-run output that can never enter git,
-# so a .DS_Store an operator's Finder dropped inside one is unrelated working
-# state, not framework content. check-drift.sh prunes the same gitignored
-# runtime set (<TEAM>-87 + <TEAM>-213); this scan and the secret grep below mirror it
-# so a tree carrying real cross-model-review runs still validates clean. (<TEAM>-244.)
-if find "$repo_root" -name .DS_Store \
-    -not -path "$repo_root/.claude/worktrees/*" \
-    -not -path "$repo_root/.codex/worktrees/*" \
-    -not -path "$repo_root/.agents/worktrees/*" \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*" \
-    -print -quit | grep -q .; then
-  printf 'FAIL .DS_Store files found\n' >&2
-  find "$repo_root" -name .DS_Store \
-    -not -path "$repo_root/.claude/worktrees/*" \
-    -not -path "$repo_root/.codex/worktrees/*" \
-    -not -path "$repo_root/.agents/worktrees/*" \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*" >&2
-  exit 1
-fi
-printf 'PASS no .DS_Store files\n'
-
-# Embedded .git dirs: prune the root .git (huge, expected) plus the gitignored
-# runtime dirs (cross-model-out/, .codegraph/) — a cross-model run that captured
-# output from a cloned repo, or a codegraph index, can leave a nested .git there
-# that is driver-local, never committable framework content. (<TEAM>-244 extends
-# the <TEAM>-61 prune set, mirroring check-drift's gitignored-runtime exclusion.)
-if find "$repo_root" -path "$repo_root/.git" -prune -o -name .git -type d \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*" \
-    -print -quit | grep -q .; then
-  printf 'FAIL embedded .git directories found\n' >&2
-  find "$repo_root" -path "$repo_root/.git" -prune -o -name .git -type d \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*" \
-    -print >&2
-  exit 1
-fi
-printf 'PASS no embedded .git directories\n'
-
-# Flat-reject: loose files / dirs that would only land here through hand-edit
-# or a misconfigured tool. None are harness-managed at repo root.
-for forbidden in \
-  "$repo_root/.env" "$repo_root/auth.json" \
-  "$repo_root/config.toml" "$repo_root/settings.json" \
-  "$repo_root/vault" "$repo_root/codex"; do
-  if [ -e "$forbidden" ]; then
-    printf 'FAIL forbidden local or legacy artifact present: %s\n' "$forbidden" >&2
-    exit 1
-  fi
-done
-
-# Recognize a deliberately CO-LOCATED harness config dir in the loop below: when
-# the operator points a harness's config-dir variable at a directory under the
-# repo root (e.g. CLAUDE_CONFIG_DIR=$repo_root/.claude — running every harness
-# out of the framework folder), that directory holds the harness's own compiled
-# output + runtime state. It is gitignored and never committable, so it is out of
-# scope for this leak guard, exactly like the cross-model-out/ / .codegraph/ /
-# worktrees/ runtime dirs the scans above already prune. Resolve each configured
-# target to a physical path: environment first, then a sourced local.env
-# (install.sh / bootstrap.sh read local.env the same way). In the maintainer
-# default (~/.claude etc.) and in CI (temp-dir config) none of these equal
-# $repo_root/.<harness>, so the reject below still fires on a genuine leak.
+# Resolve each configured target to a physical path: environment first, then a
+# sourced local.env (install.sh / bootstrap.sh read local.env the same way). In
+# the maintainer default (~/.claude etc.) and in CI (temp-dir config) none of
+# these equal $repo_root/.<harness>, so the .DS_Store / embedded-.git / hand-
+# edit rejects below still fire on a genuine leak. <TEAM>-285 added this
+# recognition to the forbidden-artifacts guard ONLY; <TEAM>-319 hoists it ABOVE the
+# .DS_Store + embedded-.git scans so those two earlier tree-walks honor the same
+# exemption — a co-located install previously cascade-failed `make verify`
+# locally because those scans tripped on the gitignored plugin .git dirs.
 cfg_claude="${CLAUDE_CONFIG_DIR:-}"
 cfg_codex="${CODEX_HOME:-}"
 cfg_hermes="${HERMES_HOME:-}"
@@ -108,6 +56,115 @@ _phys_dir() {
 cfg_claude_p="$(_phys_dir "$cfg_claude")"
 cfg_codex_p="$(_phys_dir "$cfg_codex")"
 cfg_hermes_p="$(_phys_dir "$cfg_hermes")"
+
+# Register the repo-root harness dirs that ARE the operator's co-located config
+# dir. The co-located DECISION is made by PHYSICAL path (pwd -P on both sides),
+# so a /var↔/private symlink can never misclassify; the stored key is the
+# repo_root-relative dir ($repo_root/.claude), which matches the prefix that
+# find prints for artifacts inside it. .agents has no config variable, so it is
+# never registered and stays fully guarded.
+colocated_dirs=()
+_register_colocated() {
+  local name="$1" cfg_phys="$2" hd hd_phys
+  hd="$repo_root/$name"
+  [ -n "$cfg_phys" ] || return 0
+  [ -d "$hd" ] || return 0
+  hd_phys="$(cd "$hd" 2>/dev/null && pwd -P)" || return 0
+  [ "$hd_phys" = "$cfg_phys" ] && colocated_dirs+=("$hd")
+  return 0
+}
+_register_colocated ".claude" "$cfg_claude_p"
+_register_colocated ".codex"  "$cfg_codex_p"
+_register_colocated ".hermes" "$cfg_hermes_p"
+
+# True when $1 lives inside a recognized co-located config dir (registered
+# above). Guarded length check keeps the empty-array expansion safe under
+# `set -u` on bash 3.2 (the macOS default).
+_under_colocated_cfg() {
+  local p="$1" d
+  [ "${#colocated_dirs[@]}" -gt 0 ] || return 1
+  for d in "${colocated_dirs[@]}"; do
+    case "$p" in "$d"/*) return 0 ;; esac
+  done
+  return 1
+}
+
+# Harness-managed worktrees (.claude/worktrees/, and the parallel .codex/ and
+# .agents/ paths if they ever exist) can legitimately contain .DS_Store from
+# macOS Finder visits or unrelated test fixtures. <TEAM>-60 allowlisted the
+# worktrees subtree in the forbidden-roots check; this scan does the same so
+# `bash scripts/validate.sh` runs clean from main repo root all the way
+# through. (<TEAM>-61.)
+#
+# Gitignored runtime-artifact dirs (cross-model-out/, .codegraph/) are pruned
+# the same way. They hold driver-local per-run output that can never enter git,
+# so a .DS_Store an operator's Finder dropped inside one is unrelated working
+# state, not framework content. check-drift.sh prunes the same gitignored
+# runtime set (<TEAM>-87 + <TEAM>-213); this scan and the secret grep below mirror it
+# so a tree carrying real cross-model-review runs still validates clean. (<TEAM>-244.)
+# Collect candidates once, then drop any under a co-located config dir (<TEAM>-319).
+# A while-read filter replaces the old `find -print -quit | grep -q` early-exit
+# because the co-located exemption is a per-path decision the static -not -path
+# prunes can't express; the static prunes still pre-drop the runtime dirs.
+ds_hits=""
+while IFS= read -r ds_f; do
+  [ -n "$ds_f" ] || continue
+  _under_colocated_cfg "$ds_f" && continue
+  ds_hits+="$ds_f"$'\n'
+done < <(find "$repo_root" -name .DS_Store \
+    -not -path "$repo_root/.claude/worktrees/*" \
+    -not -path "$repo_root/.codex/worktrees/*" \
+    -not -path "$repo_root/.agents/worktrees/*" \
+    -not -path "$repo_root/cross-model-out/*" \
+    -not -path "$repo_root/.codegraph/*")
+if [ -n "$ds_hits" ]; then
+  printf 'FAIL .DS_Store files found\n' >&2
+  printf '%s' "$ds_hits" >&2
+  exit 1
+fi
+printf 'PASS no .DS_Store files\n'
+
+# Embedded .git dirs: prune the root .git (huge, expected) plus the gitignored
+# runtime dirs (cross-model-out/, .codegraph/) — a cross-model run that captured
+# output from a cloned repo, or a codegraph index, can leave a nested .git there
+# that is driver-local, never committable framework content. (<TEAM>-244 extends
+# the <TEAM>-61 prune set, mirroring check-drift's gitignored-runtime exclusion.)
+# Same per-path co-located filter as the .DS_Store scan (<TEAM>-319): the offending
+# paths a co-located install trips on are the plugin-marketplace clones'
+# own .git dirs under .claude/.codex (gitignored, never committable). The root
+# .git is pruned by the -path … -prune branch; cross-model-out/ + .codegraph/
+# keep their static prunes.
+git_hits=""
+while IFS= read -r git_d; do
+  [ -n "$git_d" ] || continue
+  _under_colocated_cfg "$git_d" && continue
+  git_hits+="$git_d"$'\n'
+done < <(find "$repo_root" -path "$repo_root/.git" -prune -o -name .git -type d \
+    -not -path "$repo_root/cross-model-out/*" \
+    -not -path "$repo_root/.codegraph/*" \
+    -print)
+if [ -n "$git_hits" ]; then
+  printf 'FAIL embedded .git directories found\n' >&2
+  printf '%s' "$git_hits" >&2
+  exit 1
+fi
+printf 'PASS no embedded .git directories\n'
+
+# Flat-reject: loose files / dirs that would only land here through hand-edit
+# or a misconfigured tool. None are harness-managed at repo root.
+for forbidden in \
+  "$repo_root/.env" "$repo_root/auth.json" \
+  "$repo_root/config.toml" "$repo_root/settings.json" \
+  "$repo_root/vault" "$repo_root/codex"; do
+  if [ -e "$forbidden" ]; then
+    printf 'FAIL forbidden local or legacy artifact present: %s\n' "$forbidden" >&2
+    exit 1
+  fi
+done
+
+# (Co-located config-dir resolution — cfg_claude_p / cfg_codex_p / cfg_hermes_p —
+# is hoisted to the top of this script by <TEAM>-319 so the .DS_Store + embedded-.git
+# scans above share it. The loop below consumes the same resolved paths.)
 
 # Harness-config dirs (.claude/, .codex/, .hermes/, .agents/) at agentic-os-template repo root
 # may contain ONLY framework-development workflow state:

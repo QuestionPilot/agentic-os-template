@@ -310,3 +310,80 @@ foreach ($q246name in @("fixture-t246-$(Get-VtSuffix).log", ".test-t246-$(Get-Vt
 # the committable-set scan still PASSES clean on the live tree — a
 # positive guard that the enumeration didn't over-prune into a vacuous pass.
 Assert-Exit 'validate.test: validate.ps1 passes clean on the committable set' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
+
+# --- <TEAM>-319: .DS_Store + embedded-.git scans honor the CO-LOCATED config dir
+# exemption (twin of validate.test.sh's <TEAM>-319 block) ---
+# A co-located install keeps the harness's own gitignored runtime state under the
+# repo-root config dir — plugin clones carrying their own .git and Finder
+# .DS_Store files. <TEAM>-319 hoists the co-located recognition above the two early
+# tree-walk scans so they prune those; the contrast (config dir ELSEWHERE) must
+# still FAIL. Inject into $REPO_ROOT/.hermes (skip-if-real) and drive recognition
+# via HERMES_HOME so the operator's real .claude/.codex are never touched.
+$q319Hermes = Join-Path $env:REPO_ROOT '.hermes'
+if (Test-Path -LiteralPath $q319Hermes) {
+    _Skip 'validate.test: validate.ps1 exempts embedded .git in a co-located config dir' `
+        'real .hermes/ present at $REPO_ROOT — refusing to co-opt as a config target'
+    _Skip 'validate.test: validate.ps1 still FAILS embedded .git when config dir is elsewhere' `
+        'real .hermes/ present at $REPO_ROOT — refusing to co-opt as a config target'
+    _Skip 'validate.test: validate.ps1 exempts .DS_Store in a co-located config dir' `
+        'real .hermes/ present at $REPO_ROOT — refusing to co-opt as a config target'
+    _Skip 'validate.test: validate.ps1 still FAILS .DS_Store when config dir is elsewhere' `
+        'real .hermes/ present at $REPO_ROOT — refusing to co-opt as a config target'
+} else {
+    $q319Else = Join-Path $env:REPO_ROOT ('.test-q319-elsewhere-' + (Get-VtSuffix))
+    New-Item -ItemType Directory -Path $q319Else -Force | Out-Null
+    $q319SavedHermes = $env:HERMES_HOME
+
+    # Scenario A — embedded .git (a plugin clone's own .git dir).
+    $q319GitDir = Join-Path $q319Hermes 'plugins' ('.test-q319-' + (Get-VtSuffix)) '.git'
+    New-Item -ItemType Directory -Path $q319GitDir -Force | Out-Null
+    # (a) HERMES_HOME IS this .hermes/ → recognized → pruned → PASS.
+    $env:HERMES_HOME = $q319Hermes
+    Assert-Exit 'validate.test: validate.ps1 exempts embedded .git in a co-located config dir' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
+    # (b) HERMES_HOME elsewhere → not recognized → still FAILS on the embedded .git.
+    $env:HERMES_HOME = $q319Else
+    $q319_out = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+    $q319_exit = $LASTEXITCODE
+    if ($q319_out -is [array]) { $q319_out = $q319_out -join "`n" }
+    Assert-Eq 'validate.test: validate.ps1 still FAILS embedded .git when config dir is elsewhere' '1' "$q319_exit"
+    Assert-Contains 'validate.test: validate.ps1 embedded-.git FAIL names the scan' `
+        $q319_out 'embedded .git'
+    Remove-Item -LiteralPath (Join-Path $q319Hermes 'plugins') -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Scenario B — a Finder .DS_Store directly under the config dir.
+    Write-LfFile (Join-Path $q319Hermes '.DS_Store') ''
+    # (a) recognized → pruned → PASS.
+    $env:HERMES_HOME = $q319Hermes
+    Assert-Exit 'validate.test: validate.ps1 exempts .DS_Store in a co-located config dir' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
+    # (b) elsewhere → still FAILS on the .DS_Store.
+    $env:HERMES_HOME = $q319Else
+    $q319b_out = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+    $q319b_exit = $LASTEXITCODE
+    if ($q319b_out -is [array]) { $q319b_out = $q319b_out -join "`n" }
+    Assert-Eq 'validate.test: validate.ps1 still FAILS .DS_Store when config dir is elsewhere' '1' "$q319b_exit"
+    Assert-Contains 'validate.test: validate.ps1 .DS_Store FAIL names the scan' `
+        $q319b_out 'DS_Store'
+    # Clear the .hermes artifact before Scenario C so its assertion is unambiguous.
+    Remove-Item -LiteralPath (Join-Path $q319Hermes '.DS_Store') -Force -ErrorAction SilentlyContinue
+    Remove-IfEmpty $q319Hermes
+
+    # Scenario C — a config var pointing at a NON-harness repo dir must NOT
+    # exempt. Recognition is gated on a repo-root harness dir physically equaling
+    # the config path — NOT on "any dir a config var points at". This is the
+    # exact divergence the cross-model review caught: the first PS cut stored
+    # every resolved config path and pruned under it, so a .DS_Store inside the
+    # pointed-at non-harness dir wrongly PASSED. Locks bash↔PS parity.
+    Write-LfFile (Join-Path $q319Else '.DS_Store') ''
+    $env:HERMES_HOME = $q319Else
+    $q319c_out = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+    $q319c_exit = $LASTEXITCODE
+    if ($q319c_out -is [array]) { $q319c_out = $q319c_out -join "`n" }
+    Assert-Eq 'validate.test: validate.ps1 does NOT exempt a non-harness dir a config var points at' '1' "$q319c_exit"
+    Assert-Contains 'validate.test: validate.ps1 non-harness-cfg FAIL names the .DS_Store scan' `
+        $q319c_out 'DS_Store'
+    Remove-Item -LiteralPath (Join-Path $q319Else '.DS_Store') -Force -ErrorAction SilentlyContinue
+
+    # Restore env + surgical cleanup (skip-if-real guaranteed .hermes/ was absent).
+    $env:HERMES_HOME = $q319SavedHermes
+    Remove-IfEmpty $q319Else
+}
