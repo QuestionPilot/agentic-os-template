@@ -477,3 +477,88 @@ if git -C "$REPO_ROOT" diff --quiet -- README.md 2>/dev/null; then
 else
   _skip "validate.sh excepts a secret-shaped line in the ROOT README" "README.md not clean"
 fi
+
+# --- <TEAM>-319: the .DS_Store + embedded-.git scans honor the CO-LOCATED config
+# dir exemption ---
+# A co-located install (CLAUDE_CONFIG_DIR=$REPO_ROOT/.claude — running every
+# harness out of the framework folder) keeps the harness's own gitignored
+# runtime state under the repo-root config dir: plugin-marketplace clones that
+# carry their OWN .git (.claude/plugins/marketplaces/*/.git,
+# .codex/.tmp/plugins/.git) and Finder .DS_Store files. Before <TEAM>-319 the two
+# early tree-walk scans (.DS_Store at validate.sh's top, embedded-.git just
+# below) pruned only worktrees/ / cross-model-out/ / .codegraph/ — NOT the
+# co-located config dirs — so `bash scripts/validate.sh` (and thus `make verify`)
+# cascade-failed locally on an otherwise-clean tree. <TEAM>-319 hoists the
+# co-located recognition the forbidden-artifacts guard already had (<TEAM>-285)
+# above both scans.
+#
+# Inject into $REPO_ROOT/.hermes (skip-if-real) and drive recognition via
+# HERMES_HOME so the test never touches the operator's real .claude/.codex. The
+# contrast (HERMES_HOME pointing ELSEWHERE) must still FAIL — proving the
+# exemption is gated on the physical-path match, not a blanket prune that would
+# gut the scan. Sentinels are uniquely suffixed; cleanup is inline (NOT trap
+# EXIT — run.sh sources files, so an EXIT trap persists across siblings).
+if [ -e "$REPO_ROOT/.hermes" ]; then
+  _skip "validate.sh exempts embedded .git in a co-located config dir" \
+    "real .hermes/ present at \$REPO_ROOT — refusing to co-opt as a config target"
+  _skip "validate.sh still FAILS embedded .git when config dir is elsewhere" \
+    "real .hermes/ present at \$REPO_ROOT — refusing to co-opt as a config target"
+  _skip "validate.sh exempts .DS_Store in a co-located config dir" \
+    "real .hermes/ present at \$REPO_ROOT — refusing to co-opt as a config target"
+  _skip "validate.sh still FAILS .DS_Store when config dir is elsewhere" \
+    "real .hermes/ present at \$REPO_ROOT — refusing to co-opt as a config target"
+else
+  VAL_Q319_ELSEWHERE="$REPO_ROOT/.test-q319-elsewhere-$$-${RANDOM:-x}"
+  mkdir -p "$VAL_Q319_ELSEWHERE"
+
+  # Scenario A — embedded .git (a plugin clone's own .git dir).
+  mkdir -p "$REPO_ROOT/.hermes/plugins/.test-q319-$$-${RANDOM:-g}/.git"
+  # (a) HERMES_HOME IS this .hermes/ → recognized → pruned → PASS.
+  assert_exit "validate.sh exempts embedded .git in a co-located config dir" 0 -- \
+    env HERMES_HOME="$REPO_ROOT/.hermes" bash "$REPO_ROOT/scripts/validate.sh"
+  # (b) HERMES_HOME elsewhere → not recognized → still FAILS on the embedded .git.
+  val_q319_out="$(env HERMES_HOME="$VAL_Q319_ELSEWHERE" bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
+    && val_q319_exit=0 || val_q319_exit=$?
+  assert_eq "validate.sh still FAILS embedded .git when config dir is elsewhere" \
+    "1" "$val_q319_exit"
+  assert_contains "validate.sh embedded-.git FAIL names the scan" \
+    "$val_q319_out" "embedded .git"
+  rm -rf "$REPO_ROOT/.hermes/plugins"
+
+  # Scenario B — a Finder .DS_Store directly under the config dir.
+  touch "$REPO_ROOT/.hermes/.DS_Store"
+  # (a) recognized → pruned → PASS.
+  assert_exit "validate.sh exempts .DS_Store in a co-located config dir" 0 -- \
+    env HERMES_HOME="$REPO_ROOT/.hermes" bash "$REPO_ROOT/scripts/validate.sh"
+  # (b) elsewhere → still FAILS on the .DS_Store.
+  val_q319b_out="$(env HERMES_HOME="$VAL_Q319_ELSEWHERE" bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
+    && val_q319b_exit=0 || val_q319b_exit=$?
+  assert_eq "validate.sh still FAILS .DS_Store when config dir is elsewhere" \
+    "1" "$val_q319b_exit"
+  assert_contains "validate.sh .DS_Store FAIL names the scan" \
+    "$val_q319b_out" "DS_Store"
+  # Clear the .hermes artifact before Scenario C so its assertion is unambiguous.
+  rm -f "$REPO_ROOT/.hermes/.DS_Store"
+  rmdir "$REPO_ROOT/.hermes" 2>/dev/null || true
+
+  # Scenario C — a config var pointing at a NON-harness repo dir must NOT exempt.
+  # Recognition is gated on a repo-root harness dir (.claude/.codex/.hermes)
+  # physically equaling the config path — NOT on "any dir a config var points
+  # at". A .DS_Store INSIDE the pointed-at non-harness dir must still FAIL. This
+  # is the exact case the cross-model review caught the PS twin getting wrong
+  # (it pruned under any configured path); this test locks bash↔PS parity on it.
+  touch "$VAL_Q319_ELSEWHERE/.DS_Store"
+  val_q319c_out="$(env HERMES_HOME="$VAL_Q319_ELSEWHERE" bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
+    && val_q319c_exit=0 || val_q319c_exit=$?
+  assert_eq "validate.sh does NOT exempt a non-harness dir a config var points at" \
+    "1" "$val_q319c_exit"
+  assert_contains "validate.sh non-harness-cfg FAIL names the .DS_Store scan" \
+    "$val_q319c_out" "DS_Store"
+  rm -f "$VAL_Q319_ELSEWHERE/.DS_Store"
+
+  # Surgical cleanup — only what this block created (skip-if-real guaranteed
+  # .hermes/ was absent).
+  rmdir "$VAL_Q319_ELSEWHERE" 2>/dev/null || true
+  unset VAL_Q319_ELSEWHERE val_q319_out val_q319_exit val_q319b_out val_q319b_exit
+  unset val_q319c_out val_q319c_exit
+fi

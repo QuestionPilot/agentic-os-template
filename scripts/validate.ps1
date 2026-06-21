@@ -65,6 +65,82 @@ function Fail-Validation { param([string]$Msg) [Console]::Error.WriteLine($Msg);
 function Pass-Line { param([string]$Msg) Write-Host $Msg }
 
 # ---------------------------------------------------------------------------
+# Co-located harness config-dir resolution (<TEAM>-285 recognition; hoisted by
+# <TEAM>-319). When the operator points a harness config-dir variable
+# (CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME) at a dir under the repo root,
+# that dir holds the harness's own gitignored output + runtime state — plugin
+# clones carrying their OWN .git, a Finder .DS_Store, etc. <TEAM>-285 added this
+# recognition to the forbidden-artifacts scan ONLY; <TEAM>-319 hoists it ABOVE the
+# .DS_Store + embedded-.git scans so those two tree-walks prune a co-located
+# config dir's contents — a co-located install previously cascade-failed
+# `make verify`. Mirrors validate.sh's hoisted block + _under_colocated_cfg.
+# ---------------------------------------------------------------------------
+
+# Resolve a harness config-dir variable (CLAUDE_CONFIG_DIR / CODEX_HOME /
+# HERMES_HOME) to a physical path — environment first, then a textual local.env
+# parse with $VAR / ${VAR} / %VAR% expansion. Returns '' when unset or the path
+# does not resolve. Mirrors validate.sh's env-then-local.env resolution so a
+# CO-LOCATED config dir is recognized identically on both platforms.
+function Get-ConfiguredConfigDirPhys {
+    param([string]$EnvName, [string]$RepoRoot)
+    $val = [Environment]::GetEnvironmentVariable($EnvName)
+    if ([string]::IsNullOrEmpty($val)) {
+        $localEnv = Join-Path $RepoRoot 'local.env'
+        if (Test-Path -LiteralPath $localEnv) {
+            $line = (Select-String -LiteralPath $localEnv -Pattern "^\s*(export\s+)?$EnvName=" -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($line) {
+                $raw = $line.Line -replace "^\s*(export\s+)?$EnvName=", ''
+                $raw = ($raw -replace '\s+#.*$', '').Trim().Trim('"').Trim("'")
+                $raw = [Environment]::ExpandEnvironmentVariables($raw)
+                $raw = [regex]::Replace($raw, '\$\{?(\w+)\}?', { param($m) [Environment]::GetEnvironmentVariable($m.Groups[1].Value) })
+                $val = $raw
+            }
+        }
+    }
+    if ([string]::IsNullOrEmpty($val)) { return '' }
+    try { return (Resolve-Path -LiteralPath $val -ErrorAction Stop).Path } catch { return '' }
+}
+
+# Repo-root harness dirs that resolve to a configured config dir. Computed once.
+# Empty when no co-located install (maintainer default / CI) — the scans then
+# behave exactly as before. (.agents has no config variable, so it is never
+# registered and stays fully guarded.)
+#
+# Mirrors validate.sh's _register_colocated EXACTLY: a config var is recognized
+# ONLY when a repo-root harness dir (.claude/.codex/.hermes) PHYSICALLY equals
+# the resolved config path. Storing every resolved config path unconditionally
+# would prune leak-guard findings under ANY dir a config var happens to point at
+# (e.g. CLAUDE_CONFIG_DIR=$repo/core) — which bash never does. The stored key is
+# the repo-root harness dir ($repo/.claude), matching the prefix Get-ChildItem
+# prints for artifacts inside it. (Parity fix caught by cross-model review.)
+$script:ColocatedCfgDirs = @()
+foreach ($pair in @(
+    @{ Name = '.claude'; EnvName = 'CLAUDE_CONFIG_DIR' },
+    @{ Name = '.codex';  EnvName = 'CODEX_HOME' },
+    @{ Name = '.hermes'; EnvName = 'HERMES_HOME' }
+)) {
+    $cfgPhys = Get-ConfiguredConfigDirPhys $pair.EnvName $repo
+    if ([string]::IsNullOrEmpty($cfgPhys)) { continue }
+    $hd = Join-Path $repo $pair.Name
+    if (-not (Test-Path -LiteralPath $hd -PathType Container)) { continue }
+    $hdPhys = (Resolve-Path -LiteralPath $hd -ErrorAction SilentlyContinue).Path
+    if ($hdPhys -and ($hdPhys -eq $cfgPhys)) {
+        $script:ColocatedCfgDirs += $hd
+    }
+}
+
+# True when $Path lives inside a recognized co-located config dir.
+function Test-UnderColocatedCfg {
+    param([string]$Path)
+    foreach ($cfg in $script:ColocatedCfgDirs) {
+        if ($Path.StartsWith($cfg + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
 # 1. .DS_Store scan
 # ---------------------------------------------------------------------------
 
@@ -87,6 +163,8 @@ function Test-DSStore {
             foreach ($p in $allowList) {
                 if ($f.StartsWith($p + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { $isAllow = $true; break }
             }
+            # <TEAM>-319: also drop artifacts inside a co-located config dir.
+            if (-not $isAllow -and (Test-UnderColocatedCfg $f)) { $isAllow = $true }
             -not $isAllow
         }
     )
@@ -125,6 +203,9 @@ function Test-EmbeddedGit {
                     if ($f.StartsWith($r + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { $skip = $true; break }
                 }
             }
+            # <TEAM>-319: also drop .git dirs inside a co-located config dir
+            # (plugin-marketplace clones carry their own .git).
+            if (-not $skip -and (Test-UnderColocatedCfg $f)) { $skip = $true }
             -not $skip
         }
     )
@@ -143,30 +224,9 @@ Test-EmbeddedGit
 # 3. Forbidden artifacts at repo root + harness-config allowlist
 # ---------------------------------------------------------------------------
 
-# Resolve a harness config-dir variable (CLAUDE_CONFIG_DIR / CODEX_HOME /
-# HERMES_HOME) to a physical path — environment first, then a textual local.env
-# parse with $VAR / ${VAR} / %VAR% expansion. Returns '' when unset or the path
-# does not resolve. Mirrors validate.sh's env-then-local.env resolution so a
-# CO-LOCATED config dir is recognized identically on both platforms.
-function Get-ConfiguredConfigDirPhys {
-    param([string]$EnvName, [string]$RepoRoot)
-    $val = [Environment]::GetEnvironmentVariable($EnvName)
-    if ([string]::IsNullOrEmpty($val)) {
-        $localEnv = Join-Path $RepoRoot 'local.env'
-        if (Test-Path -LiteralPath $localEnv) {
-            $line = (Select-String -LiteralPath $localEnv -Pattern "^\s*(export\s+)?$EnvName=" -ErrorAction SilentlyContinue | Select-Object -First 1)
-            if ($line) {
-                $raw = $line.Line -replace "^\s*(export\s+)?$EnvName=", ''
-                $raw = ($raw -replace '\s+#.*$', '').Trim().Trim('"').Trim("'")
-                $raw = [Environment]::ExpandEnvironmentVariables($raw)
-                $raw = [regex]::Replace($raw, '\$\{?(\w+)\}?', { param($m) [Environment]::GetEnvironmentVariable($m.Groups[1].Value) })
-                $val = $raw
-            }
-        }
-    }
-    if ([string]::IsNullOrEmpty($val)) { return '' }
-    try { return (Resolve-Path -LiteralPath $val -ErrorAction Stop).Path } catch { return '' }
-}
+# (Get-ConfiguredConfigDirPhys is defined once near the top of this script —
+# hoisted by <TEAM>-319 so the .DS_Store + embedded-.git scans share it. The
+# $cfgDirs map below reuses it for the per-harness co-located match.)
 
 function Test-ForbiddenArtifacts {
     $rootForbidden = @(

@@ -1354,4 +1354,16 @@ main() {
   fi
 }
 
-main
+# Run the installer only on direct execution. When this file is SOURCED
+# (BASH_SOURCE != $0) — e.g. a unit test loading validate_build — the function
+# definitions load but the build/swap (main) does not run, so no install
+# happens. The `if` form is deliberate over a bare `[ … ] && main`: when the
+# guard is false (sourced), `&&` would make the script's LAST command exit 1,
+# which under the caller's `set -e` aborts the sourcing test. An `if` with no
+# matching branch returns 0, so a sourced run ends cleanly. (<TEAM>-318. The
+# top-level target-resolution + temp-build-dir setup above still runs on source
+# — it resolves a target and makes an empty build dir but compiles/swaps
+# nothing — so a unit test points AI_CONFIG_LOCAL_ENV at a throwaway local.env.)
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main
+fi
