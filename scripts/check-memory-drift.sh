@@ -244,14 +244,16 @@ while IFS= read -r -d '' f; do
     }
   ' "$f")
 
-  # Heuristic trigger: headline claims closed state.
-  if ! printf '%s' "$description" | grep -qiE 'COMPLETE|CLOSED|DONE'; then
+  # Heuristic trigger: headline claims closed state. here-string, not
+  # `printf … | grep -qiE`: avoids the pipefail SIGPIPE-race class (an early
+  # grep match can SIGPIPE the upstream printf and false-flip the test).
+  if ! grep -qiE 'COMPLETE|CLOSED|DONE' <<<"$description"; then
     continue
   fi
 
   # Exception: if the description ALSO mentions a follow-on / pointer, the
   # headline acknowledges the live state — not drift.
-  if printf '%s' "$description" | grep -qiE 'follow-?on|see body|active.*continu|see .?\['; then
+  if grep -qiE 'follow-?on|see body|active.*continu|see .?\[' <<<"$description"; then
     continue
   fi
 
