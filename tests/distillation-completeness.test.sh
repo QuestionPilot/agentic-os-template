@@ -185,6 +185,32 @@ BOM_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$MEM_BOM" --lessons-dir "$LES" 2>&1)
 assert_eq "distill: BOM'd frontmatter-only feedback note is in scope → exit 1" "1" "$?"
 assert_contains "distill: flags the BOM'd no-prefix feedback note" "$BOM_OUT" "home-folder.md"
 
+# === 15. SIGPIPE-race regression: a distilled token at the START of a
+# LARGE lessons corpus must PASS. The pre-fix guard piped the whole corpus into
+# `grep -qE` under `set -o pipefail`; when grep matched the early token it exited
+# before the upstream `printf` finished writing the large body, the printf took
+# SIGPIPE (non-zero), and pipefail made the pipeline report "no match" — a false
+# "undistilled" FAIL for any token sorting early in the corpus. The here-string
+# match has no upstream process to SIGPIPE. The corpus MUST exceed the pipe
+# buffer (~64KB) for the early-match race to fire on the buggy code; ~570KB of
+# filler after the token makes the pre-fix failure deterministic (verified: the
+# unpatched script FAILs this 5/5).
+MEM_RACE=$(mktemp -d 2>/dev/null) || MEM_RACE="/tmp/distill-race-$$"
+mkdir -p "$MEM_RACE"
+LES_RACE=$(mktemp -d 2>/dev/null) || LES_RACE="/tmp/distill-les-race-$$"
+mkdir -p "$LES_RACE"
+{
+  printf -- '---\ntitle: Big Corpus\n---\n\n## Source Notes\n- feedback-early-token\n\n'
+  awk 'BEGIN { for (i = 0; i < 10000; i++) print "filler line " i " lorem ipsum dolor sit amet consectetur adipiscing" }'
+} > "$LES_RACE/big.md"
+_note "$MEM_RACE" "feedback-early-token.md" feedback
+RACE_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$MEM_RACE" --lessons-dir "$LES_RACE" 2>&1)
+RACE_RC=$?
+assert_eq "distill: early token in large corpus PASSes (SIGPIPE-race regression)" "0" "$RACE_RC"
+assert_contains "distill: race-regression run reports PASS" "$RACE_OUT" "PASS"
+assert_not_contains "distill: early-token note not falsely flagged undistilled" "$RACE_OUT" "feedback-early-token.md"
+
 # --- Cleanup.
 rm -rf "$LES" "$MEM_OK" "$MEM_BAD" "$MEM_DEC" "$MEM_FM" "$MEM_BND" "$LES_BND" \
-  "$MEM_NONE" "$MEM_IDX" "$LES_SPACE" "$MEM_BARE" "$MEM_NOTFB" "$MEM_BOM"
+  "$MEM_NONE" "$MEM_IDX" "$LES_SPACE" "$MEM_BARE" "$MEM_NOTFB" "$MEM_BOM" \
+  "$MEM_RACE" "$LES_RACE"

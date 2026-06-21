@@ -1097,8 +1097,13 @@ validate_build() {
     esac
   done
   [ -d "$BUILD/skills" ] || die "build produced no skills/ directory"
-  # No unresolved build placeholders may survive into the output.
-  if grep -rlE '@@[A-Z_]+@@' "$BUILD" 2>/dev/null | grep -q .; then
+  # No unresolved build placeholders may survive into the output. Use grep's own
+  # recursive-quiet exit status, NOT `grep -rl … | grep -q .`: a multi-file match
+  # lets the downstream `grep -q` exit early and SIGPIPE the upstream grep, which
+  # under pipefail flips the pipeline non-zero and FALSE-PASSES this guard —
+  # shipping unresolved tokens (same SIGPIPE-race family as the here-string
+  # conversions elsewhere in this change).
+  if grep -rqE '@@[A-Z_]+@@' "$BUILD" 2>/dev/null; then
     die "unresolved @@PLACEHOLDER@@ tokens in build output"
   fi
 }
@@ -1170,7 +1175,9 @@ classify_state() {
       base="$(basename "$sub")"
       # App-written bookkeeping the drift gate already exempts is not "custom".
       case "$name/$base" in skills/.*) continue ;; esac
-      if ! printf '%s\n' "$mbase" | grep -qxF -- "$base"; then
+      # here-string, not `printf … | grep -qxF`: avoids the pipefail SIGPIPE-race
+      # class (an early grep match can SIGPIPE the upstream printf).
+      if ! grep -qxF -- "$base" <<<"$mbase"; then
         # custom (Shape C) is the reassuring "preserved, nothing to do" class —
         # counted, not enumerated, to keep the actionable drift lists legible.
         custom=$((custom+1))

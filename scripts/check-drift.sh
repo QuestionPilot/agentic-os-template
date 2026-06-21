@@ -97,11 +97,14 @@ if [ "${1:-}" = "--manifest" ]; then
       skills/.bundled_manifest|skills/.curator_state|skills/.usage.json|skills/.usage.json.lock) continue ;;
       skills/*/*)
         sub="${rel#skills/}"; sub="${sub%%/*}"
-        printf '%s\n' "$managed_skills" | grep -qxF "$sub" || continue
+        # here-string, not `printf … | grep -qxF`: under pipefail an early grep
+        # match can SIGPIPE the printf and false-flip the test, wrongly skipping
+        # a managed entry's drift check.
+        grep -qxF "$sub" <<<"$managed_skills" || continue
         ;;
       plugins/*/*)
         sub="${rel#plugins/}"; sub="${sub%%/*}"
-        printf '%s\n' "$managed_plugins" | grep -qxF "$sub" || continue
+        grep -qxF "$sub" <<<"$managed_plugins" || continue
         ;;
     esac
     if ! jq -e --arg k "$rel" '.generated | has($k)' "$manifest" >/dev/null 2>&1; then

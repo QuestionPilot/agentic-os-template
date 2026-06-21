@@ -165,7 +165,13 @@ while IFS= read -r -d '' f; do
   # defensively — after normalization a slug is `[a-z0-9-]` only, so this is a
   # no-op in the normal case but neutralizes any stray metacharacter.
   norm_re=$(printf '%s' "$norm" | sed 's/[^a-z0-9-]/\\&/g')
-  if printf '%s\n' "$lessons_text" | grep -qE "(^|[^a-z0-9-])${norm_re}([^a-z0-9-]|$)"; then
+  # Match via here-string, NOT `printf … | grep -qE`: under `set -o pipefail` an
+  # early `grep -q` match exits before the upstream printf finishes writing a
+  # large corpus, the printf takes SIGPIPE (non-zero), and pipefail makes the
+  # pipeline report "no match" — a false "undistilled" FAIL for any token that
+  # sorts early in the Lessons text. A here-string has no upstream process to
+  # SIGPIPE, so the match is race-free.
+  if grep -qE "(^|[^a-z0-9-])${norm_re}([^a-z0-9-]|$)" <<<"$lessons_text"; then
     : # found as a whole token in the Lessons corpus → distilled
   else
     printf 'FAIL undistilled: %s — not found in any 04-Lessons note; promote it (see capabilities/closeout.md → Distill this session'\''s feedback)\n' "$base" >&2

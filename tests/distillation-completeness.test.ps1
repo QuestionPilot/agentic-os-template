@@ -213,8 +213,29 @@ if ($BOM_OUT -is [array]) { $BOM_OUT = $BOM_OUT -join "`n" }
 Assert-Eq "distill.test: BOM'd frontmatter-only feedback note is in scope → exit 1" '1' "$BOM_RC"
 Assert-Contains "distill.test: flags the BOM'd no-prefix feedback note" $BOM_OUT 'home-folder.md'
 
+# === 15. SIGPIPE-race regression: a distilled token at the START of a
+# LARGE lessons corpus must PASS. The bash twin's pre-fix guard piped the corpus
+# into `grep -qE` under pipefail and false-FAILed early-sorting tokens; the .ps1
+# twin matches via a `foreach`/`-match` loop (no pipe, no SIGPIPE) so it was
+# always correct. This is the cross-twin parity assertion: same large-corpus
+# early-token fixture, same PASS outcome on both twins.
+$MEM_RACE = New-TempDir 'distill-race'
+$LES_RACE = New-TempDir 'distill-les-race'
+$sb = [System.Text.StringBuilder]::new()
+[void]$sb.Append("---`ntitle: Big Corpus`n---`n`n## Source Notes`n- feedback-early-token`n`n")
+for ($i = 0; $i -lt 10000; $i++) { [void]$sb.Append("filler line $i lorem ipsum dolor sit amet consectetur adipiscing`n") }
+Write-LfFile (Join-Path $LES_RACE 'big.md') $sb.ToString()
+New-Note $MEM_RACE 'feedback-early-token.md' 'feedback'
+$RACE_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $MEM_RACE --lessons-dir $LES_RACE 2>&1
+$RACE_RC = $LASTEXITCODE
+if ($RACE_OUT -is [array]) { $RACE_OUT = $RACE_OUT -join "`n" }
+Assert-Eq 'distill.test: early token in large corpus PASSes (SIGPIPE-race regression)' '0' "$RACE_RC"
+Assert-Contains 'distill.test: race-regression run reports PASS' $RACE_OUT 'PASS'
+Assert-NotContains 'distill.test: early-token note not falsely flagged undistilled' $RACE_OUT 'feedback-early-token.md'
+
 # --- Cleanup.
 foreach ($d in @($LES, $MEM_OK, $MEM_BAD, $MEM_DEC, $MEM_FM, $MEM_BND, $LES_BND, `
-                 $MEM_NONE, $MEM_IDX, $LES_SPACE_ROOT, $MEM_BARE, $MEM_NOTFB, $MEM_BOM)) {
+                 $MEM_NONE, $MEM_IDX, $LES_SPACE_ROOT, $MEM_BARE, $MEM_NOTFB, $MEM_BOM, `
+                 $MEM_RACE, $LES_RACE)) {
     Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
 }

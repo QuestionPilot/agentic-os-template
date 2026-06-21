@@ -344,7 +344,9 @@ check_capabilities() {
 
     local key
     for key in name summary triggers verification harnesses kind; do
-      if ! printf '%s\n' "$fm" | grep -qE "^$key:[[:space:]]*[^[:space:]]"; then
+      # here-string, not `printf … | grep -qE`: under pipefail an early grep
+      # match can SIGPIPE the upstream printf and false-flip the test.
+      if ! grep -qE "^$key:[[:space:]]*[^[:space:]]" <<<"$fm"; then
         printf 'FAIL capability %s: missing or empty required header key: %s\n' "$base" "$key" >&2
         exit 1
       fi
@@ -364,7 +366,7 @@ check_capabilities() {
 
     for key in triggers harnesses; do
       local lv; lv="$(fm_get "$key")"
-      if ! printf '%s' "$lv" | grep -qE '^\[[^][]*[^][[:space:]][^][]*\]$'; then
+      if ! grep -qE '^\[[^][]*[^][[:space:]][^][]*\]$' <<<"$lv"; then
         printf 'FAIL capability %s: %s must be a non-empty [list] (got "%s")\n' "$base" "$key" "$lv" >&2
         exit 1
       fi
@@ -386,7 +388,7 @@ check_capabilities() {
 
     if [ "$v_kind" = "vendored" ]; then
       for key in source version install; do
-        if ! printf '%s\n' "$fm" | grep -qE "^$key:[[:space:]]*[^[:space:]]"; then
+        if ! grep -qE "^$key:[[:space:]]*[^[:space:]]" <<<"$fm"; then
           printf 'FAIL capability %s: vendored capability missing required key: %s\n' "$base" "$key" >&2
           exit 1
         fi
@@ -482,7 +484,7 @@ check_lifecycle() {
       exit 1
     fi
 
-    if ! printf '%s\n' "$fm" | grep -qE "$valid_re"; then
+    if ! grep -qE "$valid_re" <<<"$fm"; then
       printf 'FAIL lifecycle %s: missing or invalid lifecycle: value\n' "$rel" >&2
       printf '       expected one of: experimental | reviewed | shipped | superseded | sunset\n' >&2
       exit 1
