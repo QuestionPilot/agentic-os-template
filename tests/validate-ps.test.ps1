@@ -599,3 +599,80 @@ try {
     if (-not $IsWindows -and (Test-Path -LiteralPath $nongitLocked)) { & chmod 755 $nongitLocked 2>$null }
     Remove-Item -LiteralPath $nongit -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# ---------------------------------------------------------------------------
+# <TEAM>-328 Item A: validate.ps1 resolves a VARIABLE-COMPOSED config dir from
+# local.env, matching the bash twin's sourcing semantics.
+#
+# The bash twin sources local.env in a subshell, so a config dir composed from
+# another local.env var (BASE=...; HERMES_HOME=$BASE/.hermes) resolves and the
+# co-located dir is recognized. The prior PS parser expanded $VAR against ONLY
+# the process environment, so a local.env-internal $BASE resolved empty,
+# corrupting the path and leaving the co-located dir UNRECOGNIZED — a .DS_Store
+# (or plugin .git) inside it would then trip the leak scan. Get-LocalEnvMap now
+# emulates in-order sourcing, so the offender inside the composed co-located
+# .hermes/ is pruned and validate passes.
+#
+# Driven through New-FixtureRepo (validate.ps1 -RepoRoot), so it runs on every
+# platform incl. the Windows lane. HERMES_HOME is cleared in the child so the
+# value comes from local.env, not the environment. local.env values are QUOTED:
+# the parser collapses backslash-escapes in UNQUOTED values (bash %q shape), which
+# would corrupt a Windows fixture path — quoting skips that, matching the
+# real-world quoted-path convention.
+# ---------------------------------------------------------------------------
+$q328a = New-FixtureRepo
+$q328aSavedHermes = $env:HERMES_HOME
+try {
+    Remove-Item Env:\HERMES_HOME -ErrorAction SilentlyContinue
+    # Co-located .hermes/ holding a Finder .DS_Store — a leak-scan offender UNLESS
+    # the dir is recognized as the configured HERMES_HOME.
+    New-Item -ItemType Directory -Path (Join-Path $q328a '.hermes') -Force | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $q328a '.hermes' '.DS_Store'), [byte[]](0,0))
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+    # Positive: BASE defined, HERMES_HOME composed from it. Old code => $BASE
+    # empty => not recognized => exit 1; new map-based resolver => recognized =>
+    # exit 0. local.env is gitignored by New-FixtureRepo's .gitignore (/local.env).
+    $lePos = 'BASE="' + $q328a + '"' + "`n" + 'HERMES_HOME="$BASE/.hermes"' + "`n"
+    [System.IO.File]::WriteAllText((Join-Path $q328a 'local.env'), $lePos, $utf8NoBom)
+    $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $q328a 2>&1
+    $code = $LASTEXITCODE
+    if ($out -is [array]) { $out = $out -join "`n" }
+    if ($code -eq 0) {
+        _Pass 'validate-ps.test: resolves a variable-composed config dir from local.env (co-located dir recognized)'
+    } else {
+        _Fail 'validate-ps.test: resolves a variable-composed config dir from local.env (co-located dir recognized)' "expected exit 0, got $code", $out
+    }
+
+    # Negative: drop the BASE definition. $BASE is now unresolved -> HERMES_HOME
+    # resolves empty -> .hermes is NOT recognized -> the .DS_Store trips the scan
+    # -> exit 1. Proves recognition is gated on actual resolution, not blanket.
+    $leNeg = 'HERMES_HOME="$BASE/.hermes"' + "`n"
+    [System.IO.File]::WriteAllText((Join-Path $q328a 'local.env'), $leNeg, $utf8NoBom)
+    $out2 = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $q328a 2>&1
+    $code2 = $LASTEXITCODE
+    if ($out2 -is [array]) { $out2 = $out2 -join "`n" }
+    if ($code2 -eq 1) {
+        _Pass 'validate-ps.test: an unresolved composed config dir is NOT recognized (offender still trips)'
+    } else {
+        _Fail 'validate-ps.test: an unresolved composed config dir is NOT recognized (offender still trips)' "expected exit 1, got $code2", $out2
+    }
+
+    # Inline-comment parity: a trailing `# comment` on the config-dir line must be
+    # stripped (bash sourcing drops an unquoted trailing comment), so the composed
+    # dir still resolves and is recognized -> exit 0. Pins the comment-strip fix.
+    $leCmt = 'BASE="' + $q328a + '" # repo base' + "`n" + 'HERMES_HOME="$BASE/.hermes" # co-located harness dir' + "`n"
+    [System.IO.File]::WriteAllText((Join-Path $q328a 'local.env'), $leCmt, $utf8NoBom)
+    $out3 = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $q328a 2>&1
+    $code3 = $LASTEXITCODE
+    if ($out3 -is [array]) { $out3 = $out3 -join "`n" }
+    if ($code3 -eq 0) {
+        _Pass 'validate-ps.test: strips inline comments on a composed config-dir line (bash parity)'
+    } else {
+        _Fail 'validate-ps.test: strips inline comments on a composed config-dir line (bash parity)' "expected exit 0, got $code3", $out3
+    }
+} finally {
+    if ($null -eq $q328aSavedHermes) { Remove-Item Env:\HERMES_HOME -ErrorAction SilentlyContinue }
+    else { $env:HERMES_HOME = $q328aSavedHermes }
+    Remove-Item -LiteralPath $q328a -Recurse -Force -ErrorAction SilentlyContinue
+}

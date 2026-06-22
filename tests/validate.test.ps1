@@ -387,3 +387,50 @@ if (Test-Path -LiteralPath $q319Hermes) {
     $env:HERMES_HOME = $q319SavedHermes
     Remove-IfEmpty $q319Else
 }
+
+# --- <TEAM>-328 Item B: the .DS_Store + embedded-.git tree-walk scans FAIL
+# CLOSED on a directory-enumeration error (twin of validate.test.sh's <TEAM>-328
+# block) ---
+# Test-DSStore / Test-EmbeddedGit now capture Get-ChildItem traversal errors via
+# -ErrorVariable and FAIL closed; a bare -EA SilentlyContinue silently swallowed
+# a permission-denied subdir, so an unreadable tree false-PASSed. Provoke a real
+# enumeration error with a mode-000 subdir at the repo root: the recursive walk
+# errors on it. The .DS_Store scan runs first, so its fail-closed message
+# surfaces; the embedded-.git scan applies the identical -ErrorVariable pattern.
+#
+# Mechanism mirrors the secret-scan non-git fail-closed test in
+# validate-ps.test.ps1: chmod 000 + a same-process probe, _Skip when the
+# unreadable dir can't be created (running as root, or the Windows chmod no-op —
+# so this runs only on a non-root Unix pwsh and SKIPs on the Windows lane).
+# try/finally restores perms + removes so an interrupted run never orphans an
+# unreadable dir in the live repo root.
+$q328Lock = Join-Path $env:REPO_ROOT ('.test-q328-locked-' + (Get-VtSuffix))
+if (Test-Path -LiteralPath $q328Lock) {
+    _Skip 'validate.test: validate.ps1 tree-walk scan fails closed on a directory-enumeration error' "fixture collision: $q328Lock"
+} else {
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $q328Lock 'sub') -Force | Out-Null
+        if (-not $IsWindows) { & chmod 000 $q328Lock 2>$null }
+        # Probe in THIS process (same user as the child pwsh): does a -Recurse
+        # walk actually error on the locked dir? If not (root / Windows no-op),
+        # skip. Probe the locked dir directly, not the whole repo root (a recursive
+        # walk of REPO_ROOT would be needlessly slow in a large workspace).
+        $q328ProbeErr = $null
+        $null = Get-ChildItem -LiteralPath $q328Lock -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable q328ProbeErr
+        if (-not $q328ProbeErr -or $q328ProbeErr.Count -eq 0) {
+            _Skip 'validate.test: validate.ps1 tree-walk scan fails closed on a directory-enumeration error' 'could not create an unreadable dir (root or Windows chmod no-op)'
+        } else {
+            $q328_out = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+            $q328_exit = $LASTEXITCODE
+            if ($q328_out -is [array]) { $q328_out = $q328_out -join "`n" }
+            if ($q328_exit -eq 1 -and $q328_out -match 'enumeration errored') {
+                _Pass 'validate.test: validate.ps1 tree-walk scan fails closed on a directory-enumeration error'
+            } else {
+                _Fail 'validate.test: validate.ps1 tree-walk scan fails closed on a directory-enumeration error' "expected exit 1 + 'enumeration errored', got exit $q328_exit", $q328_out
+            }
+        }
+    } finally {
+        if (-not $IsWindows -and (Test-Path -LiteralPath $q328Lock)) { & chmod 0755 $q328Lock 2>$null }
+        Remove-Item -LiteralPath $q328Lock -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
