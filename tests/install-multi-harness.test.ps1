@@ -181,7 +181,90 @@ try {
     $out7Str = if ($out7 -is [array]) { $out7 -join "`n" } else { [string]$out7 }
     Assert-Eq 'install-multi-harness.test: --build-only + multiple --harness exits 1' '1' "$exit7"
     Assert-Contains 'install-multi-harness.test: --build-only + multiple --harness names the conflict' $out7Str '--build-only'
+
+    # --- 8. Live config-dir guard: a throwaway build can't overwrite a live dir
+    # Twin of the bash guard test (section 10). install.ps1 refuses to render a
+    # throwaway-env build into a forbidden live dir and exits non-zero WITHOUT
+    # writing it. Pinned SAFELY against a temp dir via AI_CONFIG_FORBID_TARGETS —
+    # never the operator's real .codex — so a guard regression can never corrupt a
+    # live entrypoint. The inline CODEX_HOME simulates the leaked inherited value.
+    $gdLive = Join-Path $tmpRoot 'live-codex'
+    New-Item -ItemType Directory -Path $gdLive -Force | Out-Null
+    $utf8NoBom8 = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText((Join-Path $gdLive 'AGENTS.md'), "SENTINEL-DO-NOT-OVERWRITE`n", $utf8NoBom8)
+    $gdEnv = Join-Path $tmpRoot 'env8.local.env'
+    # Fixture sets OBSIDIAN_VAULT_PATH but NOT CODEX_HOME — the leak precondition.
+    [System.IO.File]::WriteAllText($gdEnv, ("OBSIDIAN_VAULT_PATH=`"$vault`"`n"), $utf8NoBom8)
+    $env:AI_CONFIG_LOCAL_ENV = $gdEnv
+    $env:AI_CONFIG_FORBID_TARGETS = $gdLive
+    $env:CODEX_HOME = $gdLive
+    $gdOut  = & pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1
+    $gdExit = $LASTEXITCODE
+    $env:CODEX_HOME = $null
+    $env:AI_CONFIG_FORBID_TARGETS = $null
+    $gdStr = if ($gdOut -is [array]) { $gdOut -join "`n" } else { [string]$gdOut }
+    Assert-Eq 'install-multi-harness.test: guard blocks throwaway build into a live dir (exit 1)' '1' "$gdExit"
+    Assert-Contains 'install-multi-harness.test: guard names the refusal' $gdStr 'refusing to render'
+    $gdSentinel = ([System.IO.File]::ReadAllText((Join-Path $gdLive 'AGENTS.md'))).Trim()
+    Assert-Eq 'install-multi-harness.test: guard leaves the live AGENTS.md intact' 'SENTINEL-DO-NOT-OVERWRITE' $gdSentinel
+
+    # The escape hatch lets a deliberate custom-env co-located install through.
+    $env:AI_CONFIG_LOCAL_ENV = $gdEnv
+    $env:AI_CONFIG_FORBID_TARGETS = $gdLive
+    $env:CODEX_HOME = $gdLive
+    $env:AI_CONFIG_ALLOW_LIVE_TARGET = '1'
+    $null   = & pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1
+    $ovExit = $LASTEXITCODE
+    $env:AI_CONFIG_ALLOW_LIVE_TARGET = $null
+    $env:CODEX_HOME = $null
+    $env:AI_CONFIG_FORBID_TARGETS = $null
+    Assert-Eq 'install-multi-harness.test: AI_CONFIG_ALLOW_LIVE_TARGET=1 overrides the refusal (exit 0)' '0' "$ovExit"
+    Assert-File 'install-multi-harness.test: override actually rendered the codex entrypoint' (Join-Path $gdLive 'AGENTS.md')
+
+    # --- 9. Guard refuses BEFORE creating a missing forbidden dir (no mutation)
+    # Twin of bash section 11: the guard runs before New-Item, so a refusal must
+    # not even CREATE the live dir. (cross-model adversarial finding.)
+    $gmMissing = Join-Path $tmpRoot 'never-created'   # forbidden target, absent
+    $gmEnv = Join-Path $tmpRoot 'env9.local.env'
+    [System.IO.File]::WriteAllText($gmEnv, ("OBSIDIAN_VAULT_PATH=`"$vault`"`n"), $utf8NoBom8)
+    $env:AI_CONFIG_LOCAL_ENV = $gmEnv
+    $env:AI_CONFIG_FORBID_TARGETS = $gmMissing
+    $env:CODEX_HOME = $gmMissing
+    $null   = & pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1
+    $gmExit = $LASTEXITCODE
+    $env:CODEX_HOME = $null
+    $env:AI_CONFIG_FORBID_TARGETS = $null
+    Assert-Eq 'install-multi-harness.test: guard into a missing forbidden dir exits 1' '1' "$gmExit"
+    if (Test-Path -LiteralPath $gmMissing) {
+        _Fail 'install-multi-harness.test: refusal does NOT create the forbidden dir' "$gmMissing was created before the guard fired"
+    } else {
+        _Pass 'install-multi-harness.test: refusal does NOT create the forbidden dir'
+    }
+
+    # --- 10. Guard fires for --build-only too — no transient under the live dir
+    # Twin of bash section 12: --build-only would mktemp a .install-build tree
+    # under the target; the guard must block it first. (cross-model finding.)
+    $gbLive = Join-Path $tmpRoot 'live-codex-bo'
+    New-Item -ItemType Directory -Path $gbLive -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $gbLive 'AGENTS.md'), "SENTINEL-BUILD-ONLY`n", $utf8NoBom8)
+    $gbEnv = Join-Path $tmpRoot 'env10.local.env'
+    [System.IO.File]::WriteAllText($gbEnv, ("OBSIDIAN_VAULT_PATH=`"$vault`"`n"), $utf8NoBom8)
+    $env:AI_CONFIG_LOCAL_ENV = $gbEnv
+    $env:AI_CONFIG_FORBID_TARGETS = $gbLive
+    $env:CODEX_HOME = $gbLive
+    $null   = & pwsh -NoProfile -File $INSTALL_PS1 --harness codex --build-only 2>&1
+    $gbExit = $LASTEXITCODE
+    $env:CODEX_HOME = $null
+    $env:AI_CONFIG_FORBID_TARGETS = $null
+    Assert-Eq 'install-multi-harness.test: --build-only into a forbidden live dir exits 1' '1' "$gbExit"
+    $gbSentinel = ([System.IO.File]::ReadAllText((Join-Path $gbLive 'AGENTS.md'))).Trim()
+    Assert-Eq 'install-multi-harness.test: --build-only leaves AGENTS.md intact' 'SENTINEL-BUILD-ONLY' $gbSentinel
+    $gbTransient = @(Get-ChildItem -LiteralPath $gbLive -Filter '.install-build.*' -Force -ErrorAction SilentlyContinue)
+    Assert-Eq 'install-multi-harness.test: --build-only leaves no .install-build transient' '0' "$($gbTransient.Count)"
 } finally {
     Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue
     $env:AI_CONFIG_LOCAL_ENV = $null
+    $env:AI_CONFIG_FORBID_TARGETS = $null
+    $env:AI_CONFIG_ALLOW_LIVE_TARGET = $null
+    $env:CODEX_HOME = $null
 }

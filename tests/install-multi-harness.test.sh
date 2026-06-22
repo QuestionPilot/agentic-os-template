@@ -108,13 +108,17 @@ rm -rf "$SG_DIR"
 # The dispatcher must validate every requested harness (name / adapter / target
 # env var) up front. Otherwise harness 1 swaps its live config, harness 2 dies
 # on its unset target, and the operator is left with a half-synced machine + a
-# non-zero exit. CODEX_HOME is deliberately unset here.
+# non-zero exit. CODEX_HOME must be GENUINELY unset for this — `env -u CODEX_HOME`
+# strips it from the ambient env, not just from the fixture local.env. Without
+# that, a run from the operator's co-located folder (where ~/.zshenv exports
+# CODEX_HOME=<repo>/.codex) would let the inherited value satisfy the preflight
+# AND render codex into the LIVE .codex — the exact corruption this file guards.
 PF_DIR="$(mktemp -d)"
 PF_CC="$PF_DIR/claude"; mkdir -p "$PF_CC"
 PF_ENV="$PF_DIR/local.env"
 make_local_env "$PF_ENV" "$PF_CC" "$PF_DIR/vault"   # CLAUDE_CONFIG_DIR set, CODEX_HOME unset
 pf_status=0
-pf_out="$(AI_CONFIG_LOCAL_ENV="$PF_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+pf_out="$(env -u CODEX_HOME AI_CONFIG_LOCAL_ENV="$PF_ENV" bash "$REPO_ROOT/scripts/install.sh" \
   --harness claude --harness codex 2>&1 >/dev/null)" || pf_status=$?
 assert_eq "multi-harness with an unset target exits 1 (preflight)" "1" "$pf_status"
 assert_contains "preflight names the unset target env var" "$pf_out" "CODEX_HOME is not set"
@@ -171,3 +175,79 @@ bo_out="$(AI_CONFIG_LOCAL_ENV="$BO_ENV" bash "$REPO_ROOT/scripts/install.sh" \
 assert_eq "install.sh --build-only + multiple --harness exits 1" "1" "$bo_status"
 assert_contains "install.sh --build-only + multiple --harness names the conflict" "$bo_out" "--build-only"
 rm -rf "$BO_DIR"
+
+# --- 10. Live config-dir guard: a throwaway build can't overwrite a live dir --
+# Regression for the corruption where a fixture local.env omitted CODEX_HOME, so
+# the target fell back to the INHERITED (live co-located) CODEX_HOME and the build
+# overwrote the operator's real AGENTS.md with a temp OBSIDIAN_VAULT_PATH. The
+# guard in install.sh refuses to render a throwaway-env build into a forbidden
+# live dir and exits non-zero WITHOUT writing it. Exercised SAFELY against a temp
+# dir via AI_CONFIG_FORBID_TARGETS — never the operator's real .codex — so a guard
+# regression can never corrupt a live entrypoint even when this runs from the
+# co-located folder. The inline CODEX_HOME simulates the leaked inherited value.
+GD_DIR="$(mktemp -d)"
+GD_LIVE="$GD_DIR/live-codex"; mkdir -p "$GD_LIVE"
+printf 'SENTINEL-DO-NOT-OVERWRITE\n' > "$GD_LIVE/AGENTS.md"
+GD_ENV="$GD_DIR/local.env"
+# Fixture sets OBSIDIAN_VAULT_PATH but NOT CODEX_HOME — the leak precondition.
+printf 'OBSIDIAN_VAULT_PATH=%q\n' "$GD_DIR/vault" > "$GD_ENV"
+gd_status=0
+gd_out="$(AI_CONFIG_FORBID_TARGETS="$GD_LIVE" CODEX_HOME="$GD_LIVE" \
+  AI_CONFIG_LOCAL_ENV="$GD_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness codex 2>&1 >/dev/null)" || gd_status=$?
+assert_eq "guard: throwaway build into a forbidden live dir exits 1" "1" "$gd_status"
+assert_contains "guard: names the refusal" "$gd_out" "refusing to render"
+gd_sentinel="$(cat "$GD_LIVE/AGENTS.md" 2>/dev/null)"
+assert_eq "guard: the live AGENTS.md is NOT overwritten" "SENTINEL-DO-NOT-OVERWRITE" "$gd_sentinel"
+# The escape hatch lets a deliberate custom-env co-located install through: with
+# AI_CONFIG_ALLOW_LIVE_TARGET=1 the same render now SUCCEEDS (and replaces AGENTS.md).
+ov_status=0
+AI_CONFIG_ALLOW_LIVE_TARGET=1 AI_CONFIG_FORBID_TARGETS="$GD_LIVE" CODEX_HOME="$GD_LIVE" \
+  AI_CONFIG_LOCAL_ENV="$GD_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness codex >/dev/null 2>&1 || ov_status=$?
+assert_eq "guard: AI_CONFIG_ALLOW_LIVE_TARGET=1 overrides the refusal (exits 0)" "0" "$ov_status"
+assert_file "guard: override actually rendered the codex entrypoint" "$GD_LIVE/AGENTS.md"
+[ -f "$GD_LIVE/AGENTS.md" ] && grep -q 'SENTINEL-DO-NOT-OVERWRITE' "$GD_LIVE/AGENTS.md" \
+  && _fail "guard: override replaced the sentinel" "sentinel still present after override render" \
+  || _pass "guard: override replaced the sentinel with a real render"
+rm -rf "$GD_DIR"
+
+# --- 11. Guard refuses BEFORE creating a missing forbidden dir (no mutation) --
+# The guard runs before `mkdir -p "$TARGET"`, so a refusal must not even CREATE
+# the live dir — the read-only-until-the-guard-passes property is total. Point a
+# throwaway build at a forbidden dir that does NOT exist yet and assert it stays
+# absent. (cross-model adversarial finding: pre-fix the guard ran after mkdir.)
+GM_DIR="$(mktemp -d)"
+GM_MISSING="$GM_DIR/never-created"   # forbidden target, deliberately absent
+GM_ENV="$GM_DIR/local.env"
+printf 'OBSIDIAN_VAULT_PATH=%q\n' "$GM_DIR/vault" > "$GM_ENV"
+gm_status=0
+AI_CONFIG_FORBID_TARGETS="$GM_MISSING" CODEX_HOME="$GM_MISSING" \
+  AI_CONFIG_LOCAL_ENV="$GM_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness codex >/dev/null 2>&1 || gm_status=$?
+assert_eq "guard: build into a missing forbidden dir exits 1" "1" "$gm_status"
+[ -e "$GM_MISSING" ] \
+  && _fail "guard: refusal does NOT create the forbidden dir" "$GM_MISSING was created before the guard fired" \
+  || _pass "guard: refusal does NOT create the forbidden dir"
+rm -rf "$GM_DIR"
+
+# --- 12. Guard fires for --build-only too — no transient under the live dir ---
+# --build-only never swaps, but it does `mktemp -d "$TARGET/.install-build.*"` —
+# which, into a forbidden live dir, would still scribble a transient build tree
+# there. The guard must block it first: exit 1, AGENTS.md intact, and NO
+# .install-build* left behind. (cross-model adversarial finding.)
+GB_DIR="$(mktemp -d)"
+GB_LIVE="$GB_DIR/live-codex"; mkdir -p "$GB_LIVE"
+printf 'SENTINEL-BUILD-ONLY\n' > "$GB_LIVE/AGENTS.md"
+GB_ENV="$GB_DIR/local.env"
+printf 'OBSIDIAN_VAULT_PATH=%q\n' "$GB_DIR/vault" > "$GB_ENV"
+gb_status=0
+AI_CONFIG_FORBID_TARGETS="$GB_LIVE" CODEX_HOME="$GB_LIVE" \
+  AI_CONFIG_LOCAL_ENV="$GB_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness codex --build-only >/dev/null 2>&1 || gb_status=$?
+assert_eq "guard: --build-only into a forbidden live dir exits 1" "1" "$gb_status"
+gb_sentinel="$(cat "$GB_LIVE/AGENTS.md" 2>/dev/null)"
+assert_eq "guard: --build-only leaves AGENTS.md intact" "SENTINEL-BUILD-ONLY" "$gb_sentinel"
+gb_transient="$(find "$GB_LIVE" -maxdepth 1 -name '.install-build.*' 2>/dev/null)"
+assert_eq "guard: --build-only leaves no .install-build transient" "" "$gb_transient"
+rm -rf "$GB_DIR"

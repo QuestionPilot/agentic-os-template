@@ -167,6 +167,50 @@ TARGET="${OUT:-$target_default}"
 adapter="$repo_root/harnesses/$HARNESS/adapter.md"
 [ -f "$adapter" ] || die "no adapter for harness '$HARNESS' (expected $adapter)"
 
+# --- live config-dir guard (throwaway/test builds only) ----------------------
+# A build driven by a NON-default local.env (AI_CONFIG_LOCAL_ENV pointing at a
+# throwaway/test local.env rather than $repo_root/local.env) must NEVER render
+# into a live config dir. When a fixture local.env omits CLAUDE_CONFIG_DIR /
+# CODEX_HOME / HERMES_HOME, the per-harness target falls back to the INHERITED
+# value — in a co-located install that is <repo>/.{claude,codex,hermes}, so the
+# build would OVERWRITE the operator's live entrypoint with throwaway test
+# content (a temp OBSIDIAN_VAULT_PATH). This corrupted a live AGENTS.md once.
+# Forbidden targets: the repo's own co-located config dirs, plus any dir listed
+# in AI_CONFIG_FORBID_TARGETS (':'-separated, entries must not contain ':' — lets
+# a test pin the guard against a temp dir, and covers a non-co-located live dir
+# like ~/.claude). A REAL install uses $repo_root/local.env (guard skipped) and
+# stays free to write its co-located target; set AI_CONFIG_ALLOW_LIVE_TARGET=1 to
+# override. Skipped under --dry-run (read-only — it never writes TARGET).
+# Runs BEFORE `mkdir -p "$TARGET"` below, so a refusal never even CREATES the
+# live dir (the read-only-until-the-guard-passes property is total, not partial).
+if [ "$DRY_RUN" -eq 0 ] && [ "${AI_CONFIG_ALLOW_LIVE_TARGET:-}" != 1 ] \
+   && ! [ "$LOCAL_ENV" -ef "$repo_root/local.env" ]; then
+  # Normalize TARGET for the compare WITHOUT creating it: canonicalize if it
+  # already exists (a live config dir always does), else just trim a trailing
+  # slash. The `|| printf` fallback keeps a racing `cd` failure (dir removed /
+  # perms) from aborting the script under `set -e` before the guard can decide.
+  if [ -d "$TARGET" ]; then
+    _tgt_cmp="$(CDPATH= cd "$TARGET" 2>/dev/null && pwd || printf '%s' "$TARGET")"
+  else
+    _tgt_cmp="${TARGET%/}"
+  fi
+  forbidden_targets=("$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes")
+  if [ -n "${AI_CONFIG_FORBID_TARGETS:-}" ]; then
+    _ft_oifs="$IFS"; IFS=':'
+    for _ft in $AI_CONFIG_FORBID_TARGETS; do [ -n "$_ft" ] && forbidden_targets+=("$_ft"); done
+    IFS="$_ft_oifs"
+  fi
+  for _colo in "${forbidden_targets[@]}"; do
+    # Canonicalize an existing forbidden dir so the compare matches $_tgt_cmp's
+    # normalization (trailing slash / symlink); else compare the raw string.
+    [ -d "$_colo" ] && _colo="$(CDPATH= cd "$_colo" 2>/dev/null && pwd || printf '%s' "$_colo")"
+    _colo="${_colo%/}"
+    if [ "$_tgt_cmp" = "$_colo" ]; then
+      die "refusing to render harness '$HARNESS' into the live config dir $_tgt_cmp — this build uses a throwaway local.env ($LOCAL_ENV) but $target_env resolved to a live config dir (the inherited $target_env leaked in because that local.env did not set it). Set $target_env to a temp dir in the local.env or pass --out; set AI_CONFIG_ALLOW_LIVE_TARGET=1 to override."
+    fi
+  done
+fi
+
 # --- temp build dir on the target filesystem (so the final swap is a rename) ---
 mkdir -p "$TARGET"
 # Canonicalize TARGET to an absolute path. A relative --out / target env var
@@ -176,6 +220,7 @@ mkdir -p "$TARGET"
 # target could resolve via a CDPATH entry (wrong directory) and echo the path
 # (corrupting the captured TARGET).
 TARGET="$(CDPATH= cd "$TARGET" && pwd)"
+
 # A real install builds under $TARGET so the final swap is an atomic same-
 # filesystem rename. A --dry-run never swaps, so it builds in a NEUTRAL system
 # temp instead — the live target is then never written to (not even a transient
