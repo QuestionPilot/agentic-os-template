@@ -363,6 +363,46 @@ if (-not (Test-Path -LiteralPath $adapter -PathType Leaf)) {
 # Build dir on the target filesystem (so the final swap is a rename).
 # ---------------------------------------------------------------------------
 
+# --- live config-dir guard (throwaway/test builds only; mirrors install.sh) ---
+# A build driven by a NON-default local.env (a throwaway/test local.env, not
+# <repo>\local.env) must NEVER render into a live config dir. When a fixture
+# local.env omits the per-harness target var, $TARGET falls back to the INHERITED
+# value — in a co-located install that is <repo>\.{claude,codex,hermes}, so the
+# build would overwrite the operator's live entrypoint with throwaway test
+# content. Forbidden: the repo's own co-located dirs + any AI_CONFIG_FORBID_TARGETS
+# entry (PathSeparator-joined). A real install uses <repo>\local.env (guard
+# skipped); set AI_CONFIG_ALLOW_LIVE_TARGET=1 to override; skipped under -DryRun.
+# Runs BEFORE New-Item below, so a refusal never even CREATES the live dir.
+$defaultLocalEnv = Join-Path $repoRoot 'local.env'
+$isDefaultEnv = $false
+if (Test-Path -LiteralPath $defaultLocalEnv -PathType Leaf) {
+    $isDefaultEnv = ((Resolve-Path -LiteralPath $LOCAL_ENV).Path -eq (Resolve-Path -LiteralPath $defaultLocalEnv).Path)
+}
+if ((-not $DryRun) -and ($env:AI_CONFIG_ALLOW_LIVE_TARGET -ne '1') -and (-not $isDefaultEnv)) {
+    # Normalize TARGET for the compare WITHOUT creating it: Resolve-Path if it
+    # already exists (a live config dir always does), else GetFullPath; trim a
+    # trailing separator so the compare matches the forbidden dirs' normalization.
+    $sepTrim = @([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $tgtCmp = if (Test-Path -LiteralPath $TARGET -PathType Container) { (Resolve-Path -LiteralPath $TARGET).Path } else { [System.IO.Path]::GetFullPath($TARGET) }
+    $tgtCmp = $tgtCmp.TrimEnd($sepTrim)
+    $forbiddenTargets = [System.Collections.Generic.List[string]]::new()
+    foreach ($sub in @('.claude', '.codex', '.hermes')) { $forbiddenTargets.Add((Join-Path $repoRoot $sub)) }
+    if ($env:AI_CONFIG_FORBID_TARGETS) {
+        foreach ($ft in ($env:AI_CONFIG_FORBID_TARGETS -split [IO.Path]::PathSeparator)) {
+            if ($ft) { $forbiddenTargets.Add($ft) }
+        }
+    }
+    foreach ($colo in $forbiddenTargets) {
+        # Canonicalize an existing forbidden dir so the compare matches $tgtCmp's
+        # normalization; else GetFullPath the raw string. Trim a trailing separator.
+        $coloNorm = if (Test-Path -LiteralPath $colo -PathType Container) { (Resolve-Path -LiteralPath $colo).Path } else { [System.IO.Path]::GetFullPath($colo) }
+        $coloNorm = $coloNorm.TrimEnd($sepTrim)
+        if ($tgtCmp -eq $coloNorm) {
+            Die "refusing to render harness '$Harness' into the live config dir $tgtCmp — this build uses a throwaway local.env ($LOCAL_ENV) but $targetEnvVar resolved to a live config dir (the inherited $targetEnvVar leaked in because that local.env did not set it). Set $targetEnvVar to a temp dir in the local.env or pass -Out; set AI_CONFIG_ALLOW_LIVE_TARGET=1 to override."
+        }
+    }
+}
+
 New-Item -ItemType Directory -Path $TARGET -Force | Out-Null
 # Canonicalize $TARGET to an absolute path. A relative -Out would otherwise
 # leak relative `command` paths into the generated settings.json hook entries.
