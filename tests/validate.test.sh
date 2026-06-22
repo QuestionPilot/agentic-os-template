@@ -562,3 +562,54 @@ else
   unset VAL_Q319_ELSEWHERE val_q319_out val_q319_exit val_q319b_out val_q319b_exit
   unset val_q319c_out val_q319c_exit
 fi
+
+# --- <TEAM>-328 Item B: the .DS_Store + embedded-.git tree-walk scans FAIL
+# CLOSED on a find enumeration error ---
+# Both early scans now capture find's exit status and FAIL on a non-zero instead
+# of silently false-passing through an empty hit list (the prior
+# `done < <(find ...)` form discarded find's status, so a permission-denied
+# subtree or system limit read as "no hits -> PASS"). Provoke a real find
+# failure with a mode-000 subdir at the repo root: find walks into it, errors,
+# and exits non-zero. The .DS_Store scan runs first, so its fail-closed message
+# is the one that surfaces; the embedded-.git scan immediately below applies the
+# identical capture-and-fail pattern (it cannot be exercised independently — the
+# same mode-000 dir trips the .DS_Store walk first). The PS twin
+# (validate.test.ps1) mirrors this via -ErrorVariable.
+#
+# _skip when the unreadable dir can't actually block find — running as root
+# (perms bypassed) or a filesystem that ignores mode 000 — so the test never
+# false-passes where the failure can't be provoked. Restore + remove on INT/TERM
+# (the bash analog of the PS twin's try/finally) so an interrupted run never
+# orphans an unreadable dir in the live repo root; cleared after inline cleanup.
+VAL_Q328_LOCK="$REPO_ROOT/.test-q328-locked-$$-${RANDOM:-x}"
+if [ -e "$VAL_Q328_LOCK" ]; then
+  _skip "validate.sh tree-walk scan fails closed on a find enumeration error" \
+    "fixture collision: $VAL_Q328_LOCK"
+elif [ "$(id -u)" = "0" ]; then
+  _skip "validate.sh tree-walk scan fails closed on a find enumeration error" \
+    "running as root — mode 000 does not block find"
+else
+  trap 'chmod 0755 "$VAL_Q328_LOCK" 2>/dev/null; rm -rf "$VAL_Q328_LOCK" 2>/dev/null' INT TERM
+  mkdir -p "$VAL_Q328_LOCK/sub"
+  chmod 000 "$VAL_Q328_LOCK"
+  # Probe in THIS shell (same user as the validate.sh child): does mode 000
+  # actually make find error here? If not, the gap can't be exercised → skip.
+  if find "$VAL_Q328_LOCK" >/dev/null 2>&1; then
+    _skip "validate.sh tree-walk scan fails closed on a find enumeration error" \
+      "find does not error on the mode-000 dir on this filesystem"
+  else
+    val_q328_out="$(bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" && val_q328_exit=0 || val_q328_exit=$?
+    case "$val_q328_out" in *"enumeration errored"*) val_q328_msg=1 ;; *) val_q328_msg=0 ;; esac
+    if [ "$val_q328_exit" = "1" ] && [ "$val_q328_msg" = "1" ]; then
+      _pass "validate.sh tree-walk scan fails closed on a find enumeration error"
+    else
+      _fail "validate.sh tree-walk scan fails closed on a find enumeration error" \
+        "expected exit 1 + 'enumeration errored', got exit $val_q328_exit" "$val_q328_out"
+    fi
+  fi
+  chmod 0755 "$VAL_Q328_LOCK" 2>/dev/null
+  rm -rf "$VAL_Q328_LOCK"
+  trap - INT TERM
+  unset val_q328_out val_q328_exit val_q328_msg
+fi
+unset VAL_Q328_LOCK

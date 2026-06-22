@@ -33,6 +33,10 @@ if [ -f "$repo_root/local.env" ]; then
   # Source in an isolated subshell (stdin closed) so a side effect, unset-var
   # reference, or stray read in local.env can neither abort this run (set -e),
   # hang it, nor pollute its environment. Only the resolved path is captured.
+  # Sourcing also resolves a variable-composed value (e.g. CLAUDE_CONFIG_DIR=
+  # $BASE/.claude where BASE is set earlier in local.env) for free. The PS twin
+  # has no shell to source, so validate.ps1 emulates this in Get-LocalEnvMap to
+  # keep bash<->PS config-dir recognition identical (<TEAM>-328 Item A).
   if [ -z "$cfg_claude" ]; then
     cfg_claude="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${CLAUDE_CONFIG_DIR:-}" )"
   fi
@@ -106,17 +110,34 @@ _under_colocated_cfg() {
 # A while-read filter replaces the old `find -print -quit | grep -q` early-exit
 # because the co-located exemption is a per-path decision the static -not -path
 # prunes can't express; the static prunes still pre-drop the runtime dirs.
+#
+# <TEAM>-328 Item B: capture find's exit status and FAIL on a non-zero. The prior
+# `done < <(find ...)` process-substitution form discarded find's status — if
+# find errored mid-walk (a permission-denied subtree, a system limit) the loop
+# just saw EOF, ds_hits stayed empty, and the scan printed PASS: a silent
+# false-pass on an enumeration failure. Command-substitution + an explicit
+# status check (the same shape the secret scan below uses for `git ls-files`)
+# fails closed instead. set +e/-e brackets the capture so find's non-zero lands
+# in the status var rather than aborting the run under `set -e`.
+set +e
+ds_raw="$(find "$repo_root" -name .DS_Store \
+    -not -path "$repo_root/.claude/worktrees/*" \
+    -not -path "$repo_root/.codex/worktrees/*" \
+    -not -path "$repo_root/.agents/worktrees/*" \
+    -not -path "$repo_root/cross-model-out/*" \
+    -not -path "$repo_root/.codegraph/*")"
+ds_find_status=$?
+set -e
+if [ "$ds_find_status" -ne 0 ]; then
+  printf 'FAIL .DS_Store scan: find enumeration errored (exit %s); not treating as clean\n' "$ds_find_status" >&2
+  exit 1
+fi
 ds_hits=""
 while IFS= read -r ds_f; do
   [ -n "$ds_f" ] || continue
   _under_colocated_cfg "$ds_f" && continue
   ds_hits+="$ds_f"$'\n'
-done < <(find "$repo_root" -name .DS_Store \
-    -not -path "$repo_root/.claude/worktrees/*" \
-    -not -path "$repo_root/.codex/worktrees/*" \
-    -not -path "$repo_root/.agents/worktrees/*" \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*")
+done <<< "$ds_raw"
 if [ -n "$ds_hits" ]; then
   printf 'FAIL .DS_Store files found\n' >&2
   printf '%s' "$ds_hits" >&2
@@ -134,15 +155,26 @@ printf 'PASS no .DS_Store files\n'
 # own .git dirs under .claude/.codex (gitignored, never committable). The root
 # .git is pruned by the -path … -prune branch; cross-model-out/ + .codegraph/
 # keep their static prunes.
+# <TEAM>-328 Item B: same find-exit-status capture as the .DS_Store scan above —
+# a non-zero find (permission-denied subtree, system limit) FAILs closed instead
+# of silently false-passing through an empty hit list.
+set +e
+git_raw="$(find "$repo_root" -path "$repo_root/.git" -prune -o -name .git -type d \
+    -not -path "$repo_root/cross-model-out/*" \
+    -not -path "$repo_root/.codegraph/*" \
+    -print)"
+git_find_status=$?
+set -e
+if [ "$git_find_status" -ne 0 ]; then
+  printf 'FAIL embedded .git scan: find enumeration errored (exit %s); not treating as clean\n' "$git_find_status" >&2
+  exit 1
+fi
 git_hits=""
 while IFS= read -r git_d; do
   [ -n "$git_d" ] || continue
   _under_colocated_cfg "$git_d" && continue
   git_hits+="$git_d"$'\n'
-done < <(find "$repo_root" -path "$repo_root/.git" -prune -o -name .git -type d \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*" \
-    -print)
+done <<< "$git_raw"
 if [ -n "$git_hits" ]; then
   printf 'FAIL embedded .git directories found\n' >&2
   printf '%s' "$git_hits" >&2

@@ -76,26 +76,98 @@ function Pass-Line { param([string]$Msg) Write-Host $Msg }
 # `make verify`. Mirrors validate.sh's hoisted block + _under_colocated_cfg.
 # ---------------------------------------------------------------------------
 
+# <TEAM>-328 Item A: build a fully-resolved map of local.env's KEY=VALUE
+# assignments, in file order, so a later line may reference an earlier var
+# (BASE=...; CLAUDE_CONFIG_DIR=$BASE/.claude). The bash twin gets this for free
+# by sourcing local.env in a subshell (validate.sh's cfg_* block); PS has no
+# shell to source, so the prior single-line parser expanded $VAR against ONLY
+# the process environment — a var defined in local.env but never exported
+# resolved to empty, corrupting the path and leaving a co-located config dir
+# unrecognized on Windows. Emulating bash in-order sourcing here keeps bash<->PS
+# config-dir recognition identical. Quote/escape handling mirrors
+# scripts/lib/local-env.ps1 Import-LocalEnv. Cached per local.env path: built
+# once even though Get-ConfiguredConfigDirPhys is called per harness var.
+$script:LocalEnvMap = $null
+$script:LocalEnvMapKey = $null
+function Get-LocalEnvMap {
+    param([string]$RepoRoot)
+    $localEnv = Join-Path $RepoRoot 'local.env'
+    # Constant (non-null string) on the LHS so the cache check is an unambiguous
+    # scalar compare, never PS array-filtering semantics.
+    if ($localEnv -eq $script:LocalEnvMapKey) { return $script:LocalEnvMap }
+    $map = [ordered]@{}
+    if (Test-Path -LiteralPath $localEnv -PathType Leaf) {
+        # Unreadable local.env (ACL / lock): the bash twin sources with
+        # `2>/dev/null` + `set +eu` and falls back to empty, so match that here
+        # rather than crash under $ErrorActionPreference='Stop'.
+        $envLines = @()
+        try { $envLines = [System.IO.File]::ReadAllLines($localEnv) } catch { $envLines = @() }
+        foreach ($line in $envLines) {
+            $trim = $line.Trim()
+            if ($trim.Length -eq 0) { continue }
+            if ($trim.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+            if ($trim -match '^export\s+(.+)$') { $trim = $matches[1] }
+            if ($trim -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { continue }
+            $key = $matches[1]
+            $val = $matches[2]
+            # Strip a trailing inline comment (whitespace then `#...`) before quote
+            # handling — bash sourcing drops a trailing comment that sits outside
+            # quotes, and the prior single-line parser did too; not stripping it
+            # was a bash<->PS parity regression. The `\s+#` anchor means `val#x`
+            # (no preceding space) stays literal, matching bash.
+            $val = $val -replace '\s+#.*$', ''
+            # Balanced surrounding quotes are stripped. A single-quoted value is
+            # literal (bash performs no $VAR expansion inside ''); an unquoted
+            # %q-escaped value has its backslash-escapes collapsed (mirrors
+            # scripts/lib/local-env.ps1 Import-LocalEnv). Bash's in-double-quote
+            # escape processing (\$, \\) is intentionally NOT emulated — config-dir
+            # values are plain paths; same documented scope as Import-LocalEnv.
+            $singleQuoted = $false
+            if ($val.Length -ge 2) {
+                $first = $val[0]; $last = $val[$val.Length - 1]
+                if ($first -ceq '"' -and $last -ceq '"') {
+                    $val = $val.Substring(1, $val.Length - 2)
+                } elseif ($first -ceq "'" -and $last -ceq "'") {
+                    $val = $val.Substring(1, $val.Length - 2)
+                    $singleQuoted = $true
+                } elseif ($val.Contains([char]'\')) {
+                    $val = [System.Text.RegularExpressions.Regex]::Replace($val, '\\(.)', '$1')
+                }
+            }
+            if (-not $singleQuoted) {
+                # ${VAR} or $VAR, resolved against the accumulating map first
+                # (earlier local.env lines), then the process environment —
+                # bash `set -a; . local.env` in-order semantics. The two-branch
+                # alternation matches ${VAR} OR $VAR distinctly, so a mismatched
+                # `$VAR}` leaves the `}` literal (as bash does). %VAR% is NOT
+                # expanded: bash has no %VAR% syntax, so expanding it would diverge.
+                $val = [regex]::Replace($val, '\$\{(\w+)\}|\$(\w+)', {
+                    param($m)
+                    $name = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+                    if ($map.Contains($name)) { [string]$map[$name] }
+                    else { [string][Environment]::GetEnvironmentVariable($name) }
+                }.GetNewClosure())
+            }
+            $map[$key] = $val
+        }
+    }
+    $script:LocalEnvMap = $map
+    $script:LocalEnvMapKey = $localEnv
+    return $map
+}
+
 # Resolve a harness config-dir variable (CLAUDE_CONFIG_DIR / CODEX_HOME /
-# HERMES_HOME) to a physical path — environment first, then a textual local.env
-# parse with $VAR / ${VAR} / %VAR% expansion. Returns '' when unset or the path
-# does not resolve. Mirrors validate.sh's env-then-local.env resolution so a
-# CO-LOCATED config dir is recognized identically on both platforms.
+# HERMES_HOME) to a physical path — environment first, then the resolved
+# local.env map (Get-LocalEnvMap, which mirrors bash sourcing incl. variable
+# composition). Returns '' when unset or the path does not resolve. Mirrors
+# validate.sh's env-then-local.env resolution so a CO-LOCATED config dir is
+# recognized identically on both platforms.
 function Get-ConfiguredConfigDirPhys {
     param([string]$EnvName, [string]$RepoRoot)
     $val = [Environment]::GetEnvironmentVariable($EnvName)
     if ([string]::IsNullOrEmpty($val)) {
-        $localEnv = Join-Path $RepoRoot 'local.env'
-        if (Test-Path -LiteralPath $localEnv) {
-            $line = (Select-String -LiteralPath $localEnv -Pattern "^\s*(export\s+)?$EnvName=" -ErrorAction SilentlyContinue | Select-Object -First 1)
-            if ($line) {
-                $raw = $line.Line -replace "^\s*(export\s+)?$EnvName=", ''
-                $raw = ($raw -replace '\s+#.*$', '').Trim().Trim('"').Trim("'")
-                $raw = [Environment]::ExpandEnvironmentVariables($raw)
-                $raw = [regex]::Replace($raw, '\$\{?(\w+)\}?', { param($m) [Environment]::GetEnvironmentVariable($m.Groups[1].Value) })
-                $val = $raw
-            }
-        }
+        $map = Get-LocalEnvMap -RepoRoot $RepoRoot
+        if ($map.Contains($EnvName)) { $val = [string]$map[$EnvName] }
     }
     if ([string]::IsNullOrEmpty($val)) { return '' }
     try { return (Resolve-Path -LiteralPath $val -ErrorAction Stop).Path } catch { return '' }
@@ -156,7 +228,13 @@ function Test-DSStore {
         (Join-Path $repo 'cross-model-out'),
         (Join-Path $repo '.codegraph')
     )
-    $offenders = @(Get-ChildItem -LiteralPath $repo -Recurse -File -Force -Filter '.DS_Store' -ErrorAction SilentlyContinue |
+    # <TEAM>-328 Item B: capture traversal errors via -ErrorVariable and FAIL
+    # closed. A bare -EA SilentlyContinue silently swallows a permission-denied
+    # subdir mid-recursion, so the scan would false-PASS on an unreadable tree —
+    # the PS mirror of the bash twin's find-exit-status check (and of the secret
+    # scan's $gciErr fail-closed pattern below).
+    $dsErr = @()
+    $offenders = @(Get-ChildItem -LiteralPath $repo -Recurse -File -Force -Filter '.DS_Store' -ErrorAction SilentlyContinue -ErrorVariable dsErr |
         Where-Object {
             $f = $_.FullName
             $isAllow = $false
@@ -168,6 +246,11 @@ function Test-DSStore {
             -not $isAllow
         }
     )
+    if ($dsErr.Count -gt 0) {
+        [Console]::Error.WriteLine("FAIL .DS_Store scan: directory enumeration errored ($($dsErr.Count) error(s)); not treating as clean")
+        foreach ($e in $dsErr) { [Console]::Error.WriteLine("       $($e.Exception.Message)") }
+        exit 1
+    }
     if ($offenders.Count -gt 0) {
         [Console]::Error.WriteLine("FAIL .DS_Store files found")
         foreach ($o in $offenders) {
@@ -194,7 +277,10 @@ function Test-EmbeddedGit {
         (Join-Path $repo 'cross-model-out'),
         (Join-Path $repo '.codegraph')
     )
-    $offenders = @(Get-ChildItem -LiteralPath $repo -Recurse -Directory -Force -Filter '.git' -ErrorAction SilentlyContinue |
+    # <TEAM>-328 Item B: same -ErrorVariable fail-closed as the .DS_Store scan —
+    # a permission-denied subtree must FAIL the scan, not silently false-PASS.
+    $gitErr = @()
+    $offenders = @(Get-ChildItem -LiteralPath $repo -Recurse -Directory -Force -Filter '.git' -ErrorAction SilentlyContinue -ErrorVariable gitErr |
         Where-Object {
             $f = $_.FullName
             $skip = ($f -eq $rootGit -or $f.StartsWith($rootGit + [IO.Path]::DirectorySeparatorChar))
@@ -209,6 +295,11 @@ function Test-EmbeddedGit {
             -not $skip
         }
     )
+    if ($gitErr.Count -gt 0) {
+        [Console]::Error.WriteLine("FAIL embedded .git scan: directory enumeration errored ($($gitErr.Count) error(s)); not treating as clean")
+        foreach ($e in $gitErr) { [Console]::Error.WriteLine("       $($e.Exception.Message)") }
+        exit 1
+    }
     if ($offenders.Count -gt 0) {
         [Console]::Error.WriteLine("FAIL embedded .git directories found")
         foreach ($o in $offenders) {
