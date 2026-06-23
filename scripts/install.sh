@@ -658,6 +658,35 @@ generate_codex_hooks() {
     > "$BUILD/hooks.json" || die "failed to generate hooks.json"
 }
 
+# hermes_hook_command_yaml <abs-path> — render an absolute hook path as the inner
+# text of a YAML double-quoted `command:` scalar that Hermes parses back to ONE
+# argv token. Hermes runs a hook's `command` string through shlex.split
+# (agent/shell_hooks.py) to build argv, so a BARE path containing a space — e.g.
+# HERMES_HOME under "/Agentic OS/" — tokenizes into two argv entries ("/Agentic"
+# + "OS/.../session-agent.sh"), the exec fails, and the hook silently never fires
+# (no session-agent auto-fire, no edit-gate). A bare apostrophe is worse: shlex
+# raises on the unbalanced quote. Fix: shell-single-quote the path so shlex sees
+# a single token, then escape backslash + double-quote for the surrounding YAML
+# double-quoted scalar. (The PS twin needs no equivalent — New-HermesHooks passes
+# the path as a discrete `args` array element, which Hermes never shlex-splits.)
+hermes_hook_command_yaml() {
+  local p="$1" q idiom
+  # 1. POSIX shell single-quote so shlex.split() yields ONE token: wrap in '...'
+  #    and rewrite each embedded apostrophe to the idiom  ' \ ' '  (close-quote,
+  #    escaped-quote, reopen-quote). That idiom is built from printf octals
+  #    (\47=' \134=backslash) and used as a $-expanded replacement: a backslash
+  #    written literally in a ${//} replacement is processed inconsistently across
+  #    bash versions, but a backslash arriving via variable expansion is literal.
+  idiom=$(printf '\47\134\47\47')
+  q="'${p//\'/$idiom}'"
+  # 2. YAML double-quote escape — backslash FIRST (so the \\ we add isn't
+  #    re-escaped), then the double-quote. The only backslashes present come from
+  #    step 1's idiom (or a literal one in the path); both must double.
+  q="${q//\\/\\\\}"
+  q="${q//\"/\\\"}"
+  printf '%s' "$q"
+}
+
 # generate_hermes_hooks — Hermes's config.yaml is user-owned (operator model /
 # provider / platform config), so the build cannot write the `hooks:` block in
 # place. Instead it (a) emits hooks/hooks.yaml — the exact copy-paste snippet,
@@ -684,9 +713,9 @@ generate_hermes_hooks() {
         [ "$ev2" = "$event" ] || continue
         if [ -n "$m2" ]; then
           printf '    - matcher: "%s"\n' "$m2"
-          printf '      command: "%s/hooks/%s"\n' "$TARGET" "$s2"
+          printf '      command: "%s"\n' "$(hermes_hook_command_yaml "$TARGET/hooks/$s2")"
         else
-          printf '    - command: "%s/hooks/%s"\n' "$TARGET" "$s2"
+          printf '    - command: "%s"\n' "$(hermes_hook_command_yaml "$TARGET/hooks/$s2")"
         fi
       done <<< "$HOOK_BLOCKS"
     done <<< "$HOOK_BLOCKS"

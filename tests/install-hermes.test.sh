@@ -48,6 +48,47 @@ assert_contains "hooks.yaml wires pre_llm_call to framework-surface" \
 assert_contains "hooks.yaml enables the agentic-os-hook-bridge plugin" \
   "$ih_yaml" "agentic-os-hook-bridge"
 
+# --- T2b: a HERMES_HOME with a SPACE (and an apostrophe) must not break hooks ---
+# Hermes runs each hooks.yaml `command` through shlex.split to build argv. A bare
+# space-containing path (e.g. HERMES_HOME under "/Agentic OS/") tokenizes into two
+# argv entries, the exec fails, and the spine hook silently never fires; a bare
+# apostrophe makes shlex raise on the unbalanced quote. Build into a path with
+# BOTH (exercising the POSIX single-quote wrap, the embedded-apostrophe '\'' idiom,
+# and the YAML backslash-escape layer) and prove every emitted command shlex-splits
+# back to exactly its hook script path.
+IH_SP_ROOT="$(mktemp -d)/has space"; mkdir -p "$IH_SP_ROOT"
+IH_SP_OUT="$IH_SP_ROOT/hermes O'brien home"; mkdir -p "$IH_SP_OUT"
+IH_SP_ENV="$(mktemp -d)/local.env"
+make_hermes_env "$IH_SP_ENV" "$IH_SP_OUT" "$IH_VAULT"
+assert_exit "install.sh --harness hermes builds clean into a space+apostrophe path" 0 -- \
+  env AI_CONFIG_LOCAL_ENV="$IH_SP_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+sp_check="$(IH_SP_OUT="$IH_SP_OUT" python3 - "$IH_SP_OUT/hooks/hooks.yaml" <<'PY'
+import os, re, shlex, sys
+hdir = os.path.join(os.environ["IH_SP_OUT"], "hooks")
+try:
+    txt = open(sys.argv[1]).read()
+except OSError as e:
+    print("NO-YAML", e); sys.exit()
+cmds = re.findall(r'^\s*command:\s*"(.*)"\s*$', txt, re.M)
+def yaml_dq_unescape(s):  # minimal YAML double-quote unescape for our charset
+    return s.replace('\\\\', '\x00').replace('\\"', '"').replace('\x00', '\\')
+if not cmds:
+    print("NO-COMMANDS"); sys.exit()
+bad = []
+for c in cmds:
+    try:
+        toks = shlex.split(yaml_dq_unescape(c))
+    except ValueError as e:
+        bad.append("shlex-error:%s on %r" % (e, c)); continue
+    # exactly one argv token, and it is a real hook script under the space path
+    if len(toks) != 1 or os.path.dirname(toks[0]) != hdir or not os.path.isfile(toks[0]):
+        bad.append("tok=%r" % toks)
+print("OK" if not bad else "FAIL " + "; ".join(bad))
+PY
+)"
+assert_eq "every hook command in a space+apostrophe path shlex-splits to exactly its hook script" "OK" "$sp_check"
+rm -rf "$IH_SP_ROOT"
+
 # --- T3: drift gate passes a fresh build ---
 assert_exit "check-drift passes the fresh hermes build" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
