@@ -333,6 +333,16 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
         # of whether the user's input was relative or absolute. Forward-slash
         # normalization matches bash output.
         $rel = [System.IO.Path]::GetRelativePath($targetAbs, $full).Replace([char]'\', [char]'/')
+        # Python bytecode cache is a RUNTIME artifact, never a manifest input:
+        # the build copies plugin .py SOURCE, and the interpreter writes
+        # __pycache__/*.pyc the first time the plugin imports (e.g. the
+        # agentic-os-hook-bridge plugin firing in a live Hermes session). The
+        # manifest can never list it, so without this exemption the extra-file
+        # scan FAILs the moment a profile runs once. Scope TIGHTLY to __pycache__/
+        # (under Python 3 all derived bytecode lands there); a loose *.pyc in a
+        # managed tree is anomalous and should still flag. -clike (NOT -like)
+        # keeps the match CASE-SENSITIVE for exact parity with the bash `case` twin.
+        if ($rel -clike '*/__pycache__/*') { continue }
         # Hermes writes its own bundled-skills bookkeeping file directly into
         # the managed skills/ tree at runtime — app-written state, not a hand
         # edit. Exempt by exact name (twin of the bash exemption).

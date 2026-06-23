@@ -88,6 +88,17 @@ if [ "${1:-}" = "--manifest" ]; then
     # e.g. `skills/rogue.md`) stay subject to the manifest gate — Codex F-2
     # in the <TEAM>-68 review.
     case "$rel" in
+      # Python bytecode cache is a RUNTIME artifact, never a manifest input: the
+      # build copies plugin .py SOURCE, and the interpreter writes
+      # __pycache__/*.pyc the first time the plugin is imported (e.g. the
+      # agentic-os-hook-bridge plugin firing in a live Hermes session). The
+      # manifest can never list it, so without this exemption the extra-file scan
+      # FAILs the moment a profile runs once. Scope the exemption TIGHTLY to the
+      # __pycache__/ tree: under Python 3 all derived bytecode (incl. optimized
+      # .opt-N.pyc) lands there, so a loose *.pyc dropped directly in a managed
+      # tree is anomalous and SHOULD still flag — a suffix-only exemption would
+      # blind the gate to any unmanifested file merely named *.pyc.
+      */__pycache__/*) continue ;;
       # Hermes writes its own skill-bookkeeping files directly into the
       # managed skills/ tree at runtime — app-written state, not a hand edit
       # (same class as the app-written settings.json keys absorbed into the

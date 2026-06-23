@@ -57,6 +57,30 @@ assert_exit "check-drift passes the fresh hermes build" 0 -- \
 printf '{}' > "$IH_OUT/skills/.bundled_manifest"
 assert_exit "check-drift exempts the hermes-app-written skills/.bundled_manifest" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
+rm -f "$IH_OUT/skills/.bundled_manifest"
+
+# The interpreter writes __pycache__/*.pyc into the managed bridge plugin the
+# first time it imports (e.g. on the first live Hermes session). That runtime
+# bytecode is never a manifest input, so the extra-file scan must EXEMPT it —
+# otherwise drift FAILs the moment a profile runs once. Simulate the cache and
+# assert the gate stays green; then prove a real hand edit still FAILs.
+ih_pycache="$IH_OUT/plugins/agentic-os-hook-bridge/__pycache__"
+mkdir -p "$ih_pycache"
+printf '\x00bytecode\n' > "$ih_pycache/__init__.cpython-312.pyc"
+assert_exit "check-drift exempts runtime __pycache__/*.pyc in the bridge plugin" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
+# The exemption is scoped to the __pycache__/ TREE, not the .pyc suffix: a loose
+# *.pyc dropped directly in a managed tree (NOT under __pycache__/) is anomalous
+# and must still register as drift — a suffix-only exemption would blind the gate.
+printf '\x00bytecode\n' > "$IH_OUT/plugins/agentic-os-hook-bridge/loose.pyc"
+assert_exit "check-drift still fails on a loose *.pyc outside __pycache__ in a managed plugin" 1 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
+rm -f "$IH_OUT/plugins/agentic-os-hook-bridge/loose.pyc"
+# A non-bytecode untracked file in the SAME managed plugin still registers as drift.
+printf 'rogue\n' > "$IH_OUT/plugins/agentic-os-hook-bridge/intruder.txt"
+assert_exit "check-drift still fails on a non-bytecode untracked file in the bridge plugin" 1 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$IH_OUT"
+rm -rf "$ih_pycache" "$IH_OUT/plugins/agentic-os-hook-bridge/intruder.txt"
 
 # --- T4: SOUL.md has the capability catalog and no unresolved placeholders ---
 ih_soul="$(cat "$IH_OUT/SOUL.md" 2>/dev/null || printf '')"
