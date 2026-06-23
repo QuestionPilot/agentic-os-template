@@ -77,6 +77,26 @@ try {
     # Hermes writes skills/.bundled_manifest at runtime — must not register as drift.
     Set-Content -LiteralPath (Join-Path $IH_OUT 'skills/.bundled_manifest') -Value '{}' -NoNewline
     Assert-Exit 'install-hermes.test: check-drift exempts the hermes-app-written skills/.bundled_manifest' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $IH_OUT
+    Remove-Item -LiteralPath (Join-Path $IH_OUT 'skills/.bundled_manifest') -Force -ErrorAction SilentlyContinue
+
+    # The interpreter writes __pycache__/*.pyc into the managed bridge plugin the
+    # first time it imports (e.g. on the first live Hermes session). That runtime
+    # bytecode is never a manifest input, so the extra-file scan must EXEMPT it
+    # (twin of the bash assertion).
+    $ihPycache = Join-Path $IH_OUT 'plugins/agentic-os-hook-bridge/__pycache__'
+    New-Item -ItemType Directory -Path $ihPycache -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ihPycache '__init__.cpython-312.pyc') -Value "bytecode`n" -NoNewline
+    Assert-Exit 'install-hermes.test: check-drift exempts runtime __pycache__/*.pyc in the bridge plugin' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $IH_OUT
+    # Scoped to the __pycache__/ TREE, not the .pyc suffix: a loose *.pyc dropped
+    # directly in a managed tree must still register as drift.
+    Set-Content -LiteralPath (Join-Path $IH_OUT 'plugins/agentic-os-hook-bridge/loose.pyc') -Value "bytecode`n" -NoNewline
+    Assert-Exit 'install-hermes.test: check-drift still fails on a loose *.pyc outside __pycache__ in a managed plugin' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $IH_OUT
+    Remove-Item -LiteralPath (Join-Path $IH_OUT 'plugins/agentic-os-hook-bridge/loose.pyc') -Force -ErrorAction SilentlyContinue
+    # A non-bytecode untracked file in the SAME managed plugin still registers as drift.
+    Set-Content -LiteralPath (Join-Path $IH_OUT 'plugins/agentic-os-hook-bridge/intruder.txt') -Value "rogue`n" -NoNewline
+    Assert-Exit 'install-hermes.test: check-drift still fails on a non-bytecode untracked file in the bridge plugin' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $IH_OUT
+    Remove-Item -LiteralPath $ihPycache -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $IH_OUT 'plugins/agentic-os-hook-bridge/intruder.txt') -Force -ErrorAction SilentlyContinue
 
     # --- T4: SOUL.md has the spine directive and no unresolved placeholders ---
     $ih_soul = if (Test-Path -LiteralPath (Join-Path $IH_OUT 'SOUL.md')) { Get-Content -Raw -LiteralPath (Join-Path $IH_OUT 'SOUL.md') } else { '' }
