@@ -13,6 +13,7 @@
 # Kill switches:
 #   CLAUDE_SKIP_FRAMEWORK_SURFACE=1         disables the whole hook
 #   CLAUDE_SKIP_FRESHNESS_CHECK=1           disables just the config-freshness nudge
+#   CLAUDE_SKIP_LOCAL_HOOK_CHECK=1          disables just the orphaned-local-hook check
 #   CLAUDE_SKIP_MCP_PROBE=1                 disables just the MCP-health block
 #   CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1   disables just the session-agent auto-fire directive
 # Window:
@@ -114,6 +115,71 @@ Stale source(s):
 $(printf '%s\n' "$stale_list" | sed 's/^/- /')
 
 Disable this check: env \`CLAUDE_SKIP_FRESHNESS_CHECK=1\`."
+    fi
+  fi
+fi
+
+# --- 1c. Orphaned operator-local hook check ---------------------
+# Catch the silent-drop failure mode: an operator-local hook wired in
+# settings.local.json whose target script no longer exists on disk (e.g. a
+# migration moved the config dir but didn't carry the operator-local file).
+# Claude loads settings.local.json hooks, but a missing command file just
+# no-ops silently — so a dropped hook (a lost SessionStart nudge, a vanished
+# safety gate) dies with no error. This block reads settings.local.json,
+# collects every hook `command`, and warns on any LITERAL ABSOLUTE command path
+# that does not exist on disk. The whole command string is tested first (so a
+# path containing a space reads correctly), with a first-token fallback for the
+# rare path-plus-args form. Scope is deliberately the literal-absolute subset;
+# relative, $VAR/${VAR}/~, and inline commands are left unchecked — they can't be
+# decisively proven missing, so no false positives. Fail-open: no settings file /
+# no jq / parse error → silent.
+LOCALHOOK_BLOCK=""
+if [[ "${CLAUDE_SKIP_LOCAL_HOOK_CHECK:-0}" != "1" ]]; then
+  # settings.local.json sits beside the hooks dir: <install>/settings.local.json
+  # (this hook lives at <install>/hooks/). Resolve independently of block 1b's
+  # INSTALL_DIR — each block carries its own kill switch and must stand alone.
+  LH_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+  LH_SETTINGS="$LH_INSTALL_DIR/settings.local.json"
+  if [[ -n "$LH_INSTALL_DIR" && -f "$LH_SETTINGS" ]]; then
+    # jq emits one command string per line; malformed JSON / odd shape → empty
+    # → silent (the ? operators + 2>/dev/null keep a bad shape fail-open). Read
+    # into a var + herestring (not `< <(jq…)` process substitution) so the loop
+    # runs in THIS shell (lh_missing persists) without needing /dev/fd.
+    lh_cmds="$(jq -r '.hooks // {} | to_entries[]? | .value[]? | .hooks[]? | .command // empty' "$LH_SETTINGS" 2>/dev/null)"
+    lh_missing=""
+    while IFS= read -r lh_cmd; do
+      [[ -z "$lh_cmd" ]] && continue
+      # Only LITERAL ABSOLUTE commands are decisively testable. A Claude hook
+      # `command` is a bare script path (args live in a separate "args" field),
+      # so test the WHOLE string first — this is what makes a path containing a
+      # space (a config dir whose folder name contains a space) read correctly
+      # instead of being truncated at the space into a false "missing" warning.
+      # Fall back to the first token for the rare "exec arg1 arg2" form so a
+      # real path-plus-args isn't a false positive. Warn naming the FULL command.
+      # Out of scope (left unchecked, no false positives): relative paths
+      # (cwd-dependent) and unexpanded $VAR / ${VAR} / ~ forms.
+      case "$lh_cmd" in
+        /*)
+          if [[ ! -e "$lh_cmd" ]]; then
+            read -r lh_first _ <<<"$lh_cmd"
+            [[ -e "$lh_first" ]] || lh_missing="${lh_missing}- ${lh_cmd}"$'\n'
+          fi
+          ;;
+      esac
+    done <<<"$lh_cmds"
+    if [[ -n "$lh_missing" ]]; then
+      LOCALHOOK_BLOCK="
+
+## ⚠ Operator-local hook is missing its script
+
+\`settings.local.json\` wires one or more hooks whose target file does not exist
+on disk. Claude loads these settings, but a missing command silently no-ops — so
+the hook is dead with no error. This usually means a migration or cleanup moved
+the config dir without carrying the operator-local script. Restore the file(s),
+or remove the stale entry from \`settings.local.json\`:
+
+${lh_missing}
+Disable this check: env \`CLAUDE_SKIP_LOCAL_HOOK_CHECK=1\`."
     fi
   fi
 fi
@@ -228,11 +294,11 @@ Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
 fi
 
 # Nothing to surface from any block → quiet exit.
-if [[ -z "$GIT_BLOCK" && -z "$FRESH_BLOCK" && -z "$MCP_BLOCK" && -z "$SA_BLOCK" ]]; then
+if [[ -z "$GIT_BLOCK" && -z "$FRESH_BLOCK" && -z "$LOCALHOOK_BLOCK" && -z "$MCP_BLOCK" && -z "$SA_BLOCK" ]]; then
   exit 0
 fi
 
-CONTEXT="${GIT_BLOCK}${FRESH_BLOCK}${MCP_BLOCK}${SA_BLOCK}"
+CONTEXT="${GIT_BLOCK}${FRESH_BLOCK}${LOCALHOOK_BLOCK}${MCP_BLOCK}${SA_BLOCK}"
 
 # Emit JSON via jq for safe escaping.
 jq -nR --arg ctx "$CONTEXT" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'

@@ -82,6 +82,30 @@ _Skip 'hooks-behavior.test: framework-surface: all-disconnected keeps git-log' $
 _Skip 'hooks-behavior.test: framework-surface: malformed output exits 0' $reason
 _Skip 'hooks-behavior.test: framework-surface: malformed output omits MCP block' $reason
 _Skip 'hooks-behavior.test: framework-surface: malformed output keeps git-log' $reason
+# orphaned operator-local hook check (block 1c) — bash-side behavioral coverage;
+# the .ps1 hook block 1c is exercised in hooks-ps-parity.test.ps1.
+_Skip 'hooks-behavior.test: framework-surface: orphaned-hook check exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: warns on missing local hook script' $reason
+_Skip 'hooks-behavior.test: framework-surface: names the missing hook path' $reason
+_Skip 'hooks-behavior.test: framework-surface: orphaned-hook kill switch exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: orphaned-hook kill switch drops block' $reason
+_Skip 'hooks-behavior.test: framework-surface: orphaned-hook kill switch keeps git-log' $reason
+_Skip 'hooks-behavior.test: framework-surface: present local hook exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: present local hook stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: no settings.local.json exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: no settings.local.json stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: existing spaced-path hook stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: missing spaced-path hook warns' $reason
+_Skip 'hooks-behavior.test: framework-surface: missing spaced-path hook names full path' $reason
+_Skip 'hooks-behavior.test: framework-surface: multi-missing names first' $reason
+_Skip 'hooks-behavior.test: framework-surface: multi-missing names second' $reason
+_Skip 'hooks-behavior.test: framework-surface: relative-path command stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: empty settings.local.json exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: empty settings.local.json stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: invalid-JSON settings exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: invalid-JSON settings stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: odd-shape .hooks exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: odd-shape .hooks stays silent' $reason
 # config-freshness nudge (bash-side behavioral coverage; the.ps1
 # hook freshness block is unit-covered in check-freshness.test.ps1).
 _Skip 'hooks-behavior.test: framework-surface: fresh install omits freshness nudge' $reason
