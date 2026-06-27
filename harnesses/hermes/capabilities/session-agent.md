@@ -25,6 +25,13 @@ lifecycle: shipped
   lives in the vault, so satisfy O1's project-body reads inside the O4 vault
   orient (read the relevant `01-Projects/` notes) instead of chasing on-disk
   memory files.
+- **O4 operator-identity read — Hermes-specific.** The operator-identity master
+  ("Operator Soul") is ALREADY in your context: `install.sh --harness hermes`
+  splices a lean projection of it (`SOUL_IDENTITY_PATH`) into `SOUL.md`, injected
+  as identity slot #1 every session. So O4's explicit identity sub-step is already
+  satisfied for working-style/identity without a vault round-trip — read the vault
+  identity master note only when you need the full version beyond the lean
+  projection.
 - **Enforcement:** class `pre-edit-gate` → the `pre_tool_call` hook
   `hooks/session-agent.sh`, matcher `write_file|patch|terminal` (`terminal` is
   included because the shell can write files — the Bash-bypass). Blocks the

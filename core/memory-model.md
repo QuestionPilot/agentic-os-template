@@ -190,6 +190,15 @@ each other:
 - **Never impose vault schema or protocols on a native store.** Each harness's
   native memory keeps its own format, size caps, and conventions; the vault's
   note schema, frontmatter contracts, and audit apply to vault notes only.
+- **A per-machine projection of a vault master is a thin offline fallback, not a
+  mirror.** When the durable vault holds a master note the orient loads every
+  session (e.g. an operator-identity / "soul" note read explicitly at
+  session-agent O4) *and* a harness keeps a per-machine cache of it, that cache
+  exists only to keep a cold or vault-unreachable session (Drive/VPN down) from
+  flying blind — not every harness has one, and the orient must degrade without it.
+  Keep any such cache lean — a pointer to the master plus the few load-bearing
+  facts — never a full duplicate that drifts against it. The vault master is
+  authoritative whenever both are in context.
 
 ### Index Size + Per-Entry Caps (enforced)
 
