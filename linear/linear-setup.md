@@ -144,15 +144,15 @@ Both surfaces expose the same Linear semantics; the syntax differs.
 ### 4.1 Common commands — lineark CLI
 
 ```bash
-# Projects (Active + Planned)
+# All projects (lineark has no project state field or state filter — only --led-by-me)
 lineark projects list --format json
 
-# Issues in a specific project
+# Issues in a specific project (Done/Canceled hidden by default; --show-done to include)
 lineark issues list --project <PROJECT_UUID> --format json
 
 # Issues assigned to you, In Progress
 lineark issues list --mine --format json
-# (filter on .state == "In Progress" in the JSON)
+# (on `list`, .state is a bare string — filter on .state == "In Progress")
 
 # Read full issue body + comments
 lineark issues read QUE-NN --format json
@@ -196,7 +196,17 @@ Refer to each plugin's documentation for the exact tool names and argument shape
 
 ### 4.3 JSON response shape
 
-Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. `ABC-123`), `title`, `description`, `state.name`, `priority`, `assignee`, `team`, `labels`, `url`, plus relations and comments where requested. Scripts should query against `.identifier` for the human-readable issue ID and `.id` (UUID) for relations and update calls.
+Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. `ABC-123`), `title`, `description`, `priority`, `assignee`, `team`, `labels`, `url`, plus relations and comments where requested. Scripts should query against `.identifier` for the human-readable issue ID and `.id` (UUID) for relations and update calls.
+
+**`.state` shape varies by `lineark` subcommand — do not assume `.state.name` everywhere.** Verified on `lineark` 3.0.3:
+
+| Call | `.state` shape | Query |
+| --- | --- | --- |
+| `issues read QUE-NN` | object `{id, name}` | `.state.name` |
+| `issues list` | bare **string** (e.g. `"Backlog"`) | `.state` |
+| `projects list` | **absent** — payload is only `id`, `name`, `slug_id`, `lead` | n/a |
+
+So `.state.name` over an `issues list` throws `Cannot index string with string "name"`, and there is **no project-state field to filter on** — `projects list` offers only `--led-by-me`. `issues list` also **hides Done/Canceled by default** (`--show-done` to include), so its raw output is already the open-work cut. The Linear MCP returns richer nested objects (`state.name` consistently, project state available) — query its shapes per its tool catalog. Cross-check `lineark --help` when a documented shape errors; both upstreams iterate independently.
 
 ## 5. How the AI Uses Linear at Runtime
 
@@ -204,11 +214,11 @@ Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. 
 
 **Session kickoff — read.** When the harness has either Linear surface installed, the agent's session kickoff runs the projects-first ordered cut:
 
-1. List Linear projects (Active + Planned) to surface fresh-spawned work.
-2. For each surfaced project, list its issues to catch backlog items not yet assigned.
-3. As a tertiary check, list personally-assigned issues filtered to In Progress.
+1. List all Linear projects to surface fresh-spawned work. (`lineark projects list` returns the full set — no state field or filter; the Linear MCP can pre-filter to Active + Planned.)
+2. For each project, list its issues to catch backlog items not yet assigned. (`lineark issues list` already hides Done/Canceled.)
+3. As a tertiary check, list personally-assigned issues that are In Progress.
 
-This order matters: an assignee-first cut alone misses brand-new projects whose issues are still Backlog and unassigned. See `capabilities/session-agent.md` Mode 1 O3 for the canonical order.
+This order matters: an assignee-first cut alone misses brand-new projects whose issues are still Backlog and unassigned. See `capabilities/session-agent.md` Mode 1 O3 for the canonical order, including the per-subcommand `.state` shapes (§4.3).
 
 **Linear gate — declare before edits.** Before any file-modifying action in a multi-step or multi-session task, the agent declares the active Linear issue in its routing block:
 
@@ -242,6 +252,7 @@ Common ways the Linear layer degrades, and what to do.
 - **Workspace mismatch.** Token authenticates against a different workspace than the agent is querying. Verify `lineark whoami` shows the expected workspace; check `LINEAR_WORKSPACE_URL` in `local.env`.
 - **MCP silent-empty-tools.** The Linear MCP connector reports `Connected` but exposes 0 tools on session load. Reconnect from the harness MCP panel. If the silent failure persists, fall back to `lineark`.
 - **Surface-doc mismatch.** This guide cites lineark commands or MCP tool names that the installed binary or connector version does not expose. Both upstreams iterate independently; cross-check `lineark --help` or the MCP plugin's tool catalog when a documented command errors.
+- **`.state` shape mismatch (lineark).** A jq filter using `.state.name` over `lineark issues list` errors with `Cannot index string with string "name"`, and a project state-filter silently matches nothing — `lineark` exposes no project state field at all. `.state` is an object only on `issues read`; it is a bare string on `issues list` and absent from `projects list`. Query `.state` on a list, `.state.name` on a read; never pre-filter projects by state against `lineark`. Full table in §4.3.
 - **Issue not found.** `lineark issues read QUE-NN` returns not-found despite the issue existing. Common cause: the issue lives in a project the token's user does not have access to; verify by viewing the issue in the Linear UI under the same account that owns the token.
 - **Free-plan issue cap.** Linear's Free plan caps a workspace at **250 active (non-archived) issues**; `Done` and `Canceled` issues still count, and once the cap is hit, creating new issues is blocked. The fix is to **archive** closed issues — archived issues are retained but no longer count toward the cap — not to delete them. Watch one masking effect: `lineark issues list --limit` tops out at 250, so on a large workspace the visible count can hide the true active total; page through GraphQL `issues(first: 250, after: $cursor)` for an accurate count.
 - **Archived issues invisible to `lineark`.** `lineark issues read|list|search` all exclude archived issues, so reading an archived issue returns *not found* even though its data is intact. Read an archived issue's description and comments via a GraphQL `issues(filter: …, includeArchived: true)` connection query (the flag is a connection argument — the singular `issue(id:)` query doesn't accept it), or through the Linear UI's Archive view; `lineark issues unarchive QUE-NN` restores it to the active set. `lineark` has no bulk-archive command — `lineark issues archive` takes one issue at a time and `batch-update` cannot archive — so to clear many at once, drive the GraphQL `issueArchive(id: <issue UUID>) { success }` mutation per issue, sequentially to respect the rate limit below (the `id` is each issue's internal `.id` from a list/read, not its `QUE-NN` key).

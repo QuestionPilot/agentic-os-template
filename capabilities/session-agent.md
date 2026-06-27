@@ -69,16 +69,31 @@ for token cost but does not require it.
 
 **Query order (surface-agnostic):**
 
-1. **List Linear projects** filtered to Active + Planned state TYPES. State NAMES
-   vary per workspace; state TYPES (`started`, `planned`) are workspace-portable —
-   filter on type.
-2. **For each surfaced project, list its issues.** A fresh-spawned project may
-   have all issues in Backlog and no assignee; the per-project sweep catches them.
-3. **As a tertiary check, list personally-assigned issues** filtered to In Progress
-   (continuation of work in flight).
+1. **List all Linear projects.** Surface-dependent: the `lineark` CLI returns the
+   full project set with **no per-project state field and no state filter** (only
+   `--led-by-me`) — do not try to pre-filter projects by state against it. The
+   Linear MCP returns richer project objects — *if* its tool exposes project state,
+   you may filter to Active + Planned state TYPES (`started`, `planned`; state
+   NAMES vary per workspace, so filter on type). Either way, step 2 is what
+   actually surfaces active work.
+2. **For each project, list its issues.** A fresh-spawned project may have all
+   issues in Backlog and no assignee; the per-project sweep catches them.
+   `lineark issues list` already **hides Done/Canceled by default** (`--show-done`
+   to include), so its output IS the open-work cut. A Linear-MCP `list_issues` may
+   *not* hide them — filter out Done/Canceled client-side if so.
+3. **As a tertiary check, list personally-assigned issues** that are In Progress
+   (continuation of work in flight) — e.g. `lineark issues list --mine`, filtering
+   on state: `.state == "In Progress"` for lineark (where `.state` is a bare
+   string) or `.state.name == "In Progress"` for the MCP's nested object (§4.3).
 
 **Always run the project sweep first.** The assignee+In-Progress cut alone misses
 fresh-spawned projects entirely — see [[feedback_session_kickoff_cut]].
+
+**`.state` shape varies by call (lineark).** `projects list` has no `state` field;
+`issues list` returns `.state` as a bare **string**; only `issues read` returns a
+`{id, name}` **object**. Query `.state` directly on a list, `.state.name` only on a
+read — a `.state.name` filter over a list throws `Cannot index string with string
+"name"`. See `$AI_CONFIG_DIR/linear/linear-setup.md` §4.3.
 
 **Per-surface commands:** see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the actual command
 shapes (lineark CLI flags or Linear MCP tool names + arguments). The same query
@@ -94,14 +109,29 @@ returns an empty array, this is the [[reference_mcp_silent_empty_tools]] pattern
 restart the harness's MCP connection (or fall back to `lineark` if installed)
 before accepting "no active work" as the answer.
 
-### O4. Vault orient
+### O4. Vault orient — entrypoint AND operator-identity master
 
-Open the durable-knowledge vault's `START.md` to ground the session in the vault's
-working rules. Load only the relevant slice — do not load the whole vault.
+Ground the session in the vault. Read **two** notes explicitly — load only the
+relevant slice, never the whole vault:
+
+1. **`START.md`** — the vault's working rules.
+2. **The operator-identity master note** — the `harness: all`-scoped identity note
+   ("Operator Soul" or equivalent) holding who the operator is and how they want to
+   be worked with. The vault entrypoint names it; the path is vault-specific (e.g.
+   under an `Areas/` folder). Read that named note as its **own mandatory
+   sub-step** rather than treating START.md's prose pointer ("load the Operator
+   Soul first") as optional — a prose pointer is an instruction *chain* agents
+   skip, so naming the read here is the fix: the identity master must land every
+   session, not only when the chain is followed.
 
 **Tool calls:**
-- `Read` the absolute path `$OBSIDIAN_VAULT_PATH/START.md`. (The vault path is
-  declared in `local.env`; on harnesses without it, skip with a one-line note.)
+- `Read` `$OBSIDIAN_VAULT_PATH/START.md`.
+- `Read` the operator-identity note START.md designates (vault-specific path).
+- **Degrade gracefully — never fail the orient.** If the vault is unreachable
+  (Drive/VPN down) *or* reachable but no identity note is configured/named, read
+  what you can (or skip) and continue with a one-line note. If the harness keeps a
+  per-machine identity cache (a lean projection of the master), use it as the
+  offline fallback; otherwise continue without identity context.
 
 ### O5. Cross-issue Linear state verification
 
