@@ -230,6 +230,11 @@ Assert-Contains 'hooks-ps-parity.test: hermes framework-surface.ps1 resolves the
 Assert-NotContains "hooks-ps-parity.test: hermes framework-surface.ps1 has no bare '& pwsh -NoProfile -File'" $hkps_hfs '& pwsh -NoProfile -File'
 $hkps_cfs = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'hooks' 'framework-surface.ps1') -Raw
 Assert-Contains "hooks-ps-parity.test: claude framework-surface.ps1 MCP probe parses the Connected status word (-ceq)" $hkps_cfs "-ceq 'Connected'"
+# Block 1c (orphaned operator-local hook check) — PS twin must carry it so the
+# .ps1 cannot diverge from the .sh behavioral coverage in hooks-behavior.test.sh.
+Assert-Contains "hooks-ps-parity.test: claude framework-surface.ps1 carries the orphaned-local-hook kill switch" $hkps_cfs 'CLAUDE_SKIP_LOCAL_HOOK_CHECK'
+Assert-Contains "hooks-ps-parity.test: claude framework-surface.ps1 reads settings.local.json hook commands" $hkps_cfs 'settings.local.json'
+Assert-Contains "hooks-ps-parity.test: claude framework-surface.ps1 emits the orphaned-local-hook warning" $hkps_cfs 'Operator-local hook is missing'
 
 # <TEAM>-300: skill_manage is mutation-only, so the gate has NO read-only fast-path
 # — it gates EVERY call. Lock that source-side so a revert re-introducing a

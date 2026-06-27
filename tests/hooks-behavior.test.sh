@@ -278,6 +278,91 @@ assert_contains     "framework-surface: malformed output keeps git-log"    "${fp
 rm -rf "$NO_CLAUDE_BIN" "$QM_STUB"
 
 # ---------------------------------------------------------------------------
+# framework-surface orphaned operator-local hook check (block 1c).
+# settings.local.json lives at <install>/settings.local.json (beside hooks/).
+# missing hook file -> warns + names the path; present -> silent; kill switch
+# suppresses. Created in the rendered install dir, removed after so it cannot
+# leak into the freshness assertions below.
+HB_LOCAL_SETTINGS="$HB_OUT/settings.local.json"
+cat > "$HB_LOCAL_SETTINGS" <<'JSON'
+{ "hooks": { "SessionStart": [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "/nonexistent/aos-test-missing-hook.sh" } ] } ] } }
+JSON
+fl1="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq       "framework-surface: orphaned-hook check exits 0"        "0" "${fl1%%|*}"
+assert_contains "framework-surface: warns on missing local hook script" "${fl1#*|}" "Operator-local hook is missing"
+assert_contains "framework-surface: names the missing hook path"        "${fl1#*|}" "/nonexistent/aos-test-missing-hook.sh"
+
+# kill switch suppresses the orphaned-hook block but preserves git-log surfacing.
+fl2="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' \
+  CLAUDE_FRAMEWORK_SINCE_DAYS=3650 CLAUDE_SKIP_LOCAL_HOOK_CHECK=1)"
+assert_eq           "framework-surface: orphaned-hook kill switch exits 0"     "0" "${fl2%%|*}"
+assert_not_contains "framework-surface: orphaned-hook kill switch drops block" "${fl2#*|}" "Operator-local hook is missing"
+assert_contains     "framework-surface: orphaned-hook kill switch keeps git-log" "${fl2#*|}" "additionalContext"
+
+# present hook file -> the block stays silent (point at a file that exists).
+cat > "$HB_LOCAL_SETTINGS" <<JSON
+{ "hooks": { "SessionStart": [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "$GEN_HOOKS/framework-surface.sh" } ] } ] } }
+JSON
+fl3="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "framework-surface: present local hook exits 0"        "0" "${fl3%%|*}"
+assert_not_contains "framework-surface: present local hook stays silent"   "${fl3#*|}" "Operator-local hook is missing"
+
+# no settings.local.json -> silent (fail-open).
+rm -f "$HB_LOCAL_SETTINGS"
+fl4="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "framework-surface: no settings.local.json exits 0"    "0" "${fl4%%|*}"
+assert_not_contains "framework-surface: no settings.local.json stays silent" "${fl4#*|}" "Operator-local hook is missing"
+
+# Regression (cross-model review): an EXISTING hook under a path WITH A SPACE must
+# stay silent. When the config dir's folder name contains a space, truncating the
+# command at the first space used to false-positive on a perfectly-present hook.
+HB_SPACE_DIR="$(mktemp -d)/with space"; mkdir -p "$HB_SPACE_DIR"; : > "$HB_SPACE_DIR/hook.sh"
+cat > "$HB_LOCAL_SETTINGS" <<JSON
+{ "hooks": { "SessionStart": [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "$HB_SPACE_DIR/hook.sh" } ] } ] } }
+JSON
+fl5="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_not_contains "framework-surface: existing spaced-path hook stays silent" "${fl5#*|}" "Operator-local hook is missing"
+
+# a MISSING hook under a spaced path warns, naming the FULL path (not truncated).
+cat > "$HB_LOCAL_SETTINGS" <<JSON
+{ "hooks": { "SessionStart": [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "$HB_SPACE_DIR/gone.sh" } ] } ] } }
+JSON
+fl6="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_contains "framework-surface: missing spaced-path hook warns"           "${fl6#*|}" "Operator-local hook is missing"
+assert_contains "framework-surface: missing spaced-path hook names full path"  "${fl6#*|}" "$HB_SPACE_DIR/gone.sh"
+
+# multiple missing hooks -> both named.
+cat > "$HB_LOCAL_SETTINGS" <<'JSON'
+{ "hooks": { "SessionStart": [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "/nonexistent/one.sh" }, { "type": "command", "command": "/nonexistent/two.sh" } ] } ] } }
+JSON
+fl7="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_contains "framework-surface: multi-missing names first"  "${fl7#*|}" "/nonexistent/one.sh"
+assert_contains "framework-surface: multi-missing names second" "${fl7#*|}" "/nonexistent/two.sh"
+
+# a RELATIVE-path command is out of scope -> silent (no cwd-dependent false pos).
+cat > "$HB_LOCAL_SETTINGS" <<'JSON'
+{ "hooks": { "SessionStart": [ { "matcher": "startup", "hooks": [ { "type": "command", "command": "relative/nope.sh" } ] } ] } }
+JSON
+fl8="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_not_contains "framework-surface: relative-path command stays silent" "${fl8#*|}" "Operator-local hook is missing"
+
+# malformed / odd-shape settings.local.json all fail open (silent, exit 0).
+printf '' > "$HB_LOCAL_SETTINGS"
+fl9="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "framework-surface: empty settings.local.json exits 0"      "0" "${fl9%%|*}"
+assert_not_contains "framework-surface: empty settings.local.json stays silent" "${fl9#*|}" "Operator-local hook is missing"
+printf 'not json {' > "$HB_LOCAL_SETTINGS"
+fl10="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "framework-surface: invalid-JSON settings exits 0"      "0" "${fl10%%|*}"
+assert_not_contains "framework-surface: invalid-JSON settings stays silent" "${fl10#*|}" "Operator-local hook is missing"
+printf '{ "hooks": [1,2,3] }' > "$HB_LOCAL_SETTINGS"
+fl11="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "framework-surface: odd-shape .hooks exits 0"      "0" "${fl11%%|*}"
+assert_not_contains "framework-surface: odd-shape .hooks stays silent" "${fl11#*|}" "Operator-local hook is missing"
+
+rm -rf "$HB_LOCAL_SETTINGS" "$HB_SPACE_DIR"
+
+# ---------------------------------------------------------------------------
 # framework-surface config-freshness nudge.
 # fresh install -> no freshness block
 # stale install (a recorded source hash no longer matches the repo)

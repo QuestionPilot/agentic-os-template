@@ -22,6 +22,7 @@
     Kill switches:
       CLAUDE_SKIP_FRAMEWORK_SURFACE=1           disables the whole hook
       CLAUDE_SKIP_FRESHNESS_CHECK=1             disables the config-freshness nudge
+      CLAUDE_SKIP_LOCAL_HOOK_CHECK=1            disables the orphaned-local-hook check
       CLAUDE_SKIP_MCP_PROBE=1                   disables the MCP-health block
       CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1     disables the session-agent block
 
@@ -127,6 +128,70 @@ $staleBullets
 
 Disable this check: env ``CLAUDE_SKIP_FRESHNESS_CHECK=1``.
 "@
+        }
+    }
+}
+
+# --- 1c. Orphaned operator-local hook check ---------------------
+# Catch the silent-drop failure mode: an operator-local hook wired in
+# settings.local.json whose target script no longer exists on disk (e.g. a
+# migration moved the config dir but didn't carry the operator-local file).
+# Claude loads settings.local.json hooks, but a missing command file silently
+# no-ops — so a dropped hook (a lost SessionStart nudge, a vanished safety
+# gate) dies with no error. Warn on any LITERAL ABSOLUTE hook command that does
+# not exist (whole path tested first, so embedded spaces are handled; first-token
+# fallback for path-plus-args). Relative, $VAR/${VAR}/~, and inline commands are
+# left unchecked — they can't be proven missing, so no false positives.
+# Fail-open: no settings file / no jq / parse error → silent.
+$LOCALHOOK_BLOCK = ''
+if ($env:CLAUDE_SKIP_LOCAL_HOOK_CHECK -ne '1') {
+    # settings.local.json sits beside the hooks dir (<install>/settings.local.json;
+    # this hook lives at <install>/hooks/). Resolve independently of block 1b's
+    # INSTALL_DIR — each block carries its own kill switch and must stand alone.
+    $LH_INSTALL_DIR = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..') -ErrorAction SilentlyContinue).Path
+    if ($LH_INSTALL_DIR) {
+        $LH_SETTINGS = Join-Path $LH_INSTALL_DIR 'settings.local.json'
+        if (Test-Path -LiteralPath $LH_SETTINGS) {
+            # jq emits one command string per line; malformed JSON → empty → silent.
+            $lhCmds = & jq -r '.hooks // {} | to_entries[]? | .value[]? | .hooks[]? | .command // empty' $LH_SETTINGS 2>$null
+            $lhMissing = @()
+            foreach ($lhCmd in @($lhCmds)) {
+                if (-not $lhCmd) { continue }
+                # Only a ROOTED absolute command is decisively testable. IsPathRooted
+                # accepts the native absolute forms of whatever OS runs the .ps1 —
+                # Unix '/x', Windows drive 'C:\x', and UNC '\\server\x' — so the PS
+                # twin doesn't silently miss native Windows hook paths the way a bare
+                # '/*' match would. A Claude hook `command` is a bare script path
+                # (args live in a separate "args" field), so test the WHOLE string
+                # first (Test-Path -LiteralPath handles embedded spaces — for a
+                # config dir whose folder name contains a space); fall back to the first
+                # token for the rare "exec arg1 arg2" form. Warn naming the FULL
+                # command. Relative / $VAR / ~ forms are out of scope (no false pos).
+                if ([System.IO.Path]::IsPathRooted($lhCmd) -and -not (Test-Path -LiteralPath $lhCmd)) {
+                    $lhFirst = ("$lhCmd".Trim() -split '\s+', 2)[0]
+                    if (-not (Test-Path -LiteralPath $lhFirst)) {
+                        $lhMissing += "- $lhCmd"
+                    }
+                }
+            }
+            if ($lhMissing.Count -gt 0) {
+                $lhBullets = ($lhMissing -join "`n")
+                $LOCALHOOK_BLOCK = @"
+
+
+## ⚠ Operator-local hook is missing its script
+
+``settings.local.json`` wires one or more hooks whose target file does not exist
+on disk. Claude loads these settings, but a missing command silently no-ops — so
+the hook is dead with no error. This usually means a migration or cleanup moved
+the config dir without carrying the operator-local script. Restore the file(s),
+or remove the stale entry from ``settings.local.json``:
+
+$lhBullets
+
+Disable this check: env ``CLAUDE_SKIP_LOCAL_HOOK_CHECK=1``.
+"@
+            }
         }
     }
 }
@@ -268,11 +333,11 @@ Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
     }
 }
 
-if (-not $GIT_BLOCK -and -not $FRESH_BLOCK -and -not $MCP_BLOCK -and -not $SA_BLOCK) {
+if (-not $GIT_BLOCK -and -not $FRESH_BLOCK -and -not $LOCALHOOK_BLOCK -and -not $MCP_BLOCK -and -not $SA_BLOCK) {
     exit 0
 }
 
-$CONTEXT = "${GIT_BLOCK}${FRESH_BLOCK}${MCP_BLOCK}${SA_BLOCK}"
+$CONTEXT = "${GIT_BLOCK}${FRESH_BLOCK}${LOCALHOOK_BLOCK}${MCP_BLOCK}${SA_BLOCK}"
 
 # Emit JSON via jq for safe escaping (parity with bash hook). Pass the
 # multiline context via --arg so jq escapes newlines + quotes correctly.
