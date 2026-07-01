@@ -164,7 +164,7 @@ For each lesson, pick exactly one class and route it. The classes are defined in
 | `data-readiness` | `playbooks/data-readiness-map.md`, verification, or Obsidian | Use when repeated work needs better source plumbing or summaries. |
 | `goal-run` | `playbooks/goal-run.md` | Use when autonomous or recurring work needs clearer bounds. |
 | `no-action` | Transcript only | Note it and move on. |
-| `state-delta` | `memory/project_*.md` (or `runtime_*.md`) + `MEMORY.md` index update | Mandatory when a Linear project or new durable on-disk artifact dir came into existence this session. Write the memory pointer during closeout itself — never deferred. |
+| `state-delta` | a project-type memory note (`metadata.type: project`, or `runtime_*.md`) + `MEMORY.md` index update | Mandatory when a Linear project or new durable on-disk artifact dir came into existence this session. Write the memory pointer during closeout itself — never deferred. |
 
 ## Memory-hygiene (on any memory write)
 

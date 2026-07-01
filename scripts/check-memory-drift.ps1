@@ -7,12 +7,15 @@
 .DESCRIPTION
     Four failure classes:
 
-    1. Headline-vs-body DRIFT in project_*.md files. A project_*.md file has
-    DRIFT when its frontmatter description headline claims a closed state
-    (COMPLETE / CLOSED / DONE) but its body links to a different `[[project_*]]`
-    follow-on AND the description itself does not acknowledge the follow-on. This
-    catches the case where a session closed a project and spawned a follow-on,
-    updated the body, but never updated the headline / index.
+    1. Headline-vs-body DRIFT in project-type notes. A note is "project-type"
+    when its frontmatter `type:` (top-level or nested under `metadata:`) is
+    `project` — NOT by filename glob (<TEAM>-353): the kebab auto-memory store keeps
+    the type in frontmatter, so a project note may be named anything. A
+    project-type note has DRIFT when its frontmatter description headline claims a
+    closed state (COMPLETE / CLOSED / DONE) but its body links to a different
+    `[[project…]]` follow-on AND the description itself does not acknowledge the
+    follow-on. This catches the case where a session closed a project and spawned
+    a follow-on, updated the body, but never updated the headline / index.
 
     2. MEMORY.md index BLOAT. When <MemoryDir>/MEMORY.md exists it is
     checked against two caps documented in core/memory-model.md:
@@ -66,7 +69,7 @@
 
 .NOTES
     Exit codes:
-        0 — clean (or no project_*.md files / MEMORY.md to inspect)
+        0 — clean (or no project-type notes / MEMORY.md to inspect)
         1 — drift detected, or MEMORY.md over a documented cap
         2 — usage error (missing dir, bad args)
 
@@ -137,11 +140,12 @@ while ($i -lt $Rest.Count) {
 # ---------------------------------------------------------------------------
 function Write-Usage {
     @'
-check-memory-drift.ps1 — flag headline-vs-body drift in project_*.md memory files.
+check-memory-drift.ps1 — flag headline-vs-body drift in project-type memory notes.
 
-A project_*.md file has DRIFT when its frontmatter description headline claims
-a closed state (COMPLETE / CLOSED / DONE) but its body links to a different
-`[[project_*]]` follow-on AND the description itself does not acknowledge the
+A note is "project-type" when its frontmatter type: (top-level or nested under
+metadata:) is project — not by filename. It has DRIFT when its description
+headline claims a closed state (COMPLETE / CLOSED / DONE) but its body links to a
+different [[project…]] follow-on AND the description does not acknowledge the
 follow-on. This catches the case where a session closed a project and spawned
 a follow-on, updated the body, but never updated the headline / index.
 
@@ -153,7 +157,7 @@ Usage:
   check-memory-drift.ps1 -Help
 
 Exit codes:
-  0 — clean (or no project_*.md files to inspect)
+  0 — clean (or no project-type notes to inspect)
   1 — drift detected
   2 — usage error (missing dir, bad args)
 
@@ -323,6 +327,31 @@ function Get-FmBody {
     return ($body -join "`n")
 }
 
+# Get-MemNoteType — return the note's memory type from frontmatter: the first
+# `type:` line inside the first `---`-fenced block, top-level or nested under
+# `metadata:`. Lowercased; '' if absent (`node_type:` is NOT matched — the
+# pattern anchors `type:` to the start after optional indent). Mirrors bash
+# mem_note_type + check-distillation-completeness.sh so both scanners agree on
+# what a "project" note is (type in frontmatter, not the filename).
+function Get-MemNoteType {
+    param([Parameter(Mandatory)][string]$Path)
+    # try/catch so a locked/deleted file degrades to '' (parity with bash awk,
+    # which warns + continues) instead of crashing the whole scan under Stop.
+    try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return '' }
+    if ($lines.Count -eq 0 -or $lines[0].TrimEnd() -ne '---') { return '' }
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].TrimEnd() -eq '---') { break }
+        if ($lines[$i] -match '^\s*type:\s*(.*)$') {
+            $v = $matches[1].Trim()
+            # Strip one surrounding quote pair so `type: "project"` / `type: 'project'`
+            # classify as project (else a valid quoted note goes invisible).
+            if ($v.Length -ge 2 -and (($v.StartsWith('"') -and $v.EndsWith('"')) -or ($v.StartsWith("'") -and $v.EndsWith("'")))) { $v = $v.Substring(1, $v.Length - 2) }
+            return $v.ToLower()
+        }
+    }
+    return ''
+}
+
 # ---------------------------------------------------------------------------
 # Main scan loop
 # ---------------------------------------------------------------------------
@@ -343,11 +372,16 @@ $scanned = 0
 # project-only count on a large mixed dir reads as a coverage gap that isn't there.
 $notesScanned = 0
 
-# Bash side uses `find -maxdepth 1 -type f -name 'project_*.md'`. Mirror with
-# -File + -Filter at depth 1.
+# Detect project memory by frontmatter type, not filename (<TEAM>-353). The old
+# `project_*.md` glob went near-blind: it matched 1 of 7 real project notes in
+# the live store. Mirror bash `find -name '*.md' ! -name 'MEMORY.md'` then keep
+# only notes whose frontmatter type is `project`.
 $projectFiles = @(
-    Get-ChildItem -LiteralPath $MemoryDir -Filter 'project_*.md' -File `
-        -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $MemoryDir -File -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -like '*.md' -and $_.Name -ne 'MEMORY.md' -and
+            (Get-MemNoteType -Path $_.FullName) -eq 'project'
+        }
 )
 
 foreach ($f in $projectFiles) {
@@ -374,9 +408,11 @@ foreach ($f in $projectFiles) {
     $body = Get-FmBody -Path $f.FullName
 
     $followon = ''
-    # Bash extracts via grep -oE '\[\[project_[A-Za-z0-9_]+(\|[^]]+)?\]\]'
-    # then strips to the project_NAME prefix. PS .NET regex equivalent:
-    $linkMatches = [regex]::Matches($body, '\[\[(project_[A-Za-z0-9_]+)(\|[^\]]+)?\]\]')
+    # Bash extracts via grep -oE '\[\[project[_-][A-Za-z0-9_-]+(\|[^]]+)?\]\]'
+    # then strips to the project name. Accept BOTH separators after `project`
+    # (snake `project_foo` + kebab `project-foo`) so a hyphen-named follow-on is
+    # caught too — the store's real project notes are kebab-named (<TEAM>-353).
+    $linkMatches = [regex]::Matches($body, '\[\[(project[_-][A-Za-z0-9_-]+)(\|[^\]]+)?\]\]')
     foreach ($m in $linkMatches) {
         $link = $m.Groups[1].Value
         if ([string]::IsNullOrEmpty($link)) { continue }

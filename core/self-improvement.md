@@ -33,7 +33,7 @@ Classify each meaningful lesson as exactly one durable action:
 | `data-readiness` | repeated work needs better source plumbing or summaries | `playbooks/data-readiness-map.md`, verification, or Obsidian |
 | `goal-run` | autonomous or recurring work needs clearer bounds | `playbooks/goal-run.md` |
 | `no-action` | transient or already covered | closeout note only |
-| `state-delta` | a Linear project (created / closed / status-changed) or new durable on-disk artifact directory came into existence during this session | a `project_*.md` or `runtime_*.md` memory file written BEFORE session exit, plus a `MEMORY.md` index update |
+| `state-delta` | a Linear project (created / closed / status-changed) or new durable on-disk artifact directory came into existence during this session | a project-type memory note (frontmatter `metadata.type: project`) or `runtime_*.md` file written BEFORE session exit, plus a `MEMORY.md` index update |
 
 ## Promotion Rule
 

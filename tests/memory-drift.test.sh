@@ -581,10 +581,70 @@ GUARD_RC=$?
 assert_eq "memory-drift: clean no-type-prefix kebab note exits 0" "0" "$GUARD_RC"
 assert_contains "memory-drift: the kebab note IS counted (1 scanned, not a vacuous 0)" "$GUARD_OUT" "1 notes frontmatter+injection-scanned"
 
+# --- 34. <TEAM>-353 blind-spot guard: project detection is by frontmatter type, NOT
+# filename. A KEBAB-named note (no project_ prefix) typed `project` with a CLOSED
+# headline + an unacknowledged follow-on MUST be caught; a `project_`-NAMED note
+# typed `reference` must NOT be headline-checked (type gates it, not the filename).
+# Pins the fix so a future refactor cannot silently revert to the project_*.md glob.
+TYPE_TMP=$(mktemp -d 2>/dev/null) || TYPE_TMP="/tmp/memory-type-$$"
+mkdir -p "$TYPE_TMP"
+cat > "$TYPE_TMP/hermes-agent.md" <<'EOF'
+---
+name: hermes-agent
+description: "Hermes workstream COMPLETE — closed 2026-06-30"
+metadata:
+  type: project
+---
+Superseded by [[project-successor]] which carries the live work.
+EOF
+cat > "$TYPE_TMP/project_decoy.md" <<'EOF'
+---
+name: project_decoy
+description: "Looks CLOSED and links onward but is typed reference"
+metadata:
+  type: reference
+---
+Mentions [[project-other]] but this is a reference note, not a project.
+EOF
+TYPE_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$TYPE_TMP" 2>&1)
+TYPE_RC=$?
+assert_eq "memory-drift <TEAM>-353: kebab-named type:project drift exits 1" "1" "$TYPE_RC"
+assert_contains "memory-drift <TEAM>-353: kebab-named type:project note IS headline-checked (filename-agnostic)" "$TYPE_OUT" "hermes-agent.md"
+assert_not_contains "memory-drift <TEAM>-353: project_-named type:reference note is NOT project-checked" "$TYPE_OUT" "project_decoy.md"
+
+# --- 35. <TEAM>-353 quote-strip (cross-model panel finding): a QUOTED frontmatter
+# type (`type: "project"` or `type: 'project'` — both valid YAML) still classifies
+# as project. Without quote-stripping the value is "project"/'project' (with quotes),
+# != project, so a valid quoted note would go invisible — the exact blind-spot class.
+QTYPE_TMP=$(mktemp -d 2>/dev/null) || QTYPE_TMP="/tmp/memory-qtype-$$"
+mkdir -p "$QTYPE_TMP"
+cat > "$QTYPE_TMP/dquote.md" <<'EOF'
+---
+name: dquote
+description: "Double-quoted type — CLOSED 2026-06-30"
+metadata:
+  type: "project"
+---
+Superseded by [[project-successor]] which carries the live work.
+EOF
+cat > "$QTYPE_TMP/squote.md" <<'EOF'
+---
+name: squote
+description: "Single-quoted type — CLOSED 2026-06-30"
+metadata:
+  type: 'project'
+---
+Superseded by [[project-successor]] which carries the live work.
+EOF
+QTYPE_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$QTYPE_TMP" 2>&1)
+assert_eq "memory-drift <TEAM>-353: quoted-type notes are project-detected (exit 1)" "1" "$?"
+assert_contains "memory-drift <TEAM>-353: double-quoted type IS detected (quote-strip)" "$QTYPE_OUT" "dquote.md"
+assert_contains "memory-drift <TEAM>-353: single-quoted type IS detected (quote-strip)" "$QTYPE_OUT" "squote.md"
+
 # --- Cleanup.
 rm -rf "$MD_TMP" "$EMPTY_TMP" "$SIZE_TMP" "$LINE_TMP" "$OK_TMP" \
   "$EMDASH_OK_TMP" "$EMDASH_BAD_TMP" "$BND_TMP" "$COMBO_TMP" \
   "$FM_TMP" "$FM_NOOPEN" "$FM_NOCLOSE" "$FM_CRLF" "$FM_CLEAN" \
   "$FM_BOM" "$FM_BOM_BAD" "$FM_NOCLOSE2" \
   "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG" "$INJ_FS" \
-  "$KEBAB_TMP" "$GUARD_TMP"
+  "$KEBAB_TMP" "$GUARD_TMP" "$TYPE_TMP" "$QTYPE_TMP"

@@ -60,11 +60,48 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# mem_note_type <file> — echo the note's memory type from frontmatter: the first
+# `type:` line inside the first `---`-fenced block, top-level or nested under
+# `metadata:`. Lowercased; empty if absent (`node_type:` is NOT matched — the
+# regex anchors `type:` to the start after optional indent). Mirrors
+# check-distillation-completeness.sh + check-memory-drift.sh so every scanner
+# agrees on what a "project" note is — the store keeps the type in frontmatter,
+# not the filename (<TEAM>-353).
+mem_note_type() {
+  LC_ALL=C awk '
+    NR==1 {
+      if (substr($0,1,3) == "\357\273\277") $0 = substr($0,4)   # strip UTF-8 BOM
+      if ($0 !~ /^---[[:space:]]*$/) exit
+    }
+    /^---[[:space:]]*$/ { saw_sep++; if (saw_sep==2) exit; next }
+    saw_sep==1 && /^[[:space:]]*type:[[:space:]]*/ {
+      v=$0; sub(/^[[:space:]]*type:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v)
+      # Strip one surrounding quote pair so `type: "project"` / `type: '\''project'\''`
+      # classify as project, not "project" (else a valid quoted note goes invisible).
+      if (length(v) >= 2 && ((substr(v,1,1)=="\"" && substr(v,length(v),1)=="\"") || (substr(v,1,1)=="\047" && substr(v,length(v),1)=="\047"))) v=substr(v,2,length(v)-2)
+      print tolower(v); exit
+    }
+  ' "$1"
+}
+
+# _sa_count_project_notes <dir> → count of *.md notes (excl MEMORY.md) whose
+# frontmatter type is `project`. Frontmatter detection, not a `project_*.md`
+# glob (<TEAM>-353).
+_sa_count_project_notes() {
+  local d="$1" f n=0
+  for f in "$d"/*.md; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "MEMORY.md" ] && continue
+    [ "$(mem_note_type "$f")" = "project" ] && n=$((n+1))
+  done
+  printf '%s' "$n"
+}
+
 # _sa_select_memory_dir <config-dir> → the operator's PRIMARY memory dir, chosen
 # DETERMINISTICALLY (<TEAM>-180 D1). Preference order:
 #   1. explicit $CLAUDE_PRIMARY_MEMORY_DIR (from local.env / env), if it is a dir
 #   2. the projects/*/memory dir that has a MEMORY.md index; when more than one
-#      does, the one with the most project_*.md files (the operator's active surface)
+#      does, the one with the most project-type notes (frontmatter type: project — the operator's active surface)
 #   3. failing any MEMORY.md, the candidate with the most *.md files
 #   4. last resort: alphabetically-first (the prior behaviour) so a single-project
 #      setup with no MEMORY.md still resolves to something
@@ -82,7 +119,7 @@ _sa_select_memory_dir() {
   for d in "$cfg"/projects/*/memory; do
     [ -d "$d" ] || continue
     [ -f "$d/MEMORY.md" ] || continue
-    count="$(find "$d" -maxdepth 1 -name 'project_*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    count="$(_sa_count_project_notes "$d")"
     if [ "$count" -gt "$best_count" ]; then best_count="$count"; best="$d"; fi
   done
   if [ -n "$best" ]; then printf '%s' "$best"; return 0; fi
@@ -331,47 +368,76 @@ score_cross_layer_handoffs() {
   # measured nothing (no reachable surface) is UNSCORED at finalize, not a free 20.
   local ran=0
 
-  # Sub-check 1.1: For each active Linear project, a matching project_*.md memory file.
-  # Codex B-2: pass --format json explicitly. Today's lineark v3.0.2 emits JSON
-  # by default, but pinning the flag protects against a future default change
-  # that would otherwise produce human prose jq can't parse (silent false-clean).
+  # Active-project list — Linear projects with >=1 OPEN issue, computed once and
+  # shared by sub-checks 1.1 (memory) + 1.2 (vault). A project with zero open
+  # issues (all Done/Canceled — lineark hides those by default) is closed-out and
+  # must NOT demand a memory/vault handshake (<TEAM>-353): self-audit used to flag
+  # EVERY `lineark projects list` entry, so closed Agentic-OS sub-projects (Launch
+  # Gate, Pre-Ship Review Fixes, …) kept deducting forever. If a per-project
+  # issues query errors we KEEP the project (conservative — a transient lineark
+  # error must not hide a real handshake gap). Codex B-2: pin `--format json`.
+  local active_projects=()
+  if [ "$lineark_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
+    local _pj _pid _pname _ij _oc
+    _pj="$(lineark projects list --format json 2>/dev/null || true)"
+    if [ -n "$_pj" ]; then
+      while IFS="$(printf '\t')" read -r _pid _pname; do
+        [ -n "$_pname" ] || continue
+        if [ -n "$_pid" ]; then
+          _ij="$(lineark issues list --project "$_pid" --format json 2>/dev/null || true)"
+          if [ -n "$_ij" ]; then
+            _oc="$(printf '%s' "$_ij" | jq 'length' 2>/dev/null || printf -- '-1')"
+            [ "$_oc" = "0" ] && continue
+          fi
+        fi
+        active_projects+=("$_pname")
+      done <<< "$(printf '%s' "$_pj" | jq -r '.[] | [.id, .name] | @tsv' 2>/dev/null || true)"
+    fi
+  fi
+
+  # Project-type memory notes (frontmatter type: project, not a filename glob —
+  # <TEAM>-353), collected once for the 1.1 name-match. Space-safe (NUL find).
+  local proj_note_files=()
+  if [ "$memory_avail" -eq 1 ]; then
+    local _mf
+    while IFS= read -r -d '' _mf; do
+      [ "$(basename "$_mf")" = "MEMORY.md" ] && continue
+      [ "$(mem_note_type "$_mf")" = "project" ] && proj_note_files+=("$_mf")
+    done < <(find "$MEMORY_DIR" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
+  fi
+
+  # Sub-check 1.1: For each ACTIVE Linear project (>=1 open issue), a matching
+  # project-type memory note (frontmatter type: project — <TEAM>-353). lineark slug
+  # != memory filename, so match the project NAME in note bodies, not filenames.
   if [ "$lineark_avail" -eq 1 ] && [ "$memory_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
     ran=1
-    local projects_json
-    projects_json="$(lineark projects list --format json 2>/dev/null || true)"
-    if [ -n "$projects_json" ]; then
-      local proj_names
-      proj_names="$(printf '%s' "$projects_json" | jq -r '.[] | .name' 2>/dev/null || true)"
-      while IFS= read -r pname; do
+    if [ "${#active_projects[@]}" -gt 0 ]; then
+      local pname
+      for pname in "${active_projects[@]}"; do
         [ -n "$pname" ] || continue
-        # Heuristic: look for project name in any project_*.md body. lineark
-        # slug != memory filename, so body-text match is more robust than
-        # filename match.
         local matched=0
-        if grep -lF "$pname" "$MEMORY_DIR"/project_*.md >/dev/null 2>&1; then
+        if [ "${#proj_note_files[@]}" -gt 0 ] && grep -lF "$pname" "${proj_note_files[@]}" >/dev/null 2>&1; then
           matched=1
         fi
         if [ "$matched" -eq 0 ]; then
           deduct "$key" 4
           record_gap 1 8 \
-            "No memory file for active Linear project" \
-            "Active project \"$pname\" has no project_*.md in $MEMORY_DIR (active projects should land a memory file at kickoff)" \
-            "Create $MEMORY_DIR/project_<slug>.md with type: project frontmatter linking to the Linear URL"
+            "No memory note for active Linear project" \
+            "Active project \"$pname\" has no project-type memory note in $MEMORY_DIR (active projects should land a memory note at kickoff)" \
+            "Create a note in $MEMORY_DIR with 'type: project' frontmatter naming the project + its Linear URL"
         fi
-      done <<< "$proj_names"
+      done
     fi
   fi
 
-  # Sub-check 1.2: For each active Linear project, a matching vault Handshake.
-  # Same `--format json` defense as 1.1 (Codex B-2).
+  # Sub-check 1.2: For each ACTIVE Linear project (>=1 open issue), a matching
+  # vault Handshake. Shares the active_projects list from 1.1 (zero-open-issue
+  # projects already filtered out — <TEAM>-353).
   if [ "$lineark_avail" -eq 1 ] && [ "$vault_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
     ran=1
-    local projects_json
-    projects_json="$(lineark projects list --format json 2>/dev/null || true)"
-    if [ -n "$projects_json" ]; then
-      local proj_names
-      proj_names="$(printf '%s' "$projects_json" | jq -r '.[] | .name' 2>/dev/null || true)"
-      while IFS= read -r pname; do
+    if [ "${#active_projects[@]}" -gt 0 ]; then
+      local pname
+      for pname in "${active_projects[@]}"; do
         [ -n "$pname" ] || continue
         local matched=0
         if [ -d "$VAULT_DIR/01-Projects" ]; then
@@ -386,7 +452,7 @@ score_cross_layer_handoffs() {
             "Active project \"$pname\" has no Handshake note in $VAULT_DIR/01-Projects/" \
             "Create $VAULT_DIR/01-Projects/<slug>.md with linear: frontmatter pointing to the Linear URL"
         fi
-      done <<< "$proj_names"
+      done
     fi
   fi
 
@@ -854,13 +920,16 @@ score_closeout_spine_discipline() {
     _cutoff_epoch=$(( _now_epoch - 7 * 86400 ))
     while IFS= read -r -d '' f; do
       [ -f "$f" ] || continue
+      [ "$(basename "$f")" = "MEMORY.md" ] && continue
+      # Project-type detection by frontmatter, not a project_*.md glob (<TEAM>-353).
+      [ "$(mem_note_type "$f")" = "project" ] || continue
       m=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
       [ -n "$m" ] || continue
       [ "$m" -ge "$_cutoff_epoch" ] || continue
       if ! grep -qE '^## State Deltas' "$f"; then
         missing_sd=$((missing_sd+1))
       fi
-    done < <(find "$MEMORY_DIR" -maxdepth 1 -name 'project_*.md' -print0 2>/dev/null)
+    done < <(find "$MEMORY_DIR" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
     if [ "$missing_sd" -gt 0 ]; then
       local pen=$(( missing_sd * 4 ))
       [ "$pen" -gt 8 ] && pen=8

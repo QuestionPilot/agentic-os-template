@@ -21,7 +21,7 @@ lifecycle: shipped
   context. For O1, read that injected snapshot; do **not** `read_file` a bare
   `MEMORY.md` path or `search_files` for it (there is no repo-root `MEMORY.md`,
   and a filesystem search times out). Hermes has no Claude-style
-  `<config>/projects/<slug>/memory/project_*.md` files — durable project memory
+  `<config>/projects/<slug>/memory/` project-type memory notes — durable project memory
   lives in the vault, so satisfy O1's project-body reads inside the O4 vault
   orient (read the relevant `01-Projects/` notes) instead of chasing on-disk
   memory files.

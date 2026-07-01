@@ -745,6 +745,8 @@ EOF
   cat > "$cfg/projects/zzz-primary/memory/project_real.md" <<'EOF'
 ---
 name: project_real
+metadata:
+  type: project
 ---
 real project body
 EOF
@@ -780,6 +782,8 @@ EOF
   cat > "$pinned/project_pinned.md" <<'EOF'
 ---
 name: project_pinned
+metadata:
+  type: project
 ---
 pinned project body
 EOF
@@ -905,6 +909,8 @@ EOF
   cat > "$good/project_g.md" <<'EOF'
 ---
 name: project_g
+metadata:
+  type: project
 ---
 body
 EOF
@@ -941,6 +947,8 @@ EOF
   cat > "$cfg/projects/aaa-tie/memory/project_a.md" <<'EOF'
 ---
 name: project_a
+metadata:
+  type: project
 ---
 a
 EOF
@@ -952,6 +960,8 @@ EOF
   cat > "$cfg/projects/bbb-tie/memory/project_b.md" <<'EOF'
 ---
 name: project_b
+metadata:
+  type: project
 ---
 b
 EOF
