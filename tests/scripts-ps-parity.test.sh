@@ -150,6 +150,7 @@ name: project_old
 description: "Old project — CLOSED 2026-01-01. Sealed."
 metadata:
   node_type: memory
+  type: project
 ---
 
 Some body. Now points to [[project_new]] as follow-on.
@@ -285,6 +286,8 @@ if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts
 ---
 name: "project_selflink"
 description: "Self-referential project — CLOSED 2026-01-01. Sealed."
+metadata:
+  type: project
 ---
 
 Body mentions only [[project_selflink]] (its own name) — no follow-on pointer.
@@ -332,6 +335,8 @@ if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts
 ---
 name: 'project_squote'
 description: "Single-quoted name project — CLOSED 2026-01-01. Sealed."
+metadata:
+  type: project
 ---
 
 Body links only [[project_squote]] (its own name).
@@ -367,8 +372,8 @@ fi
 if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts/check-memory-drift.ps1" ]; then
   CMD_BOM="$PARITY_TMP/cmd-bom"
   mkdir -p "$CMD_BOM"
-  printf '\xef\xbb\xbf---\nname: project_bom\ndescription: "BOM project — CLOSED 2026-01-01."\n---\n\nSuccessor [[project_other]] carries the live work.\n' \
-    > "$CMD_BOM/project_bom.md"
+  printf '\xef\xbb\xbf---\nname: project_bom\ndescription: "BOM project — CLOSED 2026-01-01."\nmetadata:\n  type: project\n---\n\nSuccessor [[project_other]] carries the live work.\n' \
+    > "$CMD_BOM/project_bom.md"  # NB: metadata.type below makes it project-detected (<TEAM>-353)
   bom_bash_out="$PARITY_TMP/cmd-bom-bash.out"
   bash "$REPO_ROOT/scripts/check-memory-drift.sh" --memory-dir "$CMD_BOM" \
     > "$bom_bash_out" 2>&1; bom_bash_rc=$?
@@ -487,6 +492,8 @@ if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-au
 ---
 name: project_boundary
 description: "Recent project — In Progress."
+metadata:
+  type: project
 ---
 
 Body without a State Deltas section.
@@ -786,6 +793,8 @@ if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] \
 ---
 name: project_alpha
 description: DONE — closed 2026-05-25.
+metadata:
+  type: project
 ---
 
 Successor is [[project_beta]] which carries the live work.
@@ -794,6 +803,8 @@ EOF
 ---
 name: project_gamma
 description: COMPLETE — finished 2026-05-26.
+metadata:
+  type: project
 ---
 
 Successor is [[project_delta]] which carries the live work.

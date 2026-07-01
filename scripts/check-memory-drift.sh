@@ -3,10 +3,16 @@
 #
 # Inspects the per-harness memory directory for four failure classes:
 #
-#   1. Headline-vs-body DRIFT in project_*.md files. A project_*.md file has
-#      DRIFT when its frontmatter description headline claims a closed state
+#   1. Headline-vs-body DRIFT in project-type notes. A note is "project-type"
+#      when its frontmatter `type:` (top-level or nested under `metadata:`) is
+#      `project` — NOT by filename glob (<TEAM>-353): the kebab auto-memory store
+#      keeps the type in frontmatter, so a project note may be named anything
+#      (home-repo.md, os-install-state.md, project-hermes-agent.md). The old
+#      `project_*.md` glob matched only 1 of 7 real project notes in the live
+#      store → a near-blind headline-drift scan. A project-type note has DRIFT
+#      when its frontmatter description headline claims a closed state
 #      (COMPLETE / CLOSED / DONE) but its body links to a different
-#      `[[project_*]]` follow-on AND the description itself does not acknowledge
+#      `[[project…]]` follow-on AND the description itself does not acknowledge
 #      the follow-on. This catches the case where a session closed a project and
 #      spawned a follow-on, updated the body, but never updated the headline.
 #
@@ -76,6 +82,29 @@ MEMORY_INDEX_LINE_CAP_CHARS=300
 
 usage() {
   sed -nE 's|^# ?||p' "$0" | awk '/^check-memory-drift\.sh/,/^A future/' | head -50
+}
+
+# mem_note_type <file> — echo the note's memory type from frontmatter: the first
+# `type:` line inside the first `---`-fenced block, whether top-level or nested
+# under `metadata:`. Lowercased; empty if absent (`node_type:` is NOT matched —
+# the regex anchors `type:` to the start after optional indent). Mirrors
+# check-distillation-completeness.sh's reader so both scanners agree on what a
+# "project" note is; the store keeps the type in frontmatter, not the filename.
+mem_note_type() {
+  LC_ALL=C awk '
+    NR==1 {
+      if (substr($0,1,3) == "\357\273\277") $0 = substr($0,4)   # strip UTF-8 BOM
+      if ($0 !~ /^---[[:space:]]*$/) exit
+    }
+    /^---[[:space:]]*$/ { saw_sep++; if (saw_sep==2) exit; next }
+    saw_sep==1 && /^[[:space:]]*type:[[:space:]]*/ {
+      v=$0; sub(/^[[:space:]]*type:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v)
+      # Strip one surrounding quote pair so `type: "project"` / `type: '\''project'\''`
+      # classify as project, not "project" (else a valid quoted note goes invisible).
+      if (length(v) >= 2 && ((substr(v,1,1)=="\"" && substr(v,length(v),1)=="\"") || (substr(v,1,1)=="\047" && substr(v,length(v),1)=="\047"))) v=substr(v,2,length(v)-2)
+      print tolower(v); exit
+    }
+  ' "$1"
 }
 
 # scan_injection_file <file> — echo the prompt-injection payload class if the file
@@ -202,10 +231,9 @@ notes_scanned=0
 # is bash-3.2-safe (no mapfile).
 while IFS= read -r -d '' f; do
   base=$(basename "$f")
-  case "$base" in
-    project_*.md) ;;
-    *) continue ;;
-  esac
+  # Detect project memory by frontmatter type, not filename (<TEAM>-353). The old
+  # `project_*.md` glob went near-blind: it matched 1 of 7 real project notes.
+  [ "$(mem_note_type "$f")" = "project" ] || continue
 
   scanned=$((scanned + 1))
 
@@ -267,19 +295,22 @@ while IFS= read -r -d '' f; do
   ' "$f")
 
   followon=""
-  # Extract [[project_*]] links and find one that names a different project.
+  # Extract [[project…]] links and find one that names a different project.
+  # Accept BOTH separators after `project` (`project_foo` snake + `project-foo`
+  # kebab) so a hyphen-named follow-on note is caught too — the store's real
+  # project notes are kebab-named (<TEAM>-353).
   while IFS= read -r link; do
     [ -z "$link" ] && continue
     [ "$link" = "$own_name" ] && continue
     followon="$link"
     break
-  done < <(printf '%s' "$body" | grep -oE '\[\[project_[A-Za-z0-9_]+(\|[^]]+)?\]\]' | sed -E 's/\[\[(project_[A-Za-z0-9_]+).*\]\]/\1/')
+  done < <(printf '%s' "$body" | grep -oE '\[\[project[_-][A-Za-z0-9_-]+(\|[^]]+)?\]\]' | sed -E 's/\[\[(project[_-][A-Za-z0-9_-]+).*\]\]/\1/')
 
   if [ -n "$followon" ]; then
     printf 'FAIL drift: %s — headline claims closed but body links to follow-on [[%s]]; description does not acknowledge it\n' "$base" "$followon" >&2
     drift=1
   fi
-done < <(find "$memory_dir" -maxdepth 1 -type f -name 'project_*.md' -print0)
+done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 # --- <TEAM>-136: MEMORY.md index size + per-entry line-length enforcement. -------
 # When the index file exists, fail if it crosses either documented cap. This is

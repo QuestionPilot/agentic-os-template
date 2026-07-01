@@ -672,7 +672,75 @@ $GUARD_RC = $LASTEXITCODE
 Assert-Eq 'memory-drift.test: clean no-type-prefix kebab note exits 0' '0' "$GUARD_RC"
 Assert-Contains 'memory-drift.test: the kebab note IS counted (1 scanned, not a vacuous 0)' $GUARD_OUT '1 notes frontmatter+injection-scanned'
 
+# --- 34. <TEAM>-353 blind-spot guard: project detection is by frontmatter type, NOT
+# filename (twin of memory-drift.test.sh test 34). A KEBAB-named type:project note
+# with a CLOSED headline + unacknowledged follow-on MUST be caught; a project_-named
+# type:reference note must NOT be headline-checked. Pins the filename-agnostic fix.
+$TYPE_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-type-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $TYPE_TMP -Force | Out-Null
+$typeProj = @'
+---
+name: hermes-agent
+description: "Hermes workstream COMPLETE — closed 2026-06-30"
+metadata:
+  type: project
+---
+Superseded by [[project-successor]] which carries the live work.
+'@
+Write-LfFile (Join-Path $TYPE_TMP 'hermes-agent.md') ($typeProj + "`n")
+$typeRef = @'
+---
+name: project_decoy
+description: "Looks CLOSED and links onward but is typed reference"
+metadata:
+  type: reference
+---
+Mentions [[project-other]] but this is a reference note, not a project.
+'@
+Write-LfFile (Join-Path $TYPE_TMP 'project_decoy.md') ($typeRef + "`n")
+$TYPE_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $TYPE_TMP 2>&1
+$TYPE_RC = $LASTEXITCODE
+if ($TYPE_OUT -is [array]) { $TYPE_OUT = $TYPE_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-353: kebab-named type:project drift exits 1' '1' "$TYPE_RC"
+Assert-Contains 'memory-drift.test <TEAM>-353: kebab-named type:project note IS headline-checked (filename-agnostic)' $TYPE_OUT 'hermes-agent.md'
+Assert-NotContains 'memory-drift.test <TEAM>-353: project_-named type:reference note is NOT project-checked' $TYPE_OUT 'project_decoy.md'
+
+# --- 35. <TEAM>-353 quote-strip (cross-model panel finding, twin of memory-drift.test.sh
+# test 35): a QUOTED frontmatter type (`type: "project"` or `type: 'project'`) still
+# classifies as project. Without quote-stripping the value keeps its quotes and the
+# note goes invisible — the exact blind-spot class.
+$QTYPE_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-qtype-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $QTYPE_TMP -Force | Out-Null
+$dq = @'
+---
+name: dquote
+description: "Double-quoted type — CLOSED 2026-06-30"
+metadata:
+  type: "project"
+---
+Superseded by [[project-successor]] which carries the live work.
+'@
+Write-LfFile (Join-Path $QTYPE_TMP 'dquote.md') ($dq + "`n")
+$sq = @'
+---
+name: squote
+description: "Single-quoted type — CLOSED 2026-06-30"
+metadata:
+  type: 'project'
+---
+Superseded by [[project-successor]] which carries the live work.
+'@
+Write-LfFile (Join-Path $QTYPE_TMP 'squote.md') ($sq + "`n")
+$QTYPE_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $QTYPE_TMP 2>&1
+$QTYPE_RC = $LASTEXITCODE
+if ($QTYPE_OUT -is [array]) { $QTYPE_OUT = $QTYPE_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-353: quoted-type notes are project-detected (exit 1)' '1' "$QTYPE_RC"
+Assert-Contains 'memory-drift.test <TEAM>-353: double-quoted type IS detected (quote-strip)' $QTYPE_OUT 'dquote.md'
+Assert-Contains 'memory-drift.test <TEAM>-353: single-quoted type IS detected (quote-strip)' $QTYPE_OUT 'squote.md'
+
 # --- Cleanup.
+Remove-Item -LiteralPath $QTYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $TYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $KEBAB_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $GUARD_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $INJ_FS -Recurse -Force -ErrorAction SilentlyContinue

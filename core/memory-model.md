@@ -248,6 +248,20 @@ Two contracts keep per-fact memory notes loadable and discoverable.
   note, remove its index line. This is the per-harness memory index contract.
   The check is a closeout write-side step (the writer confirms the index at write
   time).
+- **Kind is carried by frontmatter `metadata.type`, not the filename.** A note's
+  memory kind — `project` / `feedback` / `reference` / `decision` / `user` — lives
+  in its frontmatter `metadata.type` (a top-level `type:` is also accepted), NOT in
+  a filename prefix. The framework scanners that act per-kind
+  (`scripts/self-audit.{sh,ps1}` Pillar 1 + Pillar 5,
+  `scripts/check-memory-drift.{sh,ps1}` headline-drift,
+  `scripts/check-distillation-completeness.{sh,ps1}`) detect a note's kind by
+  reading `metadata.type`, so the auto-memory store's kebab-case filenames
+  (`project-web-monorepo.md`, `home-repo.md`) are first-class — no
+  `project_*.md` underscore prefix is required. What IS load-bearing is that every
+  note sets `metadata.type`: a note that omits it is invisible to the per-kind
+  scanners — the same silent-drop the filename glob used to have, re-keyed to
+  frontmatter. Filenames elsewhere in this doc written `project_*.md` are a
+  conventional illustration of a project note, not a detection contract.
 - **Frontmatter parser-safety.** Each note opens with a YAML frontmatter block
   (`name:`, `description:`, a nested `metadata:` block) closed by a `---` line. A
   strict YAML parser silently misreads two scalar shapes, so neither is allowed

@@ -50,11 +50,11 @@ re-audit to score them. The bands above describe a fully-measured run.
 
 | Pillar | What it scores |
 | --- | --- |
-| **1. Cross-layer handoffs** | Each Active Linear project has a project memory file + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
+| **1. Cross-layer handoffs** | Each Active Linear project (≥1 open issue — closed-out projects with all issues Done/Canceled are skipped) has a project-type memory note (frontmatter `metadata.type: project`) + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
 | **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
-| **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project memory files modified in the last 7 days carry a `## State Deltas` section |
+| **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
 
 **Out of scope for v1 (deferred to future PRs, when Linear is reachable from the audit run):** state-delta memory writes matched against Linear comments; project memory headline reconciled against Linear state; "recent Linear activity" cross-referenced with "recent file mtime". These are non-trivial to score deterministically and the cost outweighs the v1 benefit; the rubric checks only what the local filesystem can prove today.
 
@@ -93,8 +93,9 @@ script's penalty rules are the canonical scoring.
    `--config-dir` / `--vault-dir` / `--memory-dir` flags still win over
    `local.env`. When several `projects/*/memory/` dirs exist (a multi-project
    `$CLAUDE_CONFIG_DIR`), the script selects the operator's PRIMARY one
-   deterministically — the dir holding a `MEMORY.md`, ranked by `project_*.md`
-   count — rather than the alphabetically-first match; set
+   deterministically — the dir holding a `MEMORY.md`, ranked by project-type
+   memory-note count (frontmatter `metadata.type: project`, not a filename glob)
+   — rather than the alphabetically-first match; set
    `CLAUDE_PRIMARY_MEMORY_DIR` in `local.env` to pin it explicitly. Each surface
    is optional — the script degrades gracefully and notes "skipped: <surface> not
    configured" in the output. Pass `--repo-root <path>` to point at a different

@@ -40,13 +40,13 @@ Skipping a sub-step is a Mode 1 failure — re-run the missed sub-step before ro
 ### O1. Read project memory bodies for active-work projects
 
 The harness autoloads `MEMORY.md` — a one-line index of headlines. **Headlines are
-not the source of truth.** For any `project_*.md` referenced there whose headline
-names active or recently-active work, read the file body before acting on the
+not the source of truth.** For any project-type memory note (`metadata.type: project`)
+referenced there whose headline names active or recently-active work, read the file body before acting on the
 headline. Cross-issue Linear claims embedded in those bodies (e.g. "QUE-X is Done")
 are particularly stale-prone — Mode 1's O5 step re-checks them against Linear.
 
 **Tool calls:**
-- For each `project_*.md` in `MEMORY.md` whose headline names active work: `Read` the absolute path under the harness config dir's `projects/<project-slug>/memory/` directory.
+- For each project-type memory note (`metadata.type: project`) referenced in `MEMORY.md` whose headline names active work: `Read` the absolute path under the harness config dir's `projects/<project-slug>/memory/` directory. Detect the kind by frontmatter `metadata.type`, not a `project_*.md` filename glob — the auto-memory store is kebab-named.
 - Do NOT re-read `reference_*.md` / `feedback_*.md` bodies at kickoff — those are headline-stable.
 
 ### O2. Reconcile session-start hints against memory headlines

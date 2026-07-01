@@ -666,7 +666,7 @@ if ($jqAvail) {
     New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'zzz-primary' 'memory') -Force | Out-Null
     Write-LfFile (Join-Path $cfg 'projects' 'aaa-stray' 'memory' 'note.md') "stray`n"
     Write-LfFile (Join-Path $cfg 'projects' 'zzz-primary' 'memory' 'MEMORY.md') "# Memory Index`n`n- [Proj](project_real.md) — the operator's active project`n"
-    Write-LfFile (Join-Path $cfg 'projects' 'zzz-primary' 'memory' 'project_real.md') "---`nname: project_real`n---`nreal project body`n"
+    Write-LfFile (Join-Path $cfg 'projects' 'zzz-primary' 'memory' 'project_real.md') "---`nname: project_real`nmetadata:`n  type: project`n---`nreal project body`n"
     $savedOvp = $env:OBSIDIAN_VAULT_PATH
     $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR
     try {
@@ -694,7 +694,7 @@ if ($jqAvail) {
     New-Item -ItemType Directory -Path $pinned -Force | Out-Null
     Write-LfFile (Join-Path $cfg 'projects' 'only' 'memory' 'note.md') "x`n"
     Write-LfFile (Join-Path $pinned 'MEMORY.md') "# Memory Index`n`n- [Proj](project_pinned.md) — pinned active project`n"
-    Write-LfFile (Join-Path $pinned 'project_pinned.md') "---`nname: project_pinned`n---`npinned project body`n"
+    Write-LfFile (Join-Path $pinned 'project_pinned.md') "---`nname: project_pinned`nmetadata:`n  type: project`n---`npinned project body`n"
     $savedOvp = $env:OBSIDIAN_VAULT_PATH
     $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR
     try {
@@ -807,7 +807,7 @@ if ($jqAvail) {
     New-Item -ItemType Directory -Path $bad -Force | Out-Null
     Write-LfFile (Join-Path $cfg 'projects' 'only' 'memory' 'note.md') "x`n"
     Write-LfFile (Join-Path $good 'MEMORY.md') "# Memory Index`n`n- [Proj](project_g.md) — active`n"
-    Write-LfFile (Join-Path $good 'project_g.md') "---`nname: project_g`n---`nbody`n"
+    Write-LfFile (Join-Path $good 'project_g.md') "---`nname: project_g`nmetadata:`n  type: project`n---`nbody`n"
     Write-LfFile (Join-Path $bad 'stray.md') "stray`n"
     # Quote the value (see D2): an unquoted Windows backslash path is mangled by
     # the bash-%q backslash-collapse; the canonical local.env format quotes.
@@ -838,9 +838,9 @@ if ($jqAvail) {
     New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'aaa-tie' 'memory') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'bbb-tie' 'memory') -Force | Out-Null
     Write-LfFile (Join-Path $cfg 'projects' 'aaa-tie' 'memory' 'MEMORY.md') "# Memory Index`n`n- [A](project_a.md) — clean`n"
-    Write-LfFile (Join-Path $cfg 'projects' 'aaa-tie' 'memory' 'project_a.md') "---`nname: project_a`n---`na`n"
+    Write-LfFile (Join-Path $cfg 'projects' 'aaa-tie' 'memory' 'project_a.md') "---`nname: project_a`nmetadata:`n  type: project`n---`na`n"
     Write-LfFile (Join-Path $cfg 'projects' 'bbb-tie' 'memory' 'MEMORY.md') "# Memory Index`n`n- [B](project_b.md) — has orphan sibling`n"
-    Write-LfFile (Join-Path $cfg 'projects' 'bbb-tie' 'memory' 'project_b.md') "---`nname: project_b`n---`nb`n"
+    Write-LfFile (Join-Path $cfg 'projects' 'bbb-tie' 'memory' 'project_b.md') "---`nname: project_b`nmetadata:`n  type: project`n---`nb`n"
     Write-LfFile (Join-Path $cfg 'projects' 'bbb-tie' 'memory' 'feedback_orphan.md') "orphan`n"
     $savedOvp = $env:OBSIDIAN_VAULT_PATH
     $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR

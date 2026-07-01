@@ -206,10 +206,47 @@ function Get-SaLocalEnvValue {
     return $result
 }
 
+# Get-MemNoteType — return the note's memory type from frontmatter: the first
+# `type:` line inside the first `---`-fenced block, top-level or nested under
+# `metadata:`. Lowercased; '' if absent (`node_type:` is NOT matched). Mirrors
+# check-distillation-completeness + check-memory-drift so every scanner agrees on
+# what a "project" note is — the store keeps the type in frontmatter, not the
+# filename (<TEAM>-353).
+function Get-MemNoteType {
+    param([Parameter(Mandatory)][string]$Path)
+    # try/catch so a locked/deleted file degrades to '' (parity with bash awk,
+    # which warns + continues) instead of crashing the whole scan under Stop.
+    try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return '' }
+    if ($lines.Count -eq 0 -or $lines[0].TrimEnd() -ne '---') { return '' }
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].TrimEnd() -eq '---') { break }
+        if ($lines[$i] -match '^\s*type:\s*(.*)$') {
+            $v = $matches[1].Trim()
+            # Strip one surrounding quote pair so `type: "project"` / `type: 'project'`
+            # classify as project (else a valid quoted note goes invisible).
+            if ($v.Length -ge 2 -and (($v.StartsWith('"') -and $v.EndsWith('"')) -or ($v.StartsWith("'") -and $v.EndsWith("'")))) { $v = $v.Substring(1, $v.Length - 2) }
+            return $v.ToLower()
+        }
+    }
+    return ''
+}
+
+# Get-SaProjectNoteCount — count of *.md notes (excl MEMORY.md) whose frontmatter
+# type is `project`. Frontmatter detection, not a `project_*.md` glob (<TEAM>-353).
+function Get-SaProjectNoteCount {
+    param([string]$Dir)
+    $n = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
+        if ($f.Name -eq 'MEMORY.md') { continue }
+        if ((Get-MemNoteType -Path $f.FullName) -eq 'project') { $n++ }
+    }
+    return $n
+}
+
 # Select-SaMemoryDir — the operator's PRIMARY memory dir, chosen DETERMINISTICALLY
 # (<TEAM>-180 D1). Parity with bash _sa_select_memory_dir: prefer
 # $env:CLAUDE_PRIMARY_MEMORY_DIR; else the projects/*/memory dir holding a
-# MEMORY.md, ranked by project_*.md count; else most *.md; else the first dir
+# MEMORY.md, ranked by project-type note count; else most *.md; else the first dir
 # (name-sorted). The old `... | Select-Object -First 1` over an unordered
 # enumeration scored a near-empty stray dir on a multi-project setup.
 function Select-SaMemoryDir {
@@ -227,12 +264,12 @@ function Select-SaMemoryDir {
             if (Test-Path -LiteralPath $m -PathType Container) { $m }
         })
     if ($cands.Count -eq 0) { return '' }
-    # 1. prefer dirs with a MEMORY.md, ranked by project_*.md count.
+    # 1. prefer dirs with a MEMORY.md, ranked by project-type note count.
     $withIndex = @($cands | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'MEMORY.md') -PathType Leaf })
     if ($withIndex.Count -gt 0) {
         $best = ''; $bestCount = -1
         foreach ($d in $withIndex) {
-            $count = @(Get-ChildItem -LiteralPath $d -Filter 'project_*.md' -File -ErrorAction SilentlyContinue).Count
+            $count = Get-SaProjectNoteCount $d
             if ($count -gt $bestCount) { $bestCount = $count; $best = $d }
         }
         return $best
@@ -417,55 +454,104 @@ function Invoke-Pillar1 {
 
     # Helper: list active+planned Linear project names via lineark.
     # Returns @() on any failure path so the calling code can continue cleanly.
+    # _Get-ActiveProjectNames — names of Linear projects with >=1 OPEN issue
+    # (lineark hides Done/Canceled). A project with zero open issues is closed-out
+    # and must NOT demand a memory/vault handshake (<TEAM>-353): self-audit used to
+    # flag EVERY `lineark projects list` entry, so closed Agentic-OS sub-projects
+    # (Launch Gate, Pre-Ship Review Fixes, …) kept deducting forever. If a per-
+    # project issues query errors we KEEP the project (conservative — a transient
+    # lineark error must not hide a real handshake gap).
     function _Get-ActiveProjectNames {
         try {
             $projectsJsonLines = & lineark projects list --format json 2>$null
             if ($LASTEXITCODE -ne 0 -or -not $projectsJsonLines) { return @() }
             $projectsJson = if ($projectsJsonLines -is [array]) { ($projectsJsonLines -join "`n") } else { $projectsJsonLines }
-            # Try jq first (matches bash); fall back to ConvertFrom-Json.
+            # id+name pairs (jq matches bash; fall back to ConvertFrom-Json).
+            $pairs = @()
             if (Test-Command 'jq') {
-                $names = $projectsJson | & jq -r '.[] | .name' 2>$null
-                if ($LASTEXITCODE -eq 0 -and $names) {
-                    if ($names -is [array]) { return @($names | Where-Object { $_ }) }
-                    return @($names) | Where-Object { $_ }
+                $tsv = $projectsJson | & jq -r '.[] | [.id, .name] | @tsv' 2>$null
+                if ($LASTEXITCODE -eq 0 -and $tsv) {
+                    foreach ($line in @($tsv)) {
+                        if ([string]::IsNullOrEmpty($line)) { continue }
+                        $cols = $line -split "`t", 2
+                        $pairs += ,@($cols[0], $cols[1])
+                    }
                 }
             }
-            $obj = $projectsJson | ConvertFrom-Json -ErrorAction Stop
-            return @($obj | ForEach-Object { $_.name } | Where-Object { $_ })
+            if ($pairs.Count -eq 0) {
+                $obj = $projectsJson | ConvertFrom-Json -ErrorAction Stop
+                foreach ($p in @($obj)) { $pairs += ,@($p.id, $p.name) }
+            }
+            $active = @()
+            foreach ($pair in $pairs) {
+                $projId = $pair[0]; $projName = $pair[1]
+                if ([string]::IsNullOrEmpty($projName)) { continue }
+                if (-not [string]::IsNullOrEmpty($projId)) {
+                    $issuesLines = & lineark issues list --project $projId --format json 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $issuesLines) {
+                        $issuesJson = if ($issuesLines -is [array]) { ($issuesLines -join "`n") } else { $issuesLines }
+                        $open = -1
+                        if (Test-Command 'jq') {
+                            $len = $issuesJson | & jq 'length' 2>$null
+                            if ($LASTEXITCODE -eq 0 -and $len) { $open = [int]$len }
+                        } else {
+                            try { $open = @(($issuesJson | ConvertFrom-Json)).Count } catch { $open = -1 }
+                        }
+                        if ($open -eq 0) { continue }
+                    }
+                }
+                $active += $projName
+            }
+            return @($active)
         } catch {
             return @()
         }
+    }
+
+    # Compute the active-project names ONCE (shared by 1.1 + 1.2) so the per-
+    # project issues queries do not run twice. Only when lineark + jq available.
+    $activeProjectNames = @()
+    if ($linearkAvail -eq 1 -and (Test-Command 'jq')) {
+        $activeProjectNames = @(_Get-ActiveProjectNames)
     }
 
     # Track whether ANY sub-check actually measured something. A pillar that
     # measured nothing (no reachable surface) is UNSCORED at finalize, not a free 20.
     $ran = 0
 
-    # Sub-check 1.1 — for each active project, a matching memory file.
+    # Sub-check 1.1 — for each ACTIVE project (>=1 open issue), a matching
+    # project-type memory note (frontmatter type: project — <TEAM>-353). lineark slug
+    # != memory filename, so match the project NAME in note bodies, not filenames.
     if ($linearkAvail -eq 1 -and $memoryAvail -eq 1 -and (Test-Command 'jq')) {
         $ran = 1
-        foreach ($pname in (_Get-ActiveProjectNames)) {
+        $projNoteFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' })
+        foreach ($pname in $activeProjectNames) {
             if ([string]::IsNullOrEmpty($pname)) { continue }
             $matched = $false
-            $candidates = @(Get-ChildItem -LiteralPath $MemoryDir -Filter 'project_*.md' -File -ErrorAction SilentlyContinue)
-            foreach ($cand in $candidates) {
-                if ([System.IO.File]::ReadAllText($cand.FullName) -like "*$pname*") { $matched = $true; break }
+            foreach ($cand in $projNoteFiles) {
+                # .Contains (case-SENSITIVE, ordinal) matches bash `grep -lF` and PS
+                # sub-check 1.2 — the old `-like "*..*"` was case-INSENSITIVE, so a
+                # casing mismatch scored differently on the two twins. try/catch skips
+                # an unreadable file (parity with grep) instead of crashing under Stop.
+                try { if ([System.IO.File]::ReadAllText($cand.FullName).Contains($pname)) { $matched = $true; break } } catch { }
             }
             if (-not $matched) {
                 Use-Deduct $key 4
                 Add-Gap 1 8 `
-                    'No memory file for active Linear project' `
-                    "Active project `"$pname`" has no project_*.md in $MemoryDir (active projects should land a memory file at kickoff)" `
-                    "Create $MemoryDir/project_<slug>.md with type: project frontmatter linking to the Linear URL"
+                    'No memory note for active Linear project' `
+                    "Active project `"$pname`" has no project-type memory note in $MemoryDir (active projects should land a memory note at kickoff)" `
+                    "Create a note in $MemoryDir with 'type: project' frontmatter naming the project + its Linear URL"
             }
         }
     }
 
-    # Sub-check 1.2 — for each active project, a matching vault handshake.
+    # Sub-check 1.2 — for each ACTIVE project (>=1 open issue), a matching vault
+    # handshake. Shares $activeProjectNames from 1.1 (<TEAM>-353).
     if ($linearkAvail -eq 1 -and $vaultAvail -eq 1 -and (Test-Command 'jq')) {
         $ran = 1
         $hsRoot = Join-Path $VaultDir '01-Projects'
-        foreach ($pname in (_Get-ActiveProjectNames)) {
+        foreach ($pname in $activeProjectNames) {
             if ([string]::IsNullOrEmpty($pname)) { continue }
             $matched = $false
             if (Test-Path -LiteralPath $hsRoot -PathType Container) {
@@ -928,7 +1014,7 @@ function Invoke-Pillar5 {
             "Author the $hname realization file(s) and re-run: bash scripts/install.sh --harness $h"
     }
 
-    # Sub-check 5.2 — recent project_*.md (mtime ≤ 7 days) without ## State Deltas.
+    # Sub-check 5.2 — recent project-type notes (mtime ≤ 7 days) without ## State Deltas.
     if (-not [string]::IsNullOrEmpty($MemoryDir) -and (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
         $missingSd = 0
         # Epoch-based 7-day cutoff (integer seconds) to match the bash twin exactly
@@ -940,8 +1026,9 @@ function Invoke-Pillar5 {
         # DateTimeOffset cast drifts by the local offset around DST / on a host with
         # no tz database) to land on the same epoch seconds.
         $cutoffEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 7 * 86400
-        $projectFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter 'project_*.md' -File -ErrorAction SilentlyContinue |
-            Where-Object { ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $cutoffEpoch })
+        $projectFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' -and
+                ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $cutoffEpoch })
         foreach ($pf in $projectFiles) {
             $txt = [System.IO.File]::ReadAllText($pf.FullName)
             if ($txt -notmatch '(?m)^## State Deltas') { $missingSd++ }

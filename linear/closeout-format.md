@@ -30,7 +30,7 @@ writing a silent `clean`.
 Examples:
 
 ```
-- Linear project created: <name> (<status>) → memory/project_<slug>.md, MEMORY.md indexed
+- Linear project created: <name> (<status>) → a project-type memory note (metadata.type: project), MEMORY.md indexed
 - Linear issue created: QUE-NN, QUE-MM → no separate pointer (covered by parent project memory)
 - New artifact dir: docs/plans/<date>-<slug>.md → no separate pointer (plan-class, lives in repo)
 - operator-main: clean at <SHA> (verified: git status --porcelain empty, git diff --cached --quiet 0, git diff --quiet 0)
