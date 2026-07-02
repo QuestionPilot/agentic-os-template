@@ -738,8 +738,181 @@ Assert-Eq 'memory-drift.test <TEAM>-353: quoted-type notes are project-detected 
 Assert-Contains 'memory-drift.test <TEAM>-353: double-quoted type IS detected (quote-strip)' $QTYPE_OUT 'dquote.md'
 Assert-Contains 'memory-drift.test <TEAM>-353: single-quoted type IS detected (quote-strip)' $QTYPE_OUT 'squote.md'
 
+# === <TEAM>-354: missing-type guard on project-ish notes (ADVISORY). =============
+# Twin of memory-drift.test.sh tests 36-37. A note that LOOKS like project memory
+# (project-prefixed filename OR a linear.app/<ws>/project/ URL) but sets NO
+# frontmatter `type:` is re-surfaced with a `WARN missing-type:` line. ADVISORY: it
+# must NOT change the exit code. A TYPED note is NOT flagged; malformed frontmatter
+# is owned by class 3 and NOT double-flagged.
+
+# --- 36. Project-ish typeless notes WARN (filename / URL / both); typed and
+# non-project-ish notes do not; the advisory never flips the exit code off 0.
+$MTYPE_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-mtype-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $MTYPE_TMP -Force | Out-Null
+$mtMissing = @'
+---
+name: project_missing
+description: "Active work, but the writer forgot the type"
+metadata:
+  node_type: memory
+---
+Body with no type in frontmatter.
+'@
+Write-LfFile (Join-Path $MTYPE_TMP 'project_missing.md') ($mtMissing + "`n")
+$mtMono = @'
+---
+name: mono-note
+description: "kebab note, no type prefix, no type field"
+---
+Tracks https://linear.app/acme/project/widget-7 — handshakes a project.
+'@
+Write-LfFile (Join-Path $MTYPE_TMP 'mono-note.md') ($mtMono + "`n")
+$mtBoth = @'
+---
+name: project_both
+description: "no type at all"
+---
+See linear.app/acme/project/thing for status.
+'@
+Write-LfFile (Join-Path $MTYPE_TMP 'project_both.md') ($mtBoth + "`n")
+$mtTyped = @'
+---
+name: project_typed
+description: "Active project, correctly typed"
+metadata:
+  type: project
+---
+Body.
+'@
+Write-LfFile (Join-Path $MTYPE_TMP 'project_typed.md') ($mtTyped + "`n")
+$mtRef = @'
+---
+name: reference-handshake
+description: "a reference note that points at a project"
+metadata:
+  type: reference
+---
+Related work: https://linear.app/acme/project/other-9.
+'@
+Write-LfFile (Join-Path $MTYPE_TMP 'reference-handshake.md') ($mtRef + "`n")
+$mtPlain = @'
+---
+name: plain-untyped
+description: "no type, no project signal"
+---
+Just a stray note with neither signal.
+'@
+Write-LfFile (Join-Path $MTYPE_TMP 'plain-untyped.md') ($mtPlain + "`n")
+$MTYPE_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $MTYPE_TMP 2>&1
+$MTYPE_RC = $LASTEXITCODE
+if ($MTYPE_OUT -is [array]) { $MTYPE_OUT = $MTYPE_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-354: advisory guard does NOT change exit 0' '0' "$MTYPE_RC"
+Assert-Contains 'memory-drift.test <TEAM>-354: PASS line still printed under advisory warns' $MTYPE_OUT 'PASS'
+Assert-Contains 'memory-drift.test <TEAM>-354: project_ filename typeless note warned' $MTYPE_OUT 'missing-type: project_missing.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: filename-signal label' $MTYPE_OUT 'project_missing.md — looks like project memory (filename)'
+Assert-Contains 'memory-drift.test <TEAM>-354: URL-only typeless note warned' $MTYPE_OUT 'missing-type: mono-note.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: URL-signal label' $MTYPE_OUT 'mono-note.md — looks like project memory (linear-project-url)'
+Assert-Contains 'memory-drift.test <TEAM>-354: both-signal note warned' $MTYPE_OUT 'missing-type: project_both.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: both-signal label' $MTYPE_OUT 'project_both.md — looks like project memory (filename + linear-project-url)'
+Assert-NotContains 'memory-drift.test <TEAM>-354: well-formed type:project not warned' $MTYPE_OUT 'project_typed.md'
+Assert-NotContains 'memory-drift.test <TEAM>-354: typed reference note (with project URL) not warned' $MTYPE_OUT 'reference-handshake.md'
+Assert-NotContains 'memory-drift.test <TEAM>-354: non-project-ish typeless note not warned' $MTYPE_OUT 'plain-untyped.md'
+
+# --- 37. A project-named note with NO frontmatter is owned by class 3 (missing
+# opening ---) and must NOT ALSO get a class-5 missing-type WARN — the guard requires
+# a COMPLETE frontmatter block, so the two classes never double-flag.
+$MTYPE_NOFM = Join-Path ([IO.Path]::GetTempPath()) ("memory-mtype-nofm-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $MTYPE_NOFM -Force | Out-Null
+$mtNofm = @'
+# No frontmatter here
+Body only, but the filename looks like a project note.
+'@
+Write-LfFile (Join-Path $MTYPE_NOFM 'project_nofm.md') ($mtNofm + "`n")
+$MTYPE_NOFM_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $MTYPE_NOFM 2>&1
+$MTYPE_NOFM_RC = $LASTEXITCODE
+if ($MTYPE_NOFM_OUT -is [array]) { $MTYPE_NOFM_OUT = $MTYPE_NOFM_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-354: malformed-frontmatter project note exits 1 (class 3)' '1' "$MTYPE_NOFM_RC"
+Assert-Contains 'memory-drift.test <TEAM>-354: class-3 owns the missing-opening failure' $MTYPE_NOFM_OUT 'missing opening'
+Assert-NotContains 'memory-drift.test <TEAM>-354: guard does NOT double-flag malformed frontmatter' $MTYPE_NOFM_OUT 'missing-type: project_nofm.md'
+
+# --- 38. URL-signal precision (cross-model panel — twin of memory-drift.test.sh
+# test 38). Host-boundary-anchored + path-precise: a lookalike host must NOT match,
+# an /issue/ path must NOT match, a real /project/ URL MUST. A literal `type:` inside
+# a value must NOT be miscounted as the type field. NON-project filenames isolate the
+# URL signal.
+$MTYPE_URL = Join-Path ([IO.Path]::GetTempPath()) ("memory-mtype-url-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $MTYPE_URL -Force | Out-Null
+$uLook = @'
+---
+name: note-lookalike-host
+description: "typeless, but only lookalike hosts"
+---
+Not us: https://notlinear.app/acme/project/foo and https://evil-linear.app/acme/project/bar
+'@
+Write-LfFile (Join-Path $MTYPE_URL 'note-lookalike-host.md') ($uLook + "`n")
+$uIssue = @'
+---
+name: note-issue-url
+description: "typeless, links an ISSUE not a project"
+---
+Tracking https://linear.app/acme/issue/ABC-123/some-title here.
+'@
+Write-LfFile (Join-Path $MTYPE_URL 'note-issue-url.md') ($uIssue + "`n")
+$uReal = @'
+---
+name: note-real-url
+description: "typeless, links a real project"
+---
+Status at https://linear.app/acme/project/widget-7 currently.
+'@
+Write-LfFile (Join-Path $MTYPE_URL 'note-real-url.md') ($uReal + "`n")
+$uStrType = @'
+---
+name: project_strtype
+description: "a value that merely mentions type: inline should not count as a type"
+---
+Body; no real type field anywhere in frontmatter.
+'@
+Write-LfFile (Join-Path $MTYPE_URL 'project_strtype.md') ($uStrType + "`n")
+$MTYPE_URL_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $MTYPE_URL 2>&1
+$MTYPE_URL_RC = $LASTEXITCODE
+if ($MTYPE_URL_OUT -is [array]) { $MTYPE_URL_OUT = $MTYPE_URL_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-354: URL-precision dir stays exit 0 (advisory)' '0' "$MTYPE_URL_RC"
+Assert-NotContains 'memory-drift.test <TEAM>-354: lookalike host (notlinear/evil-linear) NOT warned' $MTYPE_URL_OUT 'note-lookalike-host.md'
+Assert-NotContains 'memory-drift.test <TEAM>-354: /issue/ URL NOT treated as a project URL' $MTYPE_URL_OUT 'note-issue-url.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: real /project/ URL IS warned' $MTYPE_URL_OUT 'missing-type: note-real-url.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: real-URL note labelled url-signal' $MTYPE_URL_OUT 'note-real-url.md — looks like project memory (linear-project-url)'
+Assert-Contains 'memory-drift.test <TEAM>-354: literal type: inside a value is NOT miscounted' $MTYPE_URL_OUT 'missing-type: project_strtype.md'
+
+# --- 39. Parity-sensitive frontmatter (cross-model panel — twin of test 39): a
+# class-5 candidate is detected identically under a UTF-8 BOM + CRLF, whitespace-
+# padded `---` fences, and a TOP-LEVEL `node_type:` (which must NOT satisfy the
+# `type:` check). Each is a typeless project-named note → each must warn, exit 0.
+$MTYPE_PAR = Join-Path ([IO.Path]::GetTempPath()) ("memory-mtype-par-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $MTYPE_PAR -Force | Out-Null
+# BOM + CRLF (leading U+FEFF becomes the UTF-8 BOM bytes; `r`n = CRLF).
+$bomcrlf = "`u{FEFF}---`r`nname: project_bomcrlf`r`ndescription: `"x`"`r`n---`r`nBody.`r`n"
+[System.IO.File]::WriteAllText((Join-Path $MTYPE_PAR 'project_bomcrlf.md'), $bomcrlf, [System.Text.UTF8Encoding]::new($false))
+# Whitespace-padded opening AND closing fences (awk [[:space:]]* vs PS TrimEnd parity).
+$wsfence = "---  `nname: project_wsfence`ndescription: `"x`"`n---  `nBody.`n"
+Write-LfFile (Join-Path $MTYPE_PAR 'project_wsfence.md') $wsfence
+# TOP-LEVEL node_type (the tempting miscount) with NO real type: → must still warn.
+$nodetype = "---`nname: project_nodetype`nnode_type: project`ndescription: `"x`"`n---`nBody.`n"
+Write-LfFile (Join-Path $MTYPE_PAR 'project_nodetype.md') $nodetype
+$MTYPE_PAR_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $MTYPE_PAR 2>&1
+$MTYPE_PAR_RC = $LASTEXITCODE
+if ($MTYPE_PAR_OUT -is [array]) { $MTYPE_PAR_OUT = $MTYPE_PAR_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-354: parity-frontmatter dir stays exit 0 (advisory)' '0' "$MTYPE_PAR_RC"
+Assert-Contains 'memory-drift.test <TEAM>-354: BOM+CRLF typeless project note warned' $MTYPE_PAR_OUT 'missing-type: project_bomcrlf.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: whitespace-padded fences still complete-frontmatter -> warned' $MTYPE_PAR_OUT 'missing-type: project_wsfence.md'
+Assert-Contains 'memory-drift.test <TEAM>-354: top-level node_type: does NOT count as a type -> warned' $MTYPE_PAR_OUT 'missing-type: project_nodetype.md'
+
 # --- Cleanup.
 Remove-Item -LiteralPath $QTYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $MTYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $MTYPE_NOFM -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $MTYPE_URL -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $MTYPE_PAR -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $TYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $KEBAB_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $GUARD_TMP -Recurse -Force -ErrorAction SilentlyContinue

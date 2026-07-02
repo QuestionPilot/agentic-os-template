@@ -5,7 +5,7 @@
     (headline-vs-body drift + MEMORY.md bloat).
 
 .DESCRIPTION
-    Four failure classes:
+    Four failure classes plus a fifth advisory guard:
 
     1. Headline-vs-body DRIFT in project-type notes. A note is "project-type"
     when its frontmatter `type:` (top-level or nested under `metadata:`) is
@@ -44,6 +44,19 @@
     case-insensitivity bash gets from tolower(), and scanning line-by-line over
     ReadAllLines avoids any (?m) need.
 
+    5. MISSING-TYPE guard on project-ish notes (ADVISORY — never changes the exit
+    code). <TEAM>-353 re-keyed project detection from the project_*.md filename glob
+    to frontmatter `metadata.type: project`, which closed the old blind spot but
+    opened a symmetric one: a note that SHOULD be project memory yet omits `type:`
+    entirely is invisible to the class-1 headline-drift scan (and to self-audit's
+    project pillars). This guard WARNs (never FAILs — a fuzzy heuristic must not
+    break the gate) when a note (a) has a COMPLETE frontmatter block (malformed
+    frontmatter is class 3's job); (b) sets NO `type:` at all (top-level or nested —
+    a note typed reference/feedback is correctly classified, so NOT flagged); and
+    (c) looks project-ish: a `project`-prefixed filename (either separator, matched
+    case-sensitively via -cmatch for find-name parity) OR a linear.app/<ws>/project/
+    URL anywhere in the file. Twin of the bash class-5 loop.
+
     Parity notes (per [[reference_ps_port_traps]]): the filename filter uses
     `-cmatch` (case-sensitive, matching bash `find -name`); .NET `\s` is a
     superset of POSIX `[[:space:]]` but agrees on the ASCII/BMP text a memory
@@ -72,6 +85,8 @@
         0 — clean (or no project-type notes / MEMORY.md to inspect)
         1 — drift detected, or MEMORY.md over a documented cap
         2 — usage error (missing dir, bad args)
+    The class-5 missing-type guard is ADVISORY: it emits `WARN missing-type:` lines
+    to stderr but never changes the exit code (a clean-but-warned dir still exits 0).
 
     Per [[reference_ps_port_traps]] + [[feedback_powershell_set_content_crlf]]:
     output goes through Write-Host / [Console]::Error.WriteLine which emit LF on
@@ -575,6 +590,45 @@ foreach ($nf in $noteFiles) {
         $injFail = 1
         [Console]::Error.WriteLine("FAIL injection ${base}: line-leading prompt-injection payload (class: $hit) — if documenting the pattern, fence or quote it; if real, remove it (see core/memory-model.md)")
     }
+}
+
+# --- <TEAM>-354: missing-type guard on project-ish notes (ADVISORY). --------------
+# Twin of the bash class-5 loop. WARN-only — never touches the exit code. Fires when
+# a note has a COMPLETE frontmatter block, sets NO `type:` (top-level or nested — a
+# typed non-project note is correctly classified, so NOT flagged), and looks
+# project-ish: a `project`-prefixed filename (case-sensitive -cmatch, parity with
+# find -name / the bash `case` glob) OR a linear.app/<ws>/project/ URL anywhere in
+# the file. Malformed frontmatter (no complete ---...---) is class 3's job → skipped.
+foreach ($nf in $noteFiles) {
+    $base  = $nf.Name
+    $lines = [System.IO.File]::ReadAllLines($nf.FullName)   # BOM auto-stripped (parity with bash awk BOM strip)
+    $hasUrl = $false
+    foreach ($ln in $lines) {
+        # Host-boundary-anchored (parity with the bash awk regex) so a lookalike
+        # host such as notlinear.app / evil-linear.app does NOT match.
+        if ($ln -imatch '(^|[^a-z0-9\-.])linear\.app/[^\s]*/project/') { $hasUrl = $true; break }
+    }
+    $sawOpen = ($lines.Count -gt 0 -and $lines[0].TrimEnd() -eq '---')
+    $closed  = $false
+    $hasType = $false
+    if ($sawOpen) {
+        for ($i = 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i].TrimEnd() -eq '---') { $closed = $true; break }
+            if ($lines[$i] -match '^\s*type:\s*') { $hasType = $true }   # node_type: not matched
+        }
+    }
+    # Not a candidate: the note has a type, or its frontmatter is malformed (missing
+    # open/close) and the class-3 scan above already owns that case.
+    if (-not ($sawOpen -and $closed -and -not $hasType)) { continue }
+    $nameSig = ($base -cmatch '^project[_-]')
+    $urlSig  = $hasUrl
+    # Candidate with NEITHER project-ish signal → out of scope (we only guard notes
+    # that look like project memory, not every untyped note).
+    if (-not $nameSig -and -not $urlSig) { continue }
+    if     ($nameSig -and $urlSig) { $label = 'filename + linear-project-url' }
+    elseif ($nameSig)              { $label = 'filename' }
+    else                           { $label = 'linear-project-url' }
+    [Console]::Error.WriteLine("WARN missing-type: ${base} — looks like project memory ($label) but its frontmatter sets no type:; the project scanners key on metadata.type, so an untyped note is invisible to them. Add the correct type: (see core/memory-model.md)")
 }
 
 if ($drift -eq 0 -and $indexFail -eq 0 -and $fmFail -eq 0 -and $injFail -eq 0) {
