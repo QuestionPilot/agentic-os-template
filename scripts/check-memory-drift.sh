@@ -213,29 +213,37 @@ if [ -n "$injection_scan_file" ]; then
   exit 0
 fi
 
-if [ -z "$memory_dir" ]; then
+# Resolve the memory dir set — explicit flag = exactly one; else derive from
+# CLAUDE_CONFIG_DIR (any projects/* subdir containing a memory/ folder).
+# <TEAM>-360: a bare run used to pick candidates[0] when several dirs matched —
+# the alphabetically-first store won and every other store (including the
+# primary home store) went silently unscanned. Scan ALL discovered dirs
+# instead: find accepts multiple roots, so the walks below aggregate across
+# the whole set.
+memory_dirs=()
+if [ -n "$memory_dir" ]; then
+  memory_dirs=("$memory_dir")
+else
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-    # Derive the Claude-harness memory dir from CLAUDE_CONFIG_DIR. The exact
-    # subpath is harness-specific; we look for any projects/* subdir containing
-    # a memory/ folder. If multiple match, prefer the one matching CWD-derived
-    # naming. If exactly one exists, use it.
-    candidates=()
     for d in "$CLAUDE_CONFIG_DIR"/projects/*/memory; do
-      [ -d "$d" ] && candidates+=("$d")
+      [ -d "$d" ] && memory_dirs+=("$d")
     done
-    case "${#candidates[@]}" in
-      0) printf 'FAIL no memory/ subdir under %s/projects/*/\n' "$CLAUDE_CONFIG_DIR" >&2; exit 2 ;;
-      1) memory_dir="${candidates[0]}" ;;
-      *) memory_dir="${candidates[0]}"
-         printf 'NOTE multiple memory dirs found; using %s\n' "$memory_dir" >&2 ;;
-    esac
+    if [ "${#memory_dirs[@]}" -eq 0 ]; then
+      printf 'FAIL no memory/ subdir under %s/projects/*/\n' "$CLAUDE_CONFIG_DIR" >&2
+      exit 2
+    fi
+    if [ "${#memory_dirs[@]}" -gt 1 ]; then
+      printf 'NOTE %s memory dirs found; scanning all of them\n' "${#memory_dirs[@]}" >&2
+    fi
   else
     printf 'FAIL no --memory-dir given and CLAUDE_CONFIG_DIR unset\n' >&2
     exit 2
   fi
 fi
 
-[ -d "$memory_dir" ] || { printf 'FAIL memory dir does not exist: %s\n' "$memory_dir" >&2; exit 2; }
+for d in "${memory_dirs[@]}"; do
+  [ -d "$d" ] || { printf 'FAIL memory dir does not exist: %s\n' "$d" >&2; exit 2; }
+done
 
 drift=0
 scanned=0
@@ -328,18 +336,19 @@ while IFS= read -r -d '' f; do
     printf 'FAIL drift: %s — headline claims closed but body links to follow-on [[%s]]; description does not acknowledge it\n' "$base" "$followon" >&2
     drift=1
   fi
-done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
+done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 # --- <TEAM>-136: MEMORY.md index size + per-entry line-length enforcement. -------
 # When the index file exists, fail if it crosses either documented cap. This is
 # the bloat the headline-vs-body staleness check could never catch: an index
 # that grows past the harness recall cap silently truncates + loses recall.
 index_fail=0
-if [ -f "$memory_dir/MEMORY.md" ]; then
-  size_bytes=$(wc -c < "$memory_dir/MEMORY.md" 2>/dev/null | tr -d ' ')
+for _md_dir in "${memory_dirs[@]}"; do
+if [ -f "$_md_dir/MEMORY.md" ]; then
+  size_bytes=$(wc -c < "$_md_dir/MEMORY.md" 2>/dev/null | tr -d ' ')
   if [ -n "$size_bytes" ] && [ "$size_bytes" -gt "$MEMORY_INDEX_SIZE_CAP_BYTES" ]; then
-    printf 'FAIL MEMORY.md is %s bytes — over the ~%s-byte recall cap; the harness truncates recall past this size. Shorten the longest one-line index entries; move detail into the named topic files.\n' \
-      "$size_bytes" "$MEMORY_INDEX_SIZE_CAP_BYTES" >&2
+    printf 'FAIL MEMORY.md is %s bytes — over the ~%s-byte recall cap; the harness truncates recall past this size. Shorten the longest one-line index entries; move detail into the named topic files. (%s)\n' \
+      "$size_bytes" "$MEMORY_INDEX_SIZE_CAP_BYTES" "$_md_dir/MEMORY.md" >&2
     index_fail=1
   fi
 
@@ -356,13 +365,14 @@ if [ -f "$memory_dir/MEMORY.md" ]; then
   # (1 here vs 2 UTF-16 units in PS) are out of scope for a text memory index.
   long_lines=$(LC_ALL=C awk -v cap="$MEMORY_INDEX_LINE_CAP_CHARS" \
     '{ s=$0; cont=gsub(/[\200-\277]/,"",s); if ((length($0)-cont) > cap) n++ } END { print n+0 }' \
-    "$memory_dir/MEMORY.md" 2>/dev/null)
+    "$_md_dir/MEMORY.md" 2>/dev/null)
   if [ -n "$long_lines" ] && [ "$long_lines" -gt 0 ]; then
-    printf 'FAIL MEMORY.md has %s index line(s) over the ~%s-char per-entry line-length cap. Trim each to a one-line headline; move detail into the named topic file.\n' \
-      "$long_lines" "$MEMORY_INDEX_LINE_CAP_CHARS" >&2
+    printf 'FAIL MEMORY.md has %s index line(s) over the ~%s-char per-entry line-length cap. Trim each to a one-line headline; move detail into the named topic file. (%s)\n' \
+      "$long_lines" "$MEMORY_INDEX_LINE_CAP_CHARS" "$_md_dir/MEMORY.md" >&2
     index_fail=1
   fi
 fi
+done
 
 # --- <TEAM>-206: frontmatter parser-safety scan (narrow hazard linter). ----------
 # For each memory note, flag the silent-corruption class a strict YAML parser
@@ -423,7 +433,7 @@ while IFS= read -r -d '' f; do
       colon)    printf 'FAIL frontmatter %s: top-level key "%s" value has unquoted ": " — quote it (YAML may read it as a nested mapping)\n' "$base" "$key" >&2 ;;
     esac
   done
-done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
+done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 # --- <TEAM>-218: injection-defense scan (line-leading payload hazard linter). -----
 # For each memory note, scan the BODY (after the 2nd `---`) for prompt-injection
@@ -487,7 +497,7 @@ while IFS= read -r -d '' f; do
   [ -z "$hit" ] && continue
   inj_fail=1
   printf 'FAIL injection %s: line-leading prompt-injection payload (class: %s) — if documenting the pattern, fence or quote it; if real, remove it (see core/memory-model.md)\n' "$base" "$hit" >&2
-done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
+done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 # --- <TEAM>-354: missing-type guard on project-ish notes (ADVISORY). --------------
 # Re-surfaces the blind spot <TEAM>-353's frontmatter-type keying opened: a note that
@@ -526,14 +536,14 @@ while IFS= read -r -d '' f; do
   else                                                    label="linear-project-url"
   fi
   printf 'WARN missing-type: %s — looks like project memory (%s) but its frontmatter sets no type:; the project scanners key on metadata.type, so an untyped note is invisible to them. Add the correct type: (see core/memory-model.md)\n' "$base" "$label" >&2
-done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
+done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 if [ "$drift" -eq 0 ] && [ "$index_fail" -eq 0 ] && [ "$fm_fail" -eq 0 ] && [ "$inj_fail" -eq 0 ]; then
-  printf 'PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads (%s project files headline-checked, %s notes frontmatter+injection-scanned in %s)\n' "$scanned" "$notes_scanned" "$memory_dir"
+  printf 'PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads (%s project files headline-checked, %s notes frontmatter+injection-scanned in %s)\n' "$scanned" "$notes_scanned" "${memory_dirs[*]}"
   exit 0
 fi
 
 if [ "$drift" -ne 0 ]; then
-  printf 'FAIL %s drift(s) detected in %s\n' "$drift" "$memory_dir" >&2
+  printf 'FAIL %s drift(s) detected in %s\n' "$drift" "${memory_dirs[*]}" >&2
 fi
 exit 1

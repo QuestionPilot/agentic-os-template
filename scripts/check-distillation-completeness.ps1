@@ -136,16 +136,22 @@ function Test-FeedbackOrDecision {
     return $false
 }
 
-# Resolve MemoryDir (mirror bash: explicit flag, else derive from CLAUDE_CONFIG_DIR).
-if ([string]::IsNullOrEmpty($MemoryDir)) {
+# Resolve the MemoryDir set (mirror bash: explicit flag = exactly one, else
+# derive from CLAUDE_CONFIG_DIR). <TEAM>-360: a bare run used to pick
+# $candidates[0] when several projects/*/memory dirs existed — every other
+# store went silently unscanned, a false-PASS direction for a pre-wipe guard.
+# Scan ALL discovered dirs instead.
+$MemoryDirs = @()
+if (-not [string]::IsNullOrEmpty($MemoryDir)) {
+    $MemoryDirs = @($MemoryDir)
+} else {
     $configDir = $env:CLAUDE_CONFIG_DIR
     if ([string]::IsNullOrEmpty($configDir)) {
         [Console]::Error.WriteLine('FAIL no --memory-dir given and CLAUDE_CONFIG_DIR unset'); exit 2
     }
     $projectsRoot = Join-Path $configDir 'projects'
-    $candidates = @()
     if (Test-Path -LiteralPath $projectsRoot -PathType Container) {
-        $candidates = @(
+        $MemoryDirs = @(
             Get-ChildItem -LiteralPath $projectsRoot -Directory -ErrorAction SilentlyContinue |
                 ForEach-Object {
                     $mem = Join-Path $_.FullName 'memory'
@@ -153,13 +159,11 @@ if ([string]::IsNullOrEmpty($MemoryDir)) {
                 }
         )
     }
-    switch ($candidates.Count) {
-        0 { [Console]::Error.WriteLine("FAIL no memory/ subdir under ${projectsRoot}/*/"); exit 2 }
-        1 { $MemoryDir = $candidates[0] }
-        default {
-            $MemoryDir = $candidates[0]
-            [Console]::Error.WriteLine("NOTE multiple memory dirs found; using $MemoryDir")
-        }
+    if ($MemoryDirs.Count -eq 0) {
+        [Console]::Error.WriteLine("FAIL no memory/ subdir under ${projectsRoot}/*/"); exit 2
+    }
+    if ($MemoryDirs.Count -gt 1) {
+        [Console]::Error.WriteLine("NOTE $($MemoryDirs.Count) memory dirs found; scanning all of them")
     }
 }
 
@@ -172,9 +176,13 @@ if ([string]::IsNullOrEmpty($LessonsDir)) {
     $LessonsDir = Join-Path $vault '04-Lessons'
 }
 
-if (-not (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
-    [Console]::Error.WriteLine("FAIL memory dir does not exist: $MemoryDir"); exit 2
+foreach ($d in $MemoryDirs) {
+    if (-not (Test-Path -LiteralPath $d -PathType Container)) {
+        [Console]::Error.WriteLine("FAIL memory dir does not exist: $d"); exit 2
+    }
 }
+# Space-joined for the summary lines (matches bash "${memory_dirs[*]}").
+$MemoryDirsLabel = $MemoryDirs -join ' '
 if (-not (Test-Path -LiteralPath $LessonsDir -PathType Container)) {
     [Console]::Error.WriteLine("FAIL lessons dir does not exist: $LessonsDir"); exit 2
 }
@@ -192,7 +200,7 @@ $lessonsLines = $lessonsText -split "`n"
 $checked = 0
 $undistilled = 0
 
-Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
+Get-ChildItem -LiteralPath $MemoryDirs -Filter '*.md' -File -ErrorAction SilentlyContinue |
     Sort-Object Name |
     ForEach-Object {
         $base = $_.Name
@@ -219,9 +227,9 @@ Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction Silently
     }
 
 if ($undistilled -eq 0) {
-    Write-Host "PASS all $checked feedback/decision note(s) distilled into 04-Lessons ($MemoryDir vs $LessonsDir)"
+    Write-Host "PASS all $checked feedback/decision note(s) distilled into 04-Lessons ($MemoryDirsLabel vs $LessonsDir)"
     exit 0
 }
 
-[Console]::Error.WriteLine("FAIL $undistilled of $checked feedback/decision note(s) undistilled in $MemoryDir")
+[Console]::Error.WriteLine("FAIL $undistilled of $checked feedback/decision note(s) undistilled in $MemoryDirsLabel")
 exit 1

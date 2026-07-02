@@ -69,20 +69,26 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Resolve the memory dir — explicit flag, else derive from CLAUDE_CONFIG_DIR the
-# same way check-memory-drift.sh does (any projects/*/memory subdir).
-if [ -z "$memory_dir" ]; then
+# Resolve the memory dir set — explicit flag = exactly one; else derive from
+# CLAUDE_CONFIG_DIR the same way check-memory-drift.sh does (any
+# projects/*/memory subdir). <TEAM>-360: a bare run used to pick candidates[0]
+# when several dirs matched — every other store went silently unscanned, a
+# false-PASS direction for a pre-wipe guard. Scan ALL discovered dirs instead.
+memory_dirs=()
+if [ -n "$memory_dir" ]; then
+  memory_dirs=("$memory_dir")
+else
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-    candidates=()
     for d in "$CLAUDE_CONFIG_DIR"/projects/*/memory; do
-      [ -d "$d" ] && candidates+=("$d")
+      [ -d "$d" ] && memory_dirs+=("$d")
     done
-    case "${#candidates[@]}" in
-      0) printf 'FAIL no memory/ subdir under %s/projects/*/\n' "$CLAUDE_CONFIG_DIR" >&2; exit 2 ;;
-      1) memory_dir="${candidates[0]}" ;;
-      *) memory_dir="${candidates[0]}"
-         printf 'NOTE multiple memory dirs found; using %s\n' "$memory_dir" >&2 ;;
-    esac
+    if [ "${#memory_dirs[@]}" -eq 0 ]; then
+      printf 'FAIL no memory/ subdir under %s/projects/*/\n' "$CLAUDE_CONFIG_DIR" >&2
+      exit 2
+    fi
+    if [ "${#memory_dirs[@]}" -gt 1 ]; then
+      printf 'NOTE %s memory dirs found; scanning all of them\n' "${#memory_dirs[@]}" >&2
+    fi
   else
     printf 'FAIL no --memory-dir given and CLAUDE_CONFIG_DIR unset\n' >&2
     exit 2
@@ -99,7 +105,9 @@ if [ -z "$lessons_dir" ]; then
   fi
 fi
 
-[ -d "$memory_dir" ]  || { printf 'FAIL memory dir does not exist: %s\n' "$memory_dir" >&2; exit 2; }
+for d in "${memory_dirs[@]}"; do
+  [ -d "$d" ] || { printf 'FAIL memory dir does not exist: %s\n' "$d" >&2; exit 2; }
+done
 [ -d "$lessons_dir" ] || { printf 'FAIL lessons dir does not exist: %s\n' "$lessons_dir" >&2; exit 2; }
 
 # Build the normalized Lessons haystack: concatenate every 04-Lessons/*.md, then
@@ -177,14 +185,14 @@ while IFS= read -r -d '' f; do
     printf 'FAIL undistilled: %s — not found in any 04-Lessons note; promote it (see capabilities/closeout.md → Distill this session'\''s feedback)\n' "$base" >&2
     undistilled=$((undistilled + 1))
   fi
-done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' -print0)
+done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' -print0)
 
 if [ "$undistilled" -eq 0 ]; then
   printf 'PASS all %s feedback/decision note(s) distilled into 04-Lessons (%s vs %s)\n' \
-    "$checked" "$memory_dir" "$lessons_dir"
+    "$checked" "${memory_dirs[*]}" "$lessons_dir"
   exit 0
 fi
 
 printf 'FAIL %s of %s feedback/decision note(s) undistilled in %s\n' \
-  "$undistilled" "$checked" "$memory_dir" >&2
+  "$undistilled" "$checked" "${memory_dirs[*]}" >&2
 exit 1

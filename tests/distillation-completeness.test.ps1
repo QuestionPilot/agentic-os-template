@@ -233,9 +233,32 @@ Assert-Eq 'distill.test: early token in large corpus PASSes (SIGPIPE-race regres
 Assert-Contains 'distill.test: race-regression run reports PASS' $RACE_OUT 'PASS'
 Assert-NotContains 'distill.test: early-token note not falsely flagged undistilled' $RACE_OUT 'feedback-early-token.md'
 
+# === <TEAM>-360: a bare (CLAUDE_CONFIG_DIR-derived) run scans ALL projects/*/
+# memory dirs, not $candidates[0]. The undistilled note lives in the
+# alphabetically-SECOND store — the old single-dir pick scanned only the first
+# and false-PASSed this pre-wipe guard exactly when it mattered. Mirrors the
+# .sh twin's <TEAM>-360 section.
+$MULTI_CFG = New-TempDir 'distill-multi'
+New-Item -ItemType Directory -Path (Join-Path $MULTI_CFG 'projects' 'a-store' 'memory') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $MULTI_CFG 'projects' 'b-store' 'memory') -Force | Out-Null
+$LES_MULTI = New-TempDir 'distill-les-multi'
+Write-LfFile (Join-Path $LES_MULTI 'lesson.md') "# lesson naming feedback-in-first-store`n"
+New-Note (Join-Path $MULTI_CFG 'projects' 'a-store' 'memory') 'feedback-in-first-store.md' 'feedback'
+New-Note (Join-Path $MULTI_CFG 'projects' 'b-store' 'memory') 'feedback-in-second-store.md' 'feedback'
+$dsPrevCfg = $env:CLAUDE_CONFIG_DIR
+$env:CLAUDE_CONFIG_DIR = $MULTI_CFG
+$MULTI_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --lessons-dir $LES_MULTI 2>&1
+$MULTI_RC = $LASTEXITCODE
+$env:CLAUDE_CONFIG_DIR = $dsPrevCfg
+if ($MULTI_OUT -is [array]) { $MULTI_OUT = $MULTI_OUT -join "`n" }
+Assert-Eq 'distill.test <TEAM>-360: bare run FAILS on undistilled note in the second memory dir' '1' "$MULTI_RC"
+Assert-Contains 'distill.test <TEAM>-360: second-dir note is named' $MULTI_OUT 'feedback-in-second-store.md'
+Assert-Contains 'distill.test <TEAM>-360: multi-dir NOTE says scanning all' $MULTI_OUT 'scanning all of them'
+Assert-Contains 'distill.test <TEAM>-360: both dirs'' notes counted' $MULTI_OUT '1 of 2 feedback/decision'
+
 # --- Cleanup.
 foreach ($d in @($LES, $MEM_OK, $MEM_BAD, $MEM_DEC, $MEM_FM, $MEM_BND, $LES_BND, `
                  $MEM_NONE, $MEM_IDX, $LES_SPACE_ROOT, $MEM_BARE, $MEM_NOTFB, $MEM_BOM, `
-                 $MEM_RACE, $LES_RACE)) {
+                 $MEM_RACE, $LES_RACE, $MULTI_CFG, $LES_MULTI)) {
     Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
 }

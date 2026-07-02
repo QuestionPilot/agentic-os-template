@@ -800,6 +800,31 @@ assert_contains "memory-drift <TEAM>-354: BOM+CRLF typeless project note warned"
 assert_contains "memory-drift <TEAM>-354: whitespace-padded fences still complete-frontmatter → warned" "$MTYPE_PAR_OUT" "missing-type: project_wsfence.md"
 assert_contains "memory-drift <TEAM>-354: top-level node_type: does NOT count as a type → warned" "$MTYPE_PAR_OUT" "missing-type: project_nodetype.md"
 
+# --- 40. <TEAM>-360: a bare (CLAUDE_CONFIG_DIR-derived) run scans ALL
+# projects/*/memory dirs, not candidates[0]. The drift lives in the
+# alphabetically-SECOND store — the old single-dir pick scanned only the first
+# and false-PASSed exactly this layout (the primary home store went unscanned
+# whenever another project store sorted ahead of it).
+MULTI_CFG=$(mktemp -d 2>/dev/null) || MULTI_CFG="/tmp/memory-multi-$$"
+mkdir -p "$MULTI_CFG/projects/a-store/memory" "$MULTI_CFG/projects/b-store/memory"
+printf -- '---\nname: clean-a\ndescription: "fine"\nmetadata:\n  type: reference\n---\nBody.\n' \
+  > "$MULTI_CFG/projects/a-store/memory/clean-a.md"
+printf -- '---\nname: proj-b\ndescription: "workstream COMPLETE"\nmetadata:\n  type: project\n---\nSee [[project-followon-x]].\n' \
+  > "$MULTI_CFG/projects/b-store/memory/proj-b.md"
+MULTI_OUT=$(CLAUDE_CONFIG_DIR="$MULTI_CFG" bash "$CMD_SCRIPT" 2>&1)
+MULTI_RC=$?
+assert_eq "memory-drift <TEAM>-360: bare run FAILS on drift in the second memory dir" "1" "$MULTI_RC"
+assert_contains "memory-drift <TEAM>-360: second-dir drift is named" "$MULTI_OUT" "proj-b.md"
+assert_contains "memory-drift <TEAM>-360: multi-dir NOTE says scanning all" "$MULTI_OUT" "scanning all of them"
+# Clean multi-dir layout PASSes and counts notes from BOTH dirs.
+rm -f "$MULTI_CFG/projects/b-store/memory/proj-b.md"
+printf -- '---\nname: clean-b\ndescription: "fine"\nmetadata:\n  type: reference\n---\nBody.\n' \
+  > "$MULTI_CFG/projects/b-store/memory/clean-b.md"
+MULTI_OK_OUT=$(CLAUDE_CONFIG_DIR="$MULTI_CFG" bash "$CMD_SCRIPT" 2>&1)
+MULTI_OK_RC=$?
+assert_eq "memory-drift <TEAM>-360: clean multi-dir bare run exits 0" "0" "$MULTI_OK_RC"
+assert_contains "memory-drift <TEAM>-360: PASS line counts notes across BOTH dirs" "$MULTI_OK_OUT" "2 notes frontmatter+injection-scanned"
+
 # --- Cleanup.
 rm -rf "$MD_TMP" "$EMPTY_TMP" "$SIZE_TMP" "$LINE_TMP" "$OK_TMP" \
   "$EMDASH_OK_TMP" "$EMDASH_BAD_TMP" "$BND_TMP" "$COMBO_TMP" \
@@ -807,4 +832,4 @@ rm -rf "$MD_TMP" "$EMPTY_TMP" "$SIZE_TMP" "$LINE_TMP" "$OK_TMP" \
   "$FM_BOM" "$FM_BOM_BAD" "$FM_NOCLOSE2" \
   "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG" "$INJ_FS" \
   "$KEBAB_TMP" "$GUARD_TMP" "$TYPE_TMP" "$QTYPE_TMP" "$MTYPE_TMP" "$MTYPE_NOFM" \
-  "$MTYPE_URL" "$MTYPE_PAR"
+  "$MTYPE_URL" "$MTYPE_PAR" "$MULTI_CFG"

@@ -1,0 +1,4 @@
+{"type":"session_meta","payload":{"cwd":"/tmp"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"text","text":"## Skills\n\n- session-agent: Auto-fires at session start to orient the AI, then routes the prompt. (file: /tmp/codex-home/skills/session-agent/SKILL.md)\n- closeout: Wrap a session. (file: /tmp/codex-home/skills/closeout/SKILL.md)"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"tweak this file for me"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Sure — making the edit now."}]}}

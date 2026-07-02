@@ -69,6 +69,15 @@ assert_eq "session-agent: invoked+Linear allows"  "allow" "$(classify_block "$r3
 r4="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(session_agent_payload "$fix/transcript-session-agent-no-linear.jsonl")")"
 assert_eq "session-agent: invoked w/o Linear blocks" "block" "$(classify_block "$r4")"
 
+# <TEAM>-360 fixture realism — both session-agent transcripts model the two
+# vacuousness triggers inside tool_result records: the skill body's injected
+# `Linear gate:` template line and a prior deny message quoting the phrase.
+# Only an ASSISTANT-authored line-anchored declaration may open the gate, so a
+# regression back to a whole-transcript grep flips r4 to allow and fails here.
+hb_nl_fixture="$(cat "$fix/transcript-session-agent-no-linear.jsonl")"
+assert_contains "session-agent: no-linear fixture models the injected template line" "$hb_nl_fixture" 'Linear gate: <ISSUE-ID'
+assert_contains "session-agent: no-linear fixture models a prior deny message"       "$hb_nl_fixture" 'no `Linear gate:` declaration'
+
 r5="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(session_agent_payload "$fix/transcript-empty.jsonl")" CLAUDE_SKIP_SESSION_AGENT=1)"
 assert_eq "session-agent: kill switch allows" "allow" "$(classify_block "$r5")"
 

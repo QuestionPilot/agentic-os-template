@@ -25,7 +25,8 @@
 #      content; no shell parsing), then later calls find the marker on disk.
 #   2. state.db BACKSTOP — when sqlite3 is available, a read-only query for
 #      this session's messages matching the skill-read marker
-#      (skills/session-agent/SKILL.md) plus a `Linear gate:` line also opens
+#      (skills/session-agent/SKILL.md, user/assistant rows) plus an
+#      ASSISTANT-authored line-anchored `Linear gate:` declaration also opens
 #      the gate (covers multi-turn sessions where the declaration is already
 #      persisted, with no gate file written).
 
@@ -86,11 +87,23 @@ if [[ -f "$GATE_FILE" ]] && grep -qF 'Linear gate:' "$GATE_FILE" 2>/dev/null; th
 fi
 
 # 3. state.db backstop — read-only; any failure falls through to the block.
+# Role-filtered + line-anchored: an any-row LIKE was vacuous —
+# the skill body alone (one tool/user row carrying both the SKILL.md path and
+# the `Linear gate:` template lines) satisfied both patterns, and a prior deny
+# from this very hook quotes the phrase too. The ran-marker accepts user- or
+# assistant-authored rows (the body injection / the model reading it — tool
+# results and the system-prompt catalog are excluded); the declaration must be
+# an ASSISTANT row with `Linear gate:` at line start (LIKE has no ^-anchor, so
+# anchor = start-of-content or after a newline).
 DB="$HHOME/state.db"
 if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB" ]]; then
+  SID_SQL="${SESSION_ID//\'/\'\'}"
+  # case_sensitive_like: SQLite LIKE is case-insensitive for ASCII by default,
+  # which would accept `linear gate:` here while the other harnesses' grep does
+  # not — pin it case-sensitive for cross-harness parity.
   HIT="$(sqlite3 -readonly "$DB" \
-    "SELECT (SELECT COUNT(*) FROM messages WHERE session_id='${SESSION_ID//\'/\'\'}' AND content LIKE '%skills/session-agent/SKILL.md%') > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='${SESSION_ID//\'/\'\'}' AND content LIKE '%Linear gate:%') > 0;" \
-    2>/dev/null || true)"
+    "PRAGMA case_sensitive_like=ON; SELECT (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role IN ('user','assistant') AND (COALESCE(content,'') LIKE '%skills/session-agent/SKILL.md%' OR COALESCE(tool_calls,'') LIKE '%skills/session-agent/SKILL.md%')) > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role='assistant' AND (COALESCE(content,'') LIKE 'Linear gate:%' OR COALESCE(content,'') LIKE '%'||char(10)||'Linear gate:%')) > 0;" \
+    2>/dev/null | tail -n 1 || true)"
   if [[ "$HIT" == "1" ]]; then
     exit 0
   fi

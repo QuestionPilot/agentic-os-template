@@ -17,9 +17,9 @@
     harness).
 
     Marker: Codex has no `Skill` tool — capabilities are context-injected.
-    The hook detects session-agent ran by matching
-    `skills/session-agent/SKILL.md` in the transcript, plus the
-    `Linear gate:` declaration.
+    The hook detects session-agent ran by finding the injected capability
+    body (its H1) or an assistant function_call reading the SKILL.md path,
+    plus an assistant-authored line-anchored `Linear gate:` declaration.
 
     stdin:  PreToolUse hook event JSON
     stdout: when blocking, a PreToolUse deny decision (JSON)
@@ -72,25 +72,57 @@ if (-not $TRANSCRIPT -or -not (Test-Path -LiteralPath $TRANSCRIPT -PathType Leaf
     exit 0
 }
 
-# Session-agent invocation present? Codex has no Skill tool — the marker is
-# `skills/session-agent/SKILL.md` appearing in the transcript (parity with
-# the bash hook's `grep -qF 'skills/session-agent/SKILL.md'`).
+# Check if the session-agent capability ran. A bare whole-transcript path
+# match is vacuous: Codex injects a skills CATALOG as a developer message on
+# EVERY session, and each catalog line carries the skill's `(file: …/SKILL.md)`
+# path — so the old check self-matched before any invocation. Detect a genuine
+# invocation instead, from the rollout's response_item records (same jq filter
+# as the bash twin):
+#   (a) a message record carrying the capability body's own H1 (the catalog
+#       line quotes only name + description, never the body), or
+#   (b) an assistant-initiated function_call whose arguments read the SKILL.md
+#       path (the model pulling the body itself).
+# The H1 literal must stay in sync with capabilities/session-agent.md.
 #
-# <TEAM>-113 Codex F-1 amendment: Codex transcripts on Windows may write the
-# marker path with OS-native separators — match BOTH `/` and `\\` (one or
-# more, since JSON encodes a single `\` as two backslash bytes). The bash
-# twin uses `/` only because it never runs on Windows. Skipping the
-# alternation would silently break the gate on the Windows Codex lane
-# (perpetual PreToolUse denial because the marker text
-# `skills\\session-agent\\SKILL.md` in a JSON-encoded transcript never
-# matches the bash literal).
-$transcriptContent = [System.IO.File]::ReadAllText($TRANSCRIPT)
-if ($transcriptContent -notmatch 'skills[/\\]+session-agent[/\\]+SKILL\.md') {
+# <TEAM>-113 Codex F-1 amendment (carried forward): Codex transcripts on Windows
+# may write the marker path with OS-native separators — the function_call
+# branch matches BOTH `/` and `\` (one or more, since JSON encodes a single
+# `\` as two backslash bytes). The bash twin now carries the same alternation
+# (cross-model panel 2026-07-02) so the twins agree on Windows transcripts.
+# Scope note (same panel): the H1 branch cannot tell WHO put the body in the
+# transcript — pasted H1 text opens only this ran-check. Accepted: the
+# enforcement lives in the assistant-authored line-anchored declaration below,
+# and this gate is a discipline net with a documented kill switch, not a
+# security boundary.
+$saRan = & jq -rR '
+    fromjson? | select(.type == "response_item") | .payload
+    | if .type == "message" then
+        ([.content[]? | .text? // empty] | join("\n"))
+        | select(contains("Session Agent — Session Kickoff Orient + Routing"))
+        | "ran"
+      elif .type == "function_call" then
+        ((.arguments // "") | tostring) + " " + ((.name // "") | tostring)
+        | select(test("skills[/\\\\]+session-agent[/\\\\]+SKILL[.]md"))
+        | "ran"
+      else empty end
+  ' $TRANSCRIPT 2>$null
+if (-not (@($saRan) -contains 'ran')) {
     Deny 'First file-modifying tool use detected but the session-agent capability has not been invoked this session. Invoke `$session-agent` to walk the kickoff orient (Mode 1) then route the request. One invocation per session for Mode 1; re-invoke for each subsequent non-trivial prompt (Mode 2). Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1.'
 }
 
-# session-agent ran — was Linear gate declared?
-if ($transcriptContent -match 'Linear gate:') {
+# session-agent ran — confirm the Linear gate was declared BY THE ASSISTANT.
+# A whole-transcript match is vacuous here: the injected capability body
+# carries its own `Linear gate:` template lines and a prior deny from this
+# very hook quotes the phrase. Keep only assistant-authored message text and
+# require the declaration at line start.
+$assistantText = & jq -rR '
+    fromjson? | select(.type == "response_item")
+    | .payload | select(.type == "message" and .role == "assistant")
+    | .content[]? | .text? // empty
+  ' $TRANSCRIPT 2>$null
+# -cmatch: case-SENSITIVE, matching the bash twin's grep (a plain -match is
+# case-insensitive and would open the gate on `linear gate:` only on Windows).
+if ((@($assistantText) -join "`n") -cmatch '(?m)^\s*Linear gate:') {
     exit 0
 }
 

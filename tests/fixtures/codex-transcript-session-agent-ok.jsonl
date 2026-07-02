@@ -1,3 +1,6 @@
 {"type":"session_meta","payload":{"cwd":"/tmp"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"text","text":"## Skills\n\n- session-agent: Auto-fires at session start to orient the AI, then routes the prompt. (file: /tmp/codex-home/skills/session-agent/SKILL.md)\n- closeout: Wrap a session. (file: /tmp/codex-home/skills/closeout/SKILL.md)"}]}}
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1,200p' ~/.codex/skills/session-agent/SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"# Session Agent — Session Kickoff Orient + Routing\n\nRun the routing steps R1–R5, then end with the declaration block:\n\nRouting: <one-sentence task surface>\nLinear gate: <ISSUE-ID or URL> | none — single-step | none — drafted"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"PreToolUse blocked: The session-agent capability ran but no `Linear gate:` declaration was found this session. Emit the full declaration including the `Linear gate:` line."}]}}
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: infra change\nLinear gate: PROJ-1"}]}}

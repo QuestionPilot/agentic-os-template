@@ -208,6 +208,48 @@ if command -v jq >/dev/null 2>&1; then
     | bash "$IH_GATE")"
   assert_eq "a payload without session_id stays silent" "" "$ih_out"
 
+  # 5g. state.db backstop (<TEAM>-360): the skill body alone — one tool-role row
+  # carrying both the SKILL.md path and the line-anchored `Linear gate:`
+  # template — must NOT open the gate (that self-match was the vacuousness),
+  # nor may a prior deny quoting the phrase. Only an ASSISTANT-authored
+  # line-anchored declaration opens it. Uses a second session id so the 5d
+  # gate file cannot satisfy the check first; the hook resolves HERMES_HOME
+  # as its own parent, so the db lives at $IH_OUT/state.db.
+  if command -v sqlite3 >/dev/null 2>&1; then
+    IH_SID2="testsession02"
+    IH_DB="$IH_OUT/state.db"
+    rm -f "$IH_DB"
+    sqlite3 "$IH_DB" "CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, tool_calls TEXT, timestamp REAL);"
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','tool','# Session Agent — Session Kickoff Orient + Routing
+read of skills/session-agent/SKILL.md
+Routing: <one-sentence task surface>
+Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);"
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','tool','blocked: include the full Linear gate: line as its content.',NULL,2);"
+    ih_bs_payload='{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"'"$IH_SID2"'","cwd":"/tmp"}'
+    ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
+    assert_contains "state.db backstop: skill-body noise alone does not open the gate" \
+      "$ih_out" '"decision":"block"'
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','user','injected body: skills/session-agent/SKILL.md',NULL,3);"
+    ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
+    assert_contains "state.db backstop: invocation without an assistant declaration still blocks" \
+      "$ih_out" '"decision":"block"'
+    # Case parity (cross-model panel 2026-07-02): SQLite LIKE is
+    # case-insensitive by default — the hook pins case_sensitive_like, so a
+    # lowercase declaration must NOT open the gate (bash grep parity).
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','assistant','Routing: x
+linear gate: none — single-step',NULL,4);"
+    ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
+    assert_contains "state.db backstop: lowercase assistant declaration still blocks (case parity)" \
+      "$ih_out" '"decision":"block"'
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','assistant','Routing: x
+Linear gate: none — single-step',NULL,5);"
+    ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
+    assert_eq "state.db backstop: assistant line-anchored declaration opens the gate" "" "$ih_out"
+    rm -f "$IH_DB"
+  else
+    _skip "hermes state.db backstop suite" "sqlite3 not installed"
+  fi
+
   # --- T6: framework-surface (pre_llm_call) injects on the first turn and
   #          stays silent on later turns (the auto-fire fix — see adapter Fact 2) ---
   ih_fs="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":{"is_first_turn":true}}' "$IH_SID" \

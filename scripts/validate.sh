@@ -29,23 +29,112 @@ printf 'Repo: %s\n\n' "$repo_root"
 cfg_claude="${CLAUDE_CONFIG_DIR:-}"
 cfg_codex="${CODEX_HOME:-}"
 cfg_hermes="${HERMES_HOME:-}"
+
+# Read local.env as DATA, never source it. The prior subshell-source EXECUTED
+# the whole file (three times): a hostile or malformed local.env could run
+# arbitrary code from a validation entry point — the same class self-audit.sh
+# closed with _sa_localenv_get. Unlike that single-key reader, this parser
+# ALSO emulates bash in-order sourcing for variable-composed values
+# (CLAUDE_CONFIG_DIR=$BASE/.claude where BASE is an earlier local.env line),
+# because the PS twin's Get-LocalEnvMap already does — dropping composition
+# here would re-open the bash<->PS config-dir recognition gap the map
+# emulation closed (<TEAM>-328 Item A). Semantics mirrored from validate.ps1
+# Get-LocalEnvMap: trim, skip comments/blank, strip `export `, KEY=VALUE only,
+# strip a trailing inline comment (whitespace + #...), strip one balanced
+# surrounding quote pair (single-quoted = literal, no expansion), collapse
+# unquoted backslash-escapes (\<c> -> <c>, the printf %q shape), expand
+# ${VAR}/$VAR against earlier local.env assignments first then the process
+# environment, last assignment of a key wins. Shared documented scope with the
+# PS twin (identical behavior, verified fixture-for-fixture): the inline-comment
+# strip runs BEFORE quote handling (a quoted value containing " #" truncates in
+# both), in-quote escape processing (\$, \\) is NOT emulated, command/process
+# substitution stays literal data, and backslash-newline continuation is
+# unsupported — config-dir values are plain paths.
+_v_le_keys=()
+_v_le_vals=()
+# _v_le_lookup <name> — accumulated-map-first (last assignment wins), then the
+# process environment; used during expansion. Bash-3.2-safe (no assoc arrays).
+_v_le_lookup() {
+  local i=${#_v_le_keys[@]}
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    if [ "${_v_le_keys[$i]}" = "$1" ]; then printf '%s' "${_v_le_vals[$i]}"; return 0; fi
+  done
+  printenv "$1" 2>/dev/null || true
+}
+# _v_le_expand <value> — expand ${VAR} / $VAR without executing anything. A `$`
+# not followed by a valid name stays literal (as bash leaves it in practice for
+# these path-shaped values); %VAR% is never expanded (bash has no such syntax).
+_v_le_expand() {
+  local v="$1" out="" rest name
+  while [ "${v#*\$}" != "$v" ]; do
+    out="${out}${v%%\$*}"
+    rest="${v#*\$}"
+    if [[ "$rest" =~ ^\{([A-Za-z_][A-Za-z0-9_]*)\} ]]; then
+      name="${BASH_REMATCH[1]}"
+      out="${out}$(_v_le_lookup "$name")"
+      rest="${rest#\{${name}\}}"
+    elif [[ "$rest" =~ ^([A-Za-z_][A-Za-z0-9_]*) ]]; then
+      name="${BASH_REMATCH[1]}"
+      out="${out}$(_v_le_lookup "$name")"
+      rest="${rest#${name}}"
+    else
+      out="${out}\$"
+    fi
+    v="$rest"
+  done
+  printf '%s' "${out}${v}"
+}
+# _v_le_parse <path> — fill the parallel arrays from local.env, as data.
+_v_le_parse() {
+  local path="$1" line t key v f l inner sq
+  [ -f "$path" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    t="${line#"${line%%[![:space:]]*}"}"
+    t="${t%"${t##*[![:space:]]}"}"
+    [ -z "$t" ] && continue
+    case "$t" in '#'*) continue ;; esac
+    case "$t" in
+      export[[:space:]]*) t="${t#export}"; t="${t#"${t%%[![:space:]]*}"}" ;;
+    esac
+    [[ "$t" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    v="${BASH_REMATCH[2]}"
+    v="$(printf '%s' "$v" | sed -E 's/[[:space:]]+#.*$//')"
+    sq=0
+    if [ "${#v}" -ge 2 ]; then
+      f="${v:0:1}"; l="${v:$(( ${#v} - 1 )):1}"
+      if [ "$f" = '"' ] && [ "$l" = '"' ]; then
+        inner=$(( ${#v} - 2 )); v="${v:1:$inner}"
+      elif [ "$f" = "'" ] && [ "$l" = "'" ]; then
+        inner=$(( ${#v} - 2 )); v="${v:1:$inner}"; sq=1
+      else
+        case "$v" in
+          *'\'*) v="$(printf '%s' "$v" | sed -E 's/\\(.)/\1/g')" ;;
+        esac
+      fi
+    fi
+    if [ "$sq" -eq 0 ]; then v="$(_v_le_expand "$v")"; fi
+    _v_le_keys+=("$key")
+    _v_le_vals+=("$v")
+  done < "$path"
+  return 0
+}
+# _v_le_get <name> — final map-only lookup (env-first precedence is handled by
+# the callers below, which only consult local.env when the env var was empty).
+_v_le_get() {
+  local i=${#_v_le_keys[@]}
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    if [ "${_v_le_keys[$i]}" = "$1" ]; then printf '%s' "${_v_le_vals[$i]}"; return 0; fi
+  done
+  return 0
+}
 if [ -f "$repo_root/local.env" ]; then
-  # Source in an isolated subshell (stdin closed) so a side effect, unset-var
-  # reference, or stray read in local.env can neither abort this run (set -e),
-  # hang it, nor pollute its environment. Only the resolved path is captured.
-  # Sourcing also resolves a variable-composed value (e.g. CLAUDE_CONFIG_DIR=
-  # $BASE/.claude where BASE is set earlier in local.env) for free. The PS twin
-  # has no shell to source, so validate.ps1 emulates this in Get-LocalEnvMap to
-  # keep bash<->PS config-dir recognition identical (<TEAM>-328 Item A).
-  if [ -z "$cfg_claude" ]; then
-    cfg_claude="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${CLAUDE_CONFIG_DIR:-}" )"
-  fi
-  if [ -z "$cfg_codex" ]; then
-    cfg_codex="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${CODEX_HOME:-}" )"
-  fi
-  if [ -z "$cfg_hermes" ]; then
-    cfg_hermes="$( set +eu; . "$repo_root/local.env" >/dev/null 2>&1 </dev/null; printf '%s' "${HERMES_HOME:-}" )"
-  fi
+  _v_le_parse "$repo_root/local.env"
+  if [ -z "$cfg_claude" ]; then cfg_claude="$(_v_le_get CLAUDE_CONFIG_DIR)"; fi
+  if [ -z "$cfg_codex" ];  then cfg_codex="$(_v_le_get CODEX_HOME)"; fi
+  if [ -z "$cfg_hermes" ]; then cfg_hermes="$(_v_le_get HERMES_HOME)"; fi
 fi
 # Physical path of a configured config dir ('' when unset or nonexistent).
 # ALWAYS returns 0: a non-zero status here would abort validate.sh under
