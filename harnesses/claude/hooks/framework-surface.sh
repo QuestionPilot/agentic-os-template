@@ -274,6 +274,34 @@ been summarized out of context. Re-establish orientation:
 Disable this directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
   else
     # Fresh session (startup / clear / unknown source): the kickoff directive.
+    # Per-session gate-marker pointer (<TEAM>-365): the pre-edit gate accepts
+    # the R5 declaration from a marker file at <install>/agentic-os/
+    # gate-<session_id> — the ONLY channel that works on harness variants
+    # (desktop/SDK) whose transcript does not persist assistant text blocks.
+    # The model cannot reliably learn its own session_id, so this directive is
+    # the canonical place the exact path is surfaced (the pre-edit deny
+    # message repeats it as a recovery path). session_id is sanitized to the
+    # UUID alphabet before being embedded in a path; a non-conforming id just
+    # drops the pointer (fail-open — the transcript channel still applies).
+    SA_GATE_NOTE=""
+    SA_SESSION_ID="$(printf '%s' "$EVENT_JSON" | jq -r '.session_id // empty' 2>/dev/null)"
+    if [[ "$SA_SESSION_ID" =~ ^[A-Za-z0-9-]+$ ]]; then
+      SA_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+      if [[ -n "$SA_INSTALL_DIR" ]]; then
+        SA_GATE_NOTE="
+
+After emitting the R5 routing declaration, ALSO persist it to the pre-edit
+gate's marker file — on harness variants that do not persist assistant text
+into the transcript (desktop/SDK), the marker is the only declaration channel
+the gate can see; elsewhere it is a harmless no-op. Write the declaration
+(including the \`Linear gate:\` line) to:
+
+    $SA_INSTALL_DIR/agentic-os/gate-$SA_SESSION_ID
+
+via a Bash heredoc (mkdir -p the directory first) or the Write tool — a Write
+to that exact path is allowed through the gate."
+      fi
+    fi
     # Leading blank line separates this block from the MCP block above.
     SA_BLOCK="
 
@@ -287,7 +315,7 @@ headlines), then routes the user's first request.
 
 On every subsequent non-trivial prompt, re-invoke \`session-agent\` (Mode 2:
 route only — Mode 1's orient outputs are still live in context).
-
+${SA_GATE_NOTE}
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
   fi

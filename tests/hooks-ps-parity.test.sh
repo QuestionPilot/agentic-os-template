@@ -260,8 +260,60 @@ HKPS_CLAUDE_STUB
     _fail "hooks-ps-parity: claude framework-surface.ps1 MCP probe mis-classified a status line" "got: $hkps_out"
   fi
 
+  # --- 3h. claude session-agent.ps1 — gate-marker channel (<TEAM>-365) -----
+  # The desktop/SDK variant does not persist assistant text into the
+  # transcript, so the PS twin (like the bash hook) must accept the R5
+  # declaration from the per-session marker file at <install>/agentic-os/
+  # gate-<session_id> — and never let the marker substitute for the Skill
+  # invocation itself. Run against a COPY in a throwaway install layout so
+  # marker writes and the stale-reap never touch the repo.
+  hkps_sa365="$hkps_tmpdir/install-365"
+  mkdir -p "$hkps_sa365/hooks"
+  cp "$REPO_ROOT/harnesses/claude/hooks/session-agent.ps1" "$hkps_sa365/hooks/"
+  hkps_sa365_fix="$REPO_ROOT/tests/fixtures/transcript-desktop-session-agent.jsonl"
+  hkps_sa365_sid="ps-dt-0000"
+  hkps_sa365_gate="$hkps_sa365/agentic-os/gate-$hkps_sa365_sid"
+
+  # no marker → DENY, and the deny must name the recovery path.
+  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$hkps_sa365_fix" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"permissionDecision":"deny"'*"gate-$hkps_sa365_sid"*)
+      _pass "hooks-ps-parity: claude session-agent.ps1 DENIES desktop transcript w/o marker, naming the marker path" ;;
+    *)
+      _fail "hooks-ps-parity: claude session-agent.ps1 should DENY w/o marker and name the marker path"             "got: ${hkps_out:-<empty = allow>}" ;;
+  esac
+
+  # the marker Write itself (exact path + line-anchored declaration) → ALLOW.
+  hkps_wpayload="$(jq -nc --arg t "$hkps_sa365_fix" --arg sid "$hkps_sa365_sid" --arg p "$hkps_sa365_gate" \
+    '{transcript_path: $t, session_id: $sid, tool_name: "Write", tool_input: {file_path: $p, content: "Routing: fix\nLinear gate: none — single-step\n"}}')"
+  hkps_out="$(printf '%s' "$hkps_wpayload" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  if [ -z "$hkps_out" ]; then
+    _pass "hooks-ps-parity: claude session-agent.ps1 ALLOWS the marker write through pre-gate"
+  else
+    _fail "hooks-ps-parity: claude session-agent.ps1 should ALLOW the marker write" "got: $hkps_out"
+  fi
+
+  # marker on disk with the declaration → ALLOW subsequent edits.
+  mkdir -p "$hkps_sa365/agentic-os"
+  printf 'Routing: fix\nLinear gate: none — single-step\n' > "$hkps_sa365_gate"
+  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$hkps_sa365_fix" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  if [ -z "$hkps_out" ]; then
+    _pass "hooks-ps-parity: claude session-agent.ps1 ALLOWS once marker is on disk"
+  else
+    _fail "hooks-ps-parity: claude session-agent.ps1 should ALLOW with marker on disk" "got: $hkps_out"
+  fi
+
+  # marker NEVER substitutes for the Skill invocation (empty transcript) → DENY.
+  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$REPO_ROOT/tests/fixtures/transcript-empty.jsonl" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"permissionDecision":"deny"'*)
+      _pass "hooks-ps-parity: claude session-agent.ps1 DENIES marker w/o skill invocation" ;;
+    *)
+      _fail "hooks-ps-parity: claude session-agent.ps1 should DENY marker w/o skill invocation"             "got: ${hkps_out:-<empty = allow>}" ;;
+  esac
+
   rm -rf "$hkps_tmpdir"
-  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs
+  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs hkps_sa365 hkps_sa365_fix hkps_sa365_sid hkps_sa365_gate hkps_wpayload
 else
   _pass "hooks-ps-parity: skipping pwsh behavioral parity (pwsh not on PATH)"
 fi

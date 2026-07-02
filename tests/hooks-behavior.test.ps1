@@ -30,6 +30,19 @@ _Skip 'hooks-behavior.test: session-agent: no routing blocks' $reason
 _Skip 'hooks-behavior.test: session-agent: invoked+Linear exits 0' $reason
 _Skip 'hooks-behavior.test: session-agent: invoked+Linear allows' $reason
 _Skip 'hooks-behavior.test: session-agent: invoked w/o Linear blocks' $reason
+# <TEAM>-365 desktop/SDK gate-marker channel (bash-side behavioral coverage;
+# the .ps1 hook marker channel is exercised in hooks-ps-parity.test.sh 3h).
+_Skip 'hooks-behavior.test: session-agent/desktop: no marker exits 0' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: no marker blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: deny names the marker path' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: marker write allowed through' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: undeclared marker write blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: marker on disk allows' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: declaration-less marker blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: marker w/o skill run blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: stale marker reaped' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: hostile session_id still blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: hostile id never echoed as path' $reason
 _Skip 'hooks-behavior.test: session-agent: kill switch allows' $reason
 _Skip 'hooks-behavior.test: session-agent: block emits hookSpecificOutput' $reason
 _Skip 'hooks-behavior.test: session-agent: block names PreToolUse event' $reason
