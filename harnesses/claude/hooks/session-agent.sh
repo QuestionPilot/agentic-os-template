@@ -93,39 +93,45 @@ if ! grep -qE '"skill"[[:space:]]*:[[:space:]]*"session-agent"' "$TRANSCRIPT" 2>
 fi
 
 # Channel 1 — gate marker (<TEAM>-365). Keyed strictly to the event's
-# session_id: sanitized to the UUID alphabet so a hostile/garbled id cannot
+# session_id: sanitized to a path-safe alphabet (letters/digits/hyphen — a
+# superset of UUIDs) so a hostile/garbled id cannot
 # path-escape the state dir (an id that fails the check just disables this
 # channel — the transcript channel still applies). The install dir is this
 # hook's own parent (hooks live at <install>/hooks/).
 GATE_FILE=""
-if [[ "$SESSION_ID" =~ ^[A-Za-z0-9-]+$ ]]; then
+# Whitespace-tolerant capture (panel finding): the SessionStart directive trims
+# the id before publishing the marker path, so the hook must key the same
+# trimmed token or a padded id would publish one path and check another.
+if [[ "$SESSION_ID" =~ ^[[:space:]]*([A-Za-z0-9-]+)[[:space:]]*$ ]]; then
+  SESSION_ID="${BASH_REMATCH[1]}"
   SA_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
   if [[ -n "$SA_INSTALL_DIR" ]]; then
     STATE_DIR="$SA_INSTALL_DIR/agentic-os"
     GATE_FILE="$STATE_DIR/gate-$SESSION_ID"
     # Reap stale markers (old sessions); never fails the hook.
-    find "$STATE_DIR" -name 'gate-*' -mtime +7 -delete 2>/dev/null || true
+    find "$STATE_DIR" -maxdepth 1 -name 'gate-*' -mtime +7 -delete 2>/dev/null || true
   fi
 fi
 
 if [[ -n "$GATE_FILE" ]]; then
   # 1a. The marker write itself is allowed through pre-gate: a Write to the
   #     exact per-session path whose content carries the line-anchored
-  #     declaration. Structured-field match on the CURRENT event only — never
+  #     declaration WITH a non-empty value after the colon (a bare
+  #     `Linear gate:` is not a disposition — panel finding). Structured-field match on the CURRENT event only — never
   #     a transcript grep, so tool_use fixture noise (the skill body's own
   #     template lines quoted inside other tool inputs) cannot satisfy it.
   if [[ "$TOOL_NAME" == "Write" ]]; then
     WPATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')"
     if [[ "$WPATH" == "$GATE_FILE" ]]; then
       if printf '%s' "$INPUT" | jq -r '.tool_input.content // empty' 2>/dev/null \
-          | grep -qE '^[[:space:]]*Linear gate:'; then
+          | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]'; then
         exit 0
       fi
       deny "The gate marker file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line in its content, then retry."
     fi
   fi
   # 1b. Marker already on disk with a line-anchored declaration → gate open.
-  if [[ -f "$GATE_FILE" ]] && grep -qE '^[[:space:]]*Linear gate:' "$GATE_FILE" 2>/dev/null; then
+  if [[ -f "$GATE_FILE" ]] && grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' "$GATE_FILE" 2>/dev/null; then
     exit 0
   fi
 fi

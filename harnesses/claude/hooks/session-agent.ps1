@@ -100,12 +100,16 @@ if ($transcriptContent -notmatch '"skill"\s*:\s*"session-agent"') {
 }
 
 # Channel 1 — gate marker (<TEAM>-365). Keyed strictly to the event's
-# session_id: sanitized to the UUID alphabet so a hostile/garbled id cannot
+# session_id: sanitized to a path-safe alphabet (letters/digits/hyphen — a
+# superset of UUIDs) so a hostile/garbled id cannot
 # path-escape the state dir (an id that fails the check just disables this
 # channel — the transcript channel still applies). The install dir is this
 # hook's own parent (hooks live at <install>/hooks/).
 $GATE_FILE = ''
-if ($SESSION_ID -cmatch '^[A-Za-z0-9-]+$') {
+# Whitespace-tolerant capture (panel finding): parity with the directive's
+# trimmed id — a padded id must not publish one path and check another.
+if ($SESSION_ID -cmatch '^\s*([A-Za-z0-9-]+)\s*$') {
+    $SESSION_ID = $Matches[1]
     $saInstallDir = Split-Path -Parent $PSScriptRoot
     if ($saInstallDir) {
         $stateDir  = Join-Path $saInstallDir 'agentic-os'
@@ -127,9 +131,12 @@ if ($GATE_FILE) {
     #     template lines quoted inside other tool inputs) cannot satisfy it.
     if ($TOOL_NAME -eq 'Write') {
         $wPath = $INPUT_JSON | & jq -r '.tool_input.file_path // empty'
-        if ($wPath -eq $GATE_FILE) {
+        # Separator-normalized compare (panel finding): on the Windows lane the
+        # model may Write with forward slashes while Join-Path builds backslashes;
+        # a raw -eq would false-deny the marker write.
+        if (($wPath -replace '\\','/') -eq ($GATE_FILE -replace '\\','/')) {
             $wContent = ($INPUT_JSON | & jq -r '.tool_input.content // empty' 2>$null) -join "`n"
-            if ($wContent -cmatch '(?m)^\s*Linear gate:') {
+            if ($wContent -cmatch '(?m)^\s*Linear gate:[ \t]*\S') {
                 exit 0
             }
             Deny 'The gate marker file must carry the routing declaration — include the full `Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted` line in its content, then retry.'
@@ -138,7 +145,7 @@ if ($GATE_FILE) {
     # 1b. Marker already on disk with a line-anchored declaration → gate open.
     if (Test-Path -LiteralPath $GATE_FILE -PathType Leaf) {
         $markerContent = [System.IO.File]::ReadAllText($GATE_FILE)
-        if ($markerContent -cmatch '(?m)^\s*Linear gate:') {
+        if ($markerContent -cmatch '(?m)^\s*Linear gate:[ \t]*\S') {
             exit 0
         }
     }

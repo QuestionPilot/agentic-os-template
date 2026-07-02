@@ -39,6 +39,9 @@ _Skip 'hooks-behavior.test: session-agent/desktop: marker write allowed through'
 _Skip 'hooks-behavior.test: session-agent/desktop: undeclared marker write blocks' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: marker on disk allows' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: declaration-less marker blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: bare value-less marker blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: value-less marker write blocks' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: padded session id still keys the marker' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: marker w/o skill run blocks' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: stale marker reaped' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: hostile session_id still blocks' $reason

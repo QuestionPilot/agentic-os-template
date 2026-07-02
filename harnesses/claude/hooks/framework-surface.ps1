@@ -320,7 +320,7 @@ Disable this directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
         # The model cannot reliably learn its own session_id, so this directive
         # is the canonical place the exact path is surfaced (the pre-edit deny
         # message repeats it as a recovery path). session_id is sanitized to the
-        # UUID alphabet before being embedded in a path; a non-conforming id
+        # path-safe alphabet (letters/digits/hyphen) before being embedded in a path; a non-conforming id
         # just drops the pointer (fail-open — the transcript channel still
         # applies). -cmatch: case-sensitive, parity with the bash twin's =~.
         $SA_GATE_NOTE = ''

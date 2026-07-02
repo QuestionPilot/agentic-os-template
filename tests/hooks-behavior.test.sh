@@ -125,6 +125,21 @@ printf 'no declaration here\n' > "$DT_GATE"
 d5="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")")"
 assert_eq "session-agent/desktop: declaration-less marker blocks" "block" "$(classify_block "$d5")"
 
+# 5b. A bare `Linear gate:` with no disposition value is not a declaration
+#     — neither on disk nor in a marker Write (panel finding).
+printf 'Linear gate:\n' > "$DT_GATE"
+d5b="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")")"
+assert_eq "session-agent/desktop: bare value-less marker blocks" "block" "$(classify_block "$d5b")"
+d5c_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "Linear gate:"}')"
+d5c="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID" Write "$d5c_input")")"
+assert_eq "session-agent/desktop: value-less marker write blocks" "block" "$(classify_block "$d5c")"
+
+# 5d. A whitespace-padded session_id keys the SAME marker path the directive
+#     publishes (both sides trim — panel finding).
+printf 'Linear gate: none — single-step\n' > "$DT_GATE"
+d5d="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "  $DT_SID  ")")"
+assert_eq "session-agent/desktop: padded session id still keys the marker" "allow" "$(classify_block "$d5d")"
+
 # 6. The marker NEVER substitutes for the Skill invocation itself — a session
 #    with a valid marker but no session-agent run still blocks.
 printf 'Linear gate: none — single-step\n' > "$DT_GATE"
