@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-memory-drift.sh — flag memory-index health failures.
 #
-# Inspects the per-harness memory directory for four failure classes:
+# Inspects the per-harness memory directory for four failure classes plus a fifth
+# advisory guard:
 #
 #   1. Headline-vs-body DRIFT in project-type notes. A note is "project-type"
 #      when its frontmatter `type:` (top-level or nested under `metadata:`) is
@@ -58,6 +59,21 @@
 #      linter, not a parser; see the in-body block + core/memory-model.md for the
 #      pattern list and accepted false-negatives.
 #
+#   5. MISSING-TYPE guard on project-ish notes (ADVISORY — never changes the exit
+#      code). <TEAM>-353 re-keyed project detection from the project_*.md filename
+#      glob to frontmatter `metadata.type: project`. That closed the old blind spot
+#      but opened a symmetric one: a note that SHOULD be project memory yet omits
+#      `type:` entirely is now invisible to the class-1 headline-drift scan (and to
+#      self-audit's project pillars) — no type, no detection. This guard re-surfaces
+#      that case. CONSERVATIVE by design: it WARNs (never FAILs, so a fuzzy heuristic
+#      cannot break the gate) and fires ONLY when a note (a) has a COMPLETE
+#      frontmatter block — malformed frontmatter is class 3's job, not double-flagged
+#      here; (b) sets NO `type:` at all (top-level or nested) — a note already typed
+#      reference/feedback/etc. is correctly classified, NOT in the blind spot, so it
+#      is not flagged; and (c) LOOKS project-ish by a heuristic signal: a `project`-
+#      prefixed filename (either separator) OR a linear.app/<workspace>/project/ URL
+#      anywhere in the file. Fix when warned: add the correct `metadata.type`.
+#
 # Usage:
 #   check-memory-drift.sh --memory-dir <path>
 #   check-memory-drift.sh                       (derives from CLAUDE_CONFIG_DIR)
@@ -70,6 +86,8 @@
 #   0 — clean (or no project_*.md files / MEMORY.md to inspect)
 #   1 — drift detected, or MEMORY.md over a documented cap
 #   2 — usage error (missing dir, bad args)
+# The class-5 missing-type guard is ADVISORY: it emits `WARN missing-type:` lines to
+# stderr but never changes the exit code (a clean-but-warned dir still exits 0).
 #
 # This is a textual heuristic check. It does not call out to Linear. A future
 # enhancement may cross-reference Linear-project status.
@@ -469,6 +487,45 @@ while IFS= read -r -d '' f; do
   [ -z "$hit" ] && continue
   inj_fail=1
   printf 'FAIL injection %s: line-leading prompt-injection payload (class: %s) — if documenting the pattern, fence or quote it; if real, remove it (see core/memory-model.md)\n' "$base" "$hit" >&2
+done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
+
+# --- <TEAM>-354: missing-type guard on project-ish notes (ADVISORY). --------------
+# Re-surfaces the blind spot <TEAM>-353's frontmatter-type keying opened: a note that
+# looks like project memory but sets no `type:` is invisible to the class-1 scan
+# above. WARN-only (never flips the exit code): the project-ish heuristic is fuzzy,
+# so a hard gate on it would risk false-positive build breaks — see the header for
+# the exact fire conditions + why a typed non-project note is correctly NOT flagged.
+# One awk pass per note returns: nothing = not a candidate (has a type, OR malformed
+# frontmatter → class 3 owns it); "url" = candidate whose file carries a project URL;
+# "none" = candidate with no URL signal. The filename signal is added in bash so the
+# `project[_-]` stem match stays case-sensitive (parity with find -name / the PS
+# -cmatch twin). Scanned in the same all-*.md walk as classes 3-4.
+while IFS= read -r -d '' f; do
+  base=$(basename "$f")
+  sig=$(LC_ALL=C awk '
+    NR==1 {
+      if (substr($0,1,3) == "\357\273\277") $0 = substr($0,4)   # strip UTF-8 BOM (parity with PS ReadAllLines)
+      if ($0 ~ /^---[[:space:]]*$/) { saw_open=1; infm=1 }
+      next
+    }
+    { if (tolower($0) ~ /(^|[^a-z0-9.\-])linear\.app\/[^[:space:]]*\/project\//) has_url=1 }   # project-URL signal, anywhere in the file; host-boundary-anchored so a lookalike host (notlinear.app / evil-linear.app) does NOT match
+    infm==1 && /^---[[:space:]]*$/ { infm=0; closed=1; next }                   # frontmatter close
+    infm==1 && /^[[:space:]]*type:[[:space:]]*/ { has_type=1 }                  # any type: (top-level or nested); node_type: not matched
+    END { if (saw_open==1 && closed==1 && has_type!=1) print (has_url==1 ? "url" : "none") }
+  ' "$f")
+  # No output → not a candidate: the note has a type, or its frontmatter is malformed
+  # (missing open/close) and the class-3 scan above already owns that.
+  [ -z "$sig" ] && continue
+  name_sig=0; case "$base" in project_*|project-*) name_sig=1 ;; esac
+  url_sig=0;  [ "$sig" = "url" ] && url_sig=1
+  # Candidate with NEITHER project-ish signal → out of scope (we only guard notes that
+  # look like project memory, not every untyped note).
+  [ "$name_sig" -eq 0 ] && [ "$url_sig" -eq 0 ] && continue
+  if   [ "$name_sig" -eq 1 ] && [ "$url_sig" -eq 1 ]; then label="filename + linear-project-url"
+  elif [ "$name_sig" -eq 1 ];                        then label="filename"
+  else                                                    label="linear-project-url"
+  fi
+  printf 'WARN missing-type: %s — looks like project memory (%s) but its frontmatter sets no type:; the project scanners key on metadata.type, so an untyped note is invisible to them. Add the correct type: (see core/memory-model.md)\n' "$base" "$label" >&2
 done < <(find "$memory_dir" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
 if [ "$drift" -eq 0 ] && [ "$index_fail" -eq 0 ] && [ "$fm_fail" -eq 0 ] && [ "$inj_fail" -eq 0 ]; then

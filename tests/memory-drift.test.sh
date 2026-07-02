@@ -641,10 +641,170 @@ assert_eq "memory-drift <TEAM>-353: quoted-type notes are project-detected (exit
 assert_contains "memory-drift <TEAM>-353: double-quoted type IS detected (quote-strip)" "$QTYPE_OUT" "dquote.md"
 assert_contains "memory-drift <TEAM>-353: single-quoted type IS detected (quote-strip)" "$QTYPE_OUT" "squote.md"
 
+# === <TEAM>-354: missing-type guard on project-ish notes (ADVISORY). =============
+# A note that LOOKS like project memory — a project-prefixed filename OR a
+# linear.app/<ws>/project/ URL — but sets NO frontmatter `type:` is re-surfaced with
+# a `WARN missing-type:` line (the blind spot <TEAM>-353's frontmatter-type keying
+# opened). ADVISORY: it must NOT change the exit code. A TYPED note is correctly
+# classified and NOT flagged; malformed frontmatter is owned by the class-3 scan and
+# NOT double-flagged here.
+
+# --- 36. Project-ish typeless notes WARN (by filename, by URL, by both); typed and
+# non-project-ish notes do not; and the advisory never flips the exit code off 0.
+MTYPE_TMP=$(mktemp -d 2>/dev/null) || MTYPE_TMP="/tmp/memory-mtype-$$"
+mkdir -p "$MTYPE_TMP"
+# Typeless + project_ filename → WARN (filename signal). `node_type:` is NOT a type.
+cat > "$MTYPE_TMP/project_missing.md" <<'EOF'
+---
+name: project_missing
+description: "Active work, but the writer forgot the type"
+metadata:
+  node_type: memory
+---
+Body with no type in frontmatter.
+EOF
+# Typeless + NON-project filename + a Linear project URL in the body → WARN (url only).
+cat > "$MTYPE_TMP/mono-note.md" <<'EOF'
+---
+name: mono-note
+description: "kebab note, no type prefix, no type field"
+---
+Tracks https://linear.app/acme/project/widget-7 — handshakes a project.
+EOF
+# Typeless + project_ filename + URL → WARN (both signals).
+cat > "$MTYPE_TMP/project_both.md" <<'EOF'
+---
+name: project_both
+description: "no type at all"
+---
+See linear.app/acme/project/thing for status.
+EOF
+# Well-formed type: project → NOT flagged (visible to the scanners already).
+cat > "$MTYPE_TMP/project_typed.md" <<'EOF'
+---
+name: project_typed
+description: "Active project, correctly typed"
+metadata:
+  type: project
+---
+Body.
+EOF
+# type: reference + a project URL handshake → NOT flagged (typed, not the blind spot).
+cat > "$MTYPE_TMP/reference-handshake.md" <<'EOF'
+---
+name: reference-handshake
+description: "a reference note that points at a project"
+metadata:
+  type: reference
+---
+Related work: https://linear.app/acme/project/other-9.
+EOF
+# Typeless but NOT project-ish (no project filename, no project URL) → out of scope.
+cat > "$MTYPE_TMP/plain-untyped.md" <<'EOF'
+---
+name: plain-untyped
+description: "no type, no project signal"
+---
+Just a stray note with neither signal.
+EOF
+MTYPE_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$MTYPE_TMP" 2>&1)
+MTYPE_RC=$?
+assert_eq "memory-drift <TEAM>-354: advisory guard does NOT change exit 0" "0" "$MTYPE_RC"
+assert_contains "memory-drift <TEAM>-354: PASS line still printed under advisory warns" "$MTYPE_OUT" "PASS"
+assert_contains "memory-drift <TEAM>-354: project_ filename typeless note warned" "$MTYPE_OUT" "missing-type: project_missing.md"
+assert_contains "memory-drift <TEAM>-354: filename-signal label" "$MTYPE_OUT" "project_missing.md — looks like project memory (filename)"
+assert_contains "memory-drift <TEAM>-354: URL-only typeless note warned" "$MTYPE_OUT" "missing-type: mono-note.md"
+assert_contains "memory-drift <TEAM>-354: URL-signal label" "$MTYPE_OUT" "mono-note.md — looks like project memory (linear-project-url)"
+assert_contains "memory-drift <TEAM>-354: both-signal note warned" "$MTYPE_OUT" "missing-type: project_both.md"
+assert_contains "memory-drift <TEAM>-354: both-signal label" "$MTYPE_OUT" "project_both.md — looks like project memory (filename + linear-project-url)"
+assert_not_contains "memory-drift <TEAM>-354: well-formed type:project not warned" "$MTYPE_OUT" "project_typed.md"
+assert_not_contains "memory-drift <TEAM>-354: typed reference note (with project URL) not warned" "$MTYPE_OUT" "reference-handshake.md"
+assert_not_contains "memory-drift <TEAM>-354: non-project-ish typeless note not warned" "$MTYPE_OUT" "plain-untyped.md"
+
+# --- 37. A project-named note with NO frontmatter is owned by the class-3 scan
+# (missing opening ---) and must NOT ALSO get a class-5 missing-type WARN — the guard
+# requires a COMPLETE frontmatter block, so the two classes never double-flag.
+MTYPE_NOFM=$(mktemp -d 2>/dev/null) || MTYPE_NOFM="/tmp/memory-mtype-nofm-$$"
+mkdir -p "$MTYPE_NOFM"
+cat > "$MTYPE_NOFM/project_nofm.md" <<'EOF'
+# No frontmatter here
+Body only, but the filename looks like a project note.
+EOF
+MTYPE_NOFM_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$MTYPE_NOFM" 2>&1)
+MTYPE_NOFM_RC=$?
+assert_eq "memory-drift <TEAM>-354: malformed-frontmatter project note exits 1 (class 3)" "1" "$MTYPE_NOFM_RC"
+assert_contains "memory-drift <TEAM>-354: class-3 owns the missing-opening failure" "$MTYPE_NOFM_OUT" "missing opening"
+assert_not_contains "memory-drift <TEAM>-354: guard does NOT double-flag malformed frontmatter" "$MTYPE_NOFM_OUT" "missing-type: project_nofm.md"
+
+# --- 38. URL-signal precision (cross-model panel — GPT + Gemini): the project-URL
+# heuristic is host-boundary-anchored and path-precise. A lookalike host
+# (notlinear.app / evil-linear.app) must NOT match; an /issue/ path must NOT match;
+# a real /project/ URL MUST match. All fixtures use NON-project filenames so ONLY the
+# URL signal can fire. Also pins that a literal `type:` inside a quoted VALUE is not
+# miscounted as the type field (the note stays typeless → still warned).
+MTYPE_URL=$(mktemp -d 2>/dev/null) || MTYPE_URL="/tmp/memory-mtype-url-$$"
+mkdir -p "$MTYPE_URL"
+cat > "$MTYPE_URL/note-lookalike-host.md" <<'EOF'
+---
+name: note-lookalike-host
+description: "typeless, but only lookalike hosts"
+---
+Not us: https://notlinear.app/acme/project/foo and https://evil-linear.app/acme/project/bar
+EOF
+cat > "$MTYPE_URL/note-issue-url.md" <<'EOF'
+---
+name: note-issue-url
+description: "typeless, links an ISSUE not a project"
+---
+Tracking https://linear.app/acme/issue/ABC-123/some-title here.
+EOF
+cat > "$MTYPE_URL/note-real-url.md" <<'EOF'
+---
+name: note-real-url
+description: "typeless, links a real project"
+---
+Status at https://linear.app/acme/project/widget-7 currently.
+EOF
+cat > "$MTYPE_URL/project_strtype.md" <<'EOF'
+---
+name: project_strtype
+description: "a value that merely mentions type: inline should not count as a type"
+---
+Body; no real type field anywhere in frontmatter.
+EOF
+MTYPE_URL_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$MTYPE_URL" 2>&1)
+MTYPE_URL_RC=$?
+assert_eq "memory-drift <TEAM>-354: URL-precision dir stays exit 0 (advisory)" "0" "$MTYPE_URL_RC"
+assert_not_contains "memory-drift <TEAM>-354: lookalike host (notlinear/evil-linear) NOT warned" "$MTYPE_URL_OUT" "note-lookalike-host.md"
+assert_not_contains "memory-drift <TEAM>-354: /issue/ URL NOT treated as a project URL" "$MTYPE_URL_OUT" "note-issue-url.md"
+assert_contains "memory-drift <TEAM>-354: real /project/ URL IS warned" "$MTYPE_URL_OUT" "missing-type: note-real-url.md"
+assert_contains "memory-drift <TEAM>-354: real-URL note labelled url-signal" "$MTYPE_URL_OUT" "note-real-url.md — looks like project memory (linear-project-url)"
+assert_contains "memory-drift <TEAM>-354: literal 'type:' inside a value is NOT miscounted as a type" "$MTYPE_URL_OUT" "missing-type: project_strtype.md"
+
+# --- 39. Parity-sensitive frontmatter (cross-model panel): a class-5 candidate is
+# detected identically across the twins under a UTF-8 BOM + CRLF, whitespace-padded
+# `---` fences, and a TOP-LEVEL `node_type:` (which must NOT satisfy the `type:`
+# check). All three are typeless project-named notes → each must warn, exit 0.
+MTYPE_PAR=$(mktemp -d 2>/dev/null) || MTYPE_PAR="/tmp/memory-mtype-par-$$"
+mkdir -p "$MTYPE_PAR"
+# BOM + CRLF, project_-named, no type.
+printf '\xef\xbb\xbf---\r\nname: project_bomcrlf\r\ndescription: "x"\r\n---\r\nBody.\r\n' > "$MTYPE_PAR/project_bomcrlf.md"
+# Whitespace-padded opening AND closing fences (awk [[:space:]]* vs PS TrimEnd parity).
+printf -- '---  \nname: project_wsfence\ndescription: "x"\n---  \nBody.\n' > "$MTYPE_PAR/project_wsfence.md"
+# TOP-LEVEL node_type (the tempting miscount) with NO real type: → must still warn.
+printf -- '---\nname: project_nodetype\nnode_type: project\ndescription: "x"\n---\nBody.\n' > "$MTYPE_PAR/project_nodetype.md"
+MTYPE_PAR_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$MTYPE_PAR" 2>&1)
+MTYPE_PAR_RC=$?
+assert_eq "memory-drift <TEAM>-354: parity-frontmatter dir stays exit 0 (advisory)" "0" "$MTYPE_PAR_RC"
+assert_contains "memory-drift <TEAM>-354: BOM+CRLF typeless project note warned" "$MTYPE_PAR_OUT" "missing-type: project_bomcrlf.md"
+assert_contains "memory-drift <TEAM>-354: whitespace-padded fences still complete-frontmatter → warned" "$MTYPE_PAR_OUT" "missing-type: project_wsfence.md"
+assert_contains "memory-drift <TEAM>-354: top-level node_type: does NOT count as a type → warned" "$MTYPE_PAR_OUT" "missing-type: project_nodetype.md"
+
 # --- Cleanup.
 rm -rf "$MD_TMP" "$EMPTY_TMP" "$SIZE_TMP" "$LINE_TMP" "$OK_TMP" \
   "$EMDASH_OK_TMP" "$EMDASH_BAD_TMP" "$BND_TMP" "$COMBO_TMP" \
   "$FM_TMP" "$FM_NOOPEN" "$FM_NOCLOSE" "$FM_CRLF" "$FM_CLEAN" \
   "$FM_BOM" "$FM_BOM_BAD" "$FM_NOCLOSE2" \
   "$INJ_BAD" "$INJ_ROLE" "$INJ_FENCE" "$INJ_SAFE" "$INJ_VAR" "$INJ_NEG" "$INJ_FS" \
-  "$KEBAB_TMP" "$GUARD_TMP" "$TYPE_TMP" "$QTYPE_TMP"
+  "$KEBAB_TMP" "$GUARD_TMP" "$TYPE_TMP" "$QTYPE_TMP" "$MTYPE_TMP" "$MTYPE_NOFM" \
+  "$MTYPE_URL" "$MTYPE_PAR"

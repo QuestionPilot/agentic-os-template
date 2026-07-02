@@ -266,6 +266,69 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 1a2: check-memory-drift parity — the <TEAM>-354 missing-type WARN (an
+# ADVISORY, exit-neutral class) must be byte-identical across twins. The
+# sorted-output-class comparison above deliberately drops non-PASS/FAIL/NOTE lines,
+# so a `WARN missing-type:` line participates in NEITHER the exit-code NOR the
+# sorted-class assertion — it needs its own explicit parity check or the two
+# awk/regex copies of the guard could silently drift.
+# ---------------------------------------------------------------------------
+
+if [ -f "$REPO_ROOT/scripts/check-memory-drift.sh" ] && [ -f "$REPO_ROOT/scripts/check-memory-drift.ps1" ] && [ "$_have_pwsh" -eq 1 ]; then
+  CMD_WARN="$PARITY_TMP/cmd-warn"
+  mkdir -p "$CMD_WARN"
+  # Typeless project-named note (filename signal) AND a Linear project URL (url
+  # signal) — exercises the combined label; must WARN in both twins, exit 0.
+  cat > "$CMD_WARN/project_untyped.md" <<'EOF'
+---
+name: project_untyped
+description: "no type field at all"
+---
+Tracks https://linear.app/acme/project/widget-7 for status.
+EOF
+  # A correctly-typed project note (must NOT warn) keeps the fixture realistic.
+  cat > "$CMD_WARN/project_typed.md" <<'EOF'
+---
+name: project_typed
+description: "Active, correctly typed"
+metadata:
+  type: project
+---
+Body.
+EOF
+  # Filename signal ONLY (project_-named, no URL) → label "filename".
+  cat > "$CMD_WARN/project_nameonly.md" <<'EOF'
+---
+name: project_nameonly
+description: "no type, no url"
+---
+Just body, no linear link here.
+EOF
+  # URL signal ONLY (non-project filename + a project URL) → label "linear-project-url".
+  cat > "$CMD_WARN/kebab-urlonly.md" <<'EOF'
+---
+name: kebab-urlonly
+description: "no type, url only"
+---
+See https://linear.app/acme/project/xyz for status.
+EOF
+  bash "$REPO_ROOT/scripts/check-memory-drift.sh" --memory-dir "$CMD_WARN" \
+    > "$PARITY_TMP/warn-bash.out" 2>&1
+  pwsh -NoProfile -File "$REPO_ROOT/scripts/check-memory-drift.ps1" \
+    -MemoryDir "$CMD_WARN" > "$PARITY_TMP/warn-ps.out" 2>&1
+  bash_warn="$(_normalize "$PARITY_TMP/warn-bash.out" | /usr/bin/grep '^WARN ' | LC_ALL=C sort)"
+  ps_warn="$(_normalize "$PARITY_TMP/warn-ps.out" | /usr/bin/grep '^WARN ' | LC_ALL=C sort)"
+  assert_eq "check-memory-drift parity: missing-type WARN lines byte-identical" \
+    "$bash_warn" "$ps_warn"
+  # Guard against both sides silently emitting nothing (a vacuous parity pass).
+  assert_contains "check-memory-drift parity: WARN fired for the untyped project note" \
+    "$bash_warn" "missing-type: project_untyped.md"
+else
+  _skip "check-memory-drift parity: missing-type WARN lines byte-identical" "scripts not present or pwsh missing"
+  _skip "check-memory-drift parity: WARN fired for the untyped project note" "scripts not present or pwsh missing"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 1b: check-memory-drift parity — QUOTED `name:` self-link recognition.
 #
 # A CLOSED project whose body self-links to its OWN name must NOT be flagged as
