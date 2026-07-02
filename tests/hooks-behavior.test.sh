@@ -78,6 +78,89 @@ hb_nl_fixture="$(cat "$fix/transcript-session-agent-no-linear.jsonl")"
 assert_contains "session-agent: no-linear fixture models the injected template line" "$hb_nl_fixture" 'Linear gate: <ISSUE-ID'
 assert_contains "session-agent: no-linear fixture models a prior deny message"       "$hb_nl_fixture" 'no `Linear gate:` declaration'
 
+# <TEAM>-365 — desktop/SDK-variant transcript: assistant TEXT blocks (including
+# the R5 declaration, even as tool preamble) are NOT persisted; only tool_use /
+# thinking records land. The transcript channel therefore cannot open the gate
+# — the GATE MARKER channel must. The fixture models the variant's record mix
+# (attachment / queue-operation / last-prompt, per-content-block assistant
+# records), a persisted Skill invocation, a prior deny quote, and tool_use
+# noise quoting the `Linear gate:` template — so any whole-transcript grep
+# regression would false-open here.
+dtp() { # desktop payload: <transcript> <session_id> [tool_name] [tool_input_json]
+  local ti="${4:-null}"
+  printf '{"transcript_path":"%s","session_id":"%s","tool_name":"%s","tool_input":%s}' \
+    "$1" "$2" "${3:-Edit}" "$ti"
+}
+DT_FIX="$fix/transcript-desktop-session-agent.jsonl"
+DT_SID="dt-0000-1111"
+DT_GATE="$HB_OUT/agentic-os/gate-$DT_SID"
+rm -f "$DT_GATE"
+
+# 1. Genuine orient, declaration emitted but not persisted, no marker → deny,
+#    and the deny must carry the recovery path (the exact marker file).
+d1="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")")"
+assert_eq       "session-agent/desktop: no marker exits 0"        "0" "${d1%%|*}"
+assert_eq       "session-agent/desktop: no marker blocks"         "block" "$(classify_block "$d1")"
+assert_contains "session-agent/desktop: deny names the marker path" "${d1#*|}" "gate-$DT_SID"
+
+# 2. The marker Write itself is allowed through pre-gate — exact path + a
+#    line-anchored declaration in the content.
+d2_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "Routing: fix\nLinear gate: none — single-step\n"}')"
+d2="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID" Write "$d2_input")")"
+assert_eq "session-agent/desktop: marker write allowed through" "allow" "$(classify_block "$d2")"
+
+# 3. A marker Write WITHOUT the declaration line is denied (content contract).
+d3_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "remember to declare later"}')"
+d3="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID" Write "$d3_input")")"
+assert_eq "session-agent/desktop: undeclared marker write blocks" "block" "$(classify_block "$d3")"
+
+# 4. Marker on disk with the declaration → gate open for subsequent edits.
+mkdir -p "$HB_OUT/agentic-os"
+printf 'Routing: fix\nLinear gate: none — single-step\n' > "$DT_GATE"
+d4="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")")"
+assert_eq "session-agent/desktop: marker on disk allows" "allow" "$(classify_block "$d4")"
+
+# 5. Marker content without a line-anchored declaration does NOT open the gate.
+printf 'no declaration here\n' > "$DT_GATE"
+d5="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")")"
+assert_eq "session-agent/desktop: declaration-less marker blocks" "block" "$(classify_block "$d5")"
+
+# 5b. A bare `Linear gate:` with no disposition value is not a declaration
+#     — neither on disk nor in a marker Write (panel finding).
+printf 'Linear gate:\n' > "$DT_GATE"
+d5b="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")")"
+assert_eq "session-agent/desktop: bare value-less marker blocks" "block" "$(classify_block "$d5b")"
+d5c_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "Linear gate:"}')"
+d5c="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID" Write "$d5c_input")")"
+assert_eq "session-agent/desktop: value-less marker write blocks" "block" "$(classify_block "$d5c")"
+
+# 5d. A whitespace-padded session_id keys the SAME marker path the directive
+#     publishes (both sides trim — panel finding).
+printf 'Linear gate: none — single-step\n' > "$DT_GATE"
+d5d="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "  $DT_SID  ")")"
+assert_eq "session-agent/desktop: padded session id still keys the marker" "allow" "$(classify_block "$d5d")"
+
+# 6. The marker NEVER substitutes for the Skill invocation itself — a session
+#    with a valid marker but no session-agent run still blocks.
+printf 'Linear gate: none — single-step\n' > "$DT_GATE"
+d6="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$fix/transcript-empty.jsonl" "$DT_SID")")"
+assert_eq "session-agent/desktop: marker w/o skill run blocks" "block" "$(classify_block "$d6")"
+rm -f "$DT_GATE"
+
+# 7. Stale markers (>7 days) are reaped on the next hook run.
+DT_STALE="$HB_OUT/agentic-os/gate-stale-9999"
+printf 'Linear gate: none — single-step\n' > "$DT_STALE"
+touch -t 202601010000 "$DT_STALE"
+run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID")" >/dev/null
+if [[ -f "$DT_STALE" ]]; then dt_reap="stale-remains"; else dt_reap="reaped"; fi
+assert_eq "session-agent/desktop: stale marker reaped" "reaped" "$dt_reap"
+
+# 8. A path-escaping session_id disables the marker channel instead of
+#    resolving outside the state dir (CLI transcript behavior still applies).
+d8="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "../../evil")")"
+assert_eq "session-agent/desktop: hostile session_id still blocks" "block" "$(classify_block "$d8")"
+assert_not_contains "session-agent/desktop: hostile id never echoed as path" "${d8#*|}" "agentic-os/gate-../../evil"
+
 r5="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(session_agent_payload "$fix/transcript-empty.jsonl")" CLAUDE_SKIP_SESSION_AGENT=1)"
 assert_eq "session-agent: kill switch allows" "allow" "$(classify_block "$r5")"
 

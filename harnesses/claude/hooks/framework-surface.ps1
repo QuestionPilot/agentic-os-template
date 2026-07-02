@@ -313,6 +313,41 @@ Disable this directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
 "@
     } else {
         # Fresh session (startup / clear / unknown source): the kickoff directive.
+        # Per-session gate-marker pointer (<TEAM>-365): the pre-edit gate accepts
+        # the R5 declaration from a marker file at <install>/agentic-os/
+        # gate-<session_id> — the ONLY channel that works on harness variants
+        # (desktop/SDK) whose transcript does not persist assistant text blocks.
+        # The model cannot reliably learn its own session_id, so this directive
+        # is the canonical place the exact path is surfaced (the pre-edit deny
+        # message repeats it as a recovery path). session_id is sanitized to the
+        # path-safe alphabet (letters/digits/hyphen) before being embedded in a path; a non-conforming id
+        # just drops the pointer (fail-open — the transcript channel still
+        # applies). -cmatch: case-sensitive, parity with the bash twin's =~.
+        $SA_GATE_NOTE = ''
+        $saSessionId = ''
+        if ($EVENT_JSON) {
+            $saSessionId = "$($EVENT_JSON | & jq -r '.session_id // empty' 2>$null)".Trim()
+        }
+        if ($saSessionId -cmatch '^[A-Za-z0-9-]+$') {
+            $saInstallDir = Split-Path -Parent $PSScriptRoot
+            if ($saInstallDir) {
+                $saGatePath = Join-Path (Join-Path $saInstallDir 'agentic-os') "gate-$saSessionId"
+                $SA_GATE_NOTE = @"
+
+
+After emitting the R5 routing declaration, ALSO persist it to the pre-edit
+gate's marker file — on harness variants that do not persist assistant text
+into the transcript (desktop/SDK), the marker is the only declaration channel
+the gate can see; elsewhere it is a harmless no-op. Write the declaration
+(including the ``Linear gate:`` line) to:
+
+    $saGatePath
+
+via a Bash heredoc (mkdir -p the directory first) or the Write tool — a Write
+to that exact path is allowed through the gate.
+"@
+            }
+        }
         $SA_BLOCK = @"
 
 
@@ -326,7 +361,7 @@ headlines), then routes the user's first request.
 
 On every subsequent non-trivial prompt, re-invoke ``session-agent`` (Mode 2:
 route only — Mode 1's orient outputs are still live in context).
-
+$SA_GATE_NOTE
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
 "@

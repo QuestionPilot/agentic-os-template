@@ -19,6 +19,19 @@ lifecycle: shipped
   declared. The hook is a safety net for sessions where the SessionStart
   directive was ignored — not the primary trigger. Kill switch: env
   `CLAUDE_SKIP_SESSION_AGENT=1`.
+- **Declaration channels:** the gate accepts the R5 declaration from either
+  channel; both require the `Skill` invocation in the transcript first:
+  1. **Gate marker** — after emitting the R5 declaration, write it (including
+     the `Linear gate:` line) to `$CLAUDE_CONFIG_DIR/agentic-os/gate-<session_id>`.
+     The exact path is surfaced in the SessionStart directive and repeated in
+     the hook's deny message; a `Write` to that exact path is allowed through
+     the gate (a Bash heredoc works too). This is the ONLY channel on harness
+     variants (desktop/SDK) whose transcript does not persist assistant text
+     blocks; elsewhere it is a harmless extra write. Markers older than 7 days
+     are reaped by the hook.
+  2. **Transcript** — an assistant-authored text block with the line-anchored
+     `Linear gate:` declaration (the CLI variant persists assistant text, so
+     the declaration alone suffices there).
 - **Mode marker:** the hook + the capability's Mode-1-vs-Mode-2 logic both
   detect prior invocation by matching the literal `"skill":"session-agent"` in
   the transcript JSON. The capability name must stay in sync with
