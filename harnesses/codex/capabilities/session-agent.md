@@ -19,10 +19,15 @@ lifecycle: shipped
   Kill switch: env `CLAUDE_SKIP_SESSION_AGENT=1` — the same name as on Claude
   Code, so one kill switch works regardless of harness.
 - **Mode marker:** Codex has no `Skill` tool — capabilities are
-  context-injected. The hook + the Mode-1-vs-Mode-2 logic both detect prior
-  invocation by matching the literal substring `skills/session-agent/SKILL.md`
-  in the session transcript (the capability body being read). The capability
-  name must stay in sync with both hook scripts.
+  context-injected. The hook + the Mode-1-vs-Mode-2 logic detect prior
+  invocation by the capability body actually landing in the transcript: a
+  message record carrying this capability's H1
+  (`Session Agent — Session Kickoff Orient + Routing`) or an assistant
+  function_call reading `skills/session-agent/SKILL.md`. A bare substring match
+  on the path is NOT the marker — Codex's per-session skills catalog (a
+  developer message) lists every skill's `(file: …)` path, so the path alone
+  appears in transcripts where the capability never ran. The capability name
+  AND the H1 title must stay in sync with both hook scripts.
 - **Catalog inputs (R2):** the orchestration sub-routine consults the OS
   capability catalog in `$CODEX_HOME/AGENTS.md` and the capability specs under
   `$AI_CONFIG_DIR/capabilities/`. The capabilities the sub-routine routes to are the

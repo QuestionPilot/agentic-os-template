@@ -70,7 +70,7 @@
 
 .PARAMETER MemoryDir
     Path to the memory directory to scan (e.g. $CLAUDE_CONFIG_DIR/projects/<h>/memory).
-    If omitted, derived from $env:CLAUDE_CONFIG_DIR (first matching projects/*/memory).
+    If omitted, derived from $env:CLAUDE_CONFIG_DIR (ALL projects/*/memory dirs are scanned).
 
 .OUTPUTS
     Markdown-shaped PASS/FAIL/NOTE lines to stdout/stderr matching the bash
@@ -254,9 +254,14 @@ if (-not [string]::IsNullOrEmpty($InjectionScan)) {
 }
 
 # ---------------------------------------------------------------------------
-# Resolve MemoryDir (mirror bash behavior)
+# Resolve the MemoryDir set (mirror bash behavior). <TEAM>-360: a bare run used
+# to pick $candidates[0] when several projects/*/memory dirs existed — every
+# other store went silently unscanned. Scan ALL discovered dirs instead.
 # ---------------------------------------------------------------------------
-if ([string]::IsNullOrEmpty($MemoryDir)) {
+$MemoryDirs = @()
+if (-not [string]::IsNullOrEmpty($MemoryDir)) {
+    $MemoryDirs = @($MemoryDir)
+} else {
     $configDir = $env:CLAUDE_CONFIG_DIR
     if ([string]::IsNullOrEmpty($configDir)) {
         [Console]::Error.WriteLine('FAIL no -MemoryDir given and CLAUDE_CONFIG_DIR unset')
@@ -267,32 +272,30 @@ if ([string]::IsNullOrEmpty($MemoryDir)) {
         [Console]::Error.WriteLine("FAIL no memory/ subdir under ${projectsRoot}/*/")
         exit 2
     }
-    $candidates = @(
+    $MemoryDirs = @(
         Get-ChildItem -LiteralPath $projectsRoot -Directory -ErrorAction SilentlyContinue |
             ForEach-Object {
                 $mem = Join-Path $_.FullName 'memory'
                 if (Test-Path -LiteralPath $mem -PathType Container) { $mem }
             }
     )
-    switch ($candidates.Count) {
-        0 {
-            [Console]::Error.WriteLine("FAIL no memory/ subdir under ${projectsRoot}/*/")
-            exit 2
-        }
-        1 {
-            $MemoryDir = $candidates[0]
-        }
-        default {
-            $MemoryDir = $candidates[0]
-            [Console]::Error.WriteLine("NOTE multiple memory dirs found; using $MemoryDir")
-        }
+    if ($MemoryDirs.Count -eq 0) {
+        [Console]::Error.WriteLine("FAIL no memory/ subdir under ${projectsRoot}/*/")
+        exit 2
+    }
+    if ($MemoryDirs.Count -gt 1) {
+        [Console]::Error.WriteLine("NOTE $($MemoryDirs.Count) memory dirs found; scanning all of them")
     }
 }
 
-if (-not (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
-    [Console]::Error.WriteLine("FAIL memory dir does not exist: $MemoryDir")
-    exit 2
+foreach ($d in $MemoryDirs) {
+    if (-not (Test-Path -LiteralPath $d -PathType Container)) {
+        [Console]::Error.WriteLine("FAIL memory dir does not exist: $d")
+        exit 2
+    }
 }
+# Space-joined for the summary lines (matches bash "${memory_dirs[*]}").
+$MemoryDirsLabel = $MemoryDirs -join ' '
 
 # ---------------------------------------------------------------------------
 # Frontmatter parsers (mirror bash awk helpers)
@@ -392,7 +395,7 @@ $notesScanned = 0
 # the live store. Mirror bash `find -name '*.md' ! -name 'MEMORY.md'` then keep
 # only notes whose frontmatter type is `project`.
 $projectFiles = @(
-    Get-ChildItem -LiteralPath $MemoryDir -File -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $MemoryDirs -File -ErrorAction SilentlyContinue |
         Where-Object {
             $_.Name -like '*.md' -and $_.Name -ne 'MEMORY.md' -and
             (Get-MemNoteType -Path $_.FullName) -eq 'project'
@@ -449,12 +452,13 @@ foreach ($f in $projectFiles) {
 # documented cap. This is the bloat the headline-vs-body staleness check could
 # never catch.
 $indexFail = 0
-$memIndex = Join-Path $MemoryDir 'MEMORY.md'
+foreach ($mdDir in $MemoryDirs) {
+$memIndex = Join-Path $mdDir 'MEMORY.md'
 if (Test-Path -LiteralPath $memIndex -PathType Leaf) {
     $sizeBytes = (Get-Item -LiteralPath $memIndex).Length
     if ($sizeBytes -gt $MEMORY_INDEX_SIZE_CAP_BYTES) {
         [Console]::Error.WriteLine(
-            "FAIL MEMORY.md is $sizeBytes bytes — over the ~${MEMORY_INDEX_SIZE_CAP_BYTES}-byte recall cap; the harness truncates recall past this size. Shorten the longest one-line index entries; move detail into the named topic files."
+            "FAIL MEMORY.md is $sizeBytes bytes — over the ~${MEMORY_INDEX_SIZE_CAP_BYTES}-byte recall cap; the harness truncates recall past this size. Shorten the longest one-line index entries; move detail into the named topic files. ($memIndex)"
         )
         $indexFail = 1
     }
@@ -472,10 +476,11 @@ if (Test-Path -LiteralPath $memIndex -PathType Leaf) {
     }
     if ($longLines -gt 0) {
         [Console]::Error.WriteLine(
-            "FAIL MEMORY.md has $longLines index line(s) over the ~${MEMORY_INDEX_LINE_CAP_CHARS}-char per-entry line-length cap. Trim each to a one-line headline; move detail into the named topic file."
+            "FAIL MEMORY.md has $longLines index line(s) over the ~${MEMORY_INDEX_LINE_CAP_CHARS}-char per-entry line-length cap. Trim each to a one-line headline; move detail into the named topic file. ($memIndex)"
         )
         $indexFail = 1
     }
+}
 }
 
 # --- <TEAM>-206: frontmatter parser-safety scan (narrow hazard linter). ----------
@@ -485,7 +490,7 @@ if (Test-Path -LiteralPath $memIndex -PathType Leaf) {
 # bash twin (line-ending normalized by the parity test).
 $fmFail = 0
 $noteFiles = @(
-    Get-ChildItem -LiteralPath $MemoryDir -File -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $MemoryDirs -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like '*.md' -and $_.Name -ne 'MEMORY.md' }
 )
 
@@ -632,11 +637,11 @@ foreach ($nf in $noteFiles) {
 }
 
 if ($drift -eq 0 -and $indexFail -eq 0 -and $fmFail -eq 0 -and $injFail -eq 0) {
-    Write-Host "PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads ($scanned project files headline-checked, $notesScanned notes frontmatter+injection-scanned in $MemoryDir)"
+    Write-Host "PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads ($scanned project files headline-checked, $notesScanned notes frontmatter+injection-scanned in $MemoryDirsLabel)"
     exit 0
 }
 
 if ($drift -ne 0) {
-    [Console]::Error.WriteLine("FAIL $drift drift(s) detected in $MemoryDir")
+    [Console]::Error.WriteLine("FAIL $drift drift(s) detected in $MemoryDirsLabel")
 }
 exit 1

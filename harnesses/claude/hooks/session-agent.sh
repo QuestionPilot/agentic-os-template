@@ -63,13 +63,31 @@ if [[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]]; then
   exit 0
 fi
 
-# Check if the session-agent capability ever ran in this session.
+# Check if the session-agent capability ever ran in this session. Safe as a
+# whole-transcript grep: the unescaped Skill tool_use JSON only appears in a
+# real invocation record — anywhere the same text is quoted inside a string
+# (the skill body citing its own marker, a tool result) the quotes are
+# JSON-escaped (\"skill\") and this pattern cannot match.
 if ! grep -qE '"skill"[[:space:]]*:[[:space:]]*"session-agent"' "$TRANSCRIPT" 2>/dev/null; then
   deny "First file-modifying tool use detected but the session-agent capability has not been invoked this session. Invoke \`session-agent\` via the Skill tool to walk the kickoff orient (Mode 1) then route the request. One invocation per session for Mode 1; re-invoke for each subsequent non-trivial prompt (Mode 2). Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
 fi
 
-# session-agent ran — confirm the Linear gate was declared.
-if grep -qE 'Linear gate:' "$TRANSCRIPT" 2>/dev/null; then
+# session-agent ran — confirm the Linear gate was declared BY THE ASSISTANT.
+# A whole-transcript grep is vacuous here: the skill body carries its own
+# `Linear gate:` template lines (injected into the transcript the moment the
+# skill loads) and a prior deny from this very hook quotes the phrase — so the
+# gate would open as soon as it was explained, never enforcing the declaration.
+# Parse the transcript records instead: keep only assistant-authored text
+# blocks (skill-body injection and deny text land in user/tool_result records)
+# and require the declaration at line start.
+if jq -rR '
+    fromjson?
+    | select(.type == "assistant")
+    | .message.content
+    | if type == "string" then .
+      elif type == "array" then (.[]? | select(.type == "text") | .text // empty)
+      else empty end
+  ' "$TRANSCRIPT" 2>/dev/null | grep -qE '^[[:space:]]*Linear gate:'; then
   exit 0
 fi
 

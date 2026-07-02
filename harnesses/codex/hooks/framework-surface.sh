@@ -16,7 +16,9 @@
 #                                           auto-fire directive
 # Window: set CLAUDE_FRAMEWORK_SINCE_DAYS=N to override (default 10).
 #
-# stdin:  SessionStart event JSON (drained but unused)
+# stdin:  SessionStart event JSON — `.source` (startup/clear/compact via the
+#         hooks.json matcher) selects the session-agent directive variant;
+#         everything else in the payload is unused
 # stdout: when surfacing, JSON with hookSpecificOutput.additionalContext
 # exit:   always 0 (fail-open; non-zero is treated as a hook error)
 
@@ -34,8 +36,19 @@ command -v jq >/dev/null 2>&1 || exit 0
 AI_CONFIG_DIR="@@AI_CONFIG_DIR@@"
 DAYS="${CLAUDE_FRAMEWORK_SINCE_DAYS:-10}"
 
-# Drain stdin (event JSON is unused; we only inspect agentic-os-template git state).
-cat >/dev/null
+# Capture the SessionStart event JSON. Its `source` field (startup/clear/
+# compact, per the matcher) selects the session-agent directive variant below
+# — a compacted session needs a RE-ORIENT directive, not the "first action
+# this session" kickoff (whose skip-condition would otherwise suppress
+# re-orienting exactly when the orient context was just compacted away).
+# <TEAM>-360: the Claude twin gained this compact-awareness; the codex
+# twin was wired for startup|clear|compact but ignored the event type. jq is
+# guaranteed here (checked above); on malformed/empty input `.source` resolves
+# to empty → kickoff directive (the safe default, identical to prior behavior).
+# Lowercase-normalize for bash↔PS parity (the PS twin's -eq is
+# case-insensitive; bash == is not).
+EVENT_JSON="$(cat)"
+SESSION_SOURCE="$(printf '%s' "$EVENT_JSON" | jq -r '.source // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
 
 # --- 1. agentic-os-template git-log block -----------------------------------------
 # Use -e (not -d) on .git: inside a linked git worktree it's a regular file
@@ -113,8 +126,33 @@ fi
 # file-modifying tool use, not a session-start trigger).
 SA_BLOCK=""
 if [[ "${CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE:-0}" != "1" ]]; then
-  # Leading blank line separates this block from the git-log block above.
-  SA_BLOCK="
+  if [[ "$SESSION_SOURCE" == "compact" ]]; then
+    # Post-compaction re-orient (<TEAM>-360; mirrors the Claude twin). The
+    # matcher includes `compact`, so this hook re-fires after a compaction —
+    # but the stock kickoff directive's "skip if already invoked this session"
+    # clause can make the model SKIP re-orienting right when its Mode 1 orient
+    # outputs were just summarized out of context. Emit an IDEMPOTENT
+    # re-orient instead: re-run Mode 1 ONLY if the orient outputs are gone,
+    # else a cheap Mode 2 route — so it cannot blindly double-orient on every
+    # compaction. Leading blank line separates this block from the one above.
+    SA_BLOCK="
+
+## Session-agent — re-orient after compacted session
+
+This session was just compacted; your earlier \`\$session-agent\` Mode 1 orient
+context (memory bodies, Linear project/issue state, vault \`START.md\`) may have
+been summarized out of context. Re-establish orientation:
+
+- If those orient outputs are NO LONGER in your context, re-invoke
+  \`\$session-agent\` (Mode 1) to rebuild them.
+- If they are still present, do NOT re-run the orient — a Mode 2 route on the
+  next non-trivial prompt is enough.
+
+Disable this directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
+  else
+    # Fresh session (startup / clear / unknown source): the kickoff directive.
+    # Leading blank line separates this block from the git-log block above.
+    SA_BLOCK="
 
 ## Session-agent — invoke now (Mode 1: kickoff orient)
 
@@ -129,6 +167,7 @@ route only — Mode 1's orient outputs are still live in context).
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
+  fi
 fi
 
 # Nothing to surface from any block → quiet exit.

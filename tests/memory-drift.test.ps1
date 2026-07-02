@@ -907,7 +907,38 @@ Assert-Contains 'memory-drift.test <TEAM>-354: BOM+CRLF typeless project note wa
 Assert-Contains 'memory-drift.test <TEAM>-354: whitespace-padded fences still complete-frontmatter -> warned' $MTYPE_PAR_OUT 'missing-type: project_wsfence.md'
 Assert-Contains 'memory-drift.test <TEAM>-354: top-level node_type: does NOT count as a type -> warned' $MTYPE_PAR_OUT 'missing-type: project_nodetype.md'
 
+# === <TEAM>-360: a bare (CLAUDE_CONFIG_DIR-derived) run scans ALL projects/*/
+# memory dirs, not $candidates[0]. The drift lives in the alphabetically-SECOND
+# store — the old single-dir pick scanned only the first and false-PASSed
+# exactly this layout. Mirrors the .sh twin's section 40.
+$MULTI_CFG = Join-Path ([IO.Path]::GetTempPath()) ("memory-multi-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path (Join-Path $MULTI_CFG 'projects' 'a-store' 'memory') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $MULTI_CFG 'projects' 'b-store' 'memory') -Force | Out-Null
+Write-LfFile (Join-Path $MULTI_CFG 'projects' 'a-store' 'memory' 'clean-a.md') `
+    "---`nname: clean-a`ndescription: `"fine`"`nmetadata:`n  type: reference`n---`nBody.`n"
+Write-LfFile (Join-Path $MULTI_CFG 'projects' 'b-store' 'memory' 'proj-b.md') `
+    "---`nname: proj-b`ndescription: `"workstream COMPLETE`"`nmetadata:`n  type: project`n---`nSee [[project-followon-x]].`n"
+$mdPrevCfg = $env:CLAUDE_CONFIG_DIR
+$env:CLAUDE_CONFIG_DIR = $MULTI_CFG
+$MULTI_OUT = & pwsh -NoProfile -File $CMD_SCRIPT 2>&1
+$MULTI_RC = $LASTEXITCODE
+if ($MULTI_OUT -is [array]) { $MULTI_OUT = $MULTI_OUT -join "`n" }
+Assert-Eq 'memory-drift.test <TEAM>-360: bare run FAILS on drift in the second memory dir' '1' "$MULTI_RC"
+Assert-Contains 'memory-drift.test <TEAM>-360: second-dir drift is named' $MULTI_OUT 'proj-b.md'
+Assert-Contains 'memory-drift.test <TEAM>-360: multi-dir NOTE says scanning all' $MULTI_OUT 'scanning all of them'
+# Clean multi-dir layout PASSes and counts notes from BOTH dirs.
+Remove-Item -LiteralPath (Join-Path $MULTI_CFG 'projects' 'b-store' 'memory' 'proj-b.md') -Force
+Write-LfFile (Join-Path $MULTI_CFG 'projects' 'b-store' 'memory' 'clean-b.md') `
+    "---`nname: clean-b`ndescription: `"fine`"`nmetadata:`n  type: reference`n---`nBody.`n"
+$MULTI_OK_OUT = & pwsh -NoProfile -File $CMD_SCRIPT 2>&1
+$MULTI_OK_RC = $LASTEXITCODE
+if ($MULTI_OK_OUT -is [array]) { $MULTI_OK_OUT = $MULTI_OK_OUT -join "`n" }
+$env:CLAUDE_CONFIG_DIR = $mdPrevCfg
+Assert-Eq 'memory-drift.test <TEAM>-360: clean multi-dir bare run exits 0' '0' "$MULTI_OK_RC"
+Assert-Contains 'memory-drift.test <TEAM>-360: PASS line counts notes across BOTH dirs' $MULTI_OK_OUT '2 notes frontmatter+injection-scanned'
+
 # --- Cleanup.
+Remove-Item -LiteralPath $MULTI_CFG -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $QTYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $MTYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $MTYPE_NOFM -Recurse -Force -ErrorAction SilentlyContinue

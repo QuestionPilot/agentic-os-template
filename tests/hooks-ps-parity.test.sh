@@ -124,8 +124,14 @@ if command -v pwsh >/dev/null 2>&1; then
   hkps_codex_sa="$REPO_ROOT/harnesses/codex/hooks/session-agent.ps1"
 
   # --- 3a. codex session-agent.ps1 — forward-slash marker ALLOWS ----------
-  hkps_trans="$hkps_tmpdir/trans-sa-fwd.txt"
-  printf 'I read skills/session-agent/SKILL.md\nLinear gate: PROJ-1\n' > "$hkps_trans"
+  # <TEAM>-360: the hook now parses rollout RECORDS (an assistant function_call
+  # reading the SKILL.md path + an assistant-authored line-anchored gate), so
+  # these synthetic transcripts are real JSONL, not bare text.
+  hkps_trans="$hkps_tmpdir/trans-sa-fwd.jsonl"
+  cat > "$hkps_trans" <<'HKPS_SA_FWD'
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}
+HKPS_SA_FWD
   hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: codex session-agent.ps1 ALLOWS forward-slash marker"
@@ -135,8 +141,14 @@ if command -v pwsh >/dev/null 2>&1; then
   fi
 
   # --- 3b. codex session-agent.ps1 — backslash marker ALLOWS (F-1 fix) ----
-  hkps_trans="$hkps_tmpdir/trans-sa-bs.txt"
-  printf 'I read skills\\\\session-agent\\\\SKILL.md\nLinear gate: PROJ-1\n' > "$hkps_trans"
+  # A Windows path in the doubly-encoded arguments string reaches the parsed
+  # .arguments value with TWO literal backslashes per separator; the raw JSONL
+  # bytes below carry four. The function_call branch's [/\\]+ class must match.
+  hkps_trans="$hkps_tmpdir/trans-sa-bs.jsonl"
+  cat > "$hkps_trans" <<'HKPS_SA_BS'
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}
+HKPS_SA_BS
   hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: codex session-agent.ps1 ALLOWS backslash marker"
@@ -144,6 +156,24 @@ if command -v pwsh >/dev/null 2>&1; then
     _fail "hooks-ps-parity: codex session-agent.ps1 should ALLOW backslash marker + Linear gate" \
           "got non-empty output: $hkps_out"
   fi
+
+  # --- 3b2. codex session-agent.ps1 — lowercase declaration DENIES ---------
+  # (cross-model panel 2026-07-02): PS -match is case-insensitive by default,
+  # so a plain -match would open the gate on `linear gate:` on Windows only.
+  # The hook uses -cmatch; this locks the bash<->PS case-sensitivity parity.
+  hkps_trans="$hkps_tmpdir/trans-sa-lc.jsonl"
+  cat > "$hkps_trans" <<'HKPS_SA_LC'
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlinear gate: PROJ-1"}]}}
+HKPS_SA_LC
+  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"deny"'*|*'"block"'*)
+      _pass "hooks-ps-parity: codex session-agent.ps1 DENIES lowercase declaration (case parity)" ;;
+    *)
+      _fail "hooks-ps-parity: codex session-agent.ps1 should DENY lowercase 'linear gate:'" \
+            "got: ${hkps_out:-<empty = allow>}" ;;
+  esac
 
   # --- 3c/3d. claude framework-surface.ps1 — compaction-aware directive ---
   # SessionStart re-fires with source=compact|resume after a compaction. On those
@@ -175,6 +205,35 @@ if command -v pwsh >/dev/null 2>&1; then
             "got: $hkps_out" ;;
   esac
 
+  # --- 3e/3f. codex framework-surface.ps1 — compaction-aware directive (<TEAM>-360)
+  # Same contract as the Claude twin: source=compact → idempotent re-orient;
+  # source=startup → kickoff. Freshness probe disabled for a deterministic
+  # SA-only payload; @@AI_CONFIG_DIR@@ stays unsubstituted so the git block is empty.
+  hkps_cxfs="$REPO_ROOT/harnesses/codex/hooks/framework-surface.ps1"
+  hkps_out="$(printf '%s' '{"source":"compact"}' | CLAUDE_SKIP_FRESHNESS_CHECK=1 pwsh -NoProfile -File "$hkps_cxfs" 2>/dev/null)"
+  case "$hkps_out" in
+    *"re-orient after compacted session"*)
+      _pass "hooks-ps-parity: codex framework-surface.ps1 emits re-orient directive on source=compact" ;;
+    *)
+      _fail "hooks-ps-parity: codex framework-surface.ps1 should emit re-orient directive on source=compact" \
+            "got: $hkps_out" ;;
+  esac
+
+  hkps_out="$(printf '%s' '{"source":"startup"}' | CLAUDE_SKIP_FRESHNESS_CHECK=1 pwsh -NoProfile -File "$hkps_cxfs" 2>/dev/null)"
+  case "$hkps_out" in
+    *"invoke now"*)
+      case "$hkps_out" in
+        *"re-orient after"*)
+          _fail "hooks-ps-parity: codex framework-surface.ps1 should keep kickoff directive on source=startup" \
+                "leaked re-orient text: $hkps_out" ;;
+        *)
+          _pass "hooks-ps-parity: codex framework-surface.ps1 keeps kickoff directive on source=startup" ;;
+      esac ;;
+    *)
+      _fail "hooks-ps-parity: codex framework-surface.ps1 should keep kickoff directive on source=startup" \
+            "got: $hkps_out" ;;
+  esac
+
   # (hermes skill-gate behavioral parity is section 3i below — it runs BOTH twins
   # against a throwaway HHOME, so it lives outside this pwsh-only guard block.)
 
@@ -202,7 +261,7 @@ HKPS_CLAUDE_STUB
   fi
 
   rm -rf "$hkps_tmpdir"
-  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2
+  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs
 else
   _pass "hooks-ps-parity: skipping pwsh behavioral parity (pwsh not on PATH)"
 fi

@@ -99,8 +99,14 @@ try {
     }
 
     # 3a — codex session-agent.ps1, forward-slash marker ALLOWS.
-    $trans = Join-Path $hkps_tmpdir 'trans-sa-fwd.txt'
-    Write-LfFile $trans "I read skills/session-agent/SKILL.md`nLinear gate: PROJ-1`n"
+    # <TEAM>-360: the hook now parses rollout RECORDS (an assistant function_call
+    # reading the SKILL.md path + an assistant-authored line-anchored gate), so
+    # these synthetic transcripts are real JSONL, not bare text.
+    $trans = Join-Path $hkps_tmpdir 'trans-sa-fwd.jsonl'
+    Write-LfFile $trans (@(
+        '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}'
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}'
+    ) -join "`n")
     $payload = '{"transcript_path":"' + ($trans -replace '\\', '/') + '"}'
     $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $payload
     if (-not $out) {
@@ -111,11 +117,14 @@ try {
     }
 
     # 3b — codex session-agent.ps1, BACKSLASH marker ALLOWS (F-1 fix).
-    $trans = Join-Path $hkps_tmpdir 'trans-sa-bs.txt'
-    # The bash test wrote `\\\\` in printf which becomes 2 literal backslashes
-    # on disk; on Windows JSON-decoded transcripts the marker arrives as 2
-    # backslashes between segments. Write 2 literal backslashes here.
-    Write-LfFile $trans "I read skills\\session-agent\\SKILL.md`nLinear gate: PROJ-1`n"
+    # A Windows path in the doubly-encoded arguments string reaches the parsed
+    # .arguments value with TWO literal backslashes per separator; the raw JSONL
+    # bytes below carry four. The function_call branch's [/\\]+ class must match.
+    $trans = Join-Path $hkps_tmpdir 'trans-sa-bs.jsonl'
+    Write-LfFile $trans (@(
+        '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}'
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}'
+    ) -join "`n")
     $payload = '{"transcript_path":"' + ($trans -replace '\\', '/') + '"}'
     $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $payload
     if (-not $out) {
@@ -123,6 +132,24 @@ try {
     } else {
         _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should ALLOW backslash marker + Linear gate' `
             "got non-empty output: $out"
+    }
+
+    # 3b2 — codex session-agent.ps1, lowercase declaration DENIES (<TEAM>-360
+    # cross-model panel): PS -match is case-insensitive by default, so a plain
+    # -match would open the gate on `linear gate:` on Windows only. The hook
+    # uses -cmatch; this locks the bash<->PS case-sensitivity parity.
+    $trans = Join-Path $hkps_tmpdir 'trans-sa-lc.jsonl'
+    Write-LfFile $trans (@(
+        '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}'
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlinear gate: PROJ-1"}]}}'
+    ) -join "`n")
+    $payload = '{"transcript_path":"' + ($trans -replace '\\', '/') + '"}'
+    $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $payload
+    if ($out -match '"deny"|"block"') {
+        _Pass 'hooks-ps-parity.test: codex session-agent.ps1 DENIES lowercase declaration (case parity)'
+    } else {
+        _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should DENY lowercase ''linear gate:''' `
+            "got: $(if ($out) { $out } else { '<empty = allow>' })"
     }
 
     # --- 3c/3d — claude framework-surface.ps1 compaction-aware directive ---
@@ -151,6 +178,31 @@ try {
         }
     } finally {
         Remove-Item Env:\CLAUDE_SKIP_MCP_PROBE -ErrorAction SilentlyContinue
+        Remove-Item Env:\CLAUDE_SKIP_FRESHNESS_CHECK -ErrorAction SilentlyContinue
+    }
+
+    # --- 3c2/3d2 — codex framework-surface.ps1 compaction-aware directive ---
+    # (<TEAM>-360): same contract as the Claude twin — source=compact emits the
+    # idempotent re-orient, source=startup keeps the kickoff.
+    $hkps_cxfs = Join-Path $env:REPO_ROOT 'harnesses' 'codex' 'hooks' 'framework-surface.ps1'
+    $env:CLAUDE_SKIP_FRESHNESS_CHECK = '1'
+    try {
+        $out = Invoke-CodexHook -HookPath $hkps_cxfs -Payload '{"source":"compact"}'
+        if ($out -match 're-orient after compacted session') {
+            _Pass 'hooks-ps-parity.test: codex framework-surface.ps1 emits re-orient directive on source=compact'
+        } else {
+            _Fail 'hooks-ps-parity.test: codex framework-surface.ps1 should emit re-orient directive on source=compact' `
+                "got: $out"
+        }
+
+        $out = Invoke-CodexHook -HookPath $hkps_cxfs -Payload '{"source":"startup"}'
+        if (($out -match 'invoke now') -and ($out -notmatch 're-orient after')) {
+            _Pass 'hooks-ps-parity.test: codex framework-surface.ps1 keeps kickoff directive on source=startup'
+        } else {
+            _Fail 'hooks-ps-parity.test: codex framework-surface.ps1 should keep kickoff directive on source=startup' `
+                "got: $out"
+        }
+    } finally {
         Remove-Item Env:\CLAUDE_SKIP_FRESHNESS_CHECK -ErrorAction SilentlyContinue
     }
 

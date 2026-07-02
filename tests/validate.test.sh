@@ -613,3 +613,48 @@ else
   unset val_q328_out val_q328_exit val_q328_msg
 fi
 unset VAL_Q328_LOCK
+
+# --- local.env is parsed as DATA, never sourced/executed (<TEAM>-360) -----------
+# validate.sh used to source local.env in three subshells to resolve the
+# config-dir keys; a hostile or malformed local.env could execute arbitrary
+# code from a validation entry point (self-audit.sh closed the same class with
+# _sa_localenv_get). Two guards: (a) structural — no sourcing site remains;
+# (b) functional — the shipped _v_le_* parser resolves composed/quoted/%q
+# values while a command-substitution booby trap stays inert.
+vle_src="$REPO_ROOT/scripts/validate.sh"
+if grep -qE '\.[[:space:]]+"\$repo_root/local\.env"' "$vle_src"; then
+  _fail "validate.sh has no local.env sourcing site" \
+    "found a '. \$repo_root/local.env' sourcing site — local.env must be read as data"
+else
+  _pass "validate.sh has no local.env sourcing site"
+fi
+
+vle_tmp="$(mktemp -d)"
+awk '/^_v_le_keys=\(\)/{f=1} f&&/^if \[ -f "\$repo_root\/local\.env" \]/{exit} f{print}' \
+  "$vle_src" > "$vle_tmp/funcs.sh"
+if [ -s "$vle_tmp/funcs.sh" ]; then
+  _pass "validate.sh _v_le_* parser block extracted"
+  vle_sentinel="$vle_tmp/pwn-sentinel"
+  cat > "$vle_tmp/local.env" <<VLE_EOF
+# hostile fixture — the command substitution below must stay inert data
+PWNED=\$(touch $vle_sentinel)
+BASE=/tmp/vle-base
+CLAUDE_CONFIG_DIR=\$BASE/.claude
+CODEX_HOME="/tmp/vle quoted/.codex"
+HERMES_HOME=/tmp/vle\\ esc/.hermes
+VLE_EOF
+  vle_out="$(bash -c "set -euo pipefail; . '$vle_tmp/funcs.sh'; _v_le_parse '$vle_tmp/local.env'; printf '%s|%s|%s' \"\$(_v_le_get CLAUDE_CONFIG_DIR)\" \"\$(_v_le_get CODEX_HOME)\" \"\$(_v_le_get HERMES_HOME)\"" 2>/dev/null)"
+  assert_eq "validate.sh parser resolves composed + quoted + %q-escaped config dirs" \
+    "/tmp/vle-base/.claude|/tmp/vle quoted/.codex|/tmp/vle esc/.hermes" "$vle_out"
+  if [ -f "$vle_sentinel" ]; then
+    _fail "validate.sh local.env command substitution stays inert" \
+      "sentinel file was created — local.env content EXECUTED"
+  else
+    _pass "validate.sh local.env command substitution stays inert"
+  fi
+else
+  _fail "validate.sh _v_le_* parser block extracted" \
+    "awk extraction found no _v_le_* block — did the parser move or get renamed?"
+fi
+rm -rf "$vle_tmp"
+unset vle_src vle_tmp vle_out vle_sentinel

@@ -68,12 +68,22 @@ if ((Test-Path -LiteralPath $gateFile) -and
 }
 
 # 3. state.db backstop — read-only; any failure falls through to the block.
+# Role-filtered + line-anchored (parity with the bash twin): an any-row LIKE
+# was vacuous — the skill body alone (one tool/user row carrying both
+# the SKILL.md path and the `Linear gate:` template lines) satisfied both
+# patterns, and a prior deny from this very hook quotes the phrase too. The
+# ran-marker accepts user- or assistant-authored rows; the declaration must be
+# an ASSISTANT row with `Linear gate:` at line start (start-of-content or
+# after a newline).
 $db = Join-Path $hhome 'state.db'
 $sqlite = Get-Command sqlite3 -ErrorAction SilentlyContinue
 if ($sqlite -and (Test-Path -LiteralPath $db)) {
     $sid = $sessionId -replace "'", "''"
-    $sql = "SELECT (SELECT COUNT(*) FROM messages WHERE session_id='$sid' AND content LIKE '%skills/session-agent/SKILL.md%') > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='$sid' AND content LIKE '%Linear gate:%') > 0;"
-    $hit = & sqlite3 -readonly $db $sql 2>$null
+    # case_sensitive_like: SQLite LIKE is case-insensitive for ASCII by
+    # default — pin it case-sensitive for cross-harness parity (bash twin does
+    # the same). The PRAGMA emits no row, so the SELECT's value is the last line.
+    $sql = "PRAGMA case_sensitive_like=ON; SELECT (SELECT COUNT(*) FROM messages WHERE session_id='$sid' AND role IN ('user','assistant') AND (COALESCE(content,'') LIKE '%skills/session-agent/SKILL.md%' OR COALESCE(tool_calls,'') LIKE '%skills/session-agent/SKILL.md%')) > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='$sid' AND role='assistant' AND (COALESCE(content,'') LIKE 'Linear gate:%' OR COALESCE(content,'') LIKE '%'||char(10)||'Linear gate:%')) > 0;"
+    $hit = @(& sqlite3 -readonly $db $sql 2>$null) | Select-Object -Last 1
     if ("$hit" -eq '1') { exit 0 }
 }
 

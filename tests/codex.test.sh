@@ -215,6 +215,45 @@ assert_eq "codex session-agent: invoked+Linear allows" "allow" "$(cx_classify_bl
 cr4="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-session-agent-no-linear.jsonl")")"
 assert_eq "codex session-agent: invoked w/o Linear blocks" "block" "$(cx_classify_block "$cr4")"
 
+# <TEAM>-360 vacuousness regressions. Codex injects a skills CATALOG (a developer
+# message listing every skill's `(file: …/SKILL.md)` path) into EVERY session's
+# rollout, so a bare path grep opened the ran-check without any invocation; the
+# injected skill body and a prior deny message both quote `Linear gate:` lines,
+# so a whole-transcript grep opened the gate too. The enriched fixtures model
+# all three noise sources — a regression back to whole-transcript greps flips
+# cr4/cr6 to allow and fails here.
+cr6="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-catalog-only.jsonl")")"
+assert_eq "codex session-agent: catalog-only transcript exits 0" "0" "${cr6%%|*}"
+assert_eq "codex session-agent: skills catalog alone is not an invocation" "block" "$(cx_classify_block "$cr6")"
+assert_contains "codex session-agent: catalog-only deny is the not-invoked reason" "${cr6#*|}" "has not been invoked"
+cx_nl_fixture="$(cat "$fix/codex-transcript-session-agent-no-linear.jsonl")"
+assert_contains "codex no-linear fixture models the catalog path line"    "$cx_nl_fixture" 'skills/session-agent/SKILL.md'
+assert_contains "codex no-linear fixture models the injected template line" "$cx_nl_fixture" 'Linear gate: <ISSUE-ID'
+assert_contains "codex no-linear fixture models a prior deny message"     "$cx_nl_fixture" 'no `Linear gate:` declaration'
+
+# Windows-separator ran marker (panel follow-up): the bash twin must accept a
+# backslash SKILL.md path in a function_call, like the PS twin's F-1 amendment.
+# Raw JSONL carries four backslashes (doubly JSON-encoded single separator).
+cr_bs_fix="$(mktemp -d)/codex-bs.jsonl"
+cat > "$cr_bs_fix" <<'CR_BS'
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"type skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}
+CR_BS
+cr7="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$cr_bs_fix")")"
+assert_eq "codex session-agent: backslash marker path allows (bash twin)" "allow" "$(cx_classify_block "$cr7")"
+rm -rf "${cr_bs_fix%/codex-bs.jsonl}"
+
+# Case sensitivity (panel follow-up): a lowercase `linear gate:` is NOT the
+# declaration — bash grep is case-sensitive and the PS twins use -cmatch.
+cr_lc_fix="$(mktemp -d)/codex-lc.jsonl"
+cat > "$cr_lc_fix" <<'CR_LC'
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlinear gate: PROJ-1"}]}}
+CR_LC
+cr8="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$cr_lc_fix")")"
+assert_eq "codex session-agent: lowercase declaration still blocks" "block" "$(cx_classify_block "$cr8")"
+rm -rf "${cr_lc_fix%/codex-lc.jsonl}"
+
 cr5="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-empty.jsonl")" CLAUDE_SKIP_SESSION_AGENT=1)"
 assert_eq "codex session-agent: kill switch allows" "allow" "$(cx_classify_block "$cr5")"
 
@@ -241,6 +280,25 @@ cf_sa2="$(cx_run_hook "$CXH/framework-surface.sh" '{}' \
 assert_eq           "codex framework-surface: SA-directive kill switch exits 0"      "0"            "${cf_sa2%%|*}"
 assert_not_contains "codex framework-surface: SA-directive kill switch drops block"  "${cf_sa2#*|}" "Session-agent — invoke now"
 assert_contains     "codex framework-surface: SA-directive kill switch keeps git-log" "${cf_sa2#*|}" "additionalContext"
+
+# compaction-aware session-agent directive (<TEAM>-360 — mirrors the Claude twin's
+# behavior + tests). source=compact must emit the IDEMPOTENT re-orient, not the
+# kickoff; startup/absent/malformed sources keep the kickoff (prior behavior).
+cf_compact="$(cx_run_hook "$CXH/framework-surface.sh" '{"source":"compact"}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "codex framework-surface: compact directive exits 0"             "0"            "${cf_compact%%|*}"
+assert_contains     "codex framework-surface: compact emits re-orient header"        "${cf_compact#*|}" "re-orient after compacted session"
+assert_contains     "codex framework-surface: compact directive references Mode 1"   "${cf_compact#*|}" "Mode 1"
+assert_contains     "codex framework-surface: compact directive references Mode 2"   "${cf_compact#*|}" "Mode 2"
+assert_not_contains "codex framework-surface: compact drops the kickoff header"      "${cf_compact#*|}" "invoke now (Mode 1: kickoff orient)"
+
+cf_startup="$(cx_run_hook "$CXH/framework-surface.sh" '{"source":"startup"}' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_contains     "codex framework-surface: explicit startup keeps kickoff header" "${cf_startup#*|}" "Session-agent — invoke now"
+assert_not_contains "codex framework-surface: startup drops the re-orient header"    "${cf_startup#*|}" "re-orient after"
+
+cf_bad="$(cx_run_hook "$CXH/framework-surface.sh" 'not-json{' CLAUDE_FRAMEWORK_SINCE_DAYS=3650)"
+assert_eq           "codex framework-surface: malformed source JSON exits 0"         "0"            "${cf_bad%%|*}"
+assert_contains     "codex framework-surface: malformed source JSON keeps kickoff"   "${cf_bad#*|}" "Session-agent — invoke now"
+assert_not_contains "codex framework-surface: malformed source JSON drops re-orient" "${cf_bad#*|}" "re-orient after"
 
 # F3 — jq contract: the codex gate hook fails closed without jq; the
 # surfacing hook fails open. CX_NOJQ is a PATH dir without jq symlinked.

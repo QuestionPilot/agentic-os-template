@@ -66,8 +66,17 @@ if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
 $AI_CONFIG_DIR = '@@AI_CONFIG_DIR@@'
 $DAYS = if ($env:CLAUDE_FRAMEWORK_SINCE_DAYS) { $env:CLAUDE_FRAMEWORK_SINCE_DAYS } else { '10' }
 
-# Drain stdin (event JSON unused; we only inspect agentic-os-template git state).
-$null = [Console]::In.ReadToEnd()
+# Capture the SessionStart event JSON. Its `source` field (startup/clear/
+# compact, per the matcher) selects the session-agent directive variant below
+# — a compacted session needs a RE-ORIENT directive, not the kickoff (<TEAM>-360;
+# mirrors the Claude twin). On malformed/empty input `.source` resolves to
+# empty → kickoff directive (the safe default, identical to prior behavior).
+$EVENT_JSON = [Console]::In.ReadToEnd()
+$SESSION_SOURCE = ''
+if ($EVENT_JSON) {
+    # Lowercase-normalize for bash↔PS parity (the bash twin canonicalizes via tr).
+    $SESSION_SOURCE = "$($EVENT_JSON | & jq -r '.source // empty' 2>$null)".Trim().ToLowerInvariant()
+}
 
 # --- 1. agentic-os-template git-log block --------------------------------------------
 # Use Test-Path on .git (file OR directory): inside a linked git worktree
@@ -153,8 +162,34 @@ Disable this check: env ``CLAUDE_SKIP_FRESHNESS_CHECK=1``.
 # net for file-modifying tool use, not a session-start trigger).
 $SA_BLOCK = ''
 if ($env:CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE -ne '1') {
-    # Leading blank lines separate this block from the git-log block above.
-    $SA_BLOCK = @"
+    if ($SESSION_SOURCE -eq 'compact') {
+        # Post-compaction re-orient (<TEAM>-360; mirrors the Claude twin). The
+        # matcher includes `compact`, so this hook re-fires after a compaction
+        # — but the stock kickoff directive's "skip if already invoked this
+        # session" clause can make the model SKIP re-orienting right when its
+        # Mode 1 orient outputs were just summarized out of context. Emit an
+        # IDEMPOTENT re-orient instead: re-run Mode 1 ONLY if the orient
+        # outputs are gone, else a cheap Mode 2 route.
+        $SA_BLOCK = @"
+
+
+## Session-agent — re-orient after compacted session
+
+This session was just compacted; your earlier ```$session-agent`` Mode 1 orient
+context (memory bodies, Linear project/issue state, vault ``START.md``) may have
+been summarized out of context. Re-establish orientation:
+
+- If those orient outputs are NO LONGER in your context, re-invoke
+  ```$session-agent`` (Mode 1) to rebuild them.
+- If they are still present, do NOT re-run the orient — a Mode 2 route on the
+  next non-trivial prompt is enough.
+
+Disable this directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
+"@
+    } else {
+        # Fresh session (startup / clear / unknown source): the kickoff directive.
+        # Leading blank lines separate this block from the git-log block above.
+        $SA_BLOCK = @"
 
 
 ## Session-agent — invoke now (Mode 1: kickoff orient)
@@ -171,6 +206,7 @@ route only — Mode 1's orient outputs are still live in context).
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
 "@
+    }
 }
 
 # Nothing to surface from any block → quiet exit (parity with bash twin).

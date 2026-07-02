@@ -73,13 +73,34 @@ if (-not $TRANSCRIPT -or -not (Test-Path -LiteralPath $TRANSCRIPT -PathType Leaf
 # Read raw transcript content; Select-String with -Pattern matches per-line.
 $transcriptContent = [System.IO.File]::ReadAllText($TRANSCRIPT)
 
-# Session-agent invocation present?
+# Session-agent invocation present? Safe as a whole-transcript match: the
+# unescaped Skill tool_use JSON only appears in a real invocation record —
+# anywhere the same text is quoted inside a string (the skill body citing its
+# own marker, a tool result) the quotes are JSON-escaped (\"skill\") and this
+# pattern cannot match.
 if ($transcriptContent -notmatch '"skill"\s*:\s*"session-agent"') {
     Deny 'First file-modifying tool use detected but the session-agent capability has not been invoked this session. Invoke `session-agent` via the Skill tool to walk the kickoff orient (Mode 1) then route the request. One invocation per session for Mode 1; re-invoke for each subsequent non-trivial prompt (Mode 2). Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1.'
 }
 
-# session-agent ran — was Linear-gate declared?
-if ($transcriptContent -match 'Linear gate:') {
+# session-agent ran — confirm the Linear gate was declared BY THE ASSISTANT.
+# A whole-transcript match is vacuous here: the skill body carries its own
+# `Linear gate:` template lines (injected into the transcript the moment the
+# skill loads) and a prior deny from this very hook quotes the phrase — so the
+# gate would open as soon as it was explained, never enforcing the declaration.
+# Parse the transcript records via jq (same filter as the bash twin): keep only
+# assistant-authored text blocks (skill-body injection and deny text land in
+# user/tool_result records) and require the declaration at line start.
+$assistantText = & jq -rR '
+    fromjson?
+    | select(.type == "assistant")
+    | .message.content
+    | if type == "string" then .
+      elif type == "array" then (.[]? | select(.type == "text") | .text // empty)
+      else empty end
+  ' $TRANSCRIPT 2>$null
+# -cmatch: case-SENSITIVE, matching the bash twin's grep (a plain -match is
+# case-insensitive and would open the gate on `linear gate:` only on Windows).
+if ((@($assistantText) -join "`n") -cmatch '(?m)^\s*Linear gate:') {
     exit 0
 }
 
