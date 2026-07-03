@@ -348,7 +348,8 @@ foreach ($k in $pillarLabels.Keys) {
 }
 
 $skipped = New-Object System.Collections.Generic.List[string]
-# Each gap entry: [pscustomobject]@{ pillar=<int>; leverage=<int>; title=<str>; detail=<str>; fix=<str> }
+# Each gap entry: [pscustomobject]@{ idx=<insertion index>; pillar=<int>; leverage=<int>; title=<str>; detail=<str>; fix=<str> }
+# idx is sort-only (the leverage tie-break) — the emitters never output it.
 $gaps    = New-Object System.Collections.Generic.List[object]
 
 function Add-Skip {
@@ -372,12 +373,22 @@ function Add-Gap {
         [string]$Title, [string]$Detail, [string]$Fix
     )
     [void]$gaps.Add([pscustomobject]@{
+        idx      = $gaps.Count
         pillar   = $Pillar
         leverage = $Leverage
         title    = $Title
         detail   = $Detail
         fix      = $Fix
     })
+}
+
+function Get-SortedGaps {
+    # Leverage descending, ties in insertion (idx) order — the tie-break the
+    # bash twin's sorted_gaps keys on too. Do not lean on Sort-Object's
+    # stability alone: bash `sort` has no stability guarantee, so both twins
+    # sort on the same two explicit keys to emit identical gap order.
+    return @($gaps | Sort-Object -Property @{ Expression = 'leverage'; Descending = $true },
+                                           @{ Expression = 'idx'; Descending = $false })
 }
 
 function Use-Deduct {
@@ -1096,7 +1107,7 @@ function Get-MarkdownOutput {
     if ($gaps.Count -eq 0) {
         [void]$sb.AppendLine('_(none)_')
     } else {
-        $sorted = @($gaps | Sort-Object -Property leverage -Descending | Select-Object -First 3)
+        $sorted = @(Get-SortedGaps | Select-Object -First 3)
         $n = 1
         foreach ($g in $sorted) {
             [void]$sb.AppendLine("$n. [Pillar $($g.pillar)] $($g.title) (leverage $($g.leverage))")
@@ -1132,7 +1143,7 @@ function Get-JsonOutput {
             notes    = $pillarNotes[$k]
         }
     }
-    $sortedGaps = @($gaps | Sort-Object -Property leverage -Descending | ForEach-Object {
+    $sortedGaps = @(Get-SortedGaps | ForEach-Object {
         [ordered]@{
             pillar   = $_.pillar
             leverage = $_.leverage

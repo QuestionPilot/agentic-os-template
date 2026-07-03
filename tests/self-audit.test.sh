@@ -1099,3 +1099,52 @@ _test_unscored_pillars_no_false_100() {
   fi
 }
 _test_unscored_pillars_no_false_100
+
+# --- <TEAM>-370 twin-parity guard: EQUAL-leverage gaps keep insertion order
+# after the leverage-descending sort. Pre-fix the twins disagreed on the same
+# fixture: bash `sort -nr`'s reversed whole-line last-resort comparison emitted
+# equal-leverage gaps in DESCENDING pillar/text order, while the PS twin's
+# stable Sort-Object preserved insertion order. Both twins now sort on explicit
+# (leverage desc, insertion index asc) keys. Fixture: two leverage-4 gaps —
+# pillar 1 (broken MEMORY.md link) is recorded before pillar 5 (missing
+# ## State Deltas), so the pillar-1 gap must emit first. The PS twin asserts
+# the SAME expected order on the SAME fixture; that shared expectation is the
+# parity contract (each CI lane runs one twin).
+_test_equal_leverage_gap_order_insertion() {
+  command -v jq >/dev/null 2>&1 || { _skip "equal-leverage gap-order test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+
+  local mem; mem="$(mktemp -d)" || { rm -rf "$fixture"; return 1; }
+  # MEMORY.md indexes the project note (no pillar-2 orphan) and links one
+  # missing file → pillar 1 "Broken MEMORY.md link(s)" at leverage 4.
+  cat > "$mem/MEMORY.md" <<'EOF'
+# Memory Index
+
+- [Proj](project_recent.md) — active project note
+- [Missing](does_not_exist.md) — broken link target
+EOF
+  # A fresh (mtime now → inside the 7-day window) project-type note without
+  # '## State Deltas' → pillar 5 "Recent project memory lacks ## State Deltas"
+  # at leverage 4. No other sub-check fires at leverage 4 on this fixture.
+  cat > "$mem/project_recent.md" <<'EOF'
+---
+name: project_recent
+metadata:
+  type: project
+---
+recent project body, deliberately without a state-deltas section
+EOF
+
+  local out lev4_titles
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+          --repo-root "$fixture" \
+          --memory-dir "$mem" --json 2>/dev/null)"
+  lev4_titles="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.leverage == 4) | .title] | join("|")')"
+  rm -rf "$fixture" "$mem"
+
+  assert_eq "equal-leverage gaps emit in insertion order (pillar 1 before pillar 5) — twin-parity tie-break" \
+    "Broken MEMORY.md link(s)|Recent project memory lacks ## State Deltas" \
+    "$lev4_titles"
+}
+_test_equal_leverage_gap_order_insertion
