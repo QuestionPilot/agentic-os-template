@@ -655,9 +655,11 @@ if ($jqAvail) {
 # tests/self-audit.test.sh).
 # =============================================================================
 
-# --- D1: deterministic PRIMARY memory-dir selection (with-MEMORY.md, not the
-# alphabetical-first stray). Non-isolated so the CONFIG_DIR→MEMORY_DIR resolution
-# runs; --config-dir pins config so the result is env-independent.
+# --- D1 (<TEAM>-366): memory scoring AGGREGATES all projects/*/memory stores. The
+# stray store's missing MEMORY.md is a REAL gap now, attributed to its store —
+# the old picker scored only the "primary" store and left the stray invisible.
+# Non-isolated so the CONFIG_DIR→memory resolution runs; --config-dir pins
+# config so the result is env-independent.
 if ($jqAvail) {
     $fixture = New-SaTmp
     New-SaFixtureRepo $fixture
@@ -674,17 +676,25 @@ if ($jqAvail) {
         Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
         $out = Invoke-SelfAudit @('--repo-root', $fixture, '--config-dir', $cfg, '--json')
         $p2 = Get-SaPillarScore $out 'memory-hygiene'
+        $missingDetail = ''
+        try { $obj = $out | ConvertFrom-Json; foreach ($g in $obj.gaps) { if ($g.title -and $g.title.Contains('MEMORY.md index missing')) { $missingDetail = $g.detail; break } } } catch { }
     } finally {
         if ($null -ne $savedOvp) { $env:OBSIDIAN_VAULT_PATH = $savedOvp } else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
         if ($null -ne $savedPmd) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $savedPmd } else { Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue }
     }
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
-    Assert-Eq 'self-audit.test: D1 selector picks the primary memory dir (with MEMORY.md), not the alphabetical-first stray' '20' "$p2"
+    if ($p2 -and ([int]$p2 -lt 20) -and $missingDetail -and $missingDetail.Contains('aaa-stray')) {
+        _Pass 'self-audit.test: D1 all memory stores scanned; stray store missing index flags, attributed to its store'
+    } else {
+        _Fail 'self-audit.test: D1 all memory stores scanned; stray store missing index flags, attributed to its store' "expected pillar 2 < 20 + missing-index gap naming aaa-stray, got score=[$p2] detail=[$missingDetail]"
+    }
 } else {
-    _Skip 'self-audit.test: D1 primary-memory-dir test' 'jq not installed'
+    _Skip 'self-audit.test: D1 all-stores-scanned test' 'jq not installed'
 }
 
-# --- D1b: explicit $CLAUDE_PRIMARY_MEMORY_DIR overrides the heuristic.
+# --- D1b: explicit $CLAUDE_PRIMARY_MEMORY_DIR pins the scan to that ONE store
+# (<TEAM>-366: the pin has always meant single-store scoring — with the pin set,
+# the config's other stores are intentionally out of scope).
 if ($jqAvail) {
     $fixture = New-SaTmp
     New-SaFixtureRepo $fixture
@@ -829,8 +839,9 @@ if ($jqAvail) {
     _Skip 'self-audit.test: D1c local.env-primary-wins test' 'jq not installed'
 }
 
-# --- D1d (Codex review): tie-break determinism — equal-count MEMORY.md dirs
-# resolve to the alphabetically-first candidate.
+# --- D1d (<TEAM>-366): a hygiene signal in the NON-largest store is scored. Two
+# indexed stores; the orphan lives in bbb-tie — the store the old tie-break never
+# scanned. Aggregation must surface it, attributed to its store.
 if ($jqAvail) {
     $fixture = New-SaTmp
     New-SaFixtureRepo $fixture
@@ -849,14 +860,88 @@ if ($jqAvail) {
         Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
         $out = Invoke-SelfAudit @('--repo-root', $fixture, '--config-dir', $cfg, '--json')
         $p2 = Get-SaPillarScore $out 'memory-hygiene'
+        $orphanDetail = ''
+        try { $obj = $out | ConvertFrom-Json; foreach ($g in $obj.gaps) { if ($g.title -and $g.title.Contains('Orphan memory file')) { $orphanDetail = $g.detail; break } } } catch { }
     } finally {
         if ($null -ne $savedOvp) { $env:OBSIDIAN_VAULT_PATH = $savedOvp } else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
         if ($null -ne $savedPmd) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $savedPmd } else { Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue }
     }
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
-    Assert-Eq 'self-audit.test: D1d equal-count MEMORY.md dirs tie-break to the alphabetical-first deterministically' '20' "$p2"
+    if ($p2 -and ([int]$p2 -lt 20) -and $orphanDetail -and $orphanDetail.Contains('bbb-tie')) {
+        _Pass 'self-audit.test: D1d orphan in the secondary (non-largest) store is scored + attributed to that store'
+    } else {
+        _Fail 'self-audit.test: D1d orphan in the secondary (non-largest) store is scored + attributed to that store' "expected pillar 2 < 20 + orphan gap naming bbb-tie, got score=[$p2] detail=[$orphanDetail]"
+    }
 } else {
-    _Skip 'self-audit.test: D1d tie-break test' 'jq not installed'
+    _Skip 'self-audit.test: D1d secondary-store-signal test' 'jq not installed'
+}
+
+# --- D1e (<TEAM>-366): aggregation spans pillars — each store's own MEMORY.md is
+# link-walked (pillar 1) while the other store's hygiene is scored (pillar 2),
+# in the same run. Store A has a broken index link; store B has an orphan note.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $cfg = Join-Path $fixture 'config'
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'aaa-links' 'memory') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'bbb-orphan' 'memory') -Force | Out-Null
+    Write-LfFile (Join-Path $cfg 'projects' 'aaa-links' 'memory' 'MEMORY.md') "# Memory Index`n`n- [Missing](does_not_exist.md) — broken link in store A`n"
+    Write-LfFile (Join-Path $cfg 'projects' 'bbb-orphan' 'memory' 'MEMORY.md') "# Memory Index`n`n(no entries)`n"
+    Write-LfFile (Join-Path $cfg 'projects' 'bbb-orphan' 'memory' 'feedback_orphan.md') "orphan`n"
+    $savedOvp = $env:OBSIDIAN_VAULT_PATH
+    $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR
+    try {
+        Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
+        $out = Invoke-SelfAudit @('--repo-root', $fixture, '--config-dir', $cfg, '--json')
+        $p1 = Get-SaPillarScore $out 'cross-layer-handoffs'
+        $p2 = Get-SaPillarScore $out 'memory-hygiene'
+        $linkDetail = ''
+        try { $obj = $out | ConvertFrom-Json; foreach ($g in $obj.gaps) { if ($g.title -and $g.title.Contains('Broken MEMORY.md link')) { $linkDetail = $g.detail; break } } } catch { }
+    } finally {
+        if ($null -ne $savedOvp) { $env:OBSIDIAN_VAULT_PATH = $savedOvp } else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
+        if ($null -ne $savedPmd) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $savedPmd } else { Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    if ($p1 -and ([int]$p1 -lt 20) -and $p2 -and ([int]$p2 -lt 20) -and $linkDetail -and $linkDetail.Contains('aaa-links')) {
+        _Pass 'self-audit.test: D1e one run scores store A broken index link AND store B orphan, each attributed'
+    } else {
+        _Fail 'self-audit.test: D1e one run scores store A broken index link AND store B orphan, each attributed' "expected p1 < 20 + p2 < 20 + link gap naming aaa-links, got p1=[$p1] p2=[$p2] detail=[$linkDetail]"
+    }
+} else {
+    _Skip 'self-audit.test: D1e cross-pillar aggregation test' 'jq not installed'
+}
+
+# --- D1f (<TEAM>-366, panel: Codex + Gemini): an explicit --memory-dir means
+# exactly ONE store even when the config dir holds other discoverable stores
+# with gaps AND a CLAUDE_PRIMARY_MEMORY_DIR pin points at the broken store —
+# the full precedence is flag > pin > discovery.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $cfg = Join-Path $fixture 'config'
+    $flagged = Join-Path $fixture 'flagged-memory'
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'broken' 'memory') -Force | Out-Null
+    New-Item -ItemType Directory -Path $flagged -Force | Out-Null
+    Write-LfFile (Join-Path $cfg 'projects' 'broken' 'memory' 'note.md') "x`n"
+    Write-LfFile (Join-Path $flagged 'MEMORY.md') "# Memory Index`n`n- [Proj](project_f.md) — flagged active project`n"
+    Write-LfFile (Join-Path $flagged 'project_f.md') "---`nname: project_f`nmetadata:`n  type: project`n---`nflagged project body`n"
+    $savedOvp = $env:OBSIDIAN_VAULT_PATH
+    $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR
+    try {
+        Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+        # Pin the AMBIENT env at the broken store: the explicit flag must still win.
+        $env:CLAUDE_PRIMARY_MEMORY_DIR = (Join-Path $cfg 'projects' 'broken' 'memory')
+        $out = Invoke-SelfAudit @('--repo-root', $fixture, '--config-dir', $cfg, '--memory-dir', $flagged, '--json')
+        $p2 = Get-SaPillarScore $out 'memory-hygiene'
+    } finally {
+        if ($null -ne $savedOvp) { $env:OBSIDIAN_VAULT_PATH = $savedOvp } else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
+        if ($null -ne $savedPmd) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $savedPmd } else { Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: D1f explicit --memory-dir scans exactly one store — flag wins over the pin and over discovery' '20' "$p2"
+} else {
+    _Skip 'self-audit.test: D1f flag-excludes-discovery test' 'jq not installed'
 }
 
 # --- D3c (Codex review): token boundary is precise — a recipe name that is only

@@ -92,11 +92,14 @@ script's penalty rules are the canonical scoring.
    export those vars. `local.env` wins over ambient env; explicit
    `--config-dir` / `--vault-dir` / `--memory-dir` flags still win over
    `local.env`. When several `projects/*/memory/` dirs exist (a multi-project
-   `$CLAUDE_CONFIG_DIR`), the script selects the operator's PRIMARY one
-   deterministically — the dir holding a `MEMORY.md`, ranked by project-type
-   memory-note count (frontmatter `metadata.type: project`, not a filename glob)
-   — rather than the alphabetically-first match; set
-   `CLAUDE_PRIMARY_MEMORY_DIR` in `local.env` to pin it explicitly. Each surface
+   `$CLAUDE_CONFIG_DIR`), the script scans **all** of them and attributes each
+   gap to the store it fired in — a hygiene signal in a small secondary store
+   counts the same as one in the main store. (The old primary-store picker
+   scored only the dir with the most project-typed notes, so every other store
+   went silently unscanned — and the pick could flip stores when note counts
+   shifted, emitting pillar demands against the wrong store.) Set
+   `CLAUDE_PRIMARY_MEMORY_DIR` in `local.env` to pin scoring to a single store;
+   the explicit `--memory-dir` flag likewise means exactly one store. Each surface
    is optional — the script degrades gracefully and notes "skipped: <surface> not
    configured" in the output. Pass `--repo-root <path>` to point at a different
    agentic-os-template checkout (the test suite uses this).

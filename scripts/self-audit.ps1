@@ -27,8 +27,10 @@
     Override the repo root used for scans. Defaults to the parent of this script.
 
 .PARAMETER MemoryDir
-    Override the memory dir. Defaults to first matching
-    $env:CLAUDE_CONFIG_DIR/projects/*/memory.
+    Override the memory scan set with exactly ONE store. Defaults to ALL
+    $env:CLAUDE_CONFIG_DIR/projects/*/memory dirs (every store is scanned and
+    gaps are attributed per store — <TEAM>-366; set CLAUDE_PRIMARY_MEMORY_DIR
+    to pin scoring to a single store).
 
 .PARAMETER VaultDir
     Override the vault dir. Defaults to $env:OBSIDIAN_VAULT_PATH.
@@ -147,8 +149,10 @@ Pillars (5 x 20pt = 100pt):
 
 Default inputs:
   -RepoRoot    parent dir of this script
-  -MemoryDir   first matching $env:CLAUDE_CONFIG_DIR/projects/*/memory/ if -ConfigDir
-               or $env:CLAUDE_CONFIG_DIR resolves; else skipped
+  -MemoryDir   ALL $env:CLAUDE_CONFIG_DIR/projects/*/memory/ dirs if -ConfigDir
+               or $env:CLAUDE_CONFIG_DIR resolves (every store is scanned, gaps
+               attributed per store; CLAUDE_PRIMARY_MEMORY_DIR pins to one);
+               else skipped. The explicit flag always means exactly one store.
   -VaultDir    $env:OBSIDIAN_VAULT_PATH if set; else skipped
   -ConfigDir   $env:CLAUDE_CONFIG_DIR if set; else skipped
 
@@ -231,59 +235,37 @@ function Get-MemNoteType {
     return ''
 }
 
-# Get-SaProjectNoteCount — count of *.md notes (excl MEMORY.md) whose frontmatter
-# type is `project`. Frontmatter detection, not a `project_*.md` glob (<TEAM>-353).
-function Get-SaProjectNoteCount {
-    param([string]$Dir)
-    $n = 0
-    foreach ($f in @(Get-ChildItem -LiteralPath $Dir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
-        if ($f.Name -eq 'MEMORY.md') { continue }
-        if ((Get-MemNoteType -Path $f.FullName) -eq 'project') { $n++ }
-    }
-    return $n
-}
-
-# Select-SaMemoryDir — the operator's PRIMARY memory dir, chosen DETERMINISTICALLY
-# (<TEAM>-180 D1). Parity with bash _sa_select_memory_dir: prefer
-# $env:CLAUDE_PRIMARY_MEMORY_DIR; else the projects/*/memory dir holding a
-# MEMORY.md, ranked by project-type note count; else most *.md; else the first dir
-# (name-sorted). The old `... | Select-Object -First 1` over an unordered
-# enumeration scored a near-empty stray dir on a multi-project setup.
-function Select-SaMemoryDir {
+# Get-SaMemoryDirs — the memory-dir scan set (<TEAM>-366). The old Select-SaMemoryDir
+# picker chose the ONE projects/*/memory dir with the most project-typed notes and
+# scored only it — the same candidates[0] blind-spot class fixed in
+# check-memory-drift + check-distillation-completeness (<TEAM>-360): every
+# non-selected store went silently unscanned, and the picker could FLIP stores
+# when note counts shifted, emitting pillar demands against the wrong store. All
+# discovered stores are now scanned, with each gap attributed to the store it
+# fired in. Precedence: $env:CLAUDE_PRIMARY_MEMORY_DIR pin (exactly one store —
+# the pin has always meant single-store scoring) > every projects/*/memory dir
+# (name-sorted for deterministic gap order). The explicit -MemoryDir flag wins
+# over both at the call site and also means exactly one store. Parity with the
+# bash twin's MEMORY_DIRS resolution.
+function Get-SaMemoryDirs {
     param([string]$ConfigDirPath)
     if (-not [string]::IsNullOrEmpty($env:CLAUDE_PRIMARY_MEMORY_DIR) -and
         (Test-Path -LiteralPath $env:CLAUDE_PRIMARY_MEMORY_DIR -PathType Container)) {
-        return $env:CLAUDE_PRIMARY_MEMORY_DIR
+        return @($env:CLAUDE_PRIMARY_MEMORY_DIR)
     }
     $projects = Join-Path $ConfigDirPath 'projects'
-    if (-not (Test-Path -LiteralPath $projects -PathType Container)) { return '' }
-    $cands = @(Get-ChildItem -LiteralPath $projects -Directory -ErrorAction SilentlyContinue |
+    if (-not (Test-Path -LiteralPath $projects -PathType Container)) { return @() }
+    return @(Get-ChildItem -LiteralPath $projects -Directory -ErrorAction SilentlyContinue |
         Sort-Object Name |
         ForEach-Object {
             $m = Join-Path $_.FullName 'memory'
             if (Test-Path -LiteralPath $m -PathType Container) { $m }
         })
-    if ($cands.Count -eq 0) { return '' }
-    # 1. prefer dirs with a MEMORY.md, ranked by project-type note count.
-    $withIndex = @($cands | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'MEMORY.md') -PathType Leaf })
-    if ($withIndex.Count -gt 0) {
-        $best = ''; $bestCount = -1
-        foreach ($d in $withIndex) {
-            $count = Get-SaProjectNoteCount $d
-            if ($count -gt $bestCount) { $bestCount = $count; $best = $d }
-        }
-        return $best
-    }
-    # 2. no MEMORY.md anywhere: pick the dir with the most *.md files.
-    $best = ''; $bestCount = -1
-    foreach ($d in $cands) {
-        $count = @(Get-ChildItem -LiteralPath $d -Filter '*.md' -File -ErrorAction SilentlyContinue).Count
-        if ($count -gt $bestCount) { $bestCount = $count; $best = $d }
-    }
-    if ($best -ne '') { return $best }
-    # 3. last resort: first (name-sorted) candidate.
-    return $cands[0]
 }
+
+# Memory-dir scan set (<TEAM>-366) — populated below; only existing dirs enter
+# the set. Mirrors the bash twin's MEMORY_DIRS.
+$MemoryDirs = @()
 
 # -Isolated turns off env-fallbacks (mirror bash ISOLATED=1).
 if (-not $Isolated.IsPresent) {
@@ -302,10 +284,10 @@ if (-not $Isolated.IsPresent) {
             $v = Get-SaLocalEnvValue -Path $localEnv -Key 'OBSIDIAN_VAULT_PATH'
             if (-not [string]::IsNullOrEmpty($v)) { $VaultDir = $v }
         }
-        # CLAUDE_PRIMARY_MEMORY_DIR: bash's `set -a; . local.env` makes a
-        # local.env pin override ambient env before the selector reads it. Mirror
+        # CLAUDE_PRIMARY_MEMORY_DIR: bash exports the local.env pin so it
+        # overrides ambient env before the memory-dir resolution reads it. Mirror
         # that by setting our own process env var (this specific config key only —
-        # never PATH) so Select-SaMemoryDir, which reads $env:CLAUDE_PRIMARY_MEMORY_DIR,
+        # never PATH) so Get-SaMemoryDirs, which reads $env:CLAUDE_PRIMARY_MEMORY_DIR,
         # honours the local.env pin and it wins over an ambient pin — preserving
         # the flag > local.env > ambient precedence. (Codex <TEAM>-180 review: a
         # parity miss where the PS twin ignored the local.env pin entirely.)
@@ -319,9 +301,16 @@ if (-not $Isolated.IsPresent) {
         $VaultDir = $env:OBSIDIAN_VAULT_PATH
     }
     if ([string]::IsNullOrEmpty($MemoryDir) -and -not [string]::IsNullOrEmpty($ConfigDir)) {
-        $sel = Select-SaMemoryDir -ConfigDirPath $ConfigDir
-        if (-not [string]::IsNullOrEmpty($sel)) { $MemoryDir = $sel }
+        $MemoryDirs = @(Get-SaMemoryDirs -ConfigDirPath $ConfigDir)
     }
+}
+
+# Explicit -MemoryDir wins over everything and means exactly ONE store (mirrors
+# check-memory-drift.ps1). A non-existent flag value resolves to an empty scan
+# set, so the memory surface reports skipped — same as before.
+if (-not [string]::IsNullOrEmpty($MemoryDir)) {
+    if (Test-Path -LiteralPath $MemoryDir -PathType Container) { $MemoryDirs = @($MemoryDir) }
+    else { $MemoryDirs = @() }
 }
 
 # ---------------------------------------------------------------------------
@@ -438,7 +427,7 @@ function Invoke-Pillar1 {
     $vaultAvail   = 0
 
     if (-not $Isolated.IsPresent -and (Test-Command 'lineark')) { $linearkAvail = 1 }
-    if ((-not [string]::IsNullOrEmpty($MemoryDir)) -and (Test-Path -LiteralPath $MemoryDir -PathType Container)) { $memoryAvail = 1 }
+    if ($MemoryDirs.Count -gt 0) { $memoryAvail = 1 }
     if ((-not [string]::IsNullOrEmpty($VaultDir))  -and (Test-Path -LiteralPath $VaultDir  -PathType Container)) { $vaultAvail  = 1 }
 
     if ($linearkAvail -eq 0) { Add-Skip 'lineark not installed — Linear-side cross-layer checks skipped' }
@@ -522,10 +511,16 @@ function Invoke-Pillar1 {
     # Sub-check 1.1 — for each ACTIVE project (>=1 open issue), a matching
     # project-type memory note (frontmatter type: project — <TEAM>-353). lineark slug
     # != memory filename, so match the project NAME in note bodies, not filenames.
+    # <TEAM>-366: notes are collected across ALL scanned stores — a project note in
+    # ANY store satisfies the handshake (the old single-store scan demanded the
+    # note in whichever store the picker happened to select).
     if ($linearkAvail -eq 1 -and $memoryAvail -eq 1 -and (Test-Command 'jq')) {
         $ran = 1
-        $projNoteFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' })
+        $projNoteFiles = @()
+        foreach ($mdDir in $MemoryDirs) {
+            $projNoteFiles += @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' })
+        }
         foreach ($pname in $activeProjectNames) {
             if ([string]::IsNullOrEmpty($pname)) { continue }
             $matched = $false
@@ -540,8 +535,8 @@ function Invoke-Pillar1 {
                 Use-Deduct $key 4
                 Add-Gap 1 8 `
                     'No memory note for active Linear project' `
-                    "Active project `"$pname`" has no project-type memory note in $MemoryDir (active projects should land a memory note at kickoff)" `
-                    "Create a note in $MemoryDir with 'type: project' frontmatter naming the project + its Linear URL"
+                    "Active project `"$pname`" has no project-type memory note in any scanned memory store ($($MemoryDirs -join ' ')) — active projects should land a memory note at kickoff" `
+                    "Create a note in the project's memory store with 'type: project' frontmatter naming the project + its Linear URL"
             }
         }
     }
@@ -575,34 +570,39 @@ function Invoke-Pillar1 {
         }
     }
 
-    # Sub-check 1.3 — MEMORY.md link integrity.
-    $memoryIndex = if (-not [string]::IsNullOrEmpty($MemoryDir)) { Join-Path $MemoryDir 'MEMORY.md' } else { $null }
-    if ($memoryAvail -eq 1 -and $memoryIndex -and (Test-Path -LiteralPath $memoryIndex -PathType Leaf)) {
-        $ran = 1
-        $broken = 0
-        $idxTxt = [System.IO.File]::ReadAllText($memoryIndex)
-        $linkMatches = [regex]::Matches($idxTxt, '\]\(([^)]+\.md)(#[^)]*)?\)')
-        foreach ($m in $linkMatches) {
-            $target = $m.Groups[1].Value
-            if ([string]::IsNullOrEmpty($target)) { continue }
-            switch -Regex ($target) {
-                '^(https?|mailto):' { continue }
-                '^/'                { continue }
+    # Sub-check 1.3 — MEMORY.md link integrity. <TEAM>-366: per store — each
+    # store's own index is walked, and a broken-link gap names the store it
+    # fired in.
+    if ($memoryAvail -eq 1) {
+        foreach ($mdDir in $MemoryDirs) {
+            $memoryIndex = Join-Path $mdDir 'MEMORY.md'
+            if (-not (Test-Path -LiteralPath $memoryIndex -PathType Leaf)) { continue }
+            $ran = 1
+            $broken = 0
+            $idxTxt = [System.IO.File]::ReadAllText($memoryIndex)
+            $linkMatches = [regex]::Matches($idxTxt, '\]\(([^)]+\.md)(#[^)]*)?\)')
+            foreach ($m in $linkMatches) {
+                $target = $m.Groups[1].Value
+                if ([string]::IsNullOrEmpty($target)) { continue }
+                switch -Regex ($target) {
+                    '^(https?|mailto):' { continue }
+                    '^/'                { continue }
+                }
+                $target = ($target -replace '#.*$', '')
+                if ([string]::IsNullOrEmpty($target)) { continue }
+                $full = Join-Path $mdDir $target
+                if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+                    $broken++
+                }
             }
-            $target = ($target -replace '#.*$', '')
-            if ([string]::IsNullOrEmpty($target)) { continue }
-            $full = Join-Path $MemoryDir $target
-            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
-                $broken++
+            if ($broken -gt 0) {
+                $pen = [Math]::Min($broken * 2, 8)
+                Use-Deduct $key $pen
+                Add-Gap 1 4 `
+                    'Broken MEMORY.md link(s)' `
+                    "MEMORY.md references $broken file(s) that do not exist in $mdDir" `
+                    'Remove the broken index lines or restore the missing memory files'
             }
-        }
-        if ($broken -gt 0) {
-            $pen = [Math]::Min($broken * 2, 8)
-            Use-Deduct $key $pen
-            Add-Gap 1 4 `
-                'Broken MEMORY.md link(s)' `
-                "MEMORY.md references $broken file(s) that do not exist in $MemoryDir" `
-                'Remove the broken index lines or restore the missing memory files'
         }
     }
 
@@ -622,74 +622,83 @@ function Invoke-Pillar1 {
 # ---------------------------------------------------------------------------
 function Invoke-Pillar2 {
     $key = 'memory-hygiene'
-    if ([string]::IsNullOrEmpty($MemoryDir) -or -not (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
+    if ($MemoryDirs.Count -eq 0) {
         Add-Skip 'memory dir not resolved — memory hygiene checks skipped'
         Set-Unscored $key 'no memory dir'
         return
     }
 
-    $memIndex = Join-Path $MemoryDir 'MEMORY.md'
+    # <TEAM>-366: every discovered store is scored, not one selected store — the
+    # sub-checks below run PER STORE and each gap names the store it fired in.
+    # A hygiene failure in a small secondary store is a real failure (its notes
+    # are just as invisible at orient); the old picker never saw it.
+    $missingIndex = $false
+    foreach ($mdDir in $MemoryDirs) {
+        $memIndex = Join-Path $mdDir 'MEMORY.md'
 
-    # Sub-check 2.1 — orphan check.
-    $orphans = 0
-    if (Test-Path -LiteralPath $memIndex -PathType Leaf) {
+        if (-not (Test-Path -LiteralPath $memIndex -PathType Leaf)) {
+            # MEMORY.md missing entirely is a 20pt hit — the index is the spine of
+            # memory recall; a store without one runs blind at every kickoff orient.
+            Use-Deduct $key 20
+            Add-Gap 2 10 `
+                'MEMORY.md index missing' `
+                "$mdDir/MEMORY.md does not exist; every kickoff orient runs blind" `
+                'Create MEMORY.md with one line per memory file per core/memory-model.md'
+            $missingIndex = $true
+            continue
+        }
+
+        # Sub-check 2.1 — orphan check: files this store's index never names.
+        $orphans = 0
         $indexContent = [System.IO.File]::ReadAllText($memIndex)
-        $mdFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction SilentlyContinue)
+        $mdFiles = @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue)
         foreach ($mf in $mdFiles) {
             $base = $mf.Name
             if ($base -eq 'MEMORY.md') { continue }
             if (-not $indexContent.Contains($base)) { $orphans++ }
         }
-    } else {
-        Use-Deduct $key 20
-        Add-Gap 2 10 `
-            'MEMORY.md index missing' `
-            "$MemoryDir/MEMORY.md does not exist; every kickoff orient runs blind" `
-            'Create MEMORY.md with one line per memory file per core/memory-model.md'
-        $pillarNotes[$key] = 'MEMORY.md missing'
-        return
-    }
+        if ($orphans -gt 0) {
+            $pen = [Math]::Min($orphans * 2, 10)
+            Use-Deduct $key $pen
+            Add-Gap 2 3 `
+                'Orphan memory file(s)' `
+                "$orphans memory file(s) in $mdDir have no MEMORY.md index entry" `
+                'Run /consolidate-memory or hand-add a one-line pointer to MEMORY.md'
+        }
 
-    if ($orphans -gt 0) {
-        $pen = [Math]::Min($orphans * 2, 10)
-        Use-Deduct $key $pen
-        Add-Gap 2 3 `
-            'Orphan memory file(s)' `
-            "$orphans memory file(s) have no MEMORY.md index entry" `
-            'Run /consolidate-memory or hand-add a one-line pointer to MEMORY.md'
-    }
+        # Sub-check 2.2 — size vs recall cap (~24400 bytes).
+        # MEMORY_INDEX_SIZE_CAP_BYTES in core/memory-model.md.
+        $sizeBytes = (Get-Item -LiteralPath $memIndex).Length
+        if ($sizeBytes -gt 24400) {
+            Use-Deduct $key 4
+            Add-Gap 2 5 `
+                'MEMORY.md over recall cap' `
+                "$mdDir/MEMORY.md is $sizeBytes bytes (over the ~24400 recall cap)" `
+                'Shorten the longest one-line index entries; move detail into the named topic files'
+        }
 
-    # Sub-check 2.2 — size vs recall cap (~24400 bytes).
-    # MEMORY_INDEX_SIZE_CAP_BYTES in core/memory-model.md.
-    $sizeBytes = (Get-Item -LiteralPath $memIndex).Length
-    if ($sizeBytes -gt 24400) {
-        Use-Deduct $key 4
-        Add-Gap 2 5 `
-            'MEMORY.md over recall cap' `
-            "MEMORY.md is $sizeBytes bytes (over the ~24400 recall cap)" `
-            'Shorten the longest one-line index entries; move detail into the named topic files'
-    }
-
-    # Sub-check 2.3 — per-entry line-length cap (~300 chars). Counts CHARACTERS:
-    # .Length is the UTF-16 unit count, which equals the codepoint count for all
-    # BMP characters. The bash twin counts codepoints (byte length minus UTF-8
-    # continuation bytes), so the two agree for every character a text memory
-    # index realistically contains (em-dash, accented Latin, etc.).
-    # MEMORY_INDEX_LINE_CAP_CHARS in core/memory-model.md.
-    $longLines = 0
-    foreach ($ln in [System.IO.File]::ReadAllLines($memIndex)) {
-        if ($ln.Length -gt 300) { $longLines++ }
-    }
-    if ($longLines -gt 0) {
-        Use-Deduct $key 4
-        Add-Gap 2 5 `
-            'MEMORY.md entries over line-length cap' `
-            "$longLines index line(s) exceed the ~300-char per-entry cap" `
-            'Trim each to a one-line headline; move detail into the named topic file'
+        # Sub-check 2.3 — per-entry line-length cap (~300 chars). Counts CHARACTERS:
+        # .Length is the UTF-16 unit count, which equals the codepoint count for all
+        # BMP characters. The bash twin counts codepoints (byte length minus UTF-8
+        # continuation bytes), so the two agree for every character a text memory
+        # index realistically contains (em-dash, accented Latin, etc.).
+        # MEMORY_INDEX_LINE_CAP_CHARS in core/memory-model.md.
+        $longLines = 0
+        foreach ($ln in [System.IO.File]::ReadAllLines($memIndex)) {
+            if ($ln.Length -gt 300) { $longLines++ }
+        }
+        if ($longLines -gt 0) {
+            Use-Deduct $key 4
+            Add-Gap 2 5 `
+                'MEMORY.md entries over line-length cap' `
+                "$longLines index line(s) in $mdDir/MEMORY.md exceed the ~300-char per-entry cap" `
+                'Trim each to a one-line headline; move detail into the named topic file'
+        }
     }
 
     $s = $pillarScores[$key]
     if ($s -eq 20) { $pillarNotes[$key] = 'clean' }
+    elseif ($missingIndex) { $pillarNotes[$key] = 'MEMORY.md missing' }
     else { $pillarNotes[$key] = "$((20 - $s)) pts deducted; see top gaps" }
 }
 
@@ -1015,8 +1024,11 @@ function Invoke-Pillar5 {
     }
 
     # Sub-check 5.2 — recent project-type notes (mtime ≤ 7 days) without ## State Deltas.
-    if (-not [string]::IsNullOrEmpty($MemoryDir) -and (Test-Path -LiteralPath $MemoryDir -PathType Container)) {
+    # <TEAM>-366: scans ALL stores; the gap's example path attributes the store the
+    # first offender lives in.
+    if ($MemoryDirs.Count -gt 0) {
         $missingSd = 0
+        $missingSdExample = ''
         # Epoch-based 7-day cutoff (integer seconds) to match the bash twin exactly
         # — see scripts/self-audit.sh. `find -mtime -7` rounds the age by whole days
         # (and differs BSD vs GNU), so an instant-based AddDays(-7) here would
@@ -1026,19 +1038,24 @@ function Invoke-Pillar5 {
         # DateTimeOffset cast drifts by the local offset around DST / on a host with
         # no tz database) to land on the same epoch seconds.
         $cutoffEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 7 * 86400
-        $projectFiles = @(Get-ChildItem -LiteralPath $MemoryDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' -and
-                ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $cutoffEpoch })
-        foreach ($pf in $projectFiles) {
-            $txt = [System.IO.File]::ReadAllText($pf.FullName)
-            if ($txt -notmatch '(?m)^## State Deltas') { $missingSd++ }
+        foreach ($mdDir in $MemoryDirs) {
+            $projectFiles = @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' -and
+                    ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $cutoffEpoch })
+            foreach ($pf in $projectFiles) {
+                $txt = [System.IO.File]::ReadAllText($pf.FullName)
+                if ($txt -notmatch '(?m)^## State Deltas') {
+                    $missingSd++
+                    if ([string]::IsNullOrEmpty($missingSdExample)) { $missingSdExample = $pf.FullName }
+                }
+            }
         }
         if ($missingSd -gt 0) {
             $pen = [Math]::Min($missingSd * 4, 8)
             Use-Deduct $key $pen
             Add-Gap 5 4 `
                 'Recent project memory lacks ## State Deltas' `
-                "$missingSd project memory file(s) modified in the last 7 days have no '## State Deltas' section" `
+                "$missingSd project memory file(s) modified in the last 7 days have no '## State Deltas' section (e.g. $missingSdExample)" `
                 "Add the section per capabilities/closeout.md output shape, even if the contents are '_none_'"
         }
     }

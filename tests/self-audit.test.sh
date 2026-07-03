@@ -722,18 +722,20 @@ assert_contains "verification recipe documents --save as the only write path (Co
 # three defects that made the scorecard untrustworthy.
 # =============================================================================
 
-# --- D1: memory-dir selection is DETERMINISTIC — it picks the operator's PRIMARY
-# surface (the projects/*/memory dir holding a MEMORY.md, ranked by project_*.md
-# count), not the alphabetically-first stray dir. The old `ls | head -1` scored
-# a near-empty stray dir on a multi-project setup.
-_test_d1_deterministic_primary_memory_dir() {
-  command -v jq >/dev/null 2>&1 || { _skip "D1 primary-memory-dir test" "jq not installed"; return 0; }
+# --- D1 (<TEAM>-366): memory scoring AGGREGATES all projects/*/memory stores. The
+# old picker selected ONE "primary" store and scored only it, so a broken
+# secondary store was invisible (the candidates[0] blind-spot class of <TEAM>-360).
+# Both stores must be scanned: the stray store's missing MEMORY.md is a REAL gap
+# now — its notes run blind at every orient — and the gap must be ATTRIBUTED to
+# the store it fired in, not to the clean one.
+_test_d1_all_memory_stores_scanned() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1 all-stores-scanned test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
-  # Two project dirs. Alphabetically-first ("aaa-stray") is a near-empty dir with
-  # NO MEMORY.md; the real one ("zzz-primary") carries the index + a project file.
-  # The OLD selector picked aaa-stray (→ MEMORY.md missing → pillar 2 = 0); the
-  # new selector must pick zzz-primary (→ clean index → pillar 2 = 20).
+  # Two project dirs. "aaa-stray" is a near-empty store with a note but NO
+  # MEMORY.md; "zzz-primary" carries a clean index + a project file. The old
+  # selector scored only zzz-primary (→ pillar 2 = 20, stray invisible); the
+  # aggregate scan must surface the stray store's missing index.
   local cfg="$fixture/config"
   mkdir -p "$cfg/projects/aaa-stray/memory" "$cfg/projects/zzz-primary/memory"
   printf 'stray\n' > "$cfg/projects/aaa-stray/memory/note.md"
@@ -750,22 +752,31 @@ metadata:
 ---
 real project body
 EOF
-  # Non-isolated so the CONFIG_DIR→MEMORY_DIR auto-resolution runs (the D1 code
+  # Non-isolated so the CONFIG_DIR→memory auto-resolution runs (the D1 code
   # path); --config-dir pins the config so the result does not depend on ambient
   # env / local.env. Vault unset → skipped. Assert on pillar 2 (memory-hygiene),
   # which is independent of lineark.
-  local out p2
+  local out p2 missing_detail
   out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
           bash "$REPO_ROOT/scripts/self-audit.sh" \
           --repo-root "$fixture" --config-dir "$cfg" --json 2>/dev/null)"
   p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  missing_detail="$(printf '%s' "$out" | jq -r \
+    '.gaps[] | select(.title | contains("MEMORY.md index missing")) | .detail' | head -1)"
   rm -rf "$fixture"
-  assert_eq "D1: selector picks the primary memory dir (with MEMORY.md), not the alphabetical-first stray" \
-    "20" "$p2"
+  if [ -n "$p2" ] && [ "$p2" -lt 20 ] && [ -n "$missing_detail" ] \
+     && [ -z "${missing_detail##*aaa-stray*}" ]; then
+    _pass "D1: all memory stores are scanned; the stray store's missing index flags, attributed to its store"
+  else
+    _fail "D1: all memory stores are scanned; the stray store's missing index flags, attributed to its store" \
+          "expected pillar 2 < 20 + missing-index gap naming aaa-stray, got score=[$p2] detail=[$missing_detail]"
+  fi
 }
-_test_d1_deterministic_primary_memory_dir
+_test_d1_all_memory_stores_scanned
 
-# --- D1b: an explicit $CLAUDE_PRIMARY_MEMORY_DIR overrides the heuristic.
+# --- D1b: an explicit $CLAUDE_PRIMARY_MEMORY_DIR pins the scan to that ONE
+# store (<TEAM>-366: the pin has always meant single-store scoring — with the pin
+# set, the config's other stores are intentionally out of scope).
 _test_d1_explicit_primary_override() {
   command -v jq >/dev/null 2>&1 || { _skip "D1 explicit-override test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
@@ -928,17 +939,19 @@ EOF
 }
 _test_d1c_localenv_primary_wins_over_ambient
 
-# --- D1d (Codex review): tie-break determinism — two MEMORY.md dirs with equal
-# project_*.md count resolve to the alphabetically-first candidate, every run.
-_test_d1d_tiebreak_deterministic() {
-  command -v jq >/dev/null 2>&1 || { _skip "D1d tie-break test" "jq not installed"; return 0; }
+# --- D1d (<TEAM>-366): a hygiene signal in the NON-largest store is scored. Two
+# indexed stores; the orphan note lives in bbb-tie — the store the old tie-break
+# never scanned (this exact fixture used to assert the orphan stayed INVISIBLE).
+# The aggregate scan must surface it, attributed to its store, while the clean
+# store contributes no orphan gap.
+_test_d1d_signal_in_secondary_store_scored() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1d secondary-store-signal test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
   local cfg="$fixture/config"
   mkdir -p "$cfg/projects/aaa-tie/memory" "$cfg/projects/bbb-tie/memory"
-  # Both have MEMORY.md + exactly ONE project_*.md (equal count → a tie).
-  # aaa-tie is clean; bbb-tie also carries an orphan memory file that would drop
-  # pillar 2. The selector must pick aaa-tie (alphabetical-first) → pillar 2 = 20.
+  # Both have MEMORY.md + exactly ONE project note. aaa-tie is clean; bbb-tie
+  # also carries an orphan memory file. Aggregation must deduct for the orphan.
   cat > "$cfg/projects/aaa-tie/memory/MEMORY.md" <<'EOF'
 # Memory Index
 
@@ -966,15 +979,99 @@ metadata:
 b
 EOF
   printf 'orphan\n' > "$cfg/projects/bbb-tie/memory/feedback_orphan.md"
-  local out p2
+  local out p2 orphan_detail
   out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
           bash "$REPO_ROOT/scripts/self-audit.sh" \
           --repo-root "$fixture" --config-dir "$cfg" --json 2>/dev/null)"
   p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  orphan_detail="$(printf '%s' "$out" | jq -r \
+    '.gaps[] | select(.title | contains("Orphan memory file")) | .detail' | head -1)"
   rm -rf "$fixture"
-  assert_eq "D1d: equal-count MEMORY.md dirs tie-break to the alphabetical-first deterministically" "20" "$p2"
+  if [ -n "$p2" ] && [ "$p2" -lt 20 ] && [ -n "$orphan_detail" ] \
+     && [ -z "${orphan_detail##*bbb-tie*}" ]; then
+    _pass "D1d: an orphan in the secondary (non-largest) store is scored + attributed to that store"
+  else
+    _fail "D1d: an orphan in the secondary (non-largest) store is scored + attributed to that store" \
+          "expected pillar 2 < 20 + orphan gap naming bbb-tie, got score=[$p2] detail=[$orphan_detail]"
+  fi
 }
-_test_d1d_tiebreak_deterministic
+_test_d1d_signal_in_secondary_store_scored
+
+# --- D1e (<TEAM>-366): aggregation spans pillars — each store's own MEMORY.md is
+# link-walked (pillar 1) while the other store's hygiene is scored (pillar 2),
+# in the same run. Store A has a broken index link; store B has an orphan note.
+_test_d1e_cross_pillar_aggregation() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1e cross-pillar aggregation test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config"
+  mkdir -p "$cfg/projects/aaa-links/memory" "$cfg/projects/bbb-orphan/memory"
+  cat > "$cfg/projects/aaa-links/memory/MEMORY.md" <<'EOF'
+# Memory Index
+
+- [Missing](does_not_exist.md) — broken link in store A
+EOF
+  cat > "$cfg/projects/bbb-orphan/memory/MEMORY.md" <<'EOF'
+# Memory Index
+
+(no entries)
+EOF
+  printf 'orphan\n' > "$cfg/projects/bbb-orphan/memory/feedback_orphan.md"
+  local out p1 p2 link_detail
+  out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
+          bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --config-dir "$cfg" --json 2>/dev/null)"
+  p1="$(_sa_pillar_score "$out" "cross-layer-handoffs")"
+  p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  link_detail="$(printf '%s' "$out" | jq -r \
+    '.gaps[] | select(.title | contains("Broken MEMORY.md link")) | .detail' | head -1)"
+  rm -rf "$fixture"
+  if [ -n "$p1" ] && [ "$p1" -lt 20 ] && [ -n "$p2" ] && [ "$p2" -lt 20 ] \
+     && [ -n "$link_detail" ] && [ -z "${link_detail##*aaa-links*}" ]; then
+    _pass "D1e: one run scores store A's broken index link AND store B's orphan, each attributed"
+  else
+    _fail "D1e: one run scores store A's broken index link AND store B's orphan, each attributed" \
+          "expected p1 < 20 + p2 < 20 + link gap naming aaa-links, got p1=[$p1] p2=[$p2] detail=[$link_detail]"
+  fi
+}
+_test_d1e_cross_pillar_aggregation
+
+# --- D1f (<TEAM>-366, panel: Codex + Gemini): an explicit --memory-dir means
+# exactly ONE store even when the config dir holds other discoverable stores
+# with gaps AND a CLAUDE_PRIMARY_MEMORY_DIR pin points at the broken store —
+# the full precedence is flag > pin > discovery.
+_test_d1f_flag_excludes_discovered_stores() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1f flag-excludes-discovery test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config" flagged="$fixture/flagged-memory"
+  mkdir -p "$cfg/projects/broken/memory" "$flagged"
+  # The discoverable store is BROKEN (a note, no MEMORY.md); the flagged store is clean.
+  printf 'x\n' > "$cfg/projects/broken/memory/note.md"
+  cat > "$flagged/MEMORY.md" <<'EOF'
+# Memory Index
+
+- [Proj](project_f.md) — flagged active project
+EOF
+  cat > "$flagged/project_f.md" <<'EOF'
+---
+name: project_f
+metadata:
+  type: project
+---
+flagged project body
+EOF
+  local out p2
+  # Pin the AMBIENT env at the broken store: the explicit flag must still win.
+  out="$(env -u OBSIDIAN_VAULT_PATH CLAUDE_PRIMARY_MEMORY_DIR="$cfg/projects/broken/memory" \
+          bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --config-dir "$cfg" --memory-dir "$flagged" --json 2>/dev/null)"
+  p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  rm -rf "$fixture"
+  assert_eq "D1f: an explicit --memory-dir scans exactly one store — flag wins over the pin and over discovery" \
+    "20" "$p2"
+}
+_test_d1f_flag_excludes_discovered_stores
 
 # --- D3c (Codex review): the token boundary is precise — a recipe name that is
 # only a SUBSTRING of other words ("database", "data-driven") is still orphan.
