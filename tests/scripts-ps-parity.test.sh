@@ -615,6 +615,86 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 2c: self-audit parity — multi-store aggregation (<TEAM>-366).
+#
+# Two projects/*/memory stores under one --config-dir: store aaa-one carries ONE
+# orphan note (pen 2), store bbb-two carries TWO (pen 4). Both twins must
+# aggregate to the SAME memory-hygiene score of 14 — a single-store scan
+# (either store) would land on 18 or 16, so the value pins that aggregation
+# actually happened AND that the twins agree. Gap DETAILS (store attribution)
+# must match too, after masking the tmp path. Non-isolated so the
+# CONFIG_DIR→discovery path runs (the aggregation code path); env -u pins the
+# operator vars; assertions stay on pillar 2, which is lineark-independent.
+# ---------------------------------------------------------------------------
+
+if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-audit.ps1" ] \
+   && command -v jq >/dev/null 2>&1 && [ -d "${SA_FIX:-}" ]; then
+  SA_CFG="$PARITY_TMP/sa-cfg-multistore"
+  mkdir -p "$SA_CFG/projects/aaa-one/memory" "$SA_CFG/projects/bbb-two/memory"
+  printf '# Memory Index\n\n- [Pad](pad_a.md) — indexed\n' > "$SA_CFG/projects/aaa-one/memory/MEMORY.md"
+  printf 'pad\n' > "$SA_CFG/projects/aaa-one/memory/pad_a.md"
+  printf 'orphan\n' > "$SA_CFG/projects/aaa-one/memory/feedback_orphan_a.md"
+  printf '# Memory Index\n\n(no entries)\n' > "$SA_CFG/projects/bbb-two/memory/MEMORY.md"
+  printf 'orphan\n' > "$SA_CFG/projects/bbb-two/memory/feedback_orphan_b1.md"
+  printf 'orphan\n' > "$SA_CFG/projects/bbb-two/memory/feedback_orphan_b2.md"
+
+  ms_bash_out="$PARITY_TMP/sa-ms-bash.json"
+  env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
+    bash "$REPO_ROOT/scripts/self-audit.sh" --json \
+    --repo-root "$SA_FIX" --config-dir "$SA_CFG" > "$ms_bash_out" 2>/dev/null
+
+  ms_bash_p2="$(jq -r '.pillars["memory-hygiene"].score' < "$ms_bash_out" 2>/dev/null)"
+  assert_eq "self-audit multi-store: bash aggregates both stores (orphan pens 2+4 -> 14)" "14" "$ms_bash_p2"
+
+  # Store attribution, checked on the RAW details (before masking — _normalize
+  # collapses the whole tmp path, store dir names included, to <TMP>).
+  ms_bash_raw="$(jq -r '.gaps[] | select(.title == "Orphan memory file(s)") | .detail' < "$ms_bash_out" 2>/dev/null)"
+  case "$ms_bash_raw" in
+    *aaa-one*bbb-two*|*bbb-two*aaa-one*)
+      _pass "self-audit multi-store: bash orphan gaps attribute both stores" ;;
+    *)
+      _fail "self-audit multi-store: bash orphan gaps attribute both stores" "got: $ms_bash_raw" ;;
+  esac
+
+  if [ "$_have_pwsh" -eq 1 ]; then
+    ms_ps_out="$PARITY_TMP/sa-ms-ps.json"
+    env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
+      pwsh -NoProfile -File "$REPO_ROOT/scripts/self-audit.ps1" --json \
+      --repo-root "$SA_FIX" --config-dir "$SA_CFG" > "$ms_ps_out" 2>/dev/null
+
+    ms_ps_p2="$(jq -r '.pillars["memory-hygiene"].score' < "$ms_ps_out" 2>/dev/null)"
+    assert_eq "self-audit multi-store parity: memory-hygiene score matches" "$ms_bash_p2" "$ms_ps_p2"
+
+    ms_ps_raw="$(jq -r '.gaps[] | select(.title == "Orphan memory file(s)") | .detail' < "$ms_ps_out" 2>/dev/null)"
+    case "$ms_ps_raw" in
+      *aaa-one*bbb-two*|*bbb-two*aaa-one*)
+        _pass "self-audit multi-store parity: ps orphan gaps attribute both stores" ;;
+      *)
+        _fail "self-audit multi-store parity: ps orphan gaps attribute both stores" "got: $ms_ps_raw" ;;
+    esac
+
+    # Full-line parity after the standard normalization (CR strip, \ -> /,
+    # tmp-path mask) — pins that the twins' gap TEXT agrees byte-for-byte
+    # modulo platform path shapes.
+    printf '%s\n' "$ms_bash_raw" > "$PARITY_TMP/sa-ms-bash-gaps.txt"
+    printf '%s\n' "$ms_ps_raw"   > "$PARITY_TMP/sa-ms-ps-gaps.txt"
+    assert_eq "self-audit multi-store parity: normalized orphan gap details match" \
+      "$(_normalize "$PARITY_TMP/sa-ms-bash-gaps.txt" | LC_ALL=C sort)" \
+      "$(_normalize "$PARITY_TMP/sa-ms-ps-gaps.txt" | LC_ALL=C sort)"
+  else
+    _skip "self-audit multi-store parity: memory-hygiene score matches" "pwsh not installed"
+    _skip "self-audit multi-store parity: ps orphan gaps attribute both stores" "pwsh not installed"
+    _skip "self-audit multi-store parity: normalized orphan gap details match" "pwsh not installed"
+  fi
+else
+  _skip "self-audit multi-store: bash aggregates both stores (orphan pens 2+4 -> 14)" "scripts/jq missing or SA_FIX unbuilt"
+  _skip "self-audit multi-store: bash orphan gaps attribute both stores" "scripts/jq missing or SA_FIX unbuilt"
+  _skip "self-audit multi-store parity: memory-hygiene score matches" "scripts/jq missing or SA_FIX unbuilt"
+  _skip "self-audit multi-store parity: ps orphan gaps attribute both stores" "scripts/jq missing or SA_FIX unbuilt"
+  _skip "self-audit multi-store parity: normalized orphan gap details match" "scripts/jq missing or SA_FIX unbuilt"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 3: scripts/check-drift.{sh,ps1} — --manifest mode parity
 #
 # We can't run repo-mode parity here without building a complete fixture

@@ -17,8 +17,11 @@
 #
 # Default inputs:
 #   --repo-root    parent dir of this script (i.e. the agentic-os-template checkout)
-#   --memory-dir   the first matching $CLAUDE_CONFIG_DIR/projects/*/memory/
-#                  if --config-dir or $CLAUDE_CONFIG_DIR resolves; else skipped
+#   --memory-dir   ALL $CLAUDE_CONFIG_DIR/projects/*/memory/ dirs if --config-dir
+#                  or $CLAUDE_CONFIG_DIR resolves (every store is scanned and gaps
+#                  are attributed per store — <TEAM>-366; set
+#                  CLAUDE_PRIMARY_MEMORY_DIR to pin scoring to a single store);
+#                  else skipped. The explicit flag always means exactly one store.
 #   --vault-dir    $OBSIDIAN_VAULT_PATH if set; else skipped
 #   --config-dir   $CLAUDE_CONFIG_DIR if set; else skipped
 #
@@ -84,55 +87,19 @@ mem_note_type() {
   ' "$1"
 }
 
-# _sa_count_project_notes <dir> → count of *.md notes (excl MEMORY.md) whose
-# frontmatter type is `project`. Frontmatter detection, not a `project_*.md`
-# glob (<TEAM>-353).
-_sa_count_project_notes() {
-  local d="$1" f n=0
-  for f in "$d"/*.md; do
-    [ -f "$f" ] || continue
-    [ "$(basename "$f")" = "MEMORY.md" ] && continue
-    [ "$(mem_note_type "$f")" = "project" ] && n=$((n+1))
-  done
-  printf '%s' "$n"
-}
-
-# _sa_select_memory_dir <config-dir> → the operator's PRIMARY memory dir, chosen
-# DETERMINISTICALLY (<TEAM>-180 D1). Preference order:
-#   1. explicit $CLAUDE_PRIMARY_MEMORY_DIR (from local.env / env), if it is a dir
-#   2. the projects/*/memory dir that has a MEMORY.md index; when more than one
-#      does, the one with the most project-type notes (frontmatter type: project — the operator's active surface)
-#   3. failing any MEMORY.md, the candidate with the most *.md files
-#   4. last resort: alphabetically-first (the prior behaviour) so a single-project
-#      setup with no MEMORY.md still resolves to something
-# The old `ls -d …/projects/*/memory | head -1` took the ALPHABETICALLY-first
-# match, which on a multi-project setup is a near-empty stray dir (e.g.
-# …-ai-agency/memory) instead of the operator's active 100+-entry surface — so
-# the whole scorecard then scored the wrong directory. Ties resolve to the first
-# match in glob (alphabetical) order, so the result is stable across runs.
-_sa_select_memory_dir() {
-  local cfg="$1" d count best="" best_count=-1
-  if [ -n "${CLAUDE_PRIMARY_MEMORY_DIR:-}" ] && [ -d "${CLAUDE_PRIMARY_MEMORY_DIR}" ]; then
-    printf '%s' "$CLAUDE_PRIMARY_MEMORY_DIR"
-    return 0
-  fi
-  for d in "$cfg"/projects/*/memory; do
-    [ -d "$d" ] || continue
-    [ -f "$d/MEMORY.md" ] || continue
-    count="$(_sa_count_project_notes "$d")"
-    if [ "$count" -gt "$best_count" ]; then best_count="$count"; best="$d"; fi
-  done
-  if [ -n "$best" ]; then printf '%s' "$best"; return 0; fi
-  best=""; best_count=-1
-  for d in "$cfg"/projects/*/memory; do
-    [ -d "$d" ] || continue
-    count="$(find "$d" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-    if [ "$count" -gt "$best_count" ]; then best_count="$count"; best="$d"; fi
-  done
-  if [ -n "$best" ]; then printf '%s' "$best"; return 0; fi
-  # shellcheck disable=SC2012
-  ls -d "$cfg"/projects/*/memory 2>/dev/null | head -1 || true
-}
+# Memory-dir scan set (<TEAM>-366). The old _sa_select_memory_dir picker chose the
+# ONE projects/*/memory dir with the most project-typed notes and scored only it
+# — the same candidates[0] blind-spot class fixed in check-memory-drift +
+# check-distillation-completeness (<TEAM>-360): every non-selected store went
+# silently unscanned, and the picker could FLIP stores when note counts shifted,
+# emitting pillar demands against the wrong store. All discovered stores are now
+# scanned, with each gap attributed to the store it fired in. Precedence:
+# explicit --memory-dir flag (exactly one store) > $CLAUDE_PRIMARY_MEMORY_DIR
+# pin (exactly one store — the pin has always meant single-store scoring) >
+# every $CONFIG_DIR/projects/*/memory dir. Populated in the resolution block
+# below; only existing dirs enter the set, so pillar code can expand
+# "${MEMORY_DIRS[@]}" whenever the count is non-zero (bash 3.2 set -u).
+MEMORY_DIRS=()
 
 # _sa_localenv_get <path> <key> — read ONE key's value from local.env WITHOUT
 # sourcing the file (<TEAM>-180 F1; twin parity with scripts/self-audit.ps1
@@ -202,10 +169,10 @@ if [ "$ISOLATED" -eq 0 ]; then
       _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" OBSIDIAN_VAULT_PATH)"
       [ -n "$_le_v" ] && VAULT_DIR="$_le_v"
     fi
-    # CLAUDE_PRIMARY_MEMORY_DIR: export the local.env pin so _sa_select_memory_dir
-    # (which reads $CLAUDE_PRIMARY_MEMORY_DIR) honours it AND it wins over an
-    # ambient pin — preserving flag > local.env > ambient. Only this single config
-    # key is ever exported (never PATH). Mirrors the PS twin.
+    # CLAUDE_PRIMARY_MEMORY_DIR: export the local.env pin so the memory-dir
+    # resolution below honours it AND it wins over an ambient pin — preserving
+    # flag > local.env > ambient. Only this single config key is ever exported
+    # (never PATH). Mirrors the PS twin.
     _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" CLAUDE_PRIMARY_MEMORY_DIR)"
     [ -n "$_le_v" ] && export CLAUDE_PRIMARY_MEMORY_DIR="$_le_v"
     unset _le_v
@@ -217,9 +184,25 @@ if [ "$ISOLATED" -eq 0 ]; then
     VAULT_DIR="$OBSIDIAN_VAULT_PATH"
   fi
   if [ -z "$MEMORY_DIR" ] && [ -n "$CONFIG_DIR" ] && [ -d "$CONFIG_DIR/projects" ]; then
-    MEMORY_DIR="$(_sa_select_memory_dir "$CONFIG_DIR")"
-    [ -n "$MEMORY_DIR" ] && [ ! -d "$MEMORY_DIR" ] && MEMORY_DIR=""
+    # <TEAM>-366: no flag → a $CLAUDE_PRIMARY_MEMORY_DIR pin scopes the scan to
+    # that one store; otherwise EVERY projects/*/memory dir is scanned (the old
+    # picker scored only the "largest" store and left the rest invisible).
+    if [ -n "${CLAUDE_PRIMARY_MEMORY_DIR:-}" ] && [ -d "${CLAUDE_PRIMARY_MEMORY_DIR}" ]; then
+      MEMORY_DIRS=("$CLAUDE_PRIMARY_MEMORY_DIR")
+    else
+      for _md_d in "$CONFIG_DIR"/projects/*/memory; do
+        [ -d "$_md_d" ] && MEMORY_DIRS+=("$_md_d")
+      done
+      unset _md_d
+    fi
   fi
+fi
+
+# Explicit --memory-dir wins over everything and means exactly ONE store
+# (mirrors check-memory-drift.sh). A non-existent flag value resolves to an
+# empty scan set, so the memory surface reports skipped — same as before.
+if [ -n "$MEMORY_DIR" ]; then
+  if [ -d "$MEMORY_DIR" ]; then MEMORY_DIRS=("$MEMORY_DIR"); else MEMORY_DIRS=(); fi
 fi
 
 # --- pillar state -- parallel indexed arrays, bash 3.2 compatible -------------
@@ -342,7 +325,7 @@ score_cross_layer_handoffs() {
   if [ "$ISOLATED" -eq 0 ]; then
     command -v lineark >/dev/null 2>&1 && lineark_avail=1
   fi
-  [ -n "$MEMORY_DIR" ] && [ -d "$MEMORY_DIR" ] && memory_avail=1
+  [ "${#MEMORY_DIRS[@]}" -gt 0 ] && memory_avail=1
   [ -n "$VAULT_DIR" ] && [ -d "$VAULT_DIR" ] && vault_avail=1
 
   if [ "$lineark_avail" -eq 0 ]; then
@@ -397,13 +380,16 @@ score_cross_layer_handoffs() {
 
   # Project-type memory notes (frontmatter type: project, not a filename glob —
   # <TEAM>-353), collected once for the 1.1 name-match. Space-safe (NUL find).
+  # <TEAM>-366: collected across ALL scanned stores — a project note in ANY store
+  # satisfies the handshake (the old single-store scan demanded the note in
+  # whichever store the picker happened to select).
   local proj_note_files=()
   if [ "$memory_avail" -eq 1 ]; then
     local _mf
     while IFS= read -r -d '' _mf; do
       [ "$(basename "$_mf")" = "MEMORY.md" ] && continue
       [ "$(mem_note_type "$_mf")" = "project" ] && proj_note_files+=("$_mf")
-    done < <(find "$MEMORY_DIR" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
+    done < <(find "${MEMORY_DIRS[@]}" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
   fi
 
   # Sub-check 1.1: For each ACTIVE Linear project (>=1 open issue), a matching
@@ -423,8 +409,8 @@ score_cross_layer_handoffs() {
           deduct "$key" 4
           record_gap 1 8 \
             "No memory note for active Linear project" \
-            "Active project \"$pname\" has no project-type memory note in $MEMORY_DIR (active projects should land a memory note at kickoff)" \
-            "Create a note in $MEMORY_DIR with 'type: project' frontmatter naming the project + its Linear URL"
+            "Active project \"$pname\" has no project-type memory note in any scanned memory store (${MEMORY_DIRS[*]}) — active projects should land a memory note at kickoff" \
+            "Create a note in the project's memory store with 'type: project' frontmatter naming the project + its Linear URL"
         fi
       done
     fi
@@ -459,29 +445,34 @@ score_cross_layer_handoffs() {
   # Sub-check 1.3: Walk MEMORY.md links — every relative .md target must exist.
   # Codex N-2: original regex required `.md)` literally, missing `.md#anchor)`
   # forms. Broaden to `[^)]+\.md(#[^)]*)?` then strip the #anchor before
-  # existence-checking the file.
-  if [ "$memory_avail" -eq 1 ] && [ -f "$MEMORY_DIR/MEMORY.md" ]; then
-    ran=1
-    local broken=0
-    while IFS= read -r target; do
-      [ -n "$target" ] || continue
-      case "$target" in http://*|https://*|mailto:*|/*) continue ;; esac
-      # Strip #anchor — file existence is what we check, not the anchor target.
-      target="${target%%#*}"
-      [ -z "$target" ] && continue
-      if [ ! -f "$MEMORY_DIR/$target" ]; then
-        broken=$((broken+1))
+  # existence-checking the file. <TEAM>-366: per store — each store's own index
+  # is walked, and a broken-link gap names the store it fired in.
+  if [ "$memory_avail" -eq 1 ]; then
+    local md_dir
+    for md_dir in "${MEMORY_DIRS[@]}"; do
+      [ -f "$md_dir/MEMORY.md" ] || continue
+      ran=1
+      local broken=0
+      while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        case "$target" in http://*|https://*|mailto:*|/*) continue ;; esac
+        # Strip #anchor — file existence is what we check, not the anchor target.
+        target="${target%%#*}"
+        [ -z "$target" ] && continue
+        if [ ! -f "$md_dir/$target" ]; then
+          broken=$((broken+1))
+        fi
+      done < <(grep -oE '\]\([^)]+\.md(#[^)]*)?\)' "$md_dir/MEMORY.md" | sed 's/^](//; s/)$//' || true)
+      if [ "$broken" -gt 0 ]; then
+        local pen=$(( broken * 2 ))
+        [ "$pen" -gt 8 ] && pen=8
+        deduct "$key" "$pen"
+        record_gap 1 4 \
+          "Broken MEMORY.md link(s)" \
+          "MEMORY.md references $broken file(s) that do not exist in $md_dir" \
+          "Remove the broken index lines or restore the missing memory files"
       fi
-    done < <(grep -oE '\]\([^)]+\.md(#[^)]*)?\)' "$MEMORY_DIR/MEMORY.md" | sed 's/^](//; s/)$//' || true)
-    if [ "$broken" -gt 0 ]; then
-      local pen=$(( broken * 2 ))
-      [ "$pen" -gt 8 ] && pen=8
-      deduct "$key" "$pen"
-      record_gap 1 4 \
-        "Broken MEMORY.md link(s)" \
-        "MEMORY.md references $broken file(s) that do not exist in $MEMORY_DIR" \
-        "Remove the broken index lines or restore the missing memory files"
-    fi
+    done
   fi
 
   # Finalize note. A pillar that ran zero sub-checks (no reachable cross-layer
@@ -501,18 +492,36 @@ score_cross_layer_handoffs() {
 # --- Pillar 2: Memory hygiene ------------------------------------------------
 score_memory_hygiene() {
   local key="memory-hygiene"
-  if [ -z "$MEMORY_DIR" ] || [ ! -d "$MEMORY_DIR" ]; then
+  if [ "${#MEMORY_DIRS[@]}" -eq 0 ]; then
     skip_surface "memory dir not resolved — memory hygiene checks skipped"
     mark_unscored "$key" "no memory dir"
     return 0
   fi
 
-  # Sub-check 2.1: For each memory file (excluding MEMORY.md itself), the index
-  # should reference it by name. An "orphan" is a file MEMORY.md never names.
-  local orphans=0
-  if [ -f "$MEMORY_DIR/MEMORY.md" ]; then
-    local index_content
-    index_content="$(cat "$MEMORY_DIR/MEMORY.md")"
+  # <TEAM>-366: every discovered store is scored, not one selected store — the
+  # sub-checks below run PER STORE and each gap names the store it fired in.
+  # A hygiene failure in a small secondary store is a real failure (its notes
+  # are just as invisible at orient); the old picker never saw it.
+  local md_dir missing_index=0
+  for md_dir in "${MEMORY_DIRS[@]}"; do
+
+    if [ ! -f "$md_dir/MEMORY.md" ]; then
+      # MEMORY.md missing entirely is a 20pt hit — the index is the spine of
+      # memory recall; a store without one runs blind at every kickoff orient.
+      deduct "$key" 20
+      record_gap 2 10 \
+        "MEMORY.md index missing" \
+        "$md_dir/MEMORY.md does not exist; every kickoff orient runs blind" \
+        "Create MEMORY.md with one line per memory file per core/memory-model.md"
+      missing_index=1
+      continue
+    fi
+
+    # Sub-check 2.1: For each memory file (excluding MEMORY.md itself), the
+    # store's index should reference it by name. An "orphan" is a file this
+    # store's MEMORY.md never names.
+    local orphans=0 index_content
+    index_content="$(cat "$md_dir/MEMORY.md")"
     while IFS= read -r -d '' mf; do
       [ -f "$mf" ] || continue
       local base; base="$(basename "$mf")"
@@ -522,69 +531,61 @@ score_memory_hygiene() {
         *"$base"*) ;;
         *) orphans=$((orphans+1)) ;;
       esac
-    done < <(find "$MEMORY_DIR" -maxdepth 1 -name '*.md' -print0 2>/dev/null)
-  else
-    # MEMORY.md missing entirely is a 20pt hit — the index is the spine of
-    # memory recall.
-    deduct "$key" 20
-    record_gap 2 10 \
-      "MEMORY.md index missing" \
-      "$MEMORY_DIR/MEMORY.md does not exist; every kickoff orient runs blind" \
-      "Create MEMORY.md with one line per memory file per core/memory-model.md"
-    pillar_set_note "$key" "MEMORY.md missing"
-    return 0
-  fi
+    done < <(find "$md_dir" -maxdepth 1 -name '*.md' -print0 2>/dev/null)
 
-  if [ "$orphans" -gt 0 ]; then
-    local pen=$(( orphans * 2 ))
-    [ "$pen" -gt 10 ] && pen=10
-    deduct "$key" "$pen"
-    record_gap 2 3 \
-      "Orphan memory file(s)" \
-      "$orphans memory file(s) have no MEMORY.md index entry" \
-      "Run /consolidate-memory or hand-add a one-line pointer to MEMORY.md"
-  fi
+    if [ "$orphans" -gt 0 ]; then
+      local pen=$(( orphans * 2 ))
+      [ "$pen" -gt 10 ] && pen=10
+      deduct "$key" "$pen"
+      record_gap 2 3 \
+        "Orphan memory file(s)" \
+        "$orphans memory file(s) in $md_dir have no MEMORY.md index entry" \
+        "Run /consolidate-memory or hand-add a one-line pointer to MEMORY.md"
+    fi
 
-  # Sub-check 2.2: MEMORY.md total size vs recall cap.
-  # The router truncates memory recall around ~24400 bytes; over-cap loses
-  # tail entries silently. Threshold mirrors the harness warning observed in
-  # the autoloaded MEMORY.md system reminder. The 24400 constant is the
-  # documented MEMORY_INDEX_SIZE_CAP_BYTES in core/memory-model.md.
-  local size_bytes
-  size_bytes="$(wc -c < "$MEMORY_DIR/MEMORY.md" 2>/dev/null | tr -d ' ')"
-  if [ -n "$size_bytes" ] && [ "$size_bytes" -gt 24400 ]; then
-    deduct "$key" 4
-    record_gap 2 5 \
-      "MEMORY.md over recall cap" \
-      "MEMORY.md is ${size_bytes} bytes (over the ~24400 recall cap)" \
-      "Shorten the longest one-line index entries; move detail into the named topic files"
-  fi
+    # Sub-check 2.2: MEMORY.md total size vs recall cap.
+    # The router truncates memory recall around ~24400 bytes; over-cap loses
+    # tail entries silently. Threshold mirrors the harness warning observed in
+    # the autoloaded MEMORY.md system reminder. The 24400 constant is the
+    # documented MEMORY_INDEX_SIZE_CAP_BYTES in core/memory-model.md.
+    local size_bytes
+    size_bytes="$(wc -c < "$md_dir/MEMORY.md" 2>/dev/null | tr -d ' ')"
+    if [ -n "$size_bytes" ] && [ "$size_bytes" -gt 24400 ]; then
+      deduct "$key" 4
+      record_gap 2 5 \
+        "MEMORY.md over recall cap" \
+        "$md_dir/MEMORY.md is ${size_bytes} bytes (over the ~24400 recall cap)" \
+        "Shorten the longest one-line index entries; move detail into the named topic files"
+    fi
 
-  # Sub-check 2.3: per-entry line-length cap. Index entries are one-line
-  # headlines; a line over ~300 chars is detail that belongs in the named topic
-  # file. Over-long entries inflate the index toward the size cap above and
-  # degrade scannability. Threshold is MEMORY_INDEX_LINE_CAP_CHARS in
-  # core/memory-model.md. The cap is in CHARS and the PS twin counts characters
-  # via .Length, so we count CHARACTERS here too: byte length minus UTF-8
-  # continuation bytes (0x80–0xBF) yields the Unicode codepoint count
-  # locale-independently (BSD awk's `length` is byte-only regardless of locale).
-  # LC_ALL=C keeps both length + gsub deterministic across BSD/GNU awk (set
-  # explicitly so gawk's gsub does not no-op under empty LANG —
-  # see [[reference_awk_portability]]). Matches PS .Length for all BMP chars.
-  #
-  local long_lines
-  long_lines="$(LC_ALL=C awk '{ s=$0; cont=gsub(/[\200-\277]/,"",s); if ((length($0)-cont) > 300) n++ } END { print n+0 }' "$MEMORY_DIR/MEMORY.md" 2>/dev/null)"
-  if [ -n "$long_lines" ] && [ "$long_lines" -gt 0 ]; then
-    deduct "$key" 4
-    record_gap 2 5 \
-      "MEMORY.md entries over line-length cap" \
-      "$long_lines index line(s) exceed the ~300-char per-entry cap" \
-      "Trim each to a one-line headline; move detail into the named topic file"
-  fi
+    # Sub-check 2.3: per-entry line-length cap. Index entries are one-line
+    # headlines; a line over ~300 chars is detail that belongs in the named topic
+    # file. Over-long entries inflate the index toward the size cap above and
+    # degrade scannability. Threshold is MEMORY_INDEX_LINE_CAP_CHARS in
+    # core/memory-model.md. The cap is in CHARS and the PS twin counts characters
+    # via .Length, so we count CHARACTERS here too: byte length minus UTF-8
+    # continuation bytes (0x80–0xBF) yields the Unicode codepoint count
+    # locale-independently (BSD awk's `length` is byte-only regardless of locale).
+    # LC_ALL=C keeps both length + gsub deterministic across BSD/GNU awk (set
+    # explicitly so gawk's gsub does not no-op under empty LANG —
+    # see [[reference_awk_portability]]). Matches PS .Length for all BMP chars.
+    #
+    local long_lines
+    long_lines="$(LC_ALL=C awk '{ s=$0; cont=gsub(/[\200-\277]/,"",s); if ((length($0)-cont) > 300) n++ } END { print n+0 }' "$md_dir/MEMORY.md" 2>/dev/null)"
+    if [ -n "$long_lines" ] && [ "$long_lines" -gt 0 ]; then
+      deduct "$key" 4
+      record_gap 2 5 \
+        "MEMORY.md entries over line-length cap" \
+        "$long_lines index line(s) in $md_dir/MEMORY.md exceed the ~300-char per-entry cap" \
+        "Trim each to a one-line headline; move detail into the named topic file"
+    fi
+  done
 
   local s; s="$(pillar_score "$key")"
   if [ "$s" -eq 20 ]; then
     pillar_set_note "$key" "clean"
+  elif [ "$missing_index" -eq 1 ]; then
+    pillar_set_note "$key" "MEMORY.md missing"
   else
     pillar_set_note "$key" "$((20 - s)) pts deducted; see top gaps"
   fi
@@ -906,9 +907,10 @@ score_closeout_spine_discipline() {
   done
 
   # Sub-check 5.2: Recent project memory entries should carry a State Deltas
-  # section.
-  if [ -n "$MEMORY_DIR" ] && [ -d "$MEMORY_DIR" ]; then
-    local missing_sd=0 f m
+  # section. <TEAM>-366: scans ALL stores (multi-root find); the gap's example
+  # path attributes the store the first offender lives in.
+  if [ "${#MEMORY_DIRS[@]}" -gt 0 ]; then
+    local missing_sd=0 missing_sd_example="" f m
     # Epoch-based 7-day cutoff (integer seconds), NOT `find -mtime -7`: GNU find
     # truncates the age to whole days while BSD/macOS find rounds it UP, so the
     # same flag spans a 6- vs 7-day window across platforms — and neither matches
@@ -928,15 +930,16 @@ score_closeout_spine_discipline() {
       [ "$m" -ge "$_cutoff_epoch" ] || continue
       if ! grep -qE '^## State Deltas' "$f"; then
         missing_sd=$((missing_sd+1))
+        [ -z "$missing_sd_example" ] && missing_sd_example="$f"
       fi
-    done < <(find "$MEMORY_DIR" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
+    done < <(find "${MEMORY_DIRS[@]}" -maxdepth 1 -type f -name '*.md' -print0 2>/dev/null)
     if [ "$missing_sd" -gt 0 ]; then
       local pen=$(( missing_sd * 4 ))
       [ "$pen" -gt 8 ] && pen=8
       deduct "$key" "$pen"
       record_gap 5 4 \
         "Recent project memory lacks ## State Deltas" \
-        "$missing_sd project memory file(s) modified in the last 7 days have no '## State Deltas' section" \
+        "$missing_sd project memory file(s) modified in the last 7 days have no '## State Deltas' section (e.g. $missing_sd_example)" \
         "Add the section per capabilities/closeout.md output shape, even if the contents are '_none_'"
     fi
   fi
