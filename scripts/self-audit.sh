@@ -275,6 +275,19 @@ record_gap() {
   GAPS+=("$(printf '%s\t%s\t%s\t%s\t%s' "$p" "$lev" "$title" "$detail" "$fix")")
 }
 
+sorted_gaps() {
+  # GAPS ordered by leverage descending, ties in insertion order — the
+  # tie-break the PS twin's Get-SortedGaps keys on too. A bare `sort -nr`
+  # falls back to a REVERSED whole-line comparison on equal leverage
+  # (descending pillar/text), diverging from PowerShell's stable sort; the
+  # decorate/sort/undecorate index makes the tie-break explicit instead of
+  # implementation-defined. awk over `nl` so minimal userlands (busybox/
+  # alpine) need nothing beyond the awk the script already requires.
+  # Fields after the index prefix: 1=index, 2=pillar, 3=leverage.
+  printf '%s\n' "${GAPS[@]}" | awk '{ printf "%d\t%s\n", NR, $0 }' \
+    | sort -t "$(printf '\t')" -k3,3nr -k1,1n | cut -f2-
+}
+
 deduct() {
   # deduct <pillar-key> <amount>  — clamped at 0; never below.
   local key="$1" amt="$2" cur
@@ -992,7 +1005,7 @@ emit_markdown() {
     printf '_(none)_\n'
   else
     local sorted
-    sorted="$(printf '%s\n' "${GAPS[@]}" | sort -t $'\t' -k2,2 -nr | head -3)"
+    sorted="$(sorted_gaps | head -3)"
     local n=1 pillar lev title detail fix
     while IFS=$'\t' read -r pillar lev title detail fix; do
       [ -n "$pillar" ] || continue
@@ -1034,7 +1047,7 @@ emit_json() {
 
   local gaps_arr='[]' g pillar lev title detail fix sorted
   if [ "${#GAPS[@]}" -gt 0 ]; then
-    sorted="$(printf '%s\n' "${GAPS[@]}" | sort -t $'\t' -k2,2 -nr)"
+    sorted="$(sorted_gaps)"
     while IFS=$'\t' read -r pillar lev title detail fix; do
       [ -n "$pillar" ] || continue
       gaps_arr="$(printf '%s' "$gaps_arr" | jq \

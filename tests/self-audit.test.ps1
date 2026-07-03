@@ -1070,3 +1070,39 @@ $SA_CAP_CONTENT = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'capabiliti
 $SA_VER_CONTENT = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'verification' 'self-audit.md') -Raw
 Assert-Contains 'self-audit.test: capability spec documents --save as the only write path (Codex B-1)' $SA_CAP_CONTENT '--save'
 Assert-Contains 'self-audit.test: verification recipe documents --save as the only write path (Codex B-1)' $SA_VER_CONTENT '--save'
+
+# --- <TEAM>-370 twin-parity guard: EQUAL-leverage gaps keep insertion order
+# after the leverage-descending sort (mirrors tests/self-audit.test.sh). Both
+# twins sort on explicit (leverage desc, insertion index asc) keys — the bash
+# twin's bare `sort -nr` used to reverse insertion order on ties while
+# Sort-Object preserved it. Same fixture, same expected order as the sh twin:
+# pillar 1 (broken MEMORY.md link) is recorded before pillar 5 (missing
+# ## State Deltas), so the pillar-1 gap must emit first.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $mem = New-SaTmp
+    Write-LfFile (Join-Path $mem 'MEMORY.md') @'
+# Memory Index
+
+- [Proj](project_recent.md) — active project note
+- [Missing](does_not_exist.md) — broken link target
+'@
+    Write-LfFile (Join-Path $mem 'project_recent.md') @'
+---
+name: project_recent
+metadata:
+  type: project
+---
+recent project body, deliberately without a state-deltas section
+'@
+    $out  = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--memory-dir', $mem, '--json')
+    $obj  = $out | ConvertFrom-Json
+    $lev4 = @($obj.gaps | Where-Object { $_.leverage -eq 4 } | ForEach-Object { $_.title }) -join '|'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $mem -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: equal-leverage gaps emit in insertion order (pillar 1 before pillar 5) — twin-parity tie-break' `
+        'Broken MEMORY.md link(s)|Recent project memory lacks ## State Deltas' $lev4
+} else {
+    _Skip 'self-audit.test: equal-leverage gap-order test' 'jq not installed'
+}
