@@ -9,6 +9,17 @@ local.env
 # time and NEVER shipped — same operator-local, gitignored status as local.env.
 local.soul-identity.md
 
+# Operator-local catalog/rules overlays (SKILLS_OVERLAY_PATH /
+# CODEX_RULES_OVERLAY_PATH). Carry the operator's full tool catalog and
+# tool-policy rules; appended into the rendered SKILLS.md / AGENTS.md at build
+# time and NEVER shipped — same operator-local, gitignored status as
+# local.soul-identity.md. These are the recommended repo-root filenames from
+# templates/local.env.example; left unanchored deliberately (matching the
+# local.env / local.soul-identity.md entries) so a stray copy in a subdirectory
+# cannot ship either.
+local.skills-overlay.md
+local.codex-rules-overlay.md
+
 # Harness-local state: settings.local.json, plugin caches, EnterWorktree
 # linked worktrees, etc. Never synced framework content. `.hermes/` is here
 # because a repo-local HERMES_HOME renders SOUL.md (which now carries spliced
