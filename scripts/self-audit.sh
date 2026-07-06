@@ -655,6 +655,11 @@ score_folder_hygiene() {
   fi
 
   # Sub-check 3.2: Anti-pattern dir names — same .gitignore-respecting scope.
+  # find emits filesystem enumeration order, so pipe through LC_ALL=C sort:
+  # when several dirs match the same anti-pattern name, the per-dir gaps must
+  # RECORD in byte order — the cross-twin collation convention (the PS twin
+  # ordinal-sorts the same enumeration; ordinal == C byte order for the ASCII
+  # names this repo uses), keeping .gaps identical across machines and twins.
   local antipatterns="tmp misc notes scratch junk"
   local ap d
   for ap in $antipatterns; do
@@ -672,7 +677,7 @@ score_folder_hygiene() {
         "Anti-pattern directory name" \
         "$d uses a name (\"$ap\") that signals undisciplined accretion" \
         "Rename to something meaningful (e.g. \"runtime/\", \"sandbox/\") or remove if dead"
-    done < <(find "$REPO_ROOT" -type d -name "$ap" 2>/dev/null)
+    done < <(find "$REPO_ROOT" -type d -name "$ap" 2>/dev/null | LC_ALL=C sort)
   done
 
   # Sub-check 3.3: lifecycle: superseded artifacts cite their successor.
@@ -868,8 +873,14 @@ score_closeout_spine_discipline() {
   # harnesses/<h>/capabilities/<name>.md (e.g. a dropped hermes realization)
   # now deducts exactly like a missing Claude/Codex one, so a thinned-out
   # realization can no longer pass BOTH `make verify` AND /self-audit unnoticed.
+  # Enumerate capabilities in LC_ALL=C byte order, not glob order: glob
+  # expansion collates by the ambient locale, so the downstream gap RECORDING
+  # order (harness-union first-seen order + each gap's missing_for list) could
+  # differ across machines/locales and from the PS twin. C collation is the
+  # cross-twin convention (the PS twin ordinal-sorts the same enumeration;
+  # ordinal == C byte order for the ASCII names this repo uses).
   local native_caps=() native_hlists=() cap kind name
-  for cap in "$REPO_ROOT"/capabilities/*.md; do
+  while IFS= read -r cap; do
     [ -f "$cap" ] || continue
     [ "$(basename "$cap" .md)" = "README" ] && continue
     kind="$(fm_get "$cap" kind)"
@@ -880,7 +891,7 @@ score_closeout_spine_discipline() {
     # the lowercase harnesses/<h>/ dir on case-sensitive filesystems — parity with
     # bootstrap's harness-name fold + the PS twin's .ToLower().
     native_hlists+=("$(fm_get "$cap" harnesses | tr -d '[]' | tr ',' ' ' | tr '[:upper:]' '[:lower:]')")
-  done
+  done < <(find "$REPO_ROOT/capabilities" -maxdepth 1 -name '*.md' 2>/dev/null | LC_ALL=C sort)
 
   # Union of declared harnesses, first-seen order. bash 3.2 has no associative
   # arrays, so track membership in a space-padded string.
