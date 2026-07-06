@@ -761,6 +761,12 @@ function Invoke-Pillar3 {
     }
 
     # Sub-check 3.2 — anti-pattern dir names.
+    # Get-ChildItem -Recurse enumeration order is filesystem-dependent, so
+    # ordinal-sort the hit paths: when several dirs match the same anti-pattern
+    # name, the per-dir gaps must RECORD in byte order — the cross-twin
+    # collation convention (the bash twin pipes find through LC_ALL=C sort;
+    # ordinal == C byte order for the ASCII names this repo uses), keeping
+    # .gaps identical across machines and twins.
     $antipatterns = @('tmp', 'misc', 'notes', 'scratch', 'junk')
     foreach ($ap in $antipatterns) {
         $hits = @(Get-ChildItem -LiteralPath $RepoRoot -Directory -Recurse -Force -Filter $ap -ErrorAction SilentlyContinue |
@@ -772,13 +778,21 @@ function Invoke-Pillar3 {
                 if ($f.StartsWith($gitDir) -or $f.StartsWith($nodeMod) -or $f.StartsWith($fixDir)) { return $false }
                 return $true
             })
-        foreach ($h in $hits) {
-            $rel = $h.FullName.Substring($RepoRoot.Length).TrimStart([char]'/', [char]'\').Replace([char]'\', [char]'/')
+        $hitPaths = [string[]]@($hits | ForEach-Object { $_.FullName })
+        # Sort on a separator-normalized key ('\' -> '/') so the ordering KEY is
+        # platform-independent — on Windows a raw '\' (0x5C) key would order
+        # digit-adjacent siblings (a/tmp vs a0/tmp) differently than the bash
+        # twin's '/' (0x2F) find output. The gap detail still emits the original
+        # platform-shaped path.
+        $hitKeys = [string[]]@($hitPaths | ForEach-Object { $_.Replace('\', '/') })
+        [Array]::Sort($hitKeys, $hitPaths, [System.StringComparer]::Ordinal)
+        foreach ($full in $hitPaths) {
+            $rel = $full.Substring($RepoRoot.Length).TrimStart([char]'/', [char]'\').Replace([char]'\', [char]'/')
             if ($hasGit -and (Test-GitIgnored $rel)) { continue }
             Use-Deduct $key 4
             Add-Gap 3 5 `
                 'Anti-pattern directory name' `
-                "$($h.FullName) uses a name (`"$ap`") that signals undisciplined accretion" `
+                "$full uses a name (`"$ap`") that signals undisciplined accretion" `
                 'Rename to something meaningful (e.g. "runtime/", "sandbox/") or remove if dead'
         }
     }
@@ -988,14 +1002,23 @@ function Invoke-Pillar5 {
     $nativeHlist = @{}   # capability base -> declared-harness string[]
     $capDir = Join-Path $RepoRoot 'capabilities'
     if (Test-Path -LiteralPath $capDir -PathType Container) {
-        foreach ($cap in (Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
-            $base = [System.IO.Path]::GetFileNameWithoutExtension($cap.Name)
+        # Get-ChildItem enumeration order is filesystem-dependent (not
+        # guaranteed sorted on ext4/APFS); ordinal-sort the capability paths so
+        # the downstream gap RECORDING order (harness-union first-seen order +
+        # each gap's missing_for list) matches the bash twin's LC_ALL=C-sorted
+        # enumeration — the cross-twin collation convention (ordinal == C byte
+        # order for the ASCII names this repo uses).
+        $capPaths = [string[]]@(Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.FullName })
+        [Array]::Sort($capPaths, [System.StringComparer]::Ordinal)
+        foreach ($capPath in $capPaths) {
+            $base = [System.IO.Path]::GetFileNameWithoutExtension($capPath)
             if ($base -eq 'README') { continue }
-            $kind = Get-FmField -Path $cap.FullName -Key 'kind'
+            $kind = Get-FmField -Path $capPath -Key 'kind'
             if ($kind -ne 'native') { continue }
             [void]$nativeCaps.Add($base)
             # `harnesses: [claude, codex, hermes]` -> @('claude','codex','hermes')
-            $hraw = Get-FmField -Path $cap.FullName -Key 'harnesses'
+            $hraw = Get-FmField -Path $capPath -Key 'harnesses'
             $hlist = @()
             if ($hraw) {
                 # Lowercased — twin of self-audit.sh's tr '[:upper:]' '[:lower:]';

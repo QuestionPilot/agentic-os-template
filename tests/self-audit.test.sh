@@ -1245,3 +1245,111 @@ EOF
     "$lev4_titles"
 }
 _test_equal_leverage_gap_order_insertion
+
+# --- <TEAM>-371 twin-parity guard: multi-hit gap RECORDING order is
+# traversal-independent. Pre-fix, pillar 3.2's per-dir gaps recorded in raw
+# find / Get-ChildItem enumeration order (filesystem-dependent), so two dirs
+# matching the same anti-pattern name could emit in different orders across
+# twins or machines even after the <TEAM>-370 emit-side tie-break (equal
+# leverage preserves INSERTION order — which was itself nondeterministic).
+# Both twins now sort the enumeration (LC_ALL=C / ordinal — the same byte
+# order for ASCII names). Fixture: zeta/tmp is created BEFORE alpha/tmp; the
+# alpha/tmp gap must record (and so emit) first regardless of creation or
+# enumeration order. The PS twin asserts the SAME expected order on the SAME
+# fixture; that shared expectation is the parity contract.
+_test_antipattern_gap_order_sorted() {
+  command -v jq >/dev/null 2>&1 || { _skip "anti-pattern gap-order test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  # Creation order deliberately reversed vs byte order; both dirs kept
+  # non-empty so sub-check 3.1 (empty dirs) stays out of the picture.
+  mkdir -p "$fixture/zeta/tmp" "$fixture/alpha/tmp"
+  printf 'keep\n' > "$fixture/zeta/tmp/keep.txt"
+  printf 'keep\n' > "$fixture/alpha/tmp/keep.txt"
+
+  local out details
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  details="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.title == "Anti-pattern directory name") | .detail] | join("|")')"
+  rm -rf "$fixture"
+
+  assert_eq "anti-pattern multi-hit gaps record in C-sorted path order (alpha before zeta) — twin-parity traversal determinism" \
+    "$fixture/alpha/tmp uses a name (\"tmp\") that signals undisciplined accretion|$fixture/zeta/tmp uses a name (\"tmp\") that signals undisciplined accretion" \
+    "$details"
+}
+_test_antipattern_gap_order_sorted
+
+# --- <TEAM>-371 twin-parity guard: spine-asymmetry gap order derives from the
+# SORTED capability enumeration. bb-caps.md is created before aa-caps.md and
+# is the only declarer of the second harness; pre-fix an unsorted enumeration
+# (PS Get-ChildItem; locale-collated bash glob) could surface Foxtrot's gap
+# before Echo's or scramble a gap's missing_for list. Post-fix both twins
+# enumerate aa-caps, bb-caps (byte order): harness-union first-seen order is
+# echo then foxtrot, and echo's missing_for is "aa-caps bb-caps".
+_test_spine_asymmetry_gap_order_sorted() {
+  command -v jq >/dev/null 2>&1 || { _skip "spine-asymmetry gap-order test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  cat > "$fixture/capabilities/bb-caps.md" <<'EOF'
+---
+name: bb-caps
+summary: fixture capability
+triggers: [test]
+verification: example
+harnesses: [echo, foxtrot]
+kind: native
+lifecycle: shipped
+---
+
+# bb-caps
+EOF
+  cat > "$fixture/capabilities/aa-caps.md" <<'EOF'
+---
+name: aa-caps
+summary: fixture capability
+triggers: [test]
+verification: example
+harnesses: [echo]
+kind: native
+lifecycle: shipped
+---
+
+# aa-caps
+EOF
+
+  local out titles echo_detail
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  titles="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.title | startswith("Spine asymmetry")) | .title] | join("|")')"
+  echo_detail="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.title == "Spine asymmetry: missing Echo realization(s)") | .detail] | first')"
+  rm -rf "$fixture"
+
+  assert_eq "spine-asymmetry gaps record per sorted cap enumeration (Echo before Foxtrot) — twin-parity traversal determinism" \
+    "Spine asymmetry: missing Echo realization(s)|Spine asymmetry: missing Foxtrot realization(s)" \
+    "$titles"
+  assert_eq "spine-asymmetry missing_for names follow sorted cap enumeration (aa-caps before bb-caps)" \
+    "Native capability(s) without harnesses/echo/capabilities/<name>.md: aa-caps bb-caps" \
+    "$echo_detail"
+}
+_test_spine_asymmetry_gap_order_sorted
+
+# --- <TEAM>-371 panel ask: a fixture with NO capabilities/ dir must not trip
+# the new find-based enumeration — the suppressed find yields zero rows, the
+# script completes, and no spine-asymmetry gap records. Pins the missing-dir
+# edge the glob→find swap could have changed.
+_test_spine_no_capabilities_dir() {
+  command -v jq >/dev/null 2>&1 || { _skip "no-capabilities-dir test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  rm -rf "$fixture/capabilities"
+
+  local out total_type spine_count
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  total_type="$(printf '%s' "$out" | jq -r '.total | type')"
+  spine_count="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.title | startswith("Spine asymmetry"))] | length')"
+  rm -rf "$fixture"
+
+  assert_eq "no capabilities/ dir: script still emits valid JSON (find-based enumeration yields zero rows)" \
+    "number" "$total_type"
+  assert_eq "no capabilities/ dir: no spine-asymmetry gap records" \
+    "0" "$spine_count"
+}
+_test_spine_no_capabilities_dir

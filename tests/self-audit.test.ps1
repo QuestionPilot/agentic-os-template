@@ -1106,3 +1106,97 @@ recent project body, deliberately without a state-deltas section
 } else {
     _Skip 'self-audit.test: equal-leverage gap-order test' 'jq not installed'
 }
+
+# --- <TEAM>-371 twin-parity guard: multi-hit gap RECORDING order is
+# traversal-independent (mirrors tests/self-audit.test.sh). Both twins sort the
+# pillar-3.2 enumeration (bash: find | LC_ALL=C sort; PS: ordinal Array.Sort),
+# so two dirs matching the same anti-pattern name record in byte order, not
+# filesystem enumeration order. Same fixture, same expected order as the sh
+# twin: zeta/tmp is created BEFORE alpha/tmp; alpha's gap must emit first.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'zeta' 'tmp') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'alpha' 'tmp') -Force | Out-Null
+    Write-LfFile (Join-Path $fixture 'zeta' 'tmp' 'keep.txt') "keep`n"
+    Write-LfFile (Join-Path $fixture 'alpha' 'tmp' 'keep.txt') "keep`n"
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--json')
+    $obj = $out | ConvertFrom-Json
+    $details = @($obj.gaps | Where-Object { $_.title -eq 'Anti-pattern directory name' } | ForEach-Object { $_.detail }) -join '|'
+    $expA = (Join-Path $fixture 'alpha' 'tmp') + ' uses a name ("tmp") that signals undisciplined accretion'
+    $expZ = (Join-Path $fixture 'zeta' 'tmp') + ' uses a name ("tmp") that signals undisciplined accretion'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: anti-pattern multi-hit gaps record in C-sorted path order (alpha before zeta) — twin-parity traversal determinism' `
+        "$expA|$expZ" $details
+} else {
+    _Skip 'self-audit.test: anti-pattern gap-order test' 'jq not installed'
+}
+
+# --- <TEAM>-371 twin-parity guard: spine-asymmetry gap order derives from the
+# SORTED capability enumeration (mirrors tests/self-audit.test.sh). bb-caps.md
+# is created before aa-caps.md and is the only declarer of the second harness;
+# post-fix both twins enumerate aa-caps, bb-caps (byte order): harness-union
+# first-seen order is echo then foxtrot, and echo's missing_for is
+# "aa-caps bb-caps".
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    Write-LfFile (Join-Path $fixture 'capabilities' 'bb-caps.md') @'
+---
+name: bb-caps
+summary: fixture capability
+triggers: [test]
+verification: example
+harnesses: [echo, foxtrot]
+kind: native
+lifecycle: shipped
+---
+
+# bb-caps
+'@
+    Write-LfFile (Join-Path $fixture 'capabilities' 'aa-caps.md') @'
+---
+name: aa-caps
+summary: fixture capability
+triggers: [test]
+verification: example
+harnesses: [echo]
+kind: native
+lifecycle: shipped
+---
+
+# aa-caps
+'@
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--json')
+    $obj = $out | ConvertFrom-Json
+    $titles = @($obj.gaps | Where-Object { $_.title -like 'Spine asymmetry*' } | ForEach-Object { $_.title }) -join '|'
+    $echoDetail = @($obj.gaps | Where-Object { $_.title -eq 'Spine asymmetry: missing Echo realization(s)' } | ForEach-Object { $_.detail }) | Select-Object -First 1
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: spine-asymmetry gaps record per sorted cap enumeration (Echo before Foxtrot) — twin-parity traversal determinism' `
+        'Spine asymmetry: missing Echo realization(s)|Spine asymmetry: missing Foxtrot realization(s)' $titles
+    Assert-Eq 'self-audit.test: spine-asymmetry missing_for names follow sorted cap enumeration (aa-caps before bb-caps)' `
+        'Native capability(s) without harnesses/echo/capabilities/<name>.md: aa-caps bb-caps' $echoDetail
+} else {
+    _Skip 'self-audit.test: spine-asymmetry gap-order test' 'jq not installed'
+}
+
+# --- <TEAM>-371 panel ask: a fixture with NO capabilities/ dir must not trip
+# the sorted enumeration (mirrors tests/self-audit.test.sh) — Test-Path guards
+# the block, the script completes, and no spine-asymmetry gap records.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    Remove-Item -LiteralPath (Join-Path $fixture 'capabilities') -Recurse -Force -ErrorAction SilentlyContinue
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--json')
+    $obj = $null
+    try { $obj = $out | ConvertFrom-Json -ErrorAction Stop } catch { $obj = $null }
+    $totalIsNumber = if ($null -ne $obj -and ($obj.total -is [int64] -or $obj.total -is [int32] -or $obj.total -is [double])) { 'number' } else { 'not-number' }
+    $spineCount = if ($null -ne $obj) { @($obj.gaps | Where-Object { $_.title -like 'Spine asymmetry*' }).Count } else { -1 }
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: no capabilities/ dir: script still emits valid JSON (guarded enumeration yields zero rows)' `
+        'number' $totalIsNumber
+    Assert-Eq 'self-audit.test: no capabilities/ dir: no spine-asymmetry gap records' `
+        '0' "$spineCount"
+} else {
+    _Skip 'self-audit.test: no-capabilities-dir test' 'jq not installed'
+}
