@@ -155,7 +155,7 @@ lineark issues list --mine --format json
 # (on `list`, .state is a bare string — filter on .state == "In Progress")
 
 # Read full issue body + comments
-lineark issues read QUE-NN --format json
+lineark issues read TEAM-NN --format json
 
 # Create an issue
 lineark issues create "Title" \
@@ -167,17 +167,17 @@ lineark issues create "Title" \
   --format json
 
 # Comment on an issue
-lineark comments create QUE-NN --body "Markdown comment" --format json
+lineark comments create TEAM-NN --body "Markdown comment" --format json
 
 # Update issue state, assignee, etc.
-lineark issues update QUE-NN --state "In Progress" --assignee me --format json
+lineark issues update TEAM-NN --state "In Progress" --assignee me --format json
 
 # Archive / unarchive an issue (archived issues drop out of list/read/search — see §7)
-lineark issues archive QUE-NN --format json
-lineark issues unarchive QUE-NN --format json
+lineark issues archive TEAM-NN --format json
+lineark issues unarchive TEAM-NN --format json
 
 # Add a relation (blocks, blocked-by, related)
-lineark relations create QUE-X --blocked-by QUE-Y --format json
+lineark relations create TEAM-X --blocked-by TEAM-Y --format json
 ```
 
 `--format json` is what scripts and agents should use; bare invocation produces human-readable output.
@@ -202,7 +202,7 @@ Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. 
 
 | Call | `.state` shape | Query |
 | --- | --- | --- |
-| `issues read QUE-NN` | object `{id, name}` | `.state.name` |
+| `issues read TEAM-NN` | object `{id, name}` | `.state.name` |
 | `issues list` | bare **string** (e.g. `"Backlog"`) | `.state` |
 | `projects list` | **absent** — payload is only `id`, `name`, `slug_id`, `lead` | n/a |
 
@@ -223,7 +223,7 @@ This order matters: an assignee-first cut alone misses brand-new projects whose 
 **Linear gate — declare before edits.** Before any file-modifying action in a multi-step or multi-session task, the agent declares the active Linear issue in its routing block:
 
 ```
-Linear gate: QUE-NN
+Linear gate: TEAM-NN
 ```
 
 Single-step trivial changes (e.g. a one-line fix) can declare `Linear gate: none — single-step`. The framework's harness-side enforcement hook checks for this line before allowing file edits; missing it blocks the edit.
@@ -253,7 +253,7 @@ Common ways the Linear layer degrades, and what to do.
 - **MCP silent-empty-tools.** The Linear MCP connector reports `Connected` but exposes 0 tools on session load. Reconnect from the harness MCP panel. If the silent failure persists, fall back to `lineark`.
 - **Surface-doc mismatch.** This guide cites lineark commands or MCP tool names that the installed binary or connector version does not expose. Both upstreams iterate independently; cross-check `lineark --help` or the MCP plugin's tool catalog when a documented command errors.
 - **`.state` shape mismatch (lineark).** A jq filter using `.state.name` over `lineark issues list` errors with `Cannot index string with string "name"`, and a project state-filter silently matches nothing — `lineark` exposes no project state field at all. `.state` is an object only on `issues read`; it is a bare string on `issues list` and absent from `projects list`. Query `.state` on a list, `.state.name` on a read; never pre-filter projects by state against `lineark`. Full table in §4.3.
-- **Issue not found.** `lineark issues read QUE-NN` returns not-found despite the issue existing. Common cause: the issue lives in a project the token's user does not have access to; verify by viewing the issue in the Linear UI under the same account that owns the token.
+- **Issue not found.** `lineark issues read TEAM-NN` returns not-found despite the issue existing. Common cause: the issue lives in a project the token's user does not have access to; verify by viewing the issue in the Linear UI under the same account that owns the token.
 - **Free-plan issue cap.** Linear's Free plan caps a workspace at **250 active (non-archived) issues**; `Done` and `Canceled` issues still count, and once the cap is hit, creating new issues is blocked. The fix is to **archive** closed issues — archived issues are retained but no longer count toward the cap — not to delete them. Watch one masking effect: `lineark issues list --limit` tops out at 250, so on a large workspace the visible count can hide the true active total; page through GraphQL `issues(first: 250, after: $cursor)` for an accurate count.
-- **Archived issues invisible to `lineark`.** `lineark issues read|list|search` all exclude archived issues, so reading an archived issue returns *not found* even though its data is intact. Read an archived issue's description and comments via a GraphQL `issues(filter: …, includeArchived: true)` connection query (the flag is a connection argument — the singular `issue(id:)` query doesn't accept it), or through the Linear UI's Archive view; `lineark issues unarchive QUE-NN` restores it to the active set. `lineark` has no bulk-archive command — `lineark issues archive` takes one issue at a time and `batch-update` cannot archive — so to clear many at once, drive the GraphQL `issueArchive(id: <issue UUID>) { success }` mutation per issue, sequentially to respect the rate limit below (the `id` is each issue's internal `.id` from a list/read, not its `QUE-NN` key).
+- **Archived issues invisible to `lineark`.** `lineark issues read|list|search` all exclude archived issues, so reading an archived issue returns *not found* even though its data is intact. Read an archived issue's description and comments via a GraphQL `issues(filter: …, includeArchived: true)` connection query (the flag is a connection argument — the singular `issue(id:)` query doesn't accept it), or through the Linear UI's Archive view; `lineark issues unarchive TEAM-NN` restores it to the active set. `lineark` has no bulk-archive command — `lineark issues archive` takes one issue at a time and `batch-update` cannot archive — so to clear many at once, drive the GraphQL `issueArchive(id: <issue UUID>) { success }` mutation per issue, sequentially to respect the rate limit below (the `id` is each issue's internal `.id` from a list/read, not its `TEAM-NN` key).
 - **Rate limit.** Linear's GraphQL API has request-per-minute limits. `lineark` surfaces this as an error; back off and retry after the documented window. Agents should batch reads (one `projects list` then iterate locally) rather than per-issue calls.

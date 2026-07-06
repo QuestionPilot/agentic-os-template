@@ -636,6 +636,24 @@ foreach ($nf in $noteFiles) {
     [Console]::Error.WriteLine("WARN missing-type: ${base} — looks like project memory ($label) but its frontmatter sets no type:; the project scanners key on metadata.type, so an untyped note is invisible to them. Add the correct type: (see core/memory-model.md)")
 }
 
+# --- Unknown-type guard (ADVISORY, sibling of the missing-type guard above). ------
+# Twin of the bash loop. The per-kind scanners recognize exactly the memory-model
+# enum — project / feedback / reference / decision / user (core/memory-model.md →
+# Note Discoverability + Frontmatter Contract). A note TYPED outside that enum is
+# just as invisible to them as an untyped one, but the missing-type guard only
+# fires when `type:` is absent. WARN-only for the same reason it is: a hard gate
+# would break an operator running a deliberate local extension; the warn makes
+# the invisibility visible instead of silent.
+$knownKinds = @('project', 'feedback', 'reference', 'decision', 'user')
+foreach ($nf in $noteFiles) {
+    $base = $nf.Name
+    $t = Get-MemNoteType -Path $nf.FullName
+    if ([string]::IsNullOrEmpty($t)) { continue }
+    if ($knownKinds -notcontains $t) {
+        [Console]::Error.WriteLine("WARN unknown-type: ${base} — frontmatter type `"$t`" is not a memory-model kind (project/feedback/reference/decision/user), so the per-kind scanners skip this note. Fix the type, or extend the enum in core/memory-model.md if it is a deliberate new kind")
+    }
+}
+
 if ($drift -eq 0 -and $indexFail -eq 0 -and $fmFail -eq 0 -and $injFail -eq 0) {
     Write-Host "PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads ($scanned project files headline-checked, $notesScanned notes frontmatter+injection-scanned in $MemoryDirsLabel)"
     exit 0

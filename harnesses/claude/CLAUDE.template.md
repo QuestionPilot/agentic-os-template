@@ -17,22 +17,22 @@ Key files for most sessions:
 
 ## Skills
 
-**Catalog:** `claude-config/SKILLS.md` — full live inventory by family + candidates. Open on demand.
+**Catalog:** `@@CLAUDE_CONFIG_DIR@@/SKILLS.md` — full live inventory by family + candidates. Open on demand.
 
 **`session-agent` is the spine.** The framework SessionStart hook directs you to invoke `session-agent` as the first action of every session — Mode 1 (kickoff orient: memory + Linear + vault + reconciliation) then route the user's first prompt. On every subsequent non-trivial prompt, re-invoke `session-agent` (Mode 2: route only — orient is already live in context). One capability, two modes; the body teaches both. A PreToolUse hook on Write/Edit/NotebookEdit enforces the gate before file edits as a safety net.
 
 ### Quick-reference
 
+The framework itself ships only the spine capabilities (table below). Everything else routes to Claude Code built-ins or to operator-installed skills — the build-generated `@@CLAUDE_CONFIG_DIR@@/SKILLS.md` Live Inventory is the source of truth for what is actually installed here.
+
 | Surface | Primary skill |
 | --- | --- |
-| Pre-PR review of local changes | `review` |
-| Security-sensitive change | `security-review` |
-| Anthropic SDK / Claude API code | `claude-api` |
-| Build / update a Claude Code skill | `anthropic-skills:skill-creator` |
-| Project CLAUDE.md hygiene | `claude-md-management` |
+| Pre-PR review of local changes | `review` (built-in) |
+| Security-sensitive change | `security-review` (built-in) |
+| Anthropic SDK / Claude API code | `claude-api` (built-in) |
+| Build / update a Claude Code skill | `@@AI_CONFIG_DIR@@/skills/skill-authoring.md`; operator skill-creation tooling if installed |
 | Active work tracking | See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the lineark CLI / Linear MCP setup options |
-| Data analysis | `data:analyze` |
-| Document artifact (deck / doc / sheet / PDF) | `anthropic-skills:pptx` / `:docx` / `:xlsx` / `:pdf` |
+| Data analysis / document artifacts (deck, doc, sheet, PDF) | operator-installed skills, if present — see the `SKILLS.md` Live Inventory |
 | Engineering workflows (debug, plans, TDD, parallel work, branch closeout) | see `SKILLS.md` Live Inventory |
 | Ambiguous or multi-surface | `/session-agent` (orchestration sub-routine) |
 

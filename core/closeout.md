@@ -4,14 +4,15 @@ Every meaningful workstream should end with a clear closeout.
 
 ## Required Closeout
 
-Include:
+The canonical output-block schema — section names, order, and per-section
+content — lives in `linear/closeout-format.md`; the `closeout` capability
+emits it. The block must cover:
 
-- result
-- files or systems changed
-- verification performed
-- independent review decision
-- residual risk
-- self-improvement classification
+- result (`## Result`)
+- files or systems changed (`## State Deltas` + `## Files created this session`)
+- verification performed and the independent review decision (`## Verification`)
+- residual risk (`## Residual Risk`)
+- self-improvement classification (`## Lessons`)
 
 ## Self-Improvement Closeout
 

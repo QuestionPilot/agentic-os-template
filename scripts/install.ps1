@@ -408,6 +408,14 @@ New-Item -ItemType Directory -Path $TARGET -Force | Out-Null
 # leak relative `command` paths into the generated settings.json hook entries.
 $TARGET = (Resolve-Path -LiteralPath $TARGET).Path
 
+# The claude entrypoint templates reference the harness's own config-dir token
+# (@@CLAUDE_CONFIG_DIR@@ — the rendered SKILLS.md catalog path). Resolve that
+# token from the EFFECTIVE target: under -Out (or a fixture local.env that
+# leaves the var unset) the raw env var is empty or points elsewhere, but the
+# rendered files live at $TARGET — the only truthful substitution value.
+# Process-scoped (default), mirroring the bash twin's export.
+[Environment]::SetEnvironmentVariable($targetEnvVar, $TARGET)
+
 # A real install builds under $TARGET so the final swap is an atomic same-
 # filesystem rename. A -DryRun never swaps, so it builds in a NEUTRAL system temp
 # instead — the live target is then never written to (not even a transient
@@ -1797,6 +1805,29 @@ try {
     Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
 
     [Console]::Error.WriteLine("install.ps1: built $Harness harness into $TARGET")
+
+    # Catalog-honesty warn (claude-only): every skill dir living under
+    # $TARGET/skills/ should appear backtick-quoted in the rendered SKILLS.md —
+    # an installed-but-uncataloged skill makes the catalog under-report what
+    # this harness can actually do. Advisory only: operator skills arrive
+    # outside install.ps1's control, so warn and name the overlay fix, never
+    # fail the install. Ordinal sort mirrors the bash twin's LC_ALL=C order.
+    $skillsMd = Join-Path $TARGET 'SKILLS.md'
+    $skillsDirPath = Join-Path $TARGET 'skills'
+    if ($Harness -eq 'claude' -and (Test-Path -LiteralPath $skillsMd) -and (Test-Path -LiteralPath $skillsDirPath)) {
+        # -Raw returns $null for a zero-byte file — coalesce so .Contains below
+        # cannot throw and crash an otherwise-complete install (advisory warn
+        # must never fail the install).
+        $catalogText = Get-Content -LiteralPath $skillsMd -Raw
+        if ($null -eq $catalogText) { $catalogText = '' }
+        $uncataloged = @(Get-ChildItem -LiteralPath $skillsDirPath -Directory |
+            Where-Object { -not $catalogText.Contains('`' + $_.Name + '`') } |
+            ForEach-Object { $_.Name })
+        [Array]::Sort($uncataloged, [System.StringComparer]::Ordinal)
+        if ($uncataloged.Count -gt 0) {
+            Warn ("skills installed under $TARGET\skills but absent from the rendered SKILLS.md catalog: " + ($uncataloged -join ' ') + " — list them in your skills overlay (SKILLS_OVERLAY_PATH in local.env) so the catalog reports what is actually installed")
+        }
+    }
 
     # The codex build is inert until the user trusts the generated hooks.json:
     # Codex does not run a non-managed hooks.json until trusted via the interactive

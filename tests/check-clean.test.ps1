@@ -361,6 +361,84 @@ try {
     Remove-Item Env:\COMMIT_IDENTITY_ALLOWLIST -ErrorAction SilentlyContinue
 }
 
+# --- Tracker-prefix configurability (TRACKER_ISSUE_PREFIX) ---------------------
+# The issue-ID scan derives from the configured prefix set; unset keeps the
+# historical QUE default (proven by the fixtures above). Prefix sentinels are
+# runtime-built from halves like every other trip-shape in this file.
+$CC_ABC = 'AB' + 'C'
+$CC_OPS = 'OP' + 'S'
+$ccAbcLc = 'ab' + 'c'
+Remove-Item Env:\TRACKER_ISSUE_PREFIX -ErrorAction SilentlyContinue
+try {
+    # A configured non-default prefix is caught, and the report names it.
+    $ccPfx = Join-Path $CC_TMP 'pfx'; New-Item -ItemType Directory -Path $ccPfx -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ccPfx 'a.md') -Value "tracked under ${CC_ABC}-123 for follow-up"
+    $env:TRACKER_ISSUE_PREFIX = $CC_ABC
+    $ccPfxOut = (& pwsh -NoProfile -File $CC_SUT $ccPfx 2>&1 | Out-String)
+    $ccPfxRc = $LASTEXITCODE
+    Assert-Eq 'configured prefix issue-ID FAILS' '1' "$ccPfxRc"
+    Assert-Contains 'configured-prefix report names the prefix' $ccPfxOut "(${CC_ABC}-<n>)"
+    # The same tree passes an UNCONFIGURED run (QUE default) — the documented
+    # contract: the guard defends exactly the prefixes it is told about.
+    Remove-Item Env:\TRACKER_ISSUE_PREFIX -ErrorAction SilentlyContinue
+    Assert-Exit 'non-default prefix passes when unconfigured (QUE default)' 0 -- pwsh -NoProfile -File $CC_SUT $ccPfx
+
+    # Multi-prefix: every configured key is scanned and named.
+    $ccPfx2 = Join-Path $CC_TMP 'pfx2'; New-Item -ItemType Directory -Path $ccPfx2 -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ccPfx2 'a.md') -Value "see ${CC_OPS}-7 here"
+    Set-Content -LiteralPath (Join-Path $ccPfx2 'b.md') -Value "and ${CC_ABC}-9 there"
+    $env:TRACKER_ISSUE_PREFIX = "$CC_ABC,$CC_OPS"
+    $ccPfx2Out = (& pwsh -NoProfile -File $CC_SUT $ccPfx2 2>&1 | Out-String)
+    $ccPfx2Rc = $LASTEXITCODE
+    Assert-Eq 'multi-prefix: both configured keys are scanned (FAIL)' '1' "$ccPfx2Rc"
+    Assert-Contains 'multi-prefix: first key named' $ccPfx2Out "(${CC_ABC}-<n>)"
+    Assert-Contains 'multi-prefix: second key named' $ccPfx2Out "(${CC_OPS}-<n>)"
+
+    # Derived-pattern semantics carry over: lowercase no-hyphen at a boundary
+    # trips; a lowercase occurrence embedded inside a word does not.
+    $ccPfxLc = Join-Path $CC_TMP 'pfxlc'; New-Item -ItemType Directory -Path $ccPfxLc -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ccPfxLc 'a.md') -Value "stale ref ${ccAbcLc}42 here"
+    $env:TRACKER_ISSUE_PREFIX = $CC_ABC
+    Assert-Exit 'lowercase no-hyphen (<prefix><NN>) FAILS for a configured prefix' 1 -- pwsh -NoProfile -File $CC_SUT $ccPfxLc
+    $ccPfxB = Join-Path $CC_TMP 'pfxb'; New-Item -ItemType Directory -Path $ccPfxB -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ccPfxB 'a.md') -Value "word f${ccAbcLc}123 embedded here"
+    Assert-Exit 'embedded lowercase prefix does NOT trip (boundary preserved)' 0 -- pwsh -NoProfile -File $CC_SUT $ccPfxB
+
+    # Prefix read from the target's gitignored local.env when not exported.
+    Remove-Item Env:\TRACKER_ISSUE_PREFIX -ErrorAction SilentlyContinue
+    $ccPfxLenv = Join-Path $CC_TMP 'pfx-lenv'; New-Item -ItemType Directory -Path $ccPfxLenv -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ccPfxLenv 'a.md') -Value "see ${CC_ABC}-11 here"
+    Set-Content -LiteralPath (Join-Path $ccPfxLenv 'local.env') -Value "TRACKER_ISSUE_PREFIX=`"$CC_ABC`""
+    Assert-Exit 'prefix read from the target local.env when not exported' 1 -- pwsh -NoProfile -File $CC_SUT $ccPfxLenv
+
+    # TEAM is the reserved documentation placeholder. Lock the exact contract:
+    # BOTH placeholder shapes the framework uses — digitless TEAM-NN and
+    # bracketed <TEAM>-<digits> (the '>' breaks prefix-digit adjacency) — pass
+    # even when TEAM itself is the configured prefix; only a BARE TEAM-<digits>
+    # (a shape framework files never carry) trips it.
+    $CC_TEAM = 'TE' + 'AM'
+    $ccTeam = Join-Path $CC_TMP 'team'; New-Item -ItemType Directory -Path $ccTeam -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $ccTeam 'a.md') -Value "reference issues as ${CC_TEAM}-NN in docs"
+    Set-Content -LiteralPath (Join-Path $ccTeam 'b.md') -Value "provenance note (<${CC_TEAM}>-147.)"
+    $env:TRACKER_ISSUE_PREFIX = $CC_TEAM
+    Assert-Exit 'framework placeholder shapes (TEAM-NN, <TEAM>-147) do NOT trip a configured TEAM prefix' 0 -- pwsh -NoProfile -File $CC_SUT $ccTeam
+    Set-Content -LiteralPath (Join-Path $ccTeam 'c.md') -Value "bare ${CC_TEAM}-123 here"
+    Assert-Exit 'bare TEAM-<digits> DOES trip a configured TEAM prefix' 1 -- pwsh -NoProfile -File $CC_SUT $ccTeam
+
+    # Misconfiguration fails closed, never open: an invalid key (leading digit)
+    # and a set-but-only-separators value are both usage errors (exit 2). A
+    # set-but-EMPTY value falls back to the QUE default (the local.env.example
+    # stub ships empty).
+    $env:TRACKER_ISSUE_PREFIX = '1BC'
+    Assert-Exit 'invalid prefix entry FAILS closed (exit 2)' 2 -- pwsh -NoProfile -File $CC_SUT $ccClean
+    $env:TRACKER_ISSUE_PREFIX = ' , '
+    Assert-Exit 'separators-only prefix list FAILS closed (exit 2)' 2 -- pwsh -NoProfile -File $CC_SUT $ccClean
+    $env:TRACKER_ISSUE_PREFIX = ''
+    Assert-Exit 'empty prefix value falls back to the QUE default (clean tree passes)' 0 -- pwsh -NoProfile -File $CC_SUT $ccClean
+} finally {
+    Remove-Item Env:\TRACKER_ISSUE_PREFIX -ErrorAction SilentlyContinue
+}
+
 # --- Scanner-integrity: a non-directory target is an error, not a pass --------
 Assert-Exit 'non-directory target is an error (exit 2)' 2 -- pwsh -NoProfile -File $CC_SUT (Join-Path $CC_TMP 'does-not-exist')
 

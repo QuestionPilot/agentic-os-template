@@ -5,7 +5,7 @@
 > This template ships ONLY the spine: the routing method, a spine-only routing table, the generated capability catalog, and the built-in harness skills. Everything operator-specific (plugin/skill families, MCP doc-lookup connectors, local CLIs) lives in a local **skills overlay** that `install.{sh,ps1}` append at the operator-overlay marker below — set `SKILLS_OVERLAY_PATH` in `local.env` to point at it. The overlay is operator-local and is never shipped in the framework.
 >
 > Single source of truth for skills installed and available in **this** Claude Code harness.
-> Last verified: 2026-06-07
+> The capability-catalog table refreshes on every `install.sh` render; truth-check the rest against the session's "skills available" block (see Maintenance below) — no hand-maintained freshness stamp.
 
 ## How to use this file
 
@@ -124,6 +124,6 @@ CLI-first rule: before reaching for an MCP tool, check `gh`, `git`, `curl`, `rg`
 
 - `@@AI_CONFIG_DIR@@/skills/registry.md` — the shipped spine capabilities + the baseline rule (stay spine-only). Travels to any harness.
 - `@@AI_CONFIG_DIR@@/skills/skill-authoring.md` — how to design and author a skill well.
-- **`claude-config/SKILLS.md` (this file)** — what's actually installed in **this** harness right now. Day-to-day routing source.
+- **`@@CLAUDE_CONFIG_DIR@@/SKILLS.md` (this file)** — what's actually installed in **this** harness right now. Day-to-day routing source.
 
 If a skill in the routing table goes stale, fix this file first. If a portable pattern needs updating, propose a change to `@@AI_CONFIG_DIR@@/skills/` and get user approval (per agentic-os-template governance rule).

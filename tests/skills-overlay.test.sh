@@ -102,4 +102,54 @@ if [ -f "$_bd/SKILLS.md" ]; then
 fi
 [ -n "$_bd" ] && rm -rf "$_bd"
 
+# 6. Catalog-honesty warn: a skill dir living in the live target but absent from
+# the rendered SKILLS.md draws an advisory stderr warn on a FULL install — the
+# install still exits 0 (warn-not-fail contract) and the warn names both the
+# offending dir and the overlay fix.
+CH_DIR="$(mktemp -d)"
+CH_TGT="$CH_DIR/cfg"
+mkdir -p "$CH_TGT/skills/mystery-operator-skill" "$CH_TGT/skills/zz aa"
+printf '# operator skill\n' > "$CH_TGT/skills/mystery-operator-skill/SKILL.md"
+printf '# spaced-name skill\n' > "$CH_TGT/skills/zz aa/SKILL.md"
+CH_ENV="$CH_DIR/local.env"
+make_local_env "$CH_ENV" "$CH_TGT" "$CH_DIR/vault"
+ch_status=0
+AI_CONFIG_LOCAL_ENV="$CH_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude >/dev/null 2>"$CH_DIR/stderr" || ch_status=$?
+assert_eq "catalog-warn: install with an uncataloged skill dir still exits 0" "0" "$ch_status"
+assert_contains "catalog-warn: warn names the uncataloged skill dir" \
+  "$(cat "$CH_DIR/stderr")" "mystery-operator-skill"
+# A skill dir named with a space reports as ONE skill (array accumulator, no
+# word-splitting). "zz aa" is chosen so its halves would NOT sort adjacent if
+# split — pre-fix output ("aa … zz") cannot contain the substring by accident.
+assert_contains "catalog-warn: spaced skill-dir name reports as one skill" \
+  "$(cat "$CH_DIR/stderr")" "zz aa"
+assert_contains "catalog-warn: warn names the overlay fix" \
+  "$(cat "$CH_DIR/stderr")" "SKILLS_OVERLAY_PATH"
+# Spine skills are cataloged by the generated table — they must NOT be flagged.
+ch_warnline="$(grep 'absent from the rendered SKILLS.md catalog' "$CH_DIR/stderr" || true)"
+assert_not_contains "catalog-warn: cataloged spine skill draws no warn" \
+  "$ch_warnline" "session-agent"
+rm -rf "$CH_DIR"
+
+# 7. Catalog-honesty warn suppressed when the overlay lists the skill: the same
+# uncataloged dir plus an overlay row naming it backticked renders warn-free.
+CQ_DIR="$(mktemp -d)"
+CQ_TGT="$CQ_DIR/cfg"
+mkdir -p "$CQ_TGT/skills/mystery-operator-skill"
+printf '# operator skill\n' > "$CQ_TGT/skills/mystery-operator-skill/SKILL.md"
+CQ_OV="$CQ_DIR/overlay.md"
+printf '### Operator skills\n\n| `mystery-operator-skill` | test row |\n' > "$CQ_OV"
+CQ_ENV="$CQ_DIR/local.env"
+{ make_local_env "$CQ_ENV" "$CQ_TGT" "$CQ_DIR/vault"
+  printf 'SKILLS_OVERLAY_PATH=%q\n' "$CQ_OV" >> "$CQ_ENV"
+}
+cq_status=0
+AI_CONFIG_LOCAL_ENV="$CQ_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude >/dev/null 2>"$CQ_DIR/stderr" || cq_status=$?
+assert_eq "catalog-warn: overlay-listed skill install exits 0" "0" "$cq_status"
+assert_not_contains "catalog-warn: overlay-listed skill draws no warn" \
+  "$(cat "$CQ_DIR/stderr")" "absent from the rendered SKILLS.md catalog"
+rm -rf "$CQ_DIR"
+
 rm -rf "$SO_DIR"

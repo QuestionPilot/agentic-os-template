@@ -111,7 +111,7 @@ MCP-health probe, and (c) the session-agent invocation directive
 **Kickoff reconciliation contract.** The hook's commit window is the freshness
 signal at session start; memory captures what was true when written, the
 commit log captures what is true now. The contract that requires the model
-to cross-reference `QUE-\d+` patterns in the surfaced commits against memory
+to cross-reference `TEAM-\d+` patterns in the surfaced commits against memory
 headlines for the same project (flagging contradictions when a project memory
 says `COMPLETE` but recent commits still reference its issues) lives in the
 `session-agent` capability's Mode 1 orient — specifically sub-step O2,

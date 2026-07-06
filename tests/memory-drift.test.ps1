@@ -907,6 +907,30 @@ Assert-Contains 'memory-drift.test <TEAM>-354: BOM+CRLF typeless project note wa
 Assert-Contains 'memory-drift.test <TEAM>-354: whitespace-padded fences still complete-frontmatter -> warned' $MTYPE_PAR_OUT 'missing-type: project_wsfence.md'
 Assert-Contains 'memory-drift.test <TEAM>-354: top-level node_type: does NOT count as a type -> warned' $MTYPE_PAR_OUT 'missing-type: project_nodetype.md'
 
+# --- 39a. Unknown-type guard (ADVISORY sibling of the missing-type guard — twin of
+# bash test 39a): a note TYPED outside the memory-model enum draws a
+# `WARN unknown-type:` naming the bad value; every enum kind — including `decision`,
+# the framework extension the harness-injected four-kind prompt omits — passes
+# silently; quoted values are normalized; the advisory never flips the exit code.
+$UTYPE_TMP = Join-Path ([IO.Path]::GetTempPath()) ("memory-utype-" + [Guid]::NewGuid().Guid.Substring(0,8))
+New-Item -ItemType Directory -Path $UTYPE_TMP -Force | Out-Null
+Write-LfFile (Join-Path $UTYPE_TMP 'odd-kind.md') "---`nname: odd-kind`ndescription: `"typed with a kind the enum does not know`"`nmetadata:`n  type: journal`n---`nBody.`n"
+foreach ($k in @('project', 'feedback', 'reference', 'decision', 'user')) {
+    Write-LfFile (Join-Path $UTYPE_TMP "kind-$k.md") "---`nname: kind-$k`ndescription: `"x`"`nmetadata:`n  type: $k`n---`nBody.`n"
+}
+Write-LfFile (Join-Path $UTYPE_TMP 'quoted-kind.md') "---`nname: quoted-kind`ndescription: `"x`"`nmetadata:`n  type: `"decision`"`n---`nBody.`n"
+$UTYPE_OUT = & pwsh -NoProfile -File $CMD_SCRIPT --memory-dir $UTYPE_TMP 2>&1
+$UTYPE_RC = $LASTEXITCODE
+if ($UTYPE_OUT -is [array]) { $UTYPE_OUT = $UTYPE_OUT -join "`n" }
+Assert-Eq 'memory-drift.test unknown-type: advisory guard does NOT change exit 0' '0' "$UTYPE_RC"
+Assert-Contains 'memory-drift.test unknown-type: out-of-enum kind warned' $UTYPE_OUT 'unknown-type: odd-kind.md'
+Assert-Contains 'memory-drift.test unknown-type: warn names the bad value' $UTYPE_OUT 'type "journal"'
+foreach ($k in @('project', 'feedback', 'reference', 'decision', 'user')) {
+    Assert-NotContains "memory-drift.test unknown-type: enum kind '$k' not flagged" $UTYPE_OUT "unknown-type: kind-$k.md"
+}
+Assert-NotContains 'memory-drift.test unknown-type: quoted enum kind normalized, not flagged' $UTYPE_OUT 'unknown-type: quoted-kind.md'
+Remove-Item -LiteralPath $UTYPE_TMP -Recurse -Force -ErrorAction SilentlyContinue
+
 # === <TEAM>-360: a bare (CLAUDE_CONFIG_DIR-derived) run scans ALL projects/*/
 # memory dirs, not $candidates[0]. The drift lives in the alphabetically-SECOND
 # store — the old single-dir pick scanned only the first and false-PASSed

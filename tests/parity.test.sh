@@ -167,13 +167,19 @@ if [ -f "$REPO_ROOT/scripts/install.sh" ] && [ -f "$REPO_ROOT/scripts/install.ps
   assert_eq "parity install --build-only: bash exits 0" 0 "$bash_i_rc"
 
   if [ "$_have_pwsh" -eq 1 ]; then
-    # PS twin needs its own local.env with its own target dir so the manifest
-    # is computed against a parallel build directory.
-    make_local_env "$I_FIX/local-ps.env" "$I_PS_OUT"
+    # PS twin builds with the SAME target inputs as the bash build (same
+    # local.env CLAUDE_CONFIG_DIR value AND the same --out): the rendered
+    # entrypoints embed @@CLAUDE_CONFIG_DIR@@ — resolved from the EFFECTIVE
+    # target — so byte-identical platform-agnostic outputs require identical
+    # target INPUTS. The builds do not collide: --build-only creates a unique
+    # .install-build.* subdir per run inside --out and prints it as its last
+    # line, so each manifest still lives in its own dir. The determinism
+    # contract compares same-input renders.
+    make_local_env "$I_FIX/local-ps.env" "$I_BASH_OUT"
     ps_i_out="$PARTY_TMP/i-ps.out"
     AI_CONFIG_LOCAL_ENV="$I_FIX/local-ps.env" \
       pwsh -NoProfile -File "$REPO_ROOT/scripts/install.ps1" \
-        --harness claude --build-only --out "$I_PS_OUT" \
+        --harness claude --build-only --out "$I_BASH_OUT" \
       > "$ps_i_out" 2>&1
     ps_i_rc=$?
     assert_eq "parity install --build-only: ps exits 0" 0 "$ps_i_rc"

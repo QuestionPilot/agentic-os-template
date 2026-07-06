@@ -9,7 +9,8 @@
 #
 # Scans a target tree (default: the current directory) and FAILS (exit 1) when
 # it finds any of:
-#   - tracker issue IDs        QUE-<digits>            (the project's issue prefix)
+#   - tracker issue IDs        <PREFIX>-<digits>       (comma-separated keys from
+#                              $TRACKER_ISSUE_PREFIX; unset defaults to QUE)
 #   - macOS / Linux home paths with a real username segment under the home root
 #   - Windows home paths with a real username segment under the profile root
 #   - email addresses          (real shape; documentation + noreply domains pass)
@@ -72,21 +73,80 @@ if [ -z "${OPERATOR_PII_TOKENS:-}" ] && [ -f "$target/local.env" ]; then
     | sed -E 's/[[:space:]]+#.*$//' | sed -e 's/^["'\'']//' -e 's/["'\'']$//')"
 fi
 
+# Tracker issue-key prefixes — same opt-in pickup pattern. Comma-separated
+# Linear-style team keys (e.g. "ABC" or "ABC,OPS"); unset it defaults to QUE
+# below so an unconfigured clone / CI run keeps the historical coverage.
+if [ -z "${TRACKER_ISSUE_PREFIX:-}" ] && [ -f "$target/local.env" ]; then
+  TRACKER_ISSUE_PREFIX="$(grep -E '^[[:space:]]*(export[[:space:]]+)?TRACKER_ISSUE_PREFIX=' "$target/local.env" \
+    | head -n1 | tr -d '\r' | sed -E 's/^[^=]*=//' \
+    | sed -E 's/[[:space:]]+#.*$//' | sed -e 's/^["'\'']//' -e 's/["'\'']$//')"
+fi
+
 fail=0
 
 # --- Patterns --------------------------------------------------------------
 # Tracker issue IDs — case-insensitive, with OR without the hyphen, and BOUNDARY-
-# aware so ordinary words ending in "que" + digits (the `unique<N>` / `opaque<N>` /
-# `technique<N>` class) do NOT false-trip this fail-closed gate. An uppercase or
-# CamelCase `QUE`/`Que` is a deliberate token (no English word capitalizes mid-word),
-# so it matches in any context; a lowercase `que` matches only at a LEFT BOUNDARY
-# (start of line, or a non-letter before it). The old `QUE-[0-9]+` (uppercase +
-# required hyphen) let real issue numbers survive as lowercase / no-hyphen `que<NN>`.
-# Hyphenated arm keeps 1+ digits (single-digit `QUE-<n>` still caught); no-hyphen arm
-# requires 2+ digits. No self-match: the char-classes carry no contiguous `que`, and
-# every `QUE-<n>` reference here is followed by `<`, not a digit. Portable ERE — no
-# `\b` (BSD vs GNU grep differ); the `(^|[^A-Za-z])` prefix is the portable boundary.
-ISSUE_RE='(Q[Uu][Ee]|(^|[^A-Za-z])[Qq][Uu][Ee])(-[0-9]+|[0-9]{2,})'
+# aware so ordinary words ending in a lowercase prefix + digits (for the historical
+# QUE default: the `unique<N>` / `opaque<N>` / `technique<N>` class) do NOT
+# false-trip this fail-closed gate. An uppercase-first or CamelCase prefix is a
+# deliberate token (no English word capitalizes mid-word), so it matches in any
+# context; an all-lowercase prefix matches only at a LEFT BOUNDARY (start of line,
+# or a non-letter before it). A required-hyphen uppercase-only pattern would let
+# real issue numbers survive as lowercase / no-hyphen `<prefix><NN>`.
+# Hyphenated arm keeps 1+ digits (single-digit `<PREFIX>-<n>` still caught);
+# no-hyphen arm requires 2+ digits. Portable ERE — no `\b` (BSD vs GNU grep
+# differ); the `(^|[^A-Za-z])` prefix is the portable boundary.
+#
+# The prefix set is operator-configurable: $TRACKER_ISSUE_PREFIX (exported, or
+# picked up from the target's gitignored local.env above) holds comma-separated
+# team keys; unset it defaults to QUE, for which build_issue_re reproduces the
+# historical pattern byte-for-byte. This file is self-excluded by exact path, so
+# the derivation cannot self-match either way.
+
+# build_issue_re <prefix> — derive the boundary-aware tracker-ID ERE for ONE
+# prefix. Letters expand to case-classes per the rationale above; digits inside
+# a key (e.g. AB2) pass through literally.
+build_issue_re() {
+  local p="$1" i c up low arm1="" core=""
+  for ((i = 0; i < ${#p}; i++)); do
+    c="${p:$i:1}"
+    case "$c" in
+      [A-Za-z])
+        up="$(printf '%s' "$c" | LC_ALL=C tr '[:lower:]' '[:upper:]')"
+        low="$(printf '%s' "$c" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+        core="${core}[${up}${low}]"
+        if [ "$i" -eq 0 ]; then arm1="$up"; else arm1="${arm1}[${up}${low}]"; fi
+        ;;
+      *)
+        core="${core}${c}"; arm1="${arm1}${c}" ;;
+    esac
+  done
+  printf '(%s|(^|[^A-Za-z])%s)(-[0-9]+|[0-9]{2,})' "$arm1" "$core"
+}
+
+# Parse + validate the prefix list. A key must be a letter followed by letters/
+# digits — anything else is a misconfiguration and FAILS closed (a malformed
+# entry would silently derive a never-matching pattern, i.e. fail open).
+_PREFIXES=()
+set -f
+for _p in $(printf '%s' "${TRACKER_ISSUE_PREFIX:-QUE}" | tr ',' ' '); do
+  case "$_p" in
+    [A-Za-z]) : ;;
+    [A-Za-z]*[!A-Za-z0-9]*|[!A-Za-z]*)
+      printf 'FAIL check-clean: invalid TRACKER_ISSUE_PREFIX entry "%s" (a letter followed by letters/digits)\n' "$_p" >&2
+      exit 2 ;;
+  esac
+  _PREFIXES+=("$(printf '%s' "$_p" | LC_ALL=C tr '[:lower:]' '[:upper:]')")
+done
+set +f
+if [ "${#_PREFIXES[@]}" -eq 0 ]; then
+  printf 'FAIL check-clean: TRACKER_ISSUE_PREFIX is set but parses to no entries (fail-closed)\n' >&2
+  exit 2
+fi
+_ISSUE_RES=()
+for _p in "${_PREFIXES[@]}"; do
+  _ISSUE_RES+=("$(build_issue_re "$_p")")
+done
 # Home paths carrying a REAL username segment. The username class begins with an
 # alphanumeric / dot / underscore, so angle-bracket or $-variable placeholders do
 # not match — and the pattern does not match its own source either. The Windows
@@ -249,9 +309,11 @@ scan_token_class() {
 
 # scan_file_content <rel> <content> — run every class scanner over one file.
 scan_file_content() {
-  local rel="$1" content="$2" joined
+  local rel="$1" content="$2" joined _pi
   joined="$(printf '%s' "$content" | hard_unwrap)"
-  scan_class "$rel" "$content" "$joined" 'tracker issue ID found (QUE-<n>)' "$ISSUE_RE"
+  for _pi in "${!_PREFIXES[@]}"; do
+    scan_class "$rel" "$content" "$joined" "tracker issue ID found (${_PREFIXES[$_pi]}-<n>)" "${_ISSUE_RES[$_pi]}"
+  done
   scan_class "$rel" "$content" "$joined" 'machine-specific home path found' "$HOME_RE"
   scan_email_class "$rel" "$content" "$joined"
   if [ "${#_TOKENS[@]}" -gt 0 ]; then
