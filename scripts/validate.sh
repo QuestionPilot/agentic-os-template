@@ -587,11 +587,11 @@ check_capabilities
 # YAML frontmatter. Canonical vocabulary + scope + scaffolds: core/lifecycle.md.
 #
 # In-scope paths (mirrored in tests/lifecycle.test.sh):
-#   docs/plans/*.md
-#   docs/superpowers/plans/*.md
-#   docs/superpowers/specs/*.md
+#   docs/plans/*.md and docs/specs/*.md
+#   docs/<subdir>/plans/*.md and docs/<subdir>/specs/*.md (any subdir the
+#     framework adopts — the case arms below are generic, no subdir is named)
 #   capabilities/*.md (except README.md)
-#   harnesses/{claude,codex}/capabilities/*.md
+#   harnesses/<h>/capabilities/*.md
 #
 # Valid values: experimental | reviewed | shipped | superseded | sunset.
 # No aliases. Validated against the literal alternation below.

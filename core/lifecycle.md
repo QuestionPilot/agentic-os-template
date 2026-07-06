@@ -43,8 +43,8 @@ exact set.
 - `docs/plans/*.md` — implementation plans
 - `docs/specs/*.md` — design specs (if/when root-level specs are adopted)
 - Any other `docs/<subdir>/plans/*.md` and `docs/<subdir>/specs/*.md` paths the
-  framework adopts — currently one such subdir exists (see `scripts/validate.sh`
-  `check_lifecycle` for the literal globs)
+  framework adopts — none exist today; the generic predicates in
+  `scripts/validate.sh` `check_lifecycle` cover any that appear
 - `capabilities/*.md` — agnostic capability bodies
 - `harnesses/{claude,codex,hermes}/capabilities/*.md` — per-harness realizations
 
@@ -156,14 +156,14 @@ NOT enforced (memory files are operator-local). For memory-author convention:
 
 ## Why this matters
 
-Repeated stale-artifact pain in recent sessions:
+Repeated stale-artifact pain motivated this convention (each incident's full
+writeup lives in the operator's durable memory, not in this public file):
 
 - A spec sat untracked in `main`'s workdir with operator paths — nobody knew
-  if it was live or stale ([[feedback_plan_files_path_leaks]])
+  if it was live or stale
 - `install.sh` ran from a worktree because nobody could tell the worktree was
-  about to die ([[feedback_install_sh_in_worktree]])
+  about to die
 - Linear flips with no on-disk rationale or lifecycle marker
-  ([[feedback_done_without_rationale]])
 
 One YAML key fixes a class of bugs. Linear holds active-work status; Memory
 headlines carry implicit lifecycle; on-disk artifacts now declare lifecycle

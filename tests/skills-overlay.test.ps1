@@ -128,4 +128,67 @@ if (Test-Path -LiteralPath $skills -PathType Leaf) {
 }
 if ($bd5) { Remove-Item -LiteralPath $bd5 -Recurse -Force -ErrorAction SilentlyContinue }
 
+# 6. Catalog-honesty warn: a skill dir living in the live target but absent from
+# the rendered SKILLS.md draws an advisory stderr warn on a FULL install — the
+# install still exits 0 (warn-not-fail contract) and the warn names both the
+# offending dir and the overlay fix.
+$CH_DIR = Join-Path ([System.IO.Path]::GetTempPath()) ("ch-" + [guid]::NewGuid().ToString('N'))
+$CH_TGT = Join-Path $CH_DIR 'cfg'
+New-Item -ItemType Directory -Path (Join-Path $CH_TGT 'skills' 'mystery-operator-skill') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $CH_TGT 'skills' 'mystery-operator-skill' 'SKILL.md') -Value '# operator skill' -Encoding utf8
+New-Item -ItemType Directory -Path (Join-Path $CH_TGT 'skills' 'zz aa') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $CH_TGT 'skills' 'zz aa' 'SKILL.md') -Value '# spaced-name skill' -Encoding utf8
+$CH_ERR = Join-Path $CH_DIR 'stderr.txt'
+$chEnv = Join-Path $CH_DIR 'local.env'
+$chLines = @(Get-Content -LiteralPath $SO_FIXTURE)
+$chLines += "CLAUDE_CONFIG_DIR=`"$CH_TGT`""
+$chLines += "OBSIDIAN_VAULT_PATH=`"$(Join-Path $CH_DIR 'vault')`""
+Set-Content -LiteralPath $chEnv -Value $chLines -Encoding utf8
+$env:AI_CONFIG_LOCAL_ENV = $chEnv
+try {
+    & pwsh -NoProfile -File $SO_INSTALL --harness claude 1>$null 2>$CH_ERR
+    $chStatus = $LASTEXITCODE
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+Assert-Eq 'catalog-warn: install with an uncataloged skill dir still exits 0' '0' "$chStatus"
+$chErrTxt = if (Test-Path -LiteralPath $CH_ERR) { Get-Content -Raw -LiteralPath $CH_ERR } else { '' }
+Assert-Contains 'catalog-warn: warn names the uncataloged skill dir' $chErrTxt 'mystery-operator-skill'
+# A skill dir named with a space reports as ONE skill (array elements, no
+# splitting) — mirrors the bash regression guard; "zz aa" halves would not
+# sort adjacent if split.
+Assert-Contains 'catalog-warn: spaced skill-dir name reports as one skill' $chErrTxt 'zz aa'
+Assert-Contains 'catalog-warn: warn names the overlay fix' $chErrTxt 'SKILLS_OVERLAY_PATH'
+# Spine skills are cataloged by the generated table — they must NOT be flagged.
+$chWarnLine = @($chErrTxt -split "`n" | Where-Object { $_ -match 'absent from the rendered SKILLS\.md catalog' }) -join "`n"
+Assert-NotContains 'catalog-warn: cataloged spine skill draws no warn' $chWarnLine 'session-agent'
+Remove-Item -LiteralPath $CH_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
+# 7. Catalog-honesty warn suppressed when the overlay lists the skill: the same
+# uncataloged dir plus an overlay row naming it backticked renders warn-free.
+$CQ_DIR = Join-Path ([System.IO.Path]::GetTempPath()) ("cq-" + [guid]::NewGuid().ToString('N'))
+$CQ_TGT = Join-Path $CQ_DIR 'cfg'
+New-Item -ItemType Directory -Path (Join-Path $CQ_TGT 'skills' 'mystery-operator-skill') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $CQ_TGT 'skills' 'mystery-operator-skill' 'SKILL.md') -Value '# operator skill' -Encoding utf8
+$CQ_OV = Join-Path $CQ_DIR 'overlay.md'
+Set-Content -LiteralPath $CQ_OV -Value "### Operator skills`n`n| ``mystery-operator-skill`` | test row |" -Encoding utf8
+$CQ_ERR = Join-Path $CQ_DIR 'stderr.txt'
+$cqEnv = Join-Path $CQ_DIR 'local.env'
+$cqLines = @(Get-Content -LiteralPath $SO_FIXTURE)
+$cqLines += "CLAUDE_CONFIG_DIR=`"$CQ_TGT`""
+$cqLines += "OBSIDIAN_VAULT_PATH=`"$(Join-Path $CQ_DIR 'vault')`""
+$cqLines += "SKILLS_OVERLAY_PATH=`"$CQ_OV`""
+Set-Content -LiteralPath $cqEnv -Value $cqLines -Encoding utf8
+$env:AI_CONFIG_LOCAL_ENV = $cqEnv
+try {
+    & pwsh -NoProfile -File $SO_INSTALL --harness claude 1>$null 2>$CQ_ERR
+    $cqStatus = $LASTEXITCODE
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+}
+Assert-Eq 'catalog-warn: overlay-listed skill install exits 0' '0' "$cqStatus"
+$cqErrTxt = if (Test-Path -LiteralPath $CQ_ERR) { Get-Content -Raw -LiteralPath $CQ_ERR } else { '' }
+Assert-NotContains 'catalog-warn: overlay-listed skill draws no warn' $cqErrTxt 'absent from the rendered SKILLS.md catalog'
+Remove-Item -LiteralPath $CQ_DIR -Recurse -Force -ErrorAction SilentlyContinue
+
 Remove-Item -LiteralPath $SO_DIR -Recurse -Force -ErrorAction SilentlyContinue

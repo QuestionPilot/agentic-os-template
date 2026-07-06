@@ -9,7 +9,8 @@
 #
 # Scans a target tree (default: the current directory) and FAILS (exit 1) when
 # it finds any of:
-#   - tracker issue IDs        QUE-<digits>
+#   - tracker issue IDs        <PREFIX>-<digits>       (comma-separated keys from
+#                              $TRACKER_ISSUE_PREFIX; unset defaults to QUE)
 #   - macOS / Linux home paths with a real username segment under the home root
 #   - Windows home paths with a real username segment under the profile root
 #   - email addresses          (real shape; documentation + noreply domains pass)
@@ -72,21 +73,80 @@ if ([string]::IsNullOrEmpty($tokens)) {
     }
 }
 
+# Tracker issue-key prefixes — same opt-in pickup pattern. Comma-separated
+# Linear-style team keys (e.g. "ABC" or "ABC,OPS"); unset it defaults to QUE
+# below so an unconfigured clone / CI run keeps the historical coverage.
+$prefixSrc = $env:TRACKER_ISSUE_PREFIX
+if ([string]::IsNullOrEmpty($prefixSrc)) {
+    $lenv = Join-Path $Target 'local.env'
+    if (Test-Path -LiteralPath $lenv -PathType Leaf) {
+        $line = Get-Content -LiteralPath $lenv |
+            Where-Object { $_ -match '^\s*(export\s+)?TRACKER_ISSUE_PREFIX=' } |
+            Select-Object -First 1
+        if ($line) {
+            $val = ($line -replace '^[^=]*=', '').TrimEnd("`r")
+            $val = ($val -replace '\s+#.*$', '').Trim()
+            $prefixSrc = $val.Trim('"').Trim("'")
+        }
+    }
+}
+
 $script:fail = 0
 
 # --- Patterns --------------------------------------------------------------
 # Tracker issue IDs — case-insensitive, with OR without the hyphen, and BOUNDARY-
-# aware so ordinary words ending in "que" + digits (the `unique<N>` / `opaque<N>` /
-# `technique<N>` class) do NOT false-trip this fail-closed gate. An uppercase or
-# CamelCase `QUE`/`Que` is a deliberate token (no English word capitalizes mid-word),
-# so it matches in any context; a lowercase `que` matches only at a LEFT BOUNDARY
-# (start, or a non-letter before it). The old `QUE-[0-9]+` (uppercase + required
-# hyphen) let real issue numbers survive as lowercase / no-hyphen `que<NN>`.
-# Hyphenated arm keeps 1+ digits (single-digit `QUE-<n>` still caught); no-hyphen arm
-# requires 2+ digits. No self-match: char-classes carry no contiguous `que`, and every
-# `QUE-<n>` reference is followed by `<`, not a digit. Kept ERE-shape for bash<->PS
-# parity; `(^|[^A-Za-z])` is the portable boundary (no `\b`).
-$issueRe = '(Q[Uu][Ee]|(^|[^A-Za-z])[Qq][Uu][Ee])(-[0-9]+|[0-9]{2,})'
+# aware so ordinary words ending in a lowercase prefix + digits (for the historical
+# QUE default: the `unique<N>` / `opaque<N>` / `technique<N>` class) do NOT
+# false-trip this fail-closed gate. An uppercase-first or CamelCase prefix is a
+# deliberate token (no English word capitalizes mid-word), so it matches in any
+# context; an all-lowercase prefix matches only at a LEFT BOUNDARY (start, or a
+# non-letter before it). A required-hyphen uppercase-only pattern would let real
+# issue numbers survive as lowercase / no-hyphen `<prefix><NN>`. Hyphenated arm
+# keeps 1+ digits; no-hyphen arm requires 2+ digits. Kept ERE-shape for bash<->PS
+# parity; `(^|[^A-Za-z])` is the portable boundary (no `\b`). For the QUE default
+# Build-IssueRe reproduces the historical pattern byte-for-byte; this file is
+# self-excluded by exact path, so the derivation cannot self-match either way.
+
+# Build-IssueRe <prefix> — derive the boundary-aware tracker-ID ERE for ONE
+# prefix. Letters expand to case-classes per the rationale above; digits inside
+# a key (e.g. AB2) pass through literally. Mirrors the bash twin's build_issue_re.
+function Build-IssueRe([string]$p) {
+    $arm1 = ''
+    $core = ''
+    for ($i = 0; $i -lt $p.Length; $i++) {
+        $c = $p[$i]
+        if ($c -match '[A-Za-z]') {
+            $up = [char]::ToUpperInvariant($c)
+            $low = [char]::ToLowerInvariant($c)
+            $core += "[$up$low]"
+            if ($i -eq 0) { $arm1 = "$up" } else { $arm1 += "[$up$low]" }
+        } else {
+            $core += "$c"
+            $arm1 += "$c"
+        }
+    }
+    return "($arm1|(^|[^A-Za-z])$core)(-[0-9]+|[0-9]{2,})"
+}
+
+# Parse + validate the prefix list. A key must be a letter followed by letters/
+# digits — anything else is a misconfiguration and FAILS closed (a malformed
+# entry would silently derive a never-matching pattern, i.e. fail open).
+if ([string]::IsNullOrEmpty($prefixSrc)) { $prefixSrc = 'QUE' }
+$script:issuePrefixes = @()
+foreach ($p in ($prefixSrc -split '[,\s]+')) {
+    $pk = $p.Trim()
+    if ($pk -eq '') { continue }
+    if ($pk -notmatch '^[A-Za-z][A-Za-z0-9]*$') {
+        [Console]::Error.WriteLine("FAIL check-clean: invalid TRACKER_ISSUE_PREFIX entry `"$pk`" (a letter followed by letters/digits)")
+        exit 2
+    }
+    $script:issuePrefixes += $pk.ToUpperInvariant()
+}
+if ($script:issuePrefixes.Count -eq 0) {
+    [Console]::Error.WriteLine('FAIL check-clean: TRACKER_ISSUE_PREFIX is set but parses to no entries (fail-closed)')
+    exit 2
+}
+$script:issueRes = @($script:issuePrefixes | ForEach-Object { Build-IssueRe $_ })
 # Home paths carrying a REAL username segment (angle-bracket or $-variable
 # placeholders do not match). The Windows arm accepts ONE OR MORE backslashes, so
 # simple, JSON-escaped, and nested source-of-JSON profile paths (one, two, or
@@ -221,7 +281,9 @@ function Scan-TokenClass([string]$rel, [string]$content, [string]$joined, [strin
 
 function Scan-FileContent([string]$rel, [string]$content) {
     $joined = Hard-Unwrap $content
-    Scan-Class $rel $content $joined 'tracker issue ID found (QUE-<n>)' $issueRe
+    for ($pi = 0; $pi -lt $script:issuePrefixes.Count; $pi++) {
+        Scan-Class $rel $content $joined "tracker issue ID found ($($script:issuePrefixes[$pi])-<n>)" $script:issueRes[$pi]
+    }
     Scan-Class $rel $content $joined 'machine-specific home path found' $homeRe
     Scan-EmailClass $rel $content $joined
     foreach ($tok in $script:tokenList) { Scan-TokenClass $rel $content $joined $tok }

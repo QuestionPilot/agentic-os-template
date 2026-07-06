@@ -800,6 +800,32 @@ assert_contains "memory-drift <TEAM>-354: BOM+CRLF typeless project note warned"
 assert_contains "memory-drift <TEAM>-354: whitespace-padded fences still complete-frontmatter → warned" "$MTYPE_PAR_OUT" "missing-type: project_wsfence.md"
 assert_contains "memory-drift <TEAM>-354: top-level node_type: does NOT count as a type → warned" "$MTYPE_PAR_OUT" "missing-type: project_nodetype.md"
 
+# --- 39a. Unknown-type guard (ADVISORY sibling of the missing-type guard): a note
+# TYPED outside the memory-model enum draws a `WARN unknown-type:` naming the bad
+# value; every enum kind — including `decision`, the framework extension the
+# harness-injected four-kind prompt omits — passes silently; quoted values are
+# normalized before the check; the advisory never flips the exit code off 0.
+UTYPE_TMP=$(mktemp -d 2>/dev/null) || UTYPE_TMP="/tmp/memory-utype-$$"
+mkdir -p "$UTYPE_TMP"
+printf -- '---\nname: odd-kind\ndescription: "typed with a kind the enum does not know"\nmetadata:\n  type: journal\n---\nBody.\n' \
+  > "$UTYPE_TMP/odd-kind.md"
+for _k in project feedback reference decision user; do
+  printf -- '---\nname: kind-%s\ndescription: "x"\nmetadata:\n  type: %s\n---\nBody.\n' "$_k" "$_k" \
+    > "$UTYPE_TMP/kind-$_k.md"
+done
+printf -- '---\nname: quoted-kind\ndescription: "x"\nmetadata:\n  type: "decision"\n---\nBody.\n' \
+  > "$UTYPE_TMP/quoted-kind.md"
+UTYPE_OUT=$(bash "$CMD_SCRIPT" --memory-dir "$UTYPE_TMP" 2>&1)
+UTYPE_RC=$?
+assert_eq "memory-drift unknown-type: advisory guard does NOT change exit 0" "0" "$UTYPE_RC"
+assert_contains "memory-drift unknown-type: out-of-enum kind warned" "$UTYPE_OUT" "unknown-type: odd-kind.md"
+assert_contains "memory-drift unknown-type: warn names the bad value" "$UTYPE_OUT" 'type "journal"'
+for _k in project feedback reference decision user; do
+  assert_not_contains "memory-drift unknown-type: enum kind '$_k' not flagged" "$UTYPE_OUT" "unknown-type: kind-$_k.md"
+done
+assert_not_contains "memory-drift unknown-type: quoted enum kind normalized, not flagged" "$UTYPE_OUT" "unknown-type: quoted-kind.md"
+rm -rf "$UTYPE_TMP"
+
 # --- 40. <TEAM>-360: a bare (CLAUDE_CONFIG_DIR-derived) run scans ALL
 # projects/*/memory dirs, not candidates[0]. The drift lives in the
 # alphabetically-SECOND store — the old single-dir pick scanned only the first

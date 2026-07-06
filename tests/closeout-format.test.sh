@@ -96,8 +96,8 @@ done
 # - `## Running State` between `## State Deltas` and `## Residual Risk` in the
 # capabilities/closeout.md output block.
 # - `## Pick up here` after `## Lessons`, as the final line of the output block.
-# - linear/closeout-format.md mirrors the shape — both new sections must exist
-# there too (position less strict; its section names diverge slightly).
+# - linear/closeout-format.md is the CANONICAL schema the capability's block
+# mirrors — both new sections must exist there too under the same names.
 
 # Local helper: line number of an exact heading match, or 0 if missing.
 # Uses grep -nFx (line-number, fixed-string, full-line) — POSIX, BSD-grep safe.

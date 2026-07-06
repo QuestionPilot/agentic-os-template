@@ -90,9 +90,14 @@ classification machinery for work that should never have shipped is wasted.
    contract above.
 4. Does Linear need updating — a completed issue moved to Done, a status
    corrected, or a follow-up issue created?
-5. Does the durable knowledge base need a note?
-6. Did the work reveal a missing data path, an unclear handoff, or an unbounded
-   autonomous run?
+5. Does the durable knowledge base (Obsidian is the canonical example) need a
+   note?
+6. Did the work reveal a missing data path (an unprepared silver platter), an
+   unclear handoff, or an unbounded goal-run?
+
+The walk's canonical wording lives in `$AI_CONFIG_DIR/core/self-improvement.md`
+— if this body and that file diverge, that file wins; fix the divergence
+rather than following it.
 7. **File sweep:** What files / directories did this session create that should
    NOT survive past it? List every `Write` / `Edit` / `Bash mkdir` / `Bash touch`
    / `Bash cp` / shell `>` or `>>` redirect / Linear-CLI file output that the
@@ -112,8 +117,7 @@ classification machinery for work that should never have shipped is wasted.
      hygiene sweep can collect it without re-deriving the policy.
 
    **Default-keep is forbidden.** Every created artifact gets one of the three
-   classifications above; silence is not an option. Per
-   [[feedback_clean_operation_no_lingering_junk]] the operator's standard is
+   classifications above; silence is not an option. The operating standard is
    "if you have to create junk files as part of a process, you need to clean
    them up as soon as that process is done" — Q7 is how the closeout walk
    enforces it.
@@ -136,9 +140,10 @@ classification machinery for work that should never have shipped is wasted.
    **Silent claims of `clean` are forbidden.** A false-RED case
    study — a stray staged `scripts/check-drift.sh` removal slipping past a
    prior session's closeout and propagating as a false `make verify` failure
-   into the next session — is what Q7a closes. See
-   [[feedback_verify_red_first]] (the kickoff-side discipline that caught the
-   propagation) for the sister rule.
+   into the next session — is what Q7a closes. Its sister rule is the
+   kickoff-side verify-first discipline that caught that propagation: run the
+   verification gates at session start before trusting a prior session's
+   green claim.
 
 If every answer is "no", classify as `no-action` with a single reason line and
 skip to Output. (Q7 itself never short-circuits — even a `no-action` session
@@ -261,14 +266,17 @@ wipe / migration boundary the way `check-clean.sh` runs at the CI boundary.
 
 ## Output
 
-End with a single block in the shape from `$AI_CONFIG_DIR/linear/closeout-format.md`:
+End with a single block in the shape from `$AI_CONFIG_DIR/linear/closeout-format.md`
+(the CANONICAL schema — if this template and that file diverge, that file wins):
 
 ```
 ## Result
 <one line: what changed or was decided>
 
 ## Verification
-<what was run, reviewed, or proven; explicitly note skipped checks>
+<what was run, reviewed, or proven, incl. the independent-review decision
+(used / skipped, and why) when the change class calls for one; explicitly
+note skipped checks>
 
 ## State Deltas
 <one line per delta: kind → memory file (or `_none_` if no state changed)>

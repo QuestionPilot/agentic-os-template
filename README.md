@@ -166,6 +166,8 @@ Shared content stays harness-neutral — it carries no single-harness assumption
 | `obsidian/vault-guide.md` | Canonical durable-vault setup + structure + agentic-OS integration spec. |
 | `templates/` | Portable templates with placeholders, never local secrets. |
 | `scripts/validate.sh` | Repository validation and safety checks. |
+| `tests/` | Acceptance suite (`tests/run.sh` / `tests/run.ps1`) — bash + PowerShell test twins and fixtures. |
+| `examples/` | Worked examples (e.g. a sample project-local entrypoint + `local.env`). |
 
 ## Compiler Model
 

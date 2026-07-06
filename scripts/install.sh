@@ -221,6 +221,14 @@ mkdir -p "$TARGET"
 # (corrupting the captured TARGET).
 TARGET="$(CDPATH= cd "$TARGET" && pwd)"
 
+# The claude entrypoint templates reference the harness's own config-dir token
+# (@@CLAUDE_CONFIG_DIR@@ — the rendered SKILLS.md catalog path). Resolve that
+# token from the EFFECTIVE target: under --out (or a fixture local.env that
+# leaves the var unset) the raw env var is empty or points elsewhere, but the
+# rendered files live at $TARGET — the only truthful substitution value.
+# Process-scoped; each multi-harness child exports its own.
+export "$target_env=$TARGET"
+
 # A real install builds under $TARGET so the final swap is an atomic same-
 # filesystem rename. A --dry-run never swaps, so it builds in a NEUTRAL system
 # temp instead — the live target is then never written to (not even a transient
@@ -1403,6 +1411,31 @@ main() {
   done
   rm -rf "$TARGET/.install-bak.d"
   printf 'install.sh: built %s harness into %s\n' "$HARNESS" "$TARGET" >&2
+
+  # Catalog-honesty warn (claude-only): every skill dir living under
+  # $TARGET/skills/ should appear backtick-quoted in the rendered SKILLS.md —
+  # an installed-but-uncataloged skill makes the catalog under-report what
+  # this harness can actually do. Advisory only: operator skills arrive
+  # outside install.sh's control, so warn and name the overlay fix, never
+  # fail the install. The backticked-substring match is a deliberate
+  # heuristic for the same reason — a backticked mention anywhere in the
+  # rendered file counts as cataloged. Names are accumulated as ARRAY
+  # elements (never a word-split scalar) so a skill dir named with spaces
+  # reports as one skill, matching the PS twin; LC_ALL=C keeps the reported
+  # order machine-independent.
+  if [ "$HARNESS" = claude ] && [ -f "$TARGET/SKILLS.md" ]; then
+    local sdir sname joined
+    local -a uncataloged=()
+    for sdir in "$TARGET"/skills/*/; do
+      [ -d "$sdir" ] || continue
+      sname="$(basename "$sdir")"
+      grep -qF "\`$sname\`" "$TARGET/SKILLS.md" || uncataloged+=("$sname")
+    done
+    if [ "${#uncataloged[@]}" -gt 0 ]; then
+      joined="$(printf '%s\n' "${uncataloged[@]}" | LC_ALL=C sort | tr '\n' ' ')"
+      warn "skills installed under $TARGET/skills but absent from the rendered SKILLS.md catalog: ${joined}— list them in your skills overlay (SKILLS_OVERLAY_PATH in local.env) so the catalog reports what is actually installed"
+    fi
+  fi
 
   # The codex build is inert until the user trusts the generated hooks.json:
   # Codex does not run a non-managed hooks.json until trusted via the

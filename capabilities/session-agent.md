@@ -42,7 +42,7 @@ Skipping a sub-step is a Mode 1 failure — re-run the missed sub-step before ro
 The harness autoloads `MEMORY.md` — a one-line index of headlines. **Headlines are
 not the source of truth.** For any project-type memory note (`metadata.type: project`)
 referenced there whose headline names active or recently-active work, read the file body before acting on the
-headline. Cross-issue Linear claims embedded in those bodies (e.g. "QUE-X is Done")
+headline. Cross-issue Linear claims embedded in those bodies (e.g. "TEAM-X is Done")
 are particularly stale-prone — Mode 1's O5 step re-checks them against Linear.
 
 **Tool calls:**
@@ -52,7 +52,7 @@ are particularly stale-prone — Mode 1's O5 step re-checks them against Linear.
 ### O2. Reconcile session-start hints against memory headlines
 
 The framework session-start hook surfaces the last 7–10 days of `agentic-os-template` commits
-in `additionalContext`. For any `QUE-\d+` identifiers in those commits whose parent
+in `additionalContext`. For any `TEAM-\d+` identifiers in those commits whose parent
 project's memory headline says `COMPLETE` / `CLOSED` / `DONE`, that's a contradiction
 — flag it in the first turn and dig before trusting the memory headline. Memory
 captures what was true when written; the session-start window captures what is true now.
@@ -87,7 +87,10 @@ for token cost but does not require it.
    string) or `.state.name == "In Progress"` for the MCP's nested object (§4.3).
 
 **Always run the project sweep first.** The assignee+In-Progress cut alone misses
-fresh-spawned projects entirely — see [[feedback_session_kickoff_cut]].
+fresh-spawned projects entirely — a just-created project's issues sit in Backlog
+with no assignee, so only the per-project sweep surfaces them (a lesson learned
+live when a kickoff orient reported "no active work" over a freshly-spawned
+project).
 
 **`.state` shape varies by call (lineark).** `projects list` has no `state` field;
 `issues list` returns `.state` as a bare **string**; only `issues read` returns a
@@ -105,9 +108,10 @@ only; a one-line warning surfaces the missing surface. Document the install in t
 next session per `$AI_CONFIG_DIR/linear/linear-setup.md`.
 
 **MCP edge case:** if the Linear MCP reports ✓ Connected but `list_projects`
-returns an empty array, this is the [[reference_mcp_silent_empty_tools]] pattern —
-restart the harness's MCP connection (or fall back to `lineark` if installed)
-before accepting "no active work" as the answer.
+returns an empty array, treat it as the silent-empty-MCP-tools failure pattern
+(a stale connection returns empty results instead of erroring) — restart the
+harness's MCP connection (or fall back to `lineark` if installed) before
+accepting "no active work" as the answer.
 
 ### O4. Vault orient — entrypoint AND operator-identity master
 
@@ -136,12 +140,12 @@ relevant slice, never the whole vault:
 ### O5. Cross-issue Linear state verification
 
 For any cross-issue Linear claims surfaced in O1's memory bodies (claims about
-*other* issues' states — "QUE-X is Done", "QUE-Y is gating", etc.), verify
+*other* issues' states — "TEAM-X is Done", "TEAM-Y is gating", etc.), verify
 against Linear at kickoff regardless. Cross-issue claims aren't self-correcting
 at the body-read step.
 
 **Tool calls:**
-- For each cross-issue claim with a concrete `QUE-\d+` identifier: query the
+- For each cross-issue claim with a concrete `TEAM-\d+` identifier: query the
   Linear surface for the issue and compare the `state` field against the memory
   body's claim (see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the per-surface read command).
   Flag mismatches in the orient summary.
@@ -152,7 +156,7 @@ End the orient pass with a structured summary the user sees:
 
 ```
 Orient:
-- Active Linear project(s): <list with QUE-IDs + state>
+- Active Linear project(s): <list with TEAM-IDs + state>
 - Open issues in active project(s): <count + headline list>
 - Memory contradictions vs session-start commits: <one line per contradiction, or "none">
 - Vault: <one line of context from START.md>

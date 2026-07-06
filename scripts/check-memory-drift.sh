@@ -538,6 +538,24 @@ while IFS= read -r -d '' f; do
   printf 'WARN missing-type: %s — looks like project memory (%s) but its frontmatter sets no type:; the project scanners key on metadata.type, so an untyped note is invisible to them. Add the correct type: (see core/memory-model.md)\n' "$base" "$label" >&2
 done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
 
+# --- Unknown-type guard (ADVISORY, sibling of the missing-type guard above). ------
+# The per-kind scanners recognize exactly the memory-model enum — project /
+# feedback / reference / decision / user (core/memory-model.md → Note
+# Discoverability + Frontmatter Contract). A note TYPED outside that enum is
+# just as invisible to them as an untyped one, but the missing-type guard only
+# fires when `type:` is absent. WARN-only for the same reason it is: a hard
+# gate would break an operator running a deliberate local extension; the warn
+# makes the invisibility visible instead of silent.
+while IFS= read -r -d '' f; do
+  base=$(basename "$f")
+  t="$(mem_note_type "$f")"
+  [ -z "$t" ] && continue
+  case "$t" in
+    project|feedback|reference|decision|user) ;;
+    *) printf 'WARN unknown-type: %s — frontmatter type "%s" is not a memory-model kind (project/feedback/reference/decision/user), so the per-kind scanners skip this note. Fix the type, or extend the enum in core/memory-model.md if it is a deliberate new kind\n' "$base" "$t" >&2 ;;
+  esac
+done < <(find "${memory_dirs[@]}" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -print0)
+
 if [ "$drift" -eq 0 ] && [ "$index_fail" -eq 0 ] && [ "$fm_fail" -eq 0 ] && [ "$inj_fail" -eq 0 ]; then
   printf 'PASS no memory headline-vs-body drift; MEMORY.md within caps; frontmatter parser-safe; no injection payloads (%s project files headline-checked, %s notes frontmatter+injection-scanned in %s)\n' "$scanned" "$notes_scanned" "${memory_dirs[*]}"
   exit 0

@@ -19,6 +19,7 @@ Project-local scripts and current user instructions remain the source of truth. 
 | Memory, process, or SOP changes | `process-memory.md` |
 | Data-readiness maps or silver platter summaries | `data-readiness.md` |
 | Repeated accuracy or readiness checks | `audit-systems.md` |
+| Framework self-audit runs (the `self-audit` spine capability) | `self-audit.md` |
 
 ## Rule
 

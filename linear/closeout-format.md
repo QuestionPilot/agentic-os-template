@@ -2,6 +2,12 @@
 
 Use this format for meaningful issue closeout comments.
 
+This file is the CANONICAL closeout block schema. The `closeout` capability
+(`capabilities/closeout.md` → Output) emits exactly these sections under
+exactly these names, and `core/closeout.md`'s required-element list maps onto
+them. When a divergence appears, this file wins — fix the copy, don't fork the
+schema.
+
 Stamp a shared **`closeout_id`** at the top of the comment — the same id the
 session-log drain writes to the vault log's frontmatter (see
 `capabilities/closeout.md` → Session-log drain). It makes the Linear comment ↔ the
@@ -13,7 +19,10 @@ What changed or what was decided.
 
 ## Verification
 
-Checks, tests, review, or live proof.
+Checks, tests, review, or live proof — including the independent-review
+decision (cross-model panel / second-model critique): used or skipped, and
+why, whenever the change class calls for one (`core/verification.md` owns the
+when). Explicitly note skipped checks.
 
 ## State Deltas
 
@@ -31,7 +40,7 @@ Examples:
 
 ```
 - Linear project created: <name> (<status>) → a project-type memory note (metadata.type: project), MEMORY.md indexed
-- Linear issue created: QUE-NN, QUE-MM → no separate pointer (covered by parent project memory)
+- Linear issue created: TEAM-NN, TEAM-MM → no separate pointer (covered by parent project memory)
 - New artifact dir: docs/plans/<date>-<slug>.md → no separate pointer (plan-class, lives in repo)
 - operator-main: clean at <SHA> (verified: git status --porcelain empty, git diff --cached --quiet 0, git diff --quiet 0)
 - operator-main: 1 staged file (scripts/foo.sh uncommitted) → resolve before next session
@@ -82,9 +91,17 @@ Examples:
 
 Known gaps, skipped checks, or follow-ups.
 
-## Lesson Classification
+## Lessons
 
-One of: `rule`, `check`, `script`, `linear`, `obsidian`, `playbook`, `skill`, `data-readiness`, `goal-run`, `no-action`, `state-delta`.
+One row per meaningful lesson, each carrying exactly one classification from
+`core/self-improvement.md`: `rule`, `check`, `script`, `linear`, `obsidian`,
+`playbook`, `skill`, `data-readiness`, `goal-run`, `no-action`, `state-delta`.
+
+```
+- [class] <one line> → <destination>
+(or)
+- [no-action] <one line reason>
+```
 
 ## Pick up here
 

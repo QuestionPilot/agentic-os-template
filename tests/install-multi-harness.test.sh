@@ -251,3 +251,28 @@ assert_eq "guard: --build-only leaves AGENTS.md intact" "SENTINEL-BUILD-ONLY" "$
 gb_transient="$(find "$GB_LIVE" -maxdepth 1 -name '.install-build.*' 2>/dev/null)"
 assert_eq "guard: --build-only leaves no .install-build transient" "" "$gb_transient"
 rm -rf "$GB_DIR"
+
+# --- 13. Bootstrap form: --harness claude --out <dir> with a local.env that
+# omits CLAUDE_CONFIG_DIR (bootstrap.sh's invocation shape). The claude
+# entrypoint templates reference @@CLAUDE_CONFIG_DIR@@, which must resolve from
+# the EFFECTIVE target (--out) instead of dying on the empty env var — the
+# Windows PS lane caught exactly this regression (its twin already carried the
+# scenario; this is the bash mirror). The rendered catalog path must name the
+# --out target.
+BF_DIR="$(mktemp -d)"
+BF_CC="$BF_DIR/cc"; mkdir -p "$BF_CC"
+BF_ENV="$BF_DIR/local.env"
+printf 'OBSIDIAN_VAULT_PATH=%q\n' "$BF_DIR/vault" > "$BF_ENV"
+bf_status=0
+env -u CLAUDE_CONFIG_DIR AI_CONFIG_LOCAL_ENV="$BF_ENV" bash "$REPO_ROOT/scripts/install.sh" \
+  --harness claude --out "$BF_CC" >/dev/null 2>&1 || bf_status=$?
+assert_eq "bootstrap form --harness claude --out <dir> exits 0" "0" "$bf_status"
+assert_file "bootstrap form --harness/--out builds the claude entrypoint" "$BF_CC/CLAUDE.md"
+if [ -f "$BF_CC/CLAUDE.md" ]; then
+  # Compare against the CANONICALIZED target — install.sh canonicalizes via
+  # `cd && pwd` (macOS mktemp paths resolve /var → /private/var).
+  BF_CC_CANON="$(CDPATH= cd "$BF_CC" && pwd)"
+  assert_contains "bootstrap form: rendered catalog path names the effective --out target" \
+    "$(cat "$BF_CC/CLAUDE.md")" "$BF_CC_CANON/SKILLS.md"
+fi
+rm -rf "$BF_DIR"

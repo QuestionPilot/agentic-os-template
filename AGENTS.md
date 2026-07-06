@@ -17,7 +17,7 @@ If you have not connected either layer yet, the framework runs and capabilities 
 
 If `$CODEX_HOME/skills/closeout/SKILL.md` does not exist, this machine does not have the OS spine installed.
 
-**Fresh clone (no `local.env` yet):** run `bash scripts/bootstrap.sh` first — it seeds `local.env` from `templates/local.env.example`, checks required CLIs (`codex`, `gh`, `jq`, `rg`), and writes the harness configs. `bootstrap.sh` is the canonical fresh-clone entry point. Operator tools (Linear surface, code-intelligence MCP, etc.) are operator-local and advisory — see [`linear/linear-setup.md`](linear/linear-setup.md). The framework ships no tool catalog.
+**Fresh clone (no `local.env` yet):** run `bash scripts/bootstrap.sh` first — it seeds `local.env` from `templates/local.env.example`, checks required CLIs (`gh`, `jq`, `rg` universally; `codex` only when `--harness codex` is targeted), and writes the harness configs. `bootstrap.sh` is the canonical fresh-clone entry point. Operator tools (Linear surface, code-intelligence MCP, etc.) are operator-local and advisory — see [`linear/linear-setup.md`](linear/linear-setup.md). The framework ships no tool catalog.
 
 **Existing `local.env` (re-render only):** run
 

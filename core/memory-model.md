@@ -262,6 +262,14 @@ Two contracts keep per-fact memory notes loadable and discoverable.
   scanners — the same silent-drop the filename glob used to have, re-keyed to
   frontmatter. Filenames elsewhere in this doc written `project_*.md` are a
   conventional illustration of a project note, not a detection contract.
+  The five-kind enum above is the FRAMEWORK's contract — a harness's own
+  injected memory instructions may enumerate a narrower set (Claude Code's
+  auto-memory prompt names only `user` / `feedback` / `project` / `reference`);
+  `decision` is the framework-level extension the scanners recognize on top of
+  it, so a decision-typed note is first-class here even though the harness
+  prompt does not name it. A `type:` outside the five-kind union draws the
+  advisory `WARN unknown-type` from `scripts/check-memory-drift.{sh,ps1}`
+  rather than silently vanishing from the per-kind scans.
 - **Frontmatter parser-safety.** Each note opens with a YAML frontmatter block
   (`name:`, `description:`, a nested `metadata:` block) closed by a `---` line. A
   strict YAML parser silently misreads two scalar shapes, so neither is allowed

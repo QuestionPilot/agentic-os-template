@@ -333,6 +333,78 @@ else
   assert_eq "commit-identity: unborn repo passes with the no-commits note" "0" "$cc_idunborn_rc"
   assert_contains "commit-identity: unborn repo names the no-commits path" "$cc_idunborn_out" "no commits to check"
 
+  # --- Tracker-prefix configurability (TRACKER_ISSUE_PREFIX) ------------------
+  # The issue-ID scan derives from the configured prefix set; unset keeps the
+  # historical QUE default (proven by the fixtures above). Prefix sentinels are
+  # runtime-built from halves like every other trip-shape in this file.
+  _CC_ABC="AB""C"
+  _CC_OPS="OP""S"
+
+  # A configured non-default prefix is caught, and the report names it.
+  cc_pfx="$CC_TMP/pfx"; mkdir -p "$cc_pfx"
+  printf 'tracked under %s-123 for follow-up\n' "$_CC_ABC" > "$cc_pfx/a.md"
+  cc_pfx_out="$(env TRACKER_ISSUE_PREFIX="$_CC_ABC" bash "$CC_SUT" "$cc_pfx" 2>&1)"; cc_pfx_rc=$?
+  assert_eq "configured prefix issue-ID FAILS" "1" "$cc_pfx_rc"
+  assert_contains "configured-prefix report names the prefix" "$cc_pfx_out" "(${_CC_ABC}-<n>)"
+  # The same tree passes an UNCONFIGURED run (QUE default) — the documented
+  # contract: the guard defends exactly the prefixes it is told about.
+  assert_exit "non-default prefix passes when unconfigured (QUE default)" 0 -- \
+    env -u TRACKER_ISSUE_PREFIX bash "$CC_SUT" "$cc_pfx"
+
+  # Multi-prefix: every configured key is scanned and named.
+  cc_pfx2="$CC_TMP/pfx2"; mkdir -p "$cc_pfx2"
+  printf 'see %s-7 here\n' "$_CC_OPS" > "$cc_pfx2/a.md"
+  printf 'and %s-9 there\n' "$_CC_ABC" > "$cc_pfx2/b.md"
+  cc_pfx2_out="$(env TRACKER_ISSUE_PREFIX="${_CC_ABC},${_CC_OPS}" bash "$CC_SUT" "$cc_pfx2" 2>&1)"; cc_pfx2_rc=$?
+  assert_eq "multi-prefix: both configured keys are scanned (FAIL)" "1" "$cc_pfx2_rc"
+  assert_contains "multi-prefix: first key named" "$cc_pfx2_out" "(${_CC_ABC}-<n>)"
+  assert_contains "multi-prefix: second key named" "$cc_pfx2_out" "(${_CC_OPS}-<n>)"
+
+  # Derived-pattern semantics carry over: lowercase no-hyphen at a boundary
+  # trips; a lowercase occurrence embedded inside a word does not.
+  _CC_ABC_LC="ab""c"
+  cc_pfxlc="$CC_TMP/pfxlc"; mkdir -p "$cc_pfxlc"
+  printf 'stale ref %s42 here\n' "$_CC_ABC_LC" > "$cc_pfxlc/a.md"
+  assert_exit "lowercase no-hyphen (<prefix><NN>) FAILS for a configured prefix" 1 -- \
+    env TRACKER_ISSUE_PREFIX="$_CC_ABC" bash "$CC_SUT" "$cc_pfxlc"
+  cc_pfxb="$CC_TMP/pfxb"; mkdir -p "$cc_pfxb"
+  printf 'word f%s123 embedded here\n' "$_CC_ABC_LC" > "$cc_pfxb/a.md"
+  assert_exit "embedded lowercase prefix does NOT trip (boundary preserved)" 0 -- \
+    env TRACKER_ISSUE_PREFIX="$_CC_ABC" bash "$CC_SUT" "$cc_pfxb"
+
+  # Prefix read from the target's gitignored local.env when not exported.
+  cc_pfxlenv="$CC_TMP/pfx-lenv"; mkdir -p "$cc_pfxlenv"
+  printf 'see %s-11 here\n' "$_CC_ABC" > "$cc_pfxlenv/a.md"
+  printf 'TRACKER_ISSUE_PREFIX="%s"\n' "$_CC_ABC" > "$cc_pfxlenv/local.env"
+  assert_exit "prefix read from the target local.env when not exported" 1 -- \
+    env -u TRACKER_ISSUE_PREFIX bash "$CC_SUT" "$cc_pfxlenv"
+
+  # TEAM is the reserved documentation placeholder. Lock the exact contract:
+  # BOTH placeholder shapes the framework uses — digitless TEAM-NN and
+  # bracketed <TEAM>-<digits> (the '>' breaks prefix-digit adjacency) — pass
+  # even when TEAM itself is the configured prefix; only a BARE TEAM-<digits>
+  # (a shape framework files never carry) trips it.
+  _CC_TEAM="TE""AM"
+  cc_team="$CC_TMP/team"; mkdir -p "$cc_team"
+  printf 'reference issues as %s-NN in docs\n' "$_CC_TEAM" > "$cc_team/a.md"
+  printf 'provenance note (<%s>-147.)\n' "$_CC_TEAM" > "$cc_team/b.md"
+  assert_exit "framework placeholder shapes (TEAM-NN, <TEAM>-147) do NOT trip a configured TEAM prefix" 0 -- \
+    env TRACKER_ISSUE_PREFIX="$_CC_TEAM" bash "$CC_SUT" "$cc_team"
+  printf 'bare %s-123 here\n' "$_CC_TEAM" > "$cc_team/c.md"
+  assert_exit "bare TEAM-<digits> DOES trip a configured TEAM prefix" 1 -- \
+    env TRACKER_ISSUE_PREFIX="$_CC_TEAM" bash "$CC_SUT" "$cc_team"
+
+  # Misconfiguration fails closed, never open: an invalid key (leading digit)
+  # and a set-but-only-separators value are both usage errors (exit 2). A
+  # set-but-EMPTY value falls back to the QUE default (the local.env.example
+  # stub ships empty).
+  assert_exit "invalid prefix entry FAILS closed (exit 2)" 2 -- \
+    env TRACKER_ISSUE_PREFIX="1BC" bash "$CC_SUT" "$cc_clean"
+  assert_exit "separators-only prefix list FAILS closed (exit 2)" 2 -- \
+    env TRACKER_ISSUE_PREFIX=" , " bash "$CC_SUT" "$cc_clean"
+  assert_exit "empty prefix value falls back to the QUE default (clean tree passes)" 0 -- \
+    env TRACKER_ISSUE_PREFIX="" bash "$CC_SUT" "$cc_clean"
+
   # --- Scanner-integrity: a non-directory target is an error, not a pass -----
   assert_exit "non-directory target is an error (exit 2)" 2 -- bash "$CC_SUT" "$CC_TMP/does-not-exist"
 
