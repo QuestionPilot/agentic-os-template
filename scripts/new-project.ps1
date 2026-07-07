@@ -51,10 +51,11 @@ if ($name.Contains('/') -or $name.Contains('\') -or $name -eq '.' -or $name -eq 
     Fail "error: project name must be a plain folder name (got: $name)"
 }
 
-$doGit = $false
+# Named initGit to mirror the bash twin's init_git (see the comment there).
+$initGit = $false
 if ($argv.Count -ge 2) {
     if ($argv.Count -eq 2 -and $argv[1] -eq '--git') {
-        $doGit = $true
+        $initGit = $true
     }
     else {
         Fail "usage: new-project.ps1 <project-name> [--git]"
@@ -84,7 +85,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot 'templates' 'project-AGENTS.md') -De
 
 # Write-Output (not Write-Host) so an in-process caller ($out = & ...) captures
 # the same success output an external caller sees — matching the bash twin.
-if ($doGit) {
+if ($initGit) {
     git -C $dest init -q
     if ($LASTEXITCODE -ne 0) {
         Fail "error: git init failed in $dest"

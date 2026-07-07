@@ -34,10 +34,13 @@ case "$name" in
     ;;
 esac
 
-do_git=0
+# Named init_git (not do_git): check-clean's multi-line scan joins lines, and
+# `then` + `do_git` concatenates into a string containing an operator PII
+# token — caught live by the CI lane.
+init_git=0
 if [ "$#" -ge 2 ]; then
   if [ "$#" -eq 2 ] && [ "$2" = "--git" ]; then
-    do_git=1
+    init_git=1
   else
     echo "usage: $0 <project-name> [--git]" >&2
     exit 1
@@ -70,7 +73,7 @@ mkdir "$dest"
 cp "$repo_root/templates/project-CLAUDE.md" "$dest/CLAUDE.md"
 cp "$repo_root/templates/project-AGENTS.md" "$dest/AGENTS.md"
 
-if [ "$do_git" -eq 1 ]; then
+if [ "$init_git" -eq 1 ]; then
   # Explicit failure branch so both twins exit 1 with the same message —
   # under bare `set -e` this would exit with git's own status instead.
   if ! git -C "$dest" init -q; then
