@@ -48,6 +48,14 @@ cross-model-out/
 # local state, not framework content.
 worktrees/
 
+# The operator's local project workspace — never tracked. scripts/new-project.sh
+# (and its .ps1 twin) scaffold real project folders here from the two
+# templates/project-*.md entrypoints; project work is the operator's own
+# content, not framework content, so it must never pollute the tracked tree or
+# conflict with a `git pull` of framework updates. Unanchored deliberately,
+# matching the worktrees/ entry above.
+projects/
+
 # self-audit score history — runtime, per-operator state written by
 # scripts/self-audit-history.{sh,ps1}. The default store lives at
 # $CLAUDE_CONFIG_DIR/self-audit-history.jsonl, but ignore it repo-wide so it
