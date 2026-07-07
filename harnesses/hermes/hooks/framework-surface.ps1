@@ -132,7 +132,9 @@ Disable this check: env ``CLAUDE_SKIP_FRESHNESS_CHECK=1``.
 # unresolvable dirs (checker exit 2), or any rc other than 1 → block omitted.
 $distBlock = ''
 if ($env:CLAUDE_SKIP_DISTILLATION_NUDGE -ne '1') {
-    $distScript = Join-Path $AI_CONFIG_DIR 'scripts' 'check-distillation-completeness.ps1'
+    # Slash-joined child (not multi-arg Join-Path) — matches the claude/codex
+    # twins so the three dist blocks stay textually parallel.
+    $distScript = Join-Path $AI_CONFIG_DIR 'scripts/check-distillation-completeness.ps1'
     if (Test-Path -LiteralPath $distScript) {
         # The checker derives its dirs from CLAUDE_CONFIG_DIR + OBSIDIAN_VAULT_PATH,
         # either of which may be unset in the hook environment. Resolve both

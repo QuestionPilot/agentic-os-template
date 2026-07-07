@@ -814,17 +814,24 @@ function Invoke-Pillar2 {
     # No such link, or no file at the target → skipped, never an error.
     $injIdentity = ''
     if ($injStartOk) {
-        foreach ($ln in [System.IO.File]::ReadAllLines($injStart)) {
-            if ($ln.StartsWith('## Read Order', [StringComparison]::Ordinal)) { break }
-            $m = [regex]::Match($ln, '\[\[([^\]]+)\]\]')
-            if ($m.Success) {
-                $t = $m.Groups[1].Value
-                $t = ($t -split '\|', 2)[0]
-                $t = ($t -split '#', 2)[0]
-                $injIdentity = $t
-                break
+        # try/catch: Test-Path proved existence, but OPENING the stream can
+        # still throw (START.md locked by a sync client/editor, or an ACL
+        # denies read). A never-crash diagnostic degrades to identity-skipped
+        # instead — the bash twin's 2>/dev/null posture (<TEAM>-364 pre-PR
+        # panel finding).
+        try {
+            foreach ($ln in [System.IO.File]::ReadAllLines($injStart)) {
+                if ($ln.StartsWith('## Read Order', [StringComparison]::Ordinal)) { break }
+                $m = [regex]::Match($ln, '\[\[([^\]]+)\]\]')
+                if ($m.Success) {
+                    $t = $m.Groups[1].Value
+                    $t = ($t -split '\|', 2)[0]
+                    $t = ($t -split '#', 2)[0]
+                    $injIdentity = $t
+                    break
+                }
             }
-        }
+        } catch { $injIdentity = '' }
     }
     $injIdPath = if ($injIdentity) { Join-Path $VaultDir ($injIdentity + '.md') } else { '' }
     if ($injIdPath -and (Test-Path -LiteralPath $injIdPath -PathType Leaf)) {
