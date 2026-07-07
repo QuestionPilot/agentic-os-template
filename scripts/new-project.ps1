@@ -82,18 +82,20 @@ New-Item -ItemType Directory -Path $dest -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot 'templates' 'project-CLAUDE.md') -Destination (Join-Path $dest 'CLAUDE.md')
 Copy-Item -LiteralPath (Join-Path $repoRoot 'templates' 'project-AGENTS.md') -Destination (Join-Path $dest 'AGENTS.md')
 
+# Write-Output (not Write-Host) so an in-process caller ($out = & ...) captures
+# the same success output an external caller sees — matching the bash twin.
 if ($doGit) {
     git -C $dest init -q
     if ($LASTEXITCODE -ne 0) {
         Fail "error: git init failed in $dest"
     }
-    Write-Host "initialized git repo in $dest"
+    Write-Output "initialized git repo in $dest"
 }
 
-Write-Host "created project: $dest"
-Write-Host "  - CLAUDE.md (Claude Code entrypoint)"
-Write-Host "  - AGENTS.md (Codex entrypoint)"
-Write-Host ""
-Write-Host "next:"
-Write-Host "  cd `"$dest`""
-Write-Host "  # edit the '## Project context' section, then run: claude   (or: codex)"
+Write-Output "created project: $dest"
+Write-Output "  - CLAUDE.md (Claude Code entrypoint)"
+Write-Output "  - AGENTS.md (Codex entrypoint)"
+Write-Output ""
+Write-Output "next:"
+Write-Output "  cd `"$dest`""
+Write-Output "  # edit the '## Project context' section, then run: claude   (or: codex)"

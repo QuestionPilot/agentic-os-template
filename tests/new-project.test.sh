@@ -40,6 +40,14 @@ assert_file "np: AGENTS.md scaffolded" "$FIX/projects/demo/AGENTS.md"
 assert_contains "np: output names the created project" "$OUT1" "created project:"
 assert_contains "np: output points at the Project context edit" "$OUT1" "## Project context"
 
+# === 1b. Hostile CDPATH cannot corrupt path resolution (the CDPATH= guard,
+# same as install.sh). Relative invocation from the fixture root is what makes
+# an exported CDPATH bite. Bash-only: the PS twin's Set-Location ignores CDPATH,
+# so this test has no .ps1 mirror.
+OUT1B=$(cd "$FIX" && CDPATH=. bash scripts/new-project.sh cdpathproj 2>&1); RC1B=$?
+assert_eq "np: scaffold immune to exported CDPATH" "0" "$RC1B"
+assert_file "np: CDPATH-run scaffold created CLAUDE.md" "$FIX/projects/cdpathproj/CLAUDE.md"
+
 # === 2. Scaffolded entrypoints are byte-identical to their templates.
 assert_exit "np: CLAUDE.md byte-identical to project-CLAUDE.md" 0 -- \
   cmp -s "$FIX/templates/project-CLAUDE.md" "$FIX/projects/demo/CLAUDE.md"
@@ -79,6 +87,15 @@ assert_exit "np: --git scaffold exits 0" 0 -- \
   bash "$FIX/scripts/new-project.sh" gitproj --git
 assert_exit "np: --git created a .git dir" 0 -- test -d "$FIX/projects/gitproj/.git"
 
+# === 7b. --git failure path: exit 1 + the same message as the PS twin (a stub
+# git that always fails, prepended to PATH — the twins' error contract).
+STUB=$(mktemp -d 2>/dev/null) || STUB="/tmp/np-stub-$$"
+printf '#!/bin/sh\nexit 3\n' > "$STUB/git"
+chmod +x "$STUB/git"
+OUT7B=$(PATH="$STUB:$PATH" bash "$FIX/scripts/new-project.sh" gitfail --git 2>&1); RC7B=$?
+assert_eq "np: --git failure exits 1 (not git's raw status)" "1" "$RC7B"
+assert_contains "np: --git failure names git init" "$OUT7B" "git init failed"
+
 # === 8. Missing templates fail closed BEFORE creating anything.
 FIX2=$(mktemp -d 2>/dev/null) || FIX2="/tmp/np-fix2-$$"
 mkdir -p "$FIX2/scripts"
@@ -100,4 +117,4 @@ assert_exit "np: projects/ path is gitignored by the tracked .gitignore" 0 -- \
 STATUS9=$(git -C "$TR" status --porcelain -- projects 2>&1)
 assert_eq "np: scaffolded workspace invisible to git status" "" "$STATUS9"
 
-rm -rf "$FIX" "$FIX2" "$TR"
+rm -rf "$FIX" "$FIX2" "$TR" "$STUB"

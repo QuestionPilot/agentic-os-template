@@ -44,8 +44,11 @@ if [ "$#" -ge 2 ]; then
   fi
 fi
 
-here="$(cd "$(dirname "$0")" && pwd)"
-repo_root="$(cd "$here/.." && pwd)"
+# `CDPATH=` neutralizes a hostile CDPATH (same guard as install.sh): without
+# it, `cd` on a relative path could resolve via a CDPATH entry and echo the
+# resolved path into the command substitution, corrupting both variables.
+here="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+repo_root="$(CDPATH= cd "$here/.." && pwd)"
 dest="$repo_root/projects/$name"
 
 # Fail before creating anything if the checkout is missing either template —
@@ -68,7 +71,12 @@ cp "$repo_root/templates/project-CLAUDE.md" "$dest/CLAUDE.md"
 cp "$repo_root/templates/project-AGENTS.md" "$dest/AGENTS.md"
 
 if [ "$do_git" -eq 1 ]; then
-  git -C "$dest" init -q
+  # Explicit failure branch so both twins exit 1 with the same message —
+  # under bare `set -e` this would exit with git's own status instead.
+  if ! git -C "$dest" init -q; then
+    echo "error: git init failed in $dest" >&2
+    exit 1
+  fi
   echo "initialized git repo in $dest"
 fi
 
