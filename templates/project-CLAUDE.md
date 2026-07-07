@@ -2,6 +2,10 @@
 
 This project uses the shared AI operating framework.
 
+## Project context
+
+_Replace this section with your project's specific context: what the project does, its tech stack, any local conventions, and where key files live._
+
 ## Startup
 
 1. Read the root `CLAUDE.md` entrypoint.
