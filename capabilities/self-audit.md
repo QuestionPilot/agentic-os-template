@@ -51,7 +51,7 @@ re-audit to score them. The bands above describe a fully-measured run.
 | Pillar | What it scores |
 | --- | --- |
 | **1. Cross-layer handoffs** | Each Active Linear project (≥1 open issue — closed-out projects with all issues Done/Canceled are skipped) has a project-type memory note (frontmatter `metadata.type: project`) + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
-| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) |
+| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400); the per-session **injection surface** — the largest store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
 | **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
@@ -82,8 +82,9 @@ script's penalty rules are the canonical scoring.
    With no flags it **reads `local.env`** (the same file `bootstrap.sh` /
    `install.sh` use) and resolves three optional surfaces from it: the memory
    dir under `$CLAUDE_CONFIG_DIR/projects/*/memory/`, the vault at
-   `$OBSIDIAN_VAULT_PATH`, plus `lineark` if installed. It **parses just those
-   three config keys as data** rather than sourcing the file — both twins
+   `$OBSIDIAN_VAULT_PATH`, plus `lineark` if installed. It **parses just the
+   four config keys as data** (those two paths, `CLAUDE_PRIMARY_MEMORY_DIR`,
+   and `INJECTION_SURFACE_WARN_KB`) rather than sourcing the file — both twins
    (`self-audit.sh`, `self-audit.ps1`) read the keys without executing
    `local.env`, so a hostile or malformed file can neither run code nor poison
    the `lineark`/`jq`/`git` lookups. Reading `local.env`
@@ -103,6 +104,12 @@ script's penalty rules are the canonical scoring.
    is optional — the script degrades gracefully and notes "skipped: <surface> not
    configured" in the output. Pass `--repo-root <path>` to point at a different
    agentic-os-template checkout (the test suite uses this).
+
+   The injection-surface budget (Pillar 2 sub-check) is tunable: precedence is
+   the `--injection-warn-kb <n>` flag > `INJECTION_SURFACE_WARN_KB` in
+   `local.env` > the ambient env var > the 32 KB default. The value is whole
+   KB; a non-positive or non-integer value silently falls back to the default
+   (the check is advisory, so a bad knob must not break the audit).
 
 2. **Read the scorecard.** The script's default output is human-readable
    markdown. The top-of-output total + per-pillar scores are the answer; the
@@ -204,6 +211,7 @@ how widely a gap of that class radiates through the framework:
 | Anti-pattern dir name in repo | 5 |
 | Broken MEMORY.md link | 4 |
 | Recent project memory missing `## State Deltas` | 4 |
+| Injection surface over the soft `INJECTION_SURFACE_WARN_KB` budget | 4 |
 | Orphan memory file (no MEMORY.md entry) | 3 |
 | Orphan `verification/*.md` (no capability consumer) | 3 |
 | `lifecycle: superseded` artifact missing successor reference | 3 |
@@ -238,6 +246,12 @@ Total: <N>/100
 | 4. Verification coverage           | <N>/20 | <one line> |
 | 5. Closeout / spine discipline     | <N>/20 | <one line> |
 
+## Injection surface
+
+- <component>: <bytes> bytes (<path>)      (one line per resolved component)
+- skipped: <component>, <component>        (only when some components skipped)
+Total: <bytes> bytes — soft threshold <K> KB (OK|OVER)
+
 ## Top gaps (leverage-weighted)
 
 1. [Pillar N] <one-sentence gap> — leverage <N>
@@ -250,11 +264,19 @@ Total: <N>/100
 - <surface>: <reason> (e.g. "lineark not installed; cross-layer Linear checks skipped")
 ```
 
+The `## Injection surface` section lists each resolved component with its byte
+size, names any component that could not resolve on a `skipped:` line, and
+closes with the total against the soft threshold. When no component resolves at
+all it reads `_(not measured — no injection-surface component resolved)_`.
+
 If `--json` is passed, the script emits a structured JSON object with
 `{total, unscored_count, pillars[name].score, pillars[name].unscored,
-pillars[name].notes, gaps[] }` — used by the upstream acceptance suite's
-`tests/self-audit.test.sh` to assert against specific scores. An UNSCORED pillar
-reports `score: 0, unscored: true`; the history helper records that 0 truthfully.
+pillars[name].notes, injection_surface, gaps[] }` — used by the upstream
+acceptance suite's `tests/self-audit.test.sh` to assert against specific scores.
+An UNSCORED pillar reports `score: 0, unscored: true`; the history helper
+records that 0 truthfully. `injection_surface` is `null` when no component
+resolved, else `{total_bytes, threshold_kb, warned, components[{name, path,
+bytes}], skipped[]}`.
 
 ## Limits
 

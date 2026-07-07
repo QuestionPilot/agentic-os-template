@@ -5,6 +5,7 @@
 #   bash scripts/self-audit.sh [--json] [--save <path>]
 #                              [--repo-root <path>] [--memory-dir <path>]
 #                              [--vault-dir <path>] [--config-dir <path>]
+#                              [--injection-warn-kb <n>]
 #
 # Read-only diagnostic. Never gates: exits 0 unless a USAGE error.
 #
@@ -24,12 +25,15 @@
 #                  else skipped. The explicit flag always means exactly one store.
 #   --vault-dir    $OBSIDIAN_VAULT_PATH if set; else skipped
 #   --config-dir   $CLAUDE_CONFIG_DIR if set; else skipped
+#   --injection-warn-kb  soft kickoff-injection budget in KB for sub-check 2.4
+#                  (default 32; flag > local.env INJECTION_SURFACE_WARN_KB >
+#                  ambient env > default — <TEAM>-364)
 #
 # `lineark` (the Linear CLI per linear/linear-setup.md) is optional;
 # Linear-side checks degrade with a "skipped: lineark not configured" note.
 #
 # Output: markdown by default. `--json` emits a structured object for tests:
-#   {date, total, pillars{...}, gaps[], skipped[]}
+#   {date, total, pillars{...}, injection_surface, gaps[], skipped[]}
 #
 # Tests: tests/self-audit.test.sh exercises every pillar with fixtures.
 #
@@ -45,6 +49,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MEMORY_DIR=""
 VAULT_DIR=""
 CONFIG_DIR=""
+# Soft injection-surface budget in KB (<TEAM>-364). Empty here = not set by
+# flag; the local.env / ambient-env fallbacks and the default apply below,
+# after the config-resolution block (mirroring CONFIG_DIR / VAULT_DIR).
+INJECTION_WARN_KB=""
 # --isolated turns off all operator-env fallbacks (env vars + lineark detection).
 # Used by tests/self-audit.test.sh so fixtures only see what the test sets up.
 ISOLATED=0
@@ -57,6 +65,7 @@ while [ $# -gt 0 ]; do
     --memory-dir)  MEMORY_DIR="${2:?--memory-dir needs a path}"; shift 2 ;;
     --vault-dir)   VAULT_DIR="${2:?--vault-dir needs a path}"; shift 2 ;;
     --config-dir)  CONFIG_DIR="${2:?--config-dir needs a path}"; shift 2 ;;
+    --injection-warn-kb) INJECTION_WARN_KB="${2:?--injection-warn-kb needs a value}"; shift 2 ;;
     --isolated)    ISOLATED=1; shift ;;
     -h|--help)     grep -E '^# ' "$0" | sed 's/^# //'; exit 0 ;;
     *) printf 'self-audit.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -106,7 +115,7 @@ MEMORY_DIRS=()
 # Get-SaLocalEnvValue). The prior `set -a; . local.env` EXECUTED the whole file:
 # a hostile or malformed local.env could run arbitrary code, or export a PATH=
 # that poisons the lineark/jq/git `command -v` lookups below — the very
-# PATH-capture window the PS twin was hardened against. Reading only the 3 config
+# PATH-capture window the PS twin was hardened against. Reading only the 4 config
 # keys as DATA (never PATH) closes that and makes the two twins behave
 # identically. Mirrors bash sourcing semantics for a key: a later assignment of
 # the same key wins; one matching surrounding quote pair is stripped; an unquoted
@@ -156,7 +165,7 @@ if [ "$ISOLATED" -eq 0 ]; then
   # that had (observed: 60/100 vs 80/100 for the same repo state). F1 (Codex
   # pre-merge review): the earlier `set -a; . local.env` EXECUTED the whole file —
   # arbitrary code + a hostile PATH= could poison the lineark/jq/git lookups below
-  # — diverging from the hardened PS twin. We now read ONLY the 3 config keys as
+  # — diverging from the hardened PS twin. We now read ONLY the 4 config keys as
   # DATA via _sa_localenv_get (never PATH). local.env wins over ambient env;
   # explicit CLI flags still win over local.env (they set CONFIG_DIR / VAULT_DIR
   # before this runs). --isolated skips it so fixtures only see what the test sets.
@@ -175,6 +184,12 @@ if [ "$ISOLATED" -eq 0 ]; then
     # (never PATH). Mirrors the PS twin.
     _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" CLAUDE_PRIMARY_MEMORY_DIR)"
     [ -n "$_le_v" ] && export CLAUDE_PRIMARY_MEMORY_DIR="$_le_v"
+    # INJECTION_SURFACE_WARN_KB (<TEAM>-364): same precedence as the paths —
+    # flag (already set above) > local.env > ambient env > default.
+    if [ -z "$INJECTION_WARN_KB" ]; then
+      _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" INJECTION_SURFACE_WARN_KB)"
+      [ -n "$_le_v" ] && INJECTION_WARN_KB="$_le_v"
+    fi
     unset _le_v
   fi
   if [ -z "$CONFIG_DIR" ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
@@ -182,6 +197,9 @@ if [ "$ISOLATED" -eq 0 ]; then
   fi
   if [ -z "$VAULT_DIR" ] && [ -n "${OBSIDIAN_VAULT_PATH:-}" ]; then
     VAULT_DIR="$OBSIDIAN_VAULT_PATH"
+  fi
+  if [ -z "$INJECTION_WARN_KB" ] && [ -n "${INJECTION_SURFACE_WARN_KB:-}" ]; then
+    INJECTION_WARN_KB="$INJECTION_SURFACE_WARN_KB"
   fi
   if [ -z "$MEMORY_DIR" ] && [ -n "$CONFIG_DIR" ] && [ -d "$CONFIG_DIR/projects" ]; then
     # <TEAM>-366: no flag → a $CLAUDE_PRIMARY_MEMORY_DIR pin scopes the scan to
@@ -204,6 +222,15 @@ fi
 if [ -n "$MEMORY_DIR" ]; then
   if [ -d "$MEMORY_DIR" ]; then MEMORY_DIRS=("$MEMORY_DIR"); else MEMORY_DIRS=(); fi
 fi
+
+# Validate the resolved injection budget: positive integer KB, else fall back
+# to the 32 KB default SILENTLY. The measurement is advisory — a soft warn,
+# never a gate (a design panel explicitly rejected a hard cap — <TEAM>-364) —
+# so a garbage knob value must degrade to the default, not break the audit.
+case "$INJECTION_WARN_KB" in
+  ''|*[!0-9]*) INJECTION_WARN_KB=32 ;;
+  *) [ "$INJECTION_WARN_KB" -gt 0 ] 2>/dev/null || INJECTION_WARN_KB=32 ;;
+esac
 
 # --- pillar state -- parallel indexed arrays, bash 3.2 compatible -------------
 PILLAR_KEYS=(
@@ -266,6 +293,20 @@ pillar_set_note() {
 # --- accumulators -------------------------------------------------------------
 SKIPPED=()                # one line per skipped surface
 GAPS=()                   # one record per gap: PILLAR<TAB>LEVERAGE<TAB>TITLE<TAB>DETAIL<TAB>FIX
+
+# Injection-surface measurement state (<TEAM>-364), filled by sub-check 2.4 in
+# score_memory_hygiene and read by both emitters. Parallel indexed arrays
+# (bash 3.2 — no associative arrays), one slot per RESOLVED component;
+# INJ_SKIPPED lists the component names that could not resolve. INJ_MEASURED=0
+# means no component resolved at all → the emitters report not-measured
+# (JSON: injection_surface = null) instead of a misleading 0-byte total.
+INJ_MEASURED=0
+INJ_TOTAL_BYTES=0
+INJ_WARNED=0
+INJ_COMP_NAMES=()
+INJ_COMP_PATHS=()
+INJ_COMP_BYTES=()
+INJ_SKIPPED=()
 
 # --- helpers ------------------------------------------------------------------
 record_gap() {
@@ -593,6 +634,108 @@ score_memory_hygiene() {
         "Trim each to a one-line headline; move detail into the named topic file"
     fi
   done
+
+  # Sub-check 2.4 (<TEAM>-364): per-session injection-surface size. These four
+  # components are injected into EVERY kickoff orient — the memory index (worst
+  # case: the LARGEST MEMORY.md across the scanned stores, since any one session
+  # loads one store), the rendered harness CLAUDE.md, the vault entrypoint
+  # START.md, and the operator-identity note START.md names — so oversize here
+  # is a per-session context tax no other check measures. SOFT threshold only:
+  # a design panel explicitly rejected a hard cap (a large surface can be a
+  # deliberate operator choice), so crossing INJECTION_SURFACE_WARN_KB (default
+  # 32) warns once and never errors. A component that cannot resolve is SKIPPED
+  # by name, never an error; the measurement rides the memory surface (the
+  # index is the dominant injected component), so when zero stores resolved the
+  # pillar returned UNSCORED above and the surface reports not-measured.
+  local inj_largest_path="" inj_largest_bytes=-1 inj_b
+  for md_dir in "${MEMORY_DIRS[@]}"; do
+    [ -f "$md_dir/MEMORY.md" ] || continue
+    inj_b="$(wc -c < "$md_dir/MEMORY.md" 2>/dev/null | tr -d ' ')"
+    [ -n "$inj_b" ] || continue
+    # Strictly-greater keeps the FIRST store on a size tie — MEMORY_DIRS order
+    # is already the twins' deterministic store order, so the reported path
+    # (which store is worst-case) matches across machines and twins.
+    if [ "$inj_b" -gt "$inj_largest_bytes" ]; then
+      inj_largest_bytes="$inj_b"
+      inj_largest_path="$md_dir/MEMORY.md"
+    fi
+  done
+  if [ -n "$inj_largest_path" ]; then
+    INJ_COMP_NAMES+=("MEMORY.md (largest store)")
+    INJ_COMP_PATHS+=("$inj_largest_path")
+    INJ_COMP_BYTES+=("$inj_largest_bytes")
+  else
+    INJ_SKIPPED+=("MEMORY.md (largest store)")
+  fi
+
+  if [ -n "$CONFIG_DIR" ] && [ -f "$CONFIG_DIR/CLAUDE.md" ]; then
+    inj_b="$(wc -c < "$CONFIG_DIR/CLAUDE.md" 2>/dev/null | tr -d ' ')"
+    INJ_COMP_NAMES+=("CLAUDE.md (rendered)")
+    INJ_COMP_PATHS+=("$CONFIG_DIR/CLAUDE.md")
+    INJ_COMP_BYTES+=("${inj_b:-0}")
+  else
+    INJ_SKIPPED+=("CLAUDE.md (rendered)")
+  fi
+
+  local inj_start_ok=0
+  if [ -n "$VAULT_DIR" ] && [ -f "$VAULT_DIR/START.md" ]; then
+    inj_start_ok=1
+    inj_b="$(wc -c < "$VAULT_DIR/START.md" 2>/dev/null | tr -d ' ')"
+    INJ_COMP_NAMES+=("START.md (vault)")
+    INJ_COMP_PATHS+=("$VAULT_DIR/START.md")
+    INJ_COMP_BYTES+=("${inj_b:-0}")
+  else
+    INJ_SKIPPED+=("START.md (vault)")
+  fi
+
+  # Operator-identity note — mechanical resolution rule: the FIRST [[wikilink]]
+  # target in START.md BEFORE the first line starting `## Read Order` (the
+  # vault contract has the entrypoint name the identity note ahead of its read
+  # order, so anything linked earlier IS the identity pointer). A `|alias` and
+  # a `#heading` suffix are stripped before resolving $VAULT_DIR/<target>.md.
+  # No such link, or no file at the target → skipped, never an error.
+  local inj_identity=""
+  if [ "$inj_start_ok" -eq 1 ]; then
+    inj_identity="$(awk '
+      /^## Read Order/ { exit }
+      match($0, /\[\[[^]]+\]\]/) {
+        t = substr($0, RSTART+2, RLENGTH-4)
+        sub(/\|.*$/, "", t)
+        sub(/#.*$/, "", t)
+        print t
+        exit
+      }
+    ' "$VAULT_DIR/START.md" 2>/dev/null)"
+  fi
+  if [ -n "$inj_identity" ] && [ -f "$VAULT_DIR/$inj_identity.md" ]; then
+    inj_b="$(wc -c < "$VAULT_DIR/$inj_identity.md" 2>/dev/null | tr -d ' ')"
+    INJ_COMP_NAMES+=("identity note")
+    INJ_COMP_PATHS+=("$VAULT_DIR/$inj_identity.md")
+    INJ_COMP_BYTES+=("${inj_b:-0}")
+  else
+    INJ_SKIPPED+=("identity note")
+  fi
+
+  if [ "${#INJ_COMP_NAMES[@]}" -gt 0 ]; then
+    INJ_MEASURED=1
+    local inj_i inj_total=0 inj_list=""
+    for inj_i in "${!INJ_COMP_NAMES[@]}"; do
+      inj_total=$(( inj_total + ${INJ_COMP_BYTES[$inj_i]} ))
+      [ -n "$inj_list" ] && inj_list="$inj_list, "
+      inj_list="${inj_list}${INJ_COMP_NAMES[$inj_i]}=${INJ_COMP_BYTES[$inj_i]}"
+    done
+    INJ_TOTAL_BYTES="$inj_total"
+    if [ "$inj_total" -gt $(( INJECTION_WARN_KB * 1024 )) ]; then
+      INJ_WARNED=1
+      # A single whole-surface aggregate, not a per-store scan — so this warn
+      # fires at most ONCE per run regardless of how many stores were scanned.
+      deduct "$key" 2
+      record_gap 2 4 \
+        "Injection surface over soft threshold" \
+        "$inj_total bytes across ${#INJ_COMP_NAMES[@]} component(s) exceeds the soft $INJECTION_WARN_KB KB kickoff-injection budget (components: $inj_list)" \
+        "Trim MEMORY.md entries / the CLAUDE.md sources / the identity note — or raise INJECTION_SURFACE_WARN_KB if the size is deliberate"
+    fi
+  fi
 
   local s; s="$(pillar_score "$key")"
   if [ "$s" -eq 20 ]; then
@@ -1011,6 +1154,29 @@ emit_markdown() {
     fi
   done
 
+  printf '\n## Injection surface\n\n'
+  if [ "$INJ_MEASURED" -eq 0 ]; then
+    printf '_(not measured — no injection-surface component resolved)_\n'
+  else
+    local j
+    for j in "${!INJ_COMP_NAMES[@]}"; do
+      printf -- '- %s: %s bytes (%s)\n' \
+        "${INJ_COMP_NAMES[$j]}" "${INJ_COMP_BYTES[$j]}" "${INJ_COMP_PATHS[$j]}"
+    done
+    if [ "${#INJ_SKIPPED[@]}" -gt 0 ]; then
+      local sk_list="" sk
+      for sk in "${INJ_SKIPPED[@]}"; do
+        [ -n "$sk_list" ] && sk_list="$sk_list, "
+        sk_list="$sk_list$sk"
+      done
+      printf -- '- skipped: %s\n' "$sk_list"
+    fi
+    local verdict="OK"
+    [ "$INJ_WARNED" -eq 1 ] && verdict="OVER"
+    printf 'Total: %s bytes — soft threshold %s KB (%s)\n' \
+      "$INJ_TOTAL_BYTES" "$INJECTION_WARN_KB" "$verdict"
+  fi
+
   printf '\n## Top gaps (leverage-weighted)\n\n'
   if [ "${#GAPS[@]}" -eq 0 ]; then
     printf '_(none)_\n'
@@ -1075,14 +1241,45 @@ emit_json() {
     done
   fi
 
+  # injection_surface (<TEAM>-364): null when nothing resolved (not-measured is
+  # a distinct state from a 0-byte surface), else a fixed-key-order object so
+  # the twins emit identical shapes.
+  local inj_json='null'
+  if [ "$INJ_MEASURED" -eq 1 ]; then
+    local inj_comps='[]' inj_j
+    for inj_j in "${!INJ_COMP_NAMES[@]}"; do
+      inj_comps="$(printf '%s' "$inj_comps" | jq \
+        --arg name "${INJ_COMP_NAMES[$inj_j]}" \
+        --arg path "${INJ_COMP_PATHS[$inj_j]}" \
+        --argjson bytes "${INJ_COMP_BYTES[$inj_j]}" \
+        '. += [{name: $name, path: $path, bytes: $bytes}]')"
+    done
+    local inj_skipped='[]' inj_s
+    if [ "${#INJ_SKIPPED[@]}" -gt 0 ]; then
+      for inj_s in "${INJ_SKIPPED[@]}"; do
+        inj_skipped="$(printf '%s' "$inj_skipped" | jq --arg s "$inj_s" '. += [$s]')"
+      done
+    fi
+    local inj_warned=false
+    [ "$INJ_WARNED" -eq 1 ] && inj_warned=true
+    inj_json="$(jq -n \
+      --argjson total "$INJ_TOTAL_BYTES" \
+      --argjson tk "$INJECTION_WARN_KB" \
+      --argjson warned "$inj_warned" \
+      --argjson components "$inj_comps" \
+      --argjson skipped "$inj_skipped" \
+      '{total_bytes: $total, threshold_kb: $tk, warned: $warned, components: $components, skipped: $skipped}')"
+  fi
+
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
     --argjson unscored_count "$UNSCORED_COUNT" \
     --argjson pillars "$pillars_obj" \
+    --argjson injection_surface "$inj_json" \
     --argjson gaps "$gaps_arr" \
     --argjson skipped "$skipped_arr" \
-    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, gaps: $gaps, skipped: $skipped}'
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped}'
 }
 
 OUTPUT=""

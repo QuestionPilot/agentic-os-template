@@ -1353,3 +1353,165 @@ _test_spine_no_capabilities_dir() {
     "0" "$spine_count"
 }
 _test_spine_no_capabilities_dir
+
+# Helper (<TEAM>-364): injection-surface fixture layered on _sa_mk_fixture_repo —
+# a fake config dir with a rendered CLAUDE.md, one memory store whose MEMORY.md
+# is the only file (no orphan / broken-link interactions), and a vault whose
+# START.md names an identity note via the FIRST wikilink (aliased, to exercise
+# the |alias strip) BEFORE the `## Read Order` heading — the mechanical
+# resolution rule sub-check 2.4 implements. Components total well over 1 KB so
+# `--injection-warn-kb 1` trips the warn and a huge threshold does not.
+_sa_mk_injection_fixture() {
+  local root="$1" i
+  _sa_mk_fixture_repo "$root"
+  mkdir -p "$root/config" "$root/mem" "$root/vault"
+  { printf '# Rendered CLAUDE.md\n'
+    for i in $(seq 1 20); do printf 'entrypoint padding line for the injection surface fixture\n'; done
+  } > "$root/config/CLAUDE.md"
+  { printf '# Memory Index\n\n'
+    for i in $(seq 1 12); do printf -- '- headline entry %s — short, under the per-line cap\n' "$i"; done
+  } > "$root/mem/MEMORY.md"
+  cat > "$root/vault/START.md" <<'EOF'
+# START
+
+## Who You're Working For
+
+Work for [[Operator Profile|the operator]] first.
+
+## Read Order
+
+1. [[Memory Core]]
+EOF
+  printf '# Operator Profile\n\nidentity note body for the injection fixture\n' > "$root/vault/Operator Profile.md"
+}
+
+# --- <TEAM>-364 (a): over the soft threshold → warned=true, a pillar-2 gap, and
+# the 2-pt deduction (18/20 — the fixture is otherwise clean). The identity
+# component must resolve THROUGH the |alias to the note named before
+# ## Read Order, not to the [[Memory Core]] link inside the read order.
+_test_injection_surface_warns_over_threshold() {
+  command -v jq >/dev/null 2>&1 || { _skip "injection-surface warn test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_injection_fixture "$fixture"
+
+  local out warned gap p2 comp_count id_path
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+          --repo-root "$fixture" --memory-dir "$fixture/mem" \
+          --config-dir "$fixture/config" --vault-dir "$fixture/vault" \
+          --injection-warn-kb 1 --json 2>/dev/null)"
+  warned="$(printf '%s' "$out" | jq -r '.injection_surface.warned')"
+  gap="$(printf '%s' "$out" | jq -r '.gaps[] | select(.title == "Injection surface over soft threshold") | .title' | head -1)"
+  p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  comp_count="$(printf '%s' "$out" | jq -r '.injection_surface.components | length')"
+  id_path="$(printf '%s' "$out" | jq -r '.injection_surface.components[] | select(.name == "identity note") | .path')"
+  rm -rf "$fixture"
+
+  assert_eq "injection surface: warned=true when total exceeds --injection-warn-kb 1" "true" "$warned"
+  assert_eq "injection surface: pillar-2 gap titled 'Injection surface over soft threshold' recorded" \
+    "Injection surface over soft threshold" "$gap"
+  assert_eq "injection surface: pillar 2 reflects the 2-pt soft deduction" "18" "$p2"
+  assert_eq "injection surface: all four components resolve on the full fixture" "4" "$comp_count"
+  if [ -n "$id_path" ] && [ -z "${id_path##*Operator Profile.md}" ]; then
+    _pass "injection surface: identity note resolves via first pre-Read-Order wikilink (alias stripped)"
+  else
+    _fail "injection surface: identity note resolves via first pre-Read-Order wikilink (alias stripped)" \
+          "expected path ending 'Operator Profile.md', got [$id_path]"
+  fi
+}
+_test_injection_surface_warns_over_threshold
+
+# --- <TEAM>-364 (b): a huge threshold → no warn, no gap, no deduction. The
+# measurement itself still reports (soft warn ≠ measurement gate).
+_test_injection_surface_clean_under_threshold() {
+  command -v jq >/dev/null 2>&1 || { _skip "injection-surface clean test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_injection_fixture "$fixture"
+
+  local out warned gap p2
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+          --repo-root "$fixture" --memory-dir "$fixture/mem" \
+          --config-dir "$fixture/config" --vault-dir "$fixture/vault" \
+          --injection-warn-kb 4096 --json 2>/dev/null)"
+  warned="$(printf '%s' "$out" | jq -r '.injection_surface.warned')"
+  gap="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.title == "Injection surface over soft threshold")] | length')"
+  p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  rm -rf "$fixture"
+
+  assert_eq "injection surface: warned=false under a huge threshold" "false" "$warned"
+  assert_eq "injection surface: no over-threshold gap under a huge threshold" "0" "$gap"
+  assert_eq "injection surface: pillar 2 stays 20/20 under a huge threshold" "20" "$p2"
+}
+_test_injection_surface_clean_under_threshold
+
+# --- <TEAM>-364 (c): markdown output carries the ## Injection surface section
+# (between the pillar table and Top gaps) with per-component lines and the
+# Total line naming the threshold + OK/OVER verdict.
+_test_injection_surface_markdown_section() {
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_injection_fixture "$fixture"
+
+  local out_over out_ok
+  out_over="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+               --repo-root "$fixture" --memory-dir "$fixture/mem" \
+               --config-dir "$fixture/config" --vault-dir "$fixture/vault" \
+               --injection-warn-kb 1 2>/dev/null)"
+  out_ok="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+             --repo-root "$fixture" --memory-dir "$fixture/mem" \
+             --config-dir "$fixture/config" --vault-dir "$fixture/vault" \
+             --injection-warn-kb 4096 2>/dev/null)"
+  rm -rf "$fixture"
+
+  assert_contains "injection surface markdown: section heading present" \
+    "$out_over" "## Injection surface"
+  assert_contains "injection surface markdown: per-component line present" \
+    "$out_over" "MEMORY.md (largest store):"
+  assert_contains "injection surface markdown: Total line says OVER past the threshold" \
+    "$out_over" "soft threshold 1 KB (OVER)"
+  assert_contains "injection surface markdown: Total line says OK under the threshold" \
+    "$out_ok" "soft threshold 4096 KB (OK)"
+}
+_test_injection_surface_markdown_section
+
+# --- <TEAM>-364 (d): a component that cannot resolve is SKIPPED by name, never
+# an error — no vault dir → START.md + identity note both land in .skipped and
+# the remaining two components still measure.
+_test_injection_surface_skips_unresolved_components() {
+  command -v jq >/dev/null 2>&1 || { _skip "injection-surface skip test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_injection_fixture "$fixture"
+
+  local out skipped_list comp_count
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated \
+          --repo-root "$fixture" --memory-dir "$fixture/mem" \
+          --config-dir "$fixture/config" \
+          --injection-warn-kb 4096 --json 2>/dev/null)"
+  skipped_list="$(printf '%s' "$out" | jq -r '.injection_surface.skipped | join("|")')"
+  comp_count="$(printf '%s' "$out" | jq -r '.injection_surface.components | length')"
+  rm -rf "$fixture"
+
+  assert_eq "injection surface: vault-side components listed in skipped when no vault dir" \
+    "START.md (vault)|identity note" "$skipped_list"
+  assert_eq "injection surface: the two resolvable components still measure" "2" "$comp_count"
+}
+_test_injection_surface_skips_unresolved_components
+
+# --- <TEAM>-364 (e): when NO component resolves (no memory store, no config,
+# no vault), the measurement is not-measured — JSON injection_surface is null
+# (a distinct state from a 0-byte surface) and the markdown says so.
+_test_injection_surface_null_when_nothing_resolves() {
+  command -v jq >/dev/null 2>&1 || { _skip "injection-surface null test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+
+  local out null_type md_out
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  null_type="$(printf '%s' "$out" | jq -r '.injection_surface | type')"
+  md_out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" 2>/dev/null)"
+  rm -rf "$fixture"
+
+  assert_eq "injection surface: JSON injection_surface is null when nothing resolves" \
+    "null" "$null_type"
+  assert_contains "injection surface: markdown reports not-measured when nothing resolves" \
+    "$md_out" "_(not measured — no injection-surface component resolved)_"
+}
+_test_injection_surface_null_when_nothing_resolves

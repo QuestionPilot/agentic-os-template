@@ -15,6 +15,7 @@
 #   CLAUDE_SKIP_FRESHNESS_CHECK=1           disables just the config-freshness nudge
 #   CLAUDE_SKIP_LOCAL_HOOK_CHECK=1          disables just the orphaned-local-hook check
 #   CLAUDE_SKIP_MCP_PROBE=1                 disables just the MCP-health block
+#   CLAUDE_SKIP_DISTILLATION_NUDGE=1        disables just the distillation-lag nudge
 #   CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1   disables just the session-agent auto-fire directive
 # Window:
 #   CLAUDE_FRAMEWORK_SINCE_DAYS=N    overrides git-log window (default 10)
@@ -238,6 +239,94 @@ See \`reference_mcp_silent_empty_tools\` for the full pattern. Disable this prob
   fi
 fi
 
+# --- 2b. Distillation-lag nudge ---------------------------------
+# READ-ONLY kickoff surfacing of scripts/check-distillation-completeness.sh
+# (<TEAM>-364): when one or more feedback/decision memory notes have not been
+# distilled into the vault's 04-Lessons layer, say so at session start instead
+# of letting the lapse sit invisible until a wipe/migration boundary. A design
+# panel explicitly REJECTED a background auto-distillation writer (a
+# silent-write + prompt-injection surface), so this block only reads and
+# reports — it never writes to the vault or the memory store; the distillation
+# itself stays with the operator-driven closeout capability. Fail-open:
+# missing checker, unresolvable dirs (checker exit 2), timeout kill (rc 124),
+# or any rc other than 1 → block omitted, never a hook failure.
+DIST_BLOCK=""
+if [[ "${CLAUDE_SKIP_DISTILLATION_NUDGE:-0}" != "1" ]]; then
+  DIST_SCRIPT="$AI_CONFIG_DIR/scripts/check-distillation-completeness.sh"
+  if [[ -f "$DIST_SCRIPT" ]]; then
+    # The checker derives its dirs from CLAUDE_CONFIG_DIR + OBSIDIAN_VAULT_PATH,
+    # either of which may be unset in the hook environment. Resolve both
+    # fail-open: the config dir falls back to this hook's own install dir
+    # (hooks live at <install>/hooks/, and for the claude harness the install
+    # dir IS the config dir); the vault path falls back to the
+    # OBSIDIAN_VAULT_PATH key in the framework repo's local.env.
+    DIST_CFG="${CLAUDE_CONFIG_DIR:-}"
+    if [[ -z "$DIST_CFG" ]]; then
+      DIST_CFG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+    fi
+    DIST_VAULT="${OBSIDIAN_VAULT_PATH:-}"
+    if [[ -z "$DIST_VAULT" && -f "$AI_CONFIG_DIR/local.env" ]]; then
+      # Minimal no-exec read of ONE key (modeled on scripts/self-audit.sh
+      # _sa_localenv_get, deliberately smaller). Sourcing local.env here is
+      # forbidden: it would execute arbitrary operator-file code inside a
+      # SessionStart hook, and a hostile PATH= line could poison every command
+      # lookup in this hook. Read the LAST OBSIDIAN_VAULT_PATH= assignment as
+      # DATA (last wins, like bash sourcing), trim trailing whitespace, and
+      # strip one matching surrounding quote pair.
+      DIST_VAULT="$(grep -E '^[[:space:]]*(export[[:space:]]+)?OBSIDIAN_VAULT_PATH=' "$AI_CONFIG_DIR/local.env" 2>/dev/null \
+        | tail -n 1 | sed -E 's/^[[:space:]]*(export[[:space:]]+)?OBSIDIAN_VAULT_PATH=//; s/[[:space:]]+$//')"
+      case "$DIST_VAULT" in
+        \"*\") DIST_VAULT="${DIST_VAULT#\"}"; DIST_VAULT="${DIST_VAULT%\"}" ;;
+        \'*\') DIST_VAULT="${DIST_VAULT#\'}"; DIST_VAULT="${DIST_VAULT%\'}" ;;
+      esac
+    fi
+    # A dir left unresolved is NOT pre-guarded beyond the cheap fallbacks
+    # above — the checker itself exits 2 on an unresolvable path, which stays
+    # silent here. Bound the run like the other blocks (prefer GNU `timeout`,
+    # fall back to `gtimeout`; without either it runs unbounded — same
+    # graceful degradation). Computed locally: the MCP block's TIMEOUT_CMD
+    # lives inside that block's own `if` and is absent when the probe is
+    # skipped.
+    DIST_TIMEOUT=""
+    if command -v timeout >/dev/null 2>&1; then DIST_TIMEOUT="timeout 5"
+    elif command -v gtimeout >/dev/null 2>&1; then DIST_TIMEOUT="gtimeout 5"; fi
+    dist_rc=0
+    dist_out="$(CLAUDE_CONFIG_DIR="$DIST_CFG" OBSIDIAN_VAULT_PATH="$DIST_VAULT" \
+      $DIST_TIMEOUT bash "$DIST_SCRIPT" 2>&1)" || dist_rc=$?
+    # ONLY a confirmed lapse (rc 1) surfaces; 0 (all distilled), 2 (usage /
+    # unresolvable dirs), 124 (timeout kill), and any other rc stay silent.
+    if [[ "$dist_rc" -eq 1 ]]; then
+      # `FAIL undistilled: <name> — …` lines carry the note names in field 3
+      # (memory-note filenames are slugs — they never contain spaces).
+      # Sorted for cross-twin determinism: the bash checker walks find order,
+      # the PS twin sorts — sorting here keeps the surfaced top-5 excerpt
+      # identical on both sides (same posture as the MCP block's sort).
+      dist_names="$(printf '%s\n' "$dist_out" | awk '/^FAIL undistilled: /{print $3}' | LC_ALL=C sort)"
+      if [[ -n "$dist_names" ]]; then
+        dist_count="$(printf '%s\n' "$dist_names" | grep -c .)"
+        dist_list="$(printf '%s\n' "$dist_names" | head -5 | sed 's/^/- /')"
+        if [[ "$dist_count" -gt 5 ]]; then
+          dist_list="${dist_list}
+- … and $((dist_count - 5)) more"
+        fi
+        # Leading blank line separates this block from the MCP block above.
+        DIST_BLOCK="
+
+## Distillation lag — ${dist_count} feedback/decision note(s) not yet distilled
+
+${dist_list}
+
+These feedback/decision memory notes have not been promoted into the vault's
+04-Lessons layer. Promote each into its thematic 04-Lessons note at the next
+closeout (capabilities/closeout.md → \"Distill this session's feedback\"). This
+nudge is a read-only lint — it changed nothing. Full list: \`bash
+scripts/check-distillation-completeness.sh\`.
+Disable this nudge: env \`CLAUDE_SKIP_DISTILLATION_NUDGE=1\`."
+      fi
+    fi
+  fi
+fi
+
 # --- 3. Session-agent invocation directive ---------------------
 # Auto-fire mechanism for the session-agent spine capability. Emits one
 # directive instructing the model to invoke session-agent as its first action
@@ -323,11 +412,11 @@ Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
 fi
 
 # Nothing to surface from any block → quiet exit.
-if [[ -z "$GIT_BLOCK" && -z "$FRESH_BLOCK" && -z "$LOCALHOOK_BLOCK" && -z "$MCP_BLOCK" && -z "$SA_BLOCK" ]]; then
+if [[ -z "$GIT_BLOCK" && -z "$FRESH_BLOCK" && -z "$LOCALHOOK_BLOCK" && -z "$MCP_BLOCK" && -z "$DIST_BLOCK" && -z "$SA_BLOCK" ]]; then
   exit 0
 fi
 
-CONTEXT="${GIT_BLOCK}${FRESH_BLOCK}${LOCALHOOK_BLOCK}${MCP_BLOCK}${SA_BLOCK}"
+CONTEXT="${GIT_BLOCK}${FRESH_BLOCK}${LOCALHOOK_BLOCK}${MCP_BLOCK}${DIST_BLOCK}${SA_BLOCK}"
 
 # Emit JSON via jq for safe escaping.
 jq -nR --arg ctx "$CONTEXT" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'

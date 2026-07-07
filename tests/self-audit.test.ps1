@@ -1200,3 +1200,159 @@ if ($jqAvail) {
 } else {
     _Skip 'self-audit.test: no-capabilities-dir test' 'jq not installed'
 }
+
+# Helper (<TEAM>-364): injection-surface fixture layered on New-SaFixtureRepo —
+# a fake config dir with a rendered CLAUDE.md, one memory store whose MEMORY.md
+# is the only file (no orphan / broken-link interactions), and a vault whose
+# START.md names an identity note via the FIRST wikilink (aliased, to exercise
+# the |alias strip) BEFORE the `## Read Order` heading — the mechanical
+# resolution rule sub-check 2.4 implements. Mirrors _sa_mk_injection_fixture.
+function New-SaInjectionFixture {
+    param([string]$Root)
+    New-SaFixtureRepo $Root
+    foreach ($d in @('config', 'mem', 'vault')) {
+        New-Item -ItemType Directory -Path (Join-Path $Root $d) -Force | Out-Null
+    }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("# Rendered CLAUDE.md`n")
+    for ($i = 1; $i -le 20; $i++) { [void]$sb.Append("entrypoint padding line for the injection surface fixture`n") }
+    Write-LfFile (Join-Path $Root 'config' 'CLAUDE.md') $sb.ToString()
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("# Memory Index`n`n")
+    for ($i = 1; $i -le 12; $i++) { [void]$sb.Append("- headline entry $i — short, under the per-line cap`n") }
+    Write-LfFile (Join-Path $Root 'mem' 'MEMORY.md') $sb.ToString()
+    Write-LfFile (Join-Path $Root 'vault' 'START.md') @'
+# START
+
+## Who You're Working For
+
+Work for [[Operator Profile|the operator]] first.
+
+## Read Order
+
+1. [[Memory Core]]
+'@
+    Write-LfFile (Join-Path $Root 'vault' 'Operator Profile.md') "# Operator Profile`n`nidentity note body for the injection fixture`n"
+}
+
+# --- <TEAM>-364 (a): over the soft threshold → warned=true, a pillar-2 gap, and
+# the 2-pt deduction (18/20 — the fixture is otherwise clean). The identity
+# component must resolve THROUGH the |alias to the note named before
+# ## Read Order, not to the [[Memory Core]] link inside the read order.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaInjectionFixture $fixture
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--config-dir', (Join-Path $fixture 'config'),
+        '--vault-dir', (Join-Path $fixture 'vault'),
+        '--injection-warn-kb', '1', '--json')
+    $obj = $out | ConvertFrom-Json
+    $warned = "$($obj.injection_surface.warned)"
+    $gap = ''
+    foreach ($g in $obj.gaps) { if ($g.title -eq 'Injection surface over soft threshold') { $gap = $g.title; break } }
+    $p2 = Get-SaPillarScore $out 'memory-hygiene'
+    $compCount = @($obj.injection_surface.components).Count
+    $idPath = ''
+    foreach ($c in $obj.injection_surface.components) { if ($c.name -eq 'identity note') { $idPath = $c.path; break } }
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: injection surface warned=true when total exceeds --injection-warn-kb 1' 'True' $warned
+    Assert-Eq 'self-audit.test: injection surface pillar-2 gap titled Injection surface over soft threshold recorded' `
+        'Injection surface over soft threshold' $gap
+    Assert-Eq 'self-audit.test: injection surface pillar 2 reflects the 2-pt soft deduction' '18' "$p2"
+    Assert-Eq 'self-audit.test: injection surface all four components resolve on the full fixture' '4' "$compCount"
+    if ($idPath -and $idPath.EndsWith('Operator Profile.md', [StringComparison]::Ordinal)) {
+        _Pass 'self-audit.test: injection surface identity note resolves via first pre-Read-Order wikilink (alias stripped)'
+    } else {
+        _Fail 'self-audit.test: injection surface identity note resolves via first pre-Read-Order wikilink (alias stripped)' "expected path ending 'Operator Profile.md', got [$idPath]"
+    }
+} else {
+    _Skip 'self-audit.test: injection-surface warn test' 'jq not installed'
+}
+
+# --- <TEAM>-364 (b): a huge threshold → no warn, no gap, no deduction. The
+# measurement itself still reports (soft warn ≠ measurement gate).
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaInjectionFixture $fixture
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--config-dir', (Join-Path $fixture 'config'),
+        '--vault-dir', (Join-Path $fixture 'vault'),
+        '--injection-warn-kb', '4096', '--json')
+    $obj = $out | ConvertFrom-Json
+    $warned = "$($obj.injection_surface.warned)"
+    $gapCount = @($obj.gaps | Where-Object { $_.title -eq 'Injection surface over soft threshold' }).Count
+    $p2 = Get-SaPillarScore $out 'memory-hygiene'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: injection surface warned=false under a huge threshold' 'False' $warned
+    Assert-Eq 'self-audit.test: injection surface no over-threshold gap under a huge threshold' '0' "$gapCount"
+    Assert-Eq 'self-audit.test: injection surface pillar 2 stays 20/20 under a huge threshold' '20' "$p2"
+} else {
+    _Skip 'self-audit.test: injection-surface clean test' 'jq not installed'
+}
+
+# --- <TEAM>-364 (c): markdown output carries the ## Injection surface section
+# (between the pillar table and Top gaps) with per-component lines and the
+# Total line naming the threshold + OK/OVER verdict.
+$fixture = New-SaTmp
+New-SaInjectionFixture $fixture
+$outOver = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+    '--memory-dir', (Join-Path $fixture 'mem'),
+    '--config-dir', (Join-Path $fixture 'config'),
+    '--vault-dir', (Join-Path $fixture 'vault'),
+    '--injection-warn-kb', '1')
+$outOk = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+    '--memory-dir', (Join-Path $fixture 'mem'),
+    '--config-dir', (Join-Path $fixture 'config'),
+    '--vault-dir', (Join-Path $fixture 'vault'),
+    '--injection-warn-kb', '4096')
+Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+Assert-Contains 'self-audit.test: injection surface markdown section heading present' `
+    $outOver '## Injection surface'
+Assert-Contains 'self-audit.test: injection surface markdown per-component line present' `
+    $outOver 'MEMORY.md (largest store):'
+Assert-Contains 'self-audit.test: injection surface markdown Total line says OVER past the threshold' `
+    $outOver 'soft threshold 1 KB (OVER)'
+Assert-Contains 'self-audit.test: injection surface markdown Total line says OK under the threshold' `
+    $outOk 'soft threshold 4096 KB (OK)'
+
+# --- <TEAM>-364 (d): a component that cannot resolve is SKIPPED by name, never
+# an error — no vault dir → START.md + identity note both land in .skipped and
+# the remaining two components still measure.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaInjectionFixture $fixture
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--config-dir', (Join-Path $fixture 'config'),
+        '--injection-warn-kb', '4096', '--json')
+    $obj = $out | ConvertFrom-Json
+    $skippedList = @($obj.injection_surface.skipped) -join '|'
+    $compCount = @($obj.injection_surface.components).Count
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: injection surface vault-side components listed in skipped when no vault dir' `
+        'START.md (vault)|identity note' $skippedList
+    Assert-Eq 'self-audit.test: injection surface the two resolvable components still measure' '2' "$compCount"
+} else {
+    _Skip 'self-audit.test: injection-surface skip test' 'jq not installed'
+}
+
+# --- <TEAM>-364 (e): when NO component resolves (no memory store, no config,
+# no vault), the measurement is not-measured — JSON injection_surface is null
+# (a distinct state from a 0-byte surface) and the markdown says so.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture, '--json')
+    $obj = $out | ConvertFrom-Json
+    $nullType = if ($null -eq $obj.injection_surface) { 'null' } else { 'not-null' }
+    $mdOut = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture)
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: injection surface JSON injection_surface is null when nothing resolves' `
+        'null' $nullType
+    Assert-Contains 'self-audit.test: injection surface markdown reports not-measured when nothing resolves' `
+        $mdOut '_(not measured — no injection-surface component resolved)_'
+} else {
+    _Skip 'self-audit.test: injection-surface null test' 'jq not installed'
+}

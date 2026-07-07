@@ -136,3 +136,19 @@ _Skip 'hooks-behavior.test: session-agent: no jq emits PreToolUse deny shape' $r
 _Skip 'hooks-behavior.test: session-agent: no jq drops legacy decision form' $reason
 _Skip 'hooks-behavior.test: framework-surface: no jq exits 0' $reason
 _Skip 'hooks-behavior.test: framework-surface: no jq is silent (open)' $reason
+# <TEAM>-364 distillation-lag nudge (bash-side behavioral coverage; the .ps1
+# hook nudge block is exercised in hooks-ps-parity.test.ps1 section 5).
+_Skip 'hooks-behavior.test: framework-surface: distillation lapse exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation lapse emits header' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation lapse names the note' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation nudge says read-only' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation nudge names its switch' $reason
+_Skip 'hooks-behavior.test: framework-surface: distilled note exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: distilled note drops the nudge' $reason
+_Skip 'hooks-behavior.test: framework-surface: distilled case keeps git-log' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation kill switch exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation kill switch drops nudge' $reason
+_Skip 'hooks-behavior.test: framework-surface: distillation kill switch keeps git-log' $reason
+_Skip 'hooks-behavior.test: framework-surface: unresolvable vault exits 0' $reason
+_Skip 'hooks-behavior.test: framework-surface: unresolvable vault stays silent' $reason
+_Skip 'hooks-behavior.test: framework-surface: unresolvable vault keeps git-log' $reason

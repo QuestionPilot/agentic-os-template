@@ -30,6 +30,8 @@
                                                 regardless of harness)
       CLAUDE_SKIP_FRESHNESS_CHECK=1             disables the config-freshness
                                                 nudge
+      CLAUDE_SKIP_DISTILLATION_NUDGE=1          disables the distillation-lag
+                                                nudge
       CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1     disables just the
                                                 session-agent block
 
@@ -153,6 +155,115 @@ Disable this check: env ``CLAUDE_SKIP_FRESHNESS_CHECK=1``.
     }
 }
 
+# --- 1c. Distillation-lag nudge ---------------------------------
+# READ-ONLY kickoff surfacing of scripts/check-distillation-completeness.ps1
+# (<TEAM>-364; mirrors the claude twin's block 2b): when one or more
+# feedback/decision memory notes have not been distilled into the vault's
+# 04-Lessons layer, say so at session start instead of letting the lapse sit
+# invisible until a wipe/migration boundary. A design panel explicitly
+# REJECTED a background auto-distillation writer (a silent-write +
+# prompt-injection surface), so this block only reads and reports — it never
+# writes to the vault or the memory store; the distillation itself stays with
+# the operator-driven closeout capability. Invokes the .ps1 twin checker so
+# Windows stays self-contained (no bash dependency); nested pwsh resolved
+# from $PID per block 1b's pattern. Fail-open: missing checker, unresolvable
+# dirs (checker exit 2), or any rc other than 1 → block omitted, never a
+# hook failure.
+$DIST_BLOCK = ''
+if ($env:CLAUDE_SKIP_DISTILLATION_NUDGE -ne '1') {
+    $DIST_SCRIPT = Join-Path $AI_CONFIG_DIR 'scripts/check-distillation-completeness.ps1'
+    if (Test-Path -LiteralPath $DIST_SCRIPT) {
+        # The checker derives its dirs from CLAUDE_CONFIG_DIR + OBSIDIAN_VAULT_PATH,
+        # either of which may be unset in the hook environment. Resolve both
+        # fail-open from the framework repo's local.env — read as DATA, never
+        # sourced/executed (that would run arbitrary operator-file code inside
+        # a session-start hook, and a hostile PATH= line could poison every
+        # command lookup here; modeled on scripts/self-audit.ps1
+        # Get-SaLocalEnvValue, deliberately smaller). Unlike the claude twin
+        # there is NO install-dir fallback for the config dir: this hook's
+        # install dir is CODEX_HOME, which does not hold the projects/*/memory
+        # store the checker scans. LAST KEY= assignment wins (like bash
+        # sourcing); trailing whitespace trimmed; one surrounding quote pair
+        # stripped.
+        $distLocalEnv = Join-Path $AI_CONFIG_DIR 'local.env'
+        function Get-DistLocalEnvValue {
+            param([string]$Key)
+            $v = ''
+            foreach ($distLn in @(Get-Content -LiteralPath $distLocalEnv -ErrorAction SilentlyContinue)) {
+                if ("$distLn" -cmatch "^\s*(export\s+)?$Key=(.*)$") {
+                    $v = $Matches[2] -replace '\s+$', ''
+                }
+            }
+            if ($v -and $v.Length -ge 2) {
+                $dvF = $v[0]; $dvL = $v[$v.Length - 1]
+                if (($dvF -eq '"' -and $dvL -eq '"') -or ($dvF -eq "'" -and $dvL -eq "'")) {
+                    $v = $v.Substring(1, $v.Length - 2)
+                }
+            }
+            return $v
+        }
+        $distCfg = $env:CLAUDE_CONFIG_DIR
+        if (-not $distCfg) { $distCfg = Get-DistLocalEnvValue -Key 'CLAUDE_CONFIG_DIR' }
+        $distVault = $env:OBSIDIAN_VAULT_PATH
+        if (-not $distVault) { $distVault = Get-DistLocalEnvValue -Key 'OBSIDIAN_VAULT_PATH' }
+        # A dir left unresolved is NOT pre-guarded beyond the cheap fallbacks
+        # above — the checker itself exits 2 on an unresolvable path, which
+        # stays silent here. Invoke with the resolved dirs as explicit env,
+        # restored afterwards (assigning $null/'' to $env: removes the var, so
+        # an originally-unset var stays unset for later blocks).
+        $pwshExeD = try { (Get-Process -Id $PID).Path } catch { $null }
+        if (-not $pwshExeD) { $pwshExeD = 'pwsh' }
+        $prevDistCfg = $env:CLAUDE_CONFIG_DIR
+        $prevDistVault = $env:OBSIDIAN_VAULT_PATH
+        $env:CLAUDE_CONFIG_DIR = $distCfg
+        $env:OBSIDIAN_VAULT_PATH = $distVault
+        $distOut = & $pwshExeD -NoProfile -File $DIST_SCRIPT 2>&1
+        $distRc = $LASTEXITCODE
+        $env:CLAUDE_CONFIG_DIR = $prevDistCfg
+        $env:OBSIDIAN_VAULT_PATH = $prevDistVault
+        # ONLY a confirmed lapse (rc 1) surfaces; 0 (all distilled), 2 (usage /
+        # unresolvable dirs), and any other rc stay silent.
+        if ($distRc -eq 1) {
+            # `FAIL undistilled: <name> — …` lines carry the note names in
+            # field 3 (memory-note filenames are slugs — never spaces).
+            $distNames = @()
+            foreach ($distOutLn in @($distOut)) {
+                $distS = "$distOutLn"
+                if ($distS -cmatch '^FAIL undistilled: ') {
+                    $distNames += ($distS -split '\s+')[2]
+                }
+            }
+            # Sorted for cross-twin determinism: the bash checker walks find
+            # order, the PS twin sorts — sorting here keeps the surfaced top-5
+            # excerpt identical on both sides. StringComparer.Ordinal is the
+            # byte-order twin of the bash side's LC_ALL=C sort (Sort-Object's
+            # culture-aware comparison can weight `-` differently).
+            $distNames = [string[]]$distNames
+            [Array]::Sort($distNames, [System.StringComparer]::Ordinal)
+            if ($distNames.Count -gt 0) {
+                $distCount = $distNames.Count
+                $distShown = @($distNames | Select-Object -First 5 | ForEach-Object { "- $_" })
+                if ($distCount -gt 5) { $distShown += "- … and $($distCount - 5) more" }
+                $distList = $distShown -join "`n"
+                $DIST_BLOCK = @"
+
+
+## Distillation lag — $distCount feedback/decision note(s) not yet distilled
+
+$distList
+
+These feedback/decision memory notes have not been promoted into the vault's
+04-Lessons layer. Promote each into its thematic 04-Lessons note at the next
+closeout (capabilities/closeout.md → "Distill this session's feedback"). This
+nudge is a read-only lint — it changed nothing. Full list: ``bash
+scripts/check-distillation-completeness.sh``.
+Disable this nudge: env ``CLAUDE_SKIP_DISTILLATION_NUDGE=1``.
+"@
+            }
+        }
+    }
+}
+
 # --- 2. Session-agent invocation directive ------------------------
 # Auto-fire mechanism for the session-agent spine capability. Emits one
 # directive instructing the model to invoke session-agent as its first
@@ -210,11 +321,11 @@ Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
 }
 
 # Nothing to surface from any block → quiet exit (parity with bash twin).
-if (-not $GIT_BLOCK -and -not $FRESH_BLOCK -and -not $SA_BLOCK) {
+if (-not $GIT_BLOCK -and -not $FRESH_BLOCK -and -not $DIST_BLOCK -and -not $SA_BLOCK) {
     exit 0
 }
 
-$CONTEXT = "${GIT_BLOCK}${FRESH_BLOCK}${SA_BLOCK}"
+$CONTEXT = "${GIT_BLOCK}${FRESH_BLOCK}${DIST_BLOCK}${SA_BLOCK}"
 
 # Emit JSON via jq for safe escaping (parity with bash hook). Pass the
 # multiline context via --arg so jq escapes newlines + quotes correctly.
