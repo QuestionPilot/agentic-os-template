@@ -107,10 +107,52 @@ classify lessons and route them to the right source of truth
 ### More detail
 
 - Runnable sample project: `examples/`
+- Scaffold a project workspace: `scripts/new-project.sh` (see [Projects workspace](#projects-workspace))
 - Full bootstrap options: `playbooks/new-machine-bootstrap.md`
 - Active-work tracker setup: `linear/linear-setup.md`
 - Durable vault setup: `obsidian/vault-guide.md`
 - Run it as your own OS (co-located config, personal fork): `playbooks/personal-fork.md`
+
+---
+
+## Projects workspace
+
+Real project work does not live in this repository's tracked tree. The
+convention is a local `projects/` workspace at the repo root: it is gitignored,
+so project folders never pollute the framework's tracked files and never
+conflict when you `git pull` framework updates.
+
+Scaffold a project into it:
+
+```bash
+bash scripts/new-project.sh my-project        # plain folder
+bash scripts/new-project.sh my-project --git  # also runs `git init`
+```
+
+(Windows: `pwsh -File scripts/new-project.ps1 my-project` — same flags.)
+
+The scaffold copies the two project entrypoint templates —
+`templates/project-CLAUDE.md` and `templates/project-AGENTS.md` — into
+`projects/my-project/` as `CLAUDE.md` and `AGENTS.md`. Edit each file's
+`## Project context` section to describe the project, then open a session
+inside the folder:
+
+```bash
+cd projects/my-project
+claude            # or: codex
+```
+
+The agent reads two layers: the project's own thin entrypoint (project-specific
+context only) and the compiled framework spine from your `CLAUDE_CONFIG_DIR` /
+`CODEX_HOME` (`session-agent`, `closeout`, `self-audit`, the operating rules,
+your tracker and vault access). The framework is shared by reference — you do
+not copy it into each project.
+
+- Each project can be its own git repo (`--git`) or a plain working folder.
+- Keep active work in your tracker and durable lessons in your vault, not in
+  flat files in the workspace — see `core/memory-model.md`.
+- To run the framework's own verification, `cd` back to the repo root and run
+  `make verify`.
 
 ---
 
@@ -165,6 +207,7 @@ Shared content stays harness-neutral — it carries no single-harness assumption
 | `obsidian/` | Long-term knowledge and wiki structure guidance. |
 | `obsidian/vault-guide.md` | Canonical durable-vault setup + structure + agentic-OS integration spec. |
 | `templates/` | Portable templates with placeholders, never local secrets. |
+| `scripts/new-project.sh` | Scaffolds a project workspace under the gitignored `projects/` from the project templates (`.ps1` twin included). |
 | `scripts/validate.sh` | Repository validation and safety checks. |
 | `tests/` | Acceptance suite (`tests/run.sh` / `tests/run.ps1`) — bash + PowerShell test twins and fixtures. |
 | `examples/` | Worked examples (e.g. a sample project-local entrypoint + `local.env`). |

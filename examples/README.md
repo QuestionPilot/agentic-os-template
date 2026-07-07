@@ -45,6 +45,9 @@ configuring your own project.
 
 - For the full install and bootstrap flow, see the Quickstart section in the
   repository `README.md`.
+- To scaffold a real project workspace from `templates/project-CLAUDE.md` +
+  `templates/project-AGENTS.md`, run `scripts/new-project.sh` — see the
+  Projects workspace section in the repository `README.md`.
 - For active-work tracker setup, see `linear/linear-setup.md`.
 - For durable-knowledge vault setup, see `obsidian/vault-guide.md`.
 - The framework ships only the spine capabilities (see `skills/registry.md`); tool and app skills are operator-local.
