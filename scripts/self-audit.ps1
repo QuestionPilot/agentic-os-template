@@ -38,6 +38,11 @@
 .PARAMETER ConfigDir
     Override the harness config dir. Defaults to $env:CLAUDE_CONFIG_DIR.
 
+.PARAMETER InjectionWarnKb
+    Soft kickoff-injection budget in KB for sub-check 2.4 (<TEAM>-364).
+    Default 32; precedence is flag > local.env INJECTION_SURFACE_WARN_KB >
+    ambient env > default.
+
 .PARAMETER Isolated
     Turn off all operator-env fallbacks (env vars + lineark detection). Used
     by tests so fixtures only see what the test sets up.
@@ -54,11 +59,11 @@
     (lineark, jq, git) are looked up via Get-Command at call time (matching the
     bash twin's `command -v ... >/dev/null 2>&1` pattern). <TEAM>-180 D2 added a
     local.env read for config resolution, but via Get-SaLocalEnvValue it reads
-    ONLY the three config keys (CLAUDE_CONFIG_DIR / OBSIDIAN_VAULT_PATH /
-    CLAUDE_PRIMARY_MEMORY_DIR) — never PATH or any other key — so no
-    PATH-poisoning window opens. The general Import-LocalEnv (scripts/lib/
-    local-env.ps1), which pushes EVERY key into the env, is deliberately NOT used
-    here for that reason.
+    ONLY the four config keys (CLAUDE_CONFIG_DIR / OBSIDIAN_VAULT_PATH /
+    CLAUDE_PRIMARY_MEMORY_DIR / INJECTION_SURFACE_WARN_KB) — never PATH or any
+    other key — so no PATH-poisoning window opens. The general Import-LocalEnv
+    (scripts/lib/local-env.ps1), which pushes EVERY key into the env, is
+    deliberately NOT used here for that reason.
 #>
 
 [CmdletBinding()]
@@ -69,6 +74,7 @@ param(
     [string]$MemoryDir = '',
     [string]$VaultDir = '',
     [string]$ConfigDir = '',
+    [string]$InjectionWarnKb = '',
     [switch]$Isolated,
     [Alias('h')][switch]$Help,
 
@@ -110,6 +116,10 @@ while ($i -lt $Rest.Count) {
             if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --config-dir needs a path'); exit 2 }
             $ConfigDir = $Rest[$i + 1]; $i += 2
         }
+        '--injection-warn-kb' {
+            if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --injection-warn-kb needs a value'); exit 2 }
+            $InjectionWarnKb = $Rest[$i + 1]; $i += 2
+        }
         '-h'     { $Help = [switch]$true; $i += 1 }
         '--help' { $Help = [switch]$true; $i += 1 }
         default {
@@ -136,7 +146,7 @@ Usage:
   pwsh -File scripts/self-audit.ps1 [-Json] [-Save <path>]
                                     [-RepoRoot <path>] [-MemoryDir <path>]
                                     [-VaultDir <path>] [-ConfigDir <path>]
-                                    [-Isolated]
+                                    [-InjectionWarnKb <n>] [-Isolated]
 
 Read-only diagnostic. Never gates: exits 0 unless a USAGE error.
 
@@ -155,9 +165,12 @@ Default inputs:
                else skipped. The explicit flag always means exactly one store.
   -VaultDir    $env:OBSIDIAN_VAULT_PATH if set; else skipped
   -ConfigDir   $env:CLAUDE_CONFIG_DIR if set; else skipped
+  -InjectionWarnKb  soft kickoff-injection budget in KB for sub-check 2.4
+               (default 32; flag > local.env INJECTION_SURFACE_WARN_KB >
+               ambient env > default)
 
 Output: markdown by default. -Json emits a structured object for tests:
-  {date, total, pillars{...}, gaps[], skipped[]}
+  {date, total, pillars{...}, injection_surface, gaps[], skipped[]}
 '@ | Write-Host
     exit 0
 }
@@ -182,7 +195,7 @@ if (Test-Path -LiteralPath $RepoRoot -PathType Container) {
 # Import-LocalEnv here: that pushes EVERY key (incl. a hostile PATH=) into the
 # process env, and this script resolves lineark/jq/git via Get-Command AFTER this
 # point — the exact [[feedback_ps_port_path_capture_at_precheck]] PATH-poisoning
-# window. Reading only the three config keys (never PATH) keeps the bash twin's
+# window. Reading only the four config keys (never PATH) keeps the bash twin's
 # `set -a; . local.env` behaviour while preserving the hardened posture. Mirrors
 # bash sourcing semantics: a later assignment of the same key wins.
 function Get-SaLocalEnvValue {
@@ -272,7 +285,7 @@ if (-not $Isolated.IsPresent) {
     # <TEAM>-180 D2: read operator config from local.env (the same source the bash
     # twin sources) so the no-flag run is REPRODUCIBLE across shells. local.env
     # wins over ambient env; explicit flags still win over local.env. Only the
-    # three config keys are read (never PATH) — see Get-SaLocalEnvValue. This
+    # four config keys are read (never PATH) — see Get-SaLocalEnvValue. This
     # branch is skipped under -Isolated, so fixtures never see operator config.
     $localEnv = Join-Path $RepoRoot 'local.env'
     if (Test-Path -LiteralPath $localEnv -PathType Leaf) {
@@ -293,12 +306,21 @@ if (-not $Isolated.IsPresent) {
         # parity miss where the PS twin ignored the local.env pin entirely.)
         $v = Get-SaLocalEnvValue -Path $localEnv -Key 'CLAUDE_PRIMARY_MEMORY_DIR'
         if (-not [string]::IsNullOrEmpty($v)) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $v }
+        # INJECTION_SURFACE_WARN_KB (<TEAM>-364): same precedence as the paths —
+        # flag (already set above) > local.env > ambient env > default.
+        if ([string]::IsNullOrEmpty($InjectionWarnKb)) {
+            $v = Get-SaLocalEnvValue -Path $localEnv -Key 'INJECTION_SURFACE_WARN_KB'
+            if (-not [string]::IsNullOrEmpty($v)) { $InjectionWarnKb = $v }
+        }
     }
     if ([string]::IsNullOrEmpty($ConfigDir) -and -not [string]::IsNullOrEmpty($env:CLAUDE_CONFIG_DIR)) {
         $ConfigDir = $env:CLAUDE_CONFIG_DIR
     }
     if ([string]::IsNullOrEmpty($VaultDir) -and -not [string]::IsNullOrEmpty($env:OBSIDIAN_VAULT_PATH)) {
         $VaultDir = $env:OBSIDIAN_VAULT_PATH
+    }
+    if ([string]::IsNullOrEmpty($InjectionWarnKb) -and -not [string]::IsNullOrEmpty($env:INJECTION_SURFACE_WARN_KB)) {
+        $InjectionWarnKb = $env:INJECTION_SURFACE_WARN_KB
     }
     if ([string]::IsNullOrEmpty($MemoryDir) -and -not [string]::IsNullOrEmpty($ConfigDir)) {
         $MemoryDirs = @(Get-SaMemoryDirs -ConfigDirPath $ConfigDir)
@@ -311,6 +333,32 @@ if (-not $Isolated.IsPresent) {
 if (-not [string]::IsNullOrEmpty($MemoryDir)) {
     if (Test-Path -LiteralPath $MemoryDir -PathType Container) { $MemoryDirs = @($MemoryDir) }
     else { $MemoryDirs = @() }
+}
+
+# Validate the resolved injection budget: positive integer KB, else fall back
+# to the 32 KB default SILENTLY. The measurement is advisory — a soft warn,
+# never a gate (a design panel explicitly rejected a hard cap — <TEAM>-364) —
+# so a garbage knob value must degrade to the default, not break the audit.
+$InjectionWarnKbInt = 32
+if ($InjectionWarnKb -match '^[0-9]+$') {
+    $injParsed = 0
+    if ([int]::TryParse($InjectionWarnKb, [ref]$injParsed) -and $injParsed -gt 0) {
+        $InjectionWarnKbInt = $injParsed
+    }
+}
+
+# Injection-surface measurement state (<TEAM>-364), filled by sub-check 2.4 in
+# Invoke-Pillar2 and read by both emitters. Hashtable entries (a reference
+# type) so the function mutates THIS object rather than shadowing a local.
+# measured=$false means no component resolved at all → the emitters report
+# not-measured (JSON: injection_surface = null) instead of a misleading
+# 0-byte total. Mirrors the bash twin's INJ_* state.
+$injSurface = @{
+    measured   = $false
+    total      = [long]0
+    warned     = $false
+    components = New-Object System.Collections.Generic.List[object]
+    skipped    = New-Object System.Collections.Generic.List[string]
 }
 
 # ---------------------------------------------------------------------------
@@ -704,6 +752,113 @@ function Invoke-Pillar2 {
                 'MEMORY.md entries over line-length cap' `
                 "$longLines index line(s) in $mdDir/MEMORY.md exceed the ~300-char per-entry cap" `
                 'Trim each to a one-line headline; move detail into the named topic file'
+        }
+    }
+
+    # Sub-check 2.4 (<TEAM>-364): per-session injection-surface size. These four
+    # components are injected into EVERY kickoff orient — the memory index (worst
+    # case: the LARGEST MEMORY.md across the scanned stores, since any one session
+    # loads one store), the rendered harness CLAUDE.md, the vault entrypoint
+    # START.md, and the operator-identity note START.md names — so oversize here
+    # is a per-session context tax no other check measures. SOFT threshold only:
+    # a design panel explicitly rejected a hard cap (a large surface can be a
+    # deliberate operator choice), so crossing INJECTION_SURFACE_WARN_KB (default
+    # 32) warns once and never errors. A component that cannot resolve is SKIPPED
+    # by name, never an error; the measurement rides the memory surface (the
+    # index is the dominant injected component), so when zero stores resolved the
+    # pillar returned UNSCORED above and the surface reports not-measured.
+    # Twin of self-audit.sh sub-check 2.4.
+    $injLargestPath = ''
+    $injLargestBytes = [long](-1)
+    foreach ($mdDir in $MemoryDirs) {
+        $injIdx = Join-Path $mdDir 'MEMORY.md'
+        if (-not (Test-Path -LiteralPath $injIdx -PathType Leaf)) { continue }
+        $injB = [long](Get-Item -LiteralPath $injIdx).Length
+        # Strictly-greater keeps the FIRST store on a size tie — $MemoryDirs order
+        # is already the twins' deterministic store order, so the reported path
+        # (which store is worst-case) matches across machines and twins.
+        if ($injB -gt $injLargestBytes) {
+            $injLargestBytes = $injB
+            $injLargestPath = $injIdx
+        }
+    }
+    if ($injLargestPath) {
+        [void]$injSurface['components'].Add([pscustomobject]@{
+            name = 'MEMORY.md (largest store)'; path = $injLargestPath; bytes = $injLargestBytes })
+    } else {
+        [void]$injSurface['skipped'].Add('MEMORY.md (largest store)')
+    }
+
+    $injClaude = if ([string]::IsNullOrEmpty($ConfigDir)) { '' } else { Join-Path $ConfigDir 'CLAUDE.md' }
+    if ($injClaude -and (Test-Path -LiteralPath $injClaude -PathType Leaf)) {
+        [void]$injSurface['components'].Add([pscustomobject]@{
+            name = 'CLAUDE.md (rendered)'; path = $injClaude; bytes = [long](Get-Item -LiteralPath $injClaude).Length })
+    } else {
+        [void]$injSurface['skipped'].Add('CLAUDE.md (rendered)')
+    }
+
+    $injStart = if ([string]::IsNullOrEmpty($VaultDir)) { '' } else { Join-Path $VaultDir 'START.md' }
+    $injStartOk = [bool]($injStart -and (Test-Path -LiteralPath $injStart -PathType Leaf))
+    if ($injStartOk) {
+        [void]$injSurface['components'].Add([pscustomobject]@{
+            name = 'START.md (vault)'; path = $injStart; bytes = [long](Get-Item -LiteralPath $injStart).Length })
+    } else {
+        [void]$injSurface['skipped'].Add('START.md (vault)')
+    }
+
+    # Operator-identity note — mechanical resolution rule: the FIRST [[wikilink]]
+    # target in START.md BEFORE the first line starting `## Read Order` (the
+    # vault contract has the entrypoint name the identity note ahead of its read
+    # order, so anything linked earlier IS the identity pointer). A `|alias` and
+    # a `#heading` suffix are stripped before resolving $VaultDir/<target>.md.
+    # No such link, or no file at the target → skipped, never an error.
+    $injIdentity = ''
+    if ($injStartOk) {
+        # try/catch: Test-Path proved existence, but OPENING the stream can
+        # still throw (START.md locked by a sync client/editor, or an ACL
+        # denies read). A never-crash diagnostic degrades to identity-skipped
+        # instead — the bash twin's 2>/dev/null posture (<TEAM>-364 pre-PR
+        # panel finding).
+        try {
+            foreach ($ln in [System.IO.File]::ReadAllLines($injStart)) {
+                if ($ln.StartsWith('## Read Order', [StringComparison]::Ordinal)) { break }
+                $m = [regex]::Match($ln, '\[\[([^\]]+)\]\]')
+                if ($m.Success) {
+                    $t = $m.Groups[1].Value
+                    $t = ($t -split '\|', 2)[0]
+                    $t = ($t -split '#', 2)[0]
+                    $injIdentity = $t
+                    break
+                }
+            }
+        } catch { $injIdentity = '' }
+    }
+    $injIdPath = if ($injIdentity) { Join-Path $VaultDir ($injIdentity + '.md') } else { '' }
+    if ($injIdPath -and (Test-Path -LiteralPath $injIdPath -PathType Leaf)) {
+        [void]$injSurface['components'].Add([pscustomobject]@{
+            name = 'identity note'; path = $injIdPath; bytes = [long](Get-Item -LiteralPath $injIdPath).Length })
+    } else {
+        [void]$injSurface['skipped'].Add('identity note')
+    }
+
+    if ($injSurface['components'].Count -gt 0) {
+        $injSurface['measured'] = $true
+        $injTotal = [long]0
+        $injList = @()
+        foreach ($c in $injSurface['components']) {
+            $injTotal += $c.bytes
+            $injList += "$($c.name)=$($c.bytes)"
+        }
+        $injSurface['total'] = $injTotal
+        if ($injTotal -gt ([long]$InjectionWarnKbInt * 1024)) {
+            $injSurface['warned'] = $true
+            # A single whole-surface aggregate, not a per-store scan — so this warn
+            # fires at most ONCE per run regardless of how many stores were scanned.
+            Use-Deduct $key 2
+            Add-Gap 2 4 `
+                'Injection surface over soft threshold' `
+                "$injTotal bytes across $($injSurface['components'].Count) component(s) exceeds the soft $InjectionWarnKbInt KB kickoff-injection budget (components: $($injList -join ', '))" `
+                'Trim MEMORY.md entries / the CLAUDE.md sources / the identity note — or raise INJECTION_SURFACE_WARN_KB if the size is deliberate'
         }
     }
 
@@ -1142,6 +1297,21 @@ function Get-MarkdownOutput {
         }
     }
     [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Injection surface')
+    [void]$sb.AppendLine('')
+    if (-not $injSurface['measured']) {
+        [void]$sb.AppendLine('_(not measured — no injection-surface component resolved)_')
+    } else {
+        foreach ($c in $injSurface['components']) {
+            [void]$sb.AppendLine("- $($c.name): $($c.bytes) bytes ($($c.path))")
+        }
+        if ($injSurface['skipped'].Count -gt 0) {
+            [void]$sb.AppendLine("- skipped: $($injSurface['skipped'] -join ', ')")
+        }
+        $injVerdict = if ($injSurface['warned']) { 'OVER' } else { 'OK' }
+        [void]$sb.AppendLine("Total: $($injSurface['total']) bytes — soft threshold $InjectionWarnKbInt KB ($injVerdict)")
+    }
+    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Top gaps (leverage-weighted)')
     [void]$sb.AppendLine('')
     if ($gaps.Count -eq 0) {
@@ -1192,13 +1362,29 @@ function Get-JsonOutput {
             fix      = $_.fix
         }
     })
+    # injection_surface (<TEAM>-364): null when nothing resolved (not-measured is
+    # a distinct state from a 0-byte surface), else a fixed-key-order object so
+    # the twins emit identical shapes.
+    $injObj = $null
+    if ($injSurface['measured']) {
+        $injObj = [ordered]@{
+            total_bytes  = $injSurface['total']
+            threshold_kb = $InjectionWarnKbInt
+            warned       = $injSurface['warned']
+            components   = @($injSurface['components'] | ForEach-Object {
+                [ordered]@{ name = $_.name; path = $_.path; bytes = $_.bytes }
+            })
+            skipped      = @($injSurface['skipped'])
+        }
+    }
     $obj = [ordered]@{
-        date           = $dateStr
-        total          = $total
-        unscored_count = $unscoredCount
-        pillars        = $pillarsObj
-        gaps           = $sortedGaps
-        skipped        = @($skipped)
+        date              = $dateStr
+        total             = $total
+        unscored_count    = $unscoredCount
+        pillars           = $pillarsObj
+        injection_surface = $injObj
+        gaps              = $sortedGaps
+        skipped           = @($skipped)
     }
     return ($obj | ConvertTo-Json -Depth 6)
 }

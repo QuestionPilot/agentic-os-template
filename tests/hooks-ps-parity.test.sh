@@ -440,6 +440,104 @@ assert_not_contains "hooks-ps-parity: skill-gate.ps1 does not parse the verb (no
 assert_contains "hooks-ps-parity: skill-gate.ps1 consumes stdin without inspecting it (ReadToEnd)" \
   "$hkps_sgps" '[Console]::In.ReadToEnd()'
 
+# --- 5. <TEAM>-364 distillation-lag nudge — claude framework-surface.ps1 ----
+# Mirrors the bash-side scenarios appended to tests/hooks-behavior.test.sh:
+# lapse -> header + note name; distilled -> nudge absent; kill switch ->
+# nudge absent; unresolvable vault -> silent (checker exit 2, fail-open).
+# The repo source hook still carries the @@AI_CONFIG_DIR@@ placeholder (this
+# file runs sources, not a build), so run a COPY with the placeholder
+# substituted to REPO_ROOT — the same substitution install performs — so the
+# block can find scripts/check-distillation-completeness.ps1. The other
+# probe blocks are disabled via their kill switches for a deterministic
+# payload. Skips when pwsh is absent (same convention as section 3).
+if command -v pwsh >/dev/null 2>&1; then
+  hkdn_tmp="$(mktemp -d)"
+  mkdir -p "$hkdn_tmp/hooks" "$hkdn_tmp/cfg/projects/x/memory" "$hkdn_tmp/vault/04-Lessons"
+  sed "s|@@AI_CONFIG_DIR@@|$REPO_ROOT|g" "$REPO_ROOT/harnesses/claude/hooks/framework-surface.ps1" \
+    > "$hkdn_tmp/hooks/framework-surface.ps1"
+  # In-scope note: kebab slug + frontmatter `metadata:`-nested `type: feedback`
+  # (the shape the checker's frontmatter scan recognizes).
+  cat > "$hkdn_tmp/cfg/projects/x/memory/feedback-test-lapse-note.md" <<'HKDN_NOTE'
+---
+title: test lapse note
+metadata:
+  type: feedback
+---
+A feedback note that has not been distilled into 04-Lessons.
+HKDN_NOTE
+  printf '# Memory index\n' > "$hkdn_tmp/cfg/projects/x/memory/MEMORY.md"
+  printf '# Unrelated lesson\n' > "$hkdn_tmp/vault/04-Lessons/unrelated.md"
+  hkdn_env=(CLAUDE_SKIP_MCP_PROBE=1 CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_LOCAL_HOOK_CHECK=1 CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1)
+
+  # lapse -> header names the count, list names the note.
+  hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" \
+    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/vault" \
+    pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
+  hkdn_rc=$?
+  if [ "$hkdn_rc" -ne 0 ]; then
+    _fail "hooks-ps-parity: claude framework-surface.ps1 distillation lapse exits 0" "exit $hkdn_rc"
+  else
+    _pass "hooks-ps-parity: claude framework-surface.ps1 distillation lapse exits 0"
+  fi
+  case "$hkdn_out" in
+    *"Distillation lag — 1 feedback/decision note(s) not yet distilled"*)
+      case "$hkdn_out" in
+        *"feedback-test-lapse-note"*)
+          _pass "hooks-ps-parity: claude framework-surface.ps1 surfaces the distillation lapse + note name" ;;
+        *)
+          _fail "hooks-ps-parity: claude framework-surface.ps1 lapse block should name the note" "got: $hkdn_out" ;;
+      esac ;;
+    *)
+      _fail "hooks-ps-parity: claude framework-surface.ps1 should surface the distillation lapse" "got: $hkdn_out" ;;
+  esac
+
+  # distilled (name recorded in a lessons note) -> nudge absent.
+  printf '# Thematic lesson\n\n## Source Notes\n\n- feedback-test-lapse-note\n' > "$hkdn_tmp/vault/04-Lessons/thematic-lesson.md"
+  hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" \
+    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/vault" \
+    pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkdn_out" in
+    *"Distillation lag"*)
+      _fail "hooks-ps-parity: claude framework-surface.ps1 distilled note should drop the nudge" "got: $hkdn_out" ;;
+    *)
+      _pass "hooks-ps-parity: claude framework-surface.ps1 distilled note drops the nudge" ;;
+  esac
+
+  # kill switch (lapse restored) -> nudge absent.
+  rm -f "$hkdn_tmp/vault/04-Lessons/thematic-lesson.md"
+  hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" CLAUDE_SKIP_DISTILLATION_NUDGE=1 \
+    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/vault" \
+    pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkdn_out" in
+    *"Distillation lag"*)
+      _fail "hooks-ps-parity: claude framework-surface.ps1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 should drop the nudge" "got: $hkdn_out" ;;
+    *)
+      _pass "hooks-ps-parity: claude framework-surface.ps1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 drops the nudge" ;;
+  esac
+
+  # unresolvable vault (nonexistent dir) -> checker exit 2 -> fail-open silent.
+  hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" \
+    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/nope" \
+    pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
+  hkdn_rc=$?
+  if [ "$hkdn_rc" -eq 0 ]; then
+    _pass "hooks-ps-parity: claude framework-surface.ps1 unresolvable vault exits 0"
+  else
+    _fail "hooks-ps-parity: claude framework-surface.ps1 unresolvable vault exits 0" "exit $hkdn_rc"
+  fi
+  case "$hkdn_out" in
+    *"Distillation lag"*)
+      _fail "hooks-ps-parity: claude framework-surface.ps1 unresolvable vault should stay silent" "got: $hkdn_out" ;;
+    *)
+      _pass "hooks-ps-parity: claude framework-surface.ps1 unresolvable vault stays silent" ;;
+  esac
+
+  rm -rf "$hkdn_tmp"
+  unset hkdn_tmp hkdn_env hkdn_out hkdn_rc
+else
+  _pass "hooks-ps-parity: skipping distillation-nudge PS behavioral checks (pwsh not on PATH)"
+fi
+
 # Cleanup of helper vars to avoid leakage into other test files (tests/run.sh
 # dot-sources each test in the same shell).
 unset hkps_root hkps_sh_pairs hkps_ps1_pairs hkps_missing_ps1 hkps_missing_sh sh_path ps1_path f hkps_ms hkps_hfs hkps_cfs hkps_sgsh hkps_sgps

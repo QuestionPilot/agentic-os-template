@@ -301,3 +301,106 @@ Assert-Contains 'hooks-ps-parity.test: skill-gate.sh consumes stdin without insp
 $hkps_sgps = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'hermes' 'hooks' 'skill-gate.ps1') -Raw
 Assert-NotContains 'hooks-ps-parity.test: skill-gate.ps1 does not parse the verb (no ConvertFrom-Json)' $hkps_sgps 'ConvertFrom-Json'
 Assert-Contains 'hooks-ps-parity.test: skill-gate.ps1 consumes stdin without inspecting it (ReadToEnd)' $hkps_sgps '[Console]::In.ReadToEnd()'
+
+# --- 5. <TEAM>-364 distillation-lag nudge — claude framework-surface.ps1 ----
+# Windows-native mirror of the .sh sibling's section 5: lapse -> header +
+# note name; distilled -> nudge absent; kill switch -> nudge absent;
+# unresolvable vault -> silent (checker exit 2, fail-open). The repo source
+# hook still carries the @@AI_CONFIG_DIR@@ placeholder (this file runs
+# sources, not a build), so run a COPY with the placeholder substituted to
+# REPO_ROOT — the same substitution install performs — so the block can find
+# scripts/check-distillation-completeness.ps1. Other probe blocks are
+# disabled via their kill switches for a deterministic payload; ambient env
+# is saved/restored so later test files see it unchanged.
+$hkdn_tmp = Join-Path ([IO.Path]::GetTempPath()) ('hkdn-ps-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    New-Item -ItemType Directory -Path (Join-Path $hkdn_tmp 'hooks') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $hkdn_tmp 'cfg' 'projects' 'x' 'memory') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $hkdn_tmp 'vault' '04-Lessons') -Force | Out-Null
+    $hkdn_utf8 = [System.Text.UTF8Encoding]::new($false)
+    $hkdn_hook = Join-Path $hkdn_tmp 'hooks' 'framework-surface.ps1'
+    $hkdn_src = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'hooks' 'framework-surface.ps1') -Raw
+    # .Replace() (ordinal), not -replace: REPO_ROOT must land literally even if
+    # the path contains regex-substitution metacharacters.
+    [System.IO.File]::WriteAllText($hkdn_hook, $hkdn_src.Replace('@@AI_CONFIG_DIR@@', $env:REPO_ROOT), $hkdn_utf8)
+    # In-scope note: kebab slug + frontmatter `metadata:`-nested `type: feedback`
+    # (the shape the checker's frontmatter scan recognizes).
+    [System.IO.File]::WriteAllText((Join-Path $hkdn_tmp 'cfg' 'projects' 'x' 'memory' 'feedback-test-lapse-note.md'),
+        "---`ntitle: test lapse note`nmetadata:`n  type: feedback`n---`nA feedback note that has not been distilled into 04-Lessons.`n", $hkdn_utf8)
+    [System.IO.File]::WriteAllText((Join-Path $hkdn_tmp 'cfg' 'projects' 'x' 'memory' 'MEMORY.md'), "# Memory index`n", $hkdn_utf8)
+    [System.IO.File]::WriteAllText((Join-Path $hkdn_tmp 'vault' '04-Lessons' 'unrelated.md'), "# Unrelated lesson`n", $hkdn_utf8)
+
+    # Invoke-DistHook — run the substituted hook with the probe kill switches +
+    # the given vault path, saving/restoring the ambient env around the call.
+    function Invoke-DistHook {
+        param([string]$Vault, [string]$ExtraSwitch = '')
+        $keys = @('CLAUDE_SKIP_MCP_PROBE', 'CLAUDE_SKIP_FRESHNESS_CHECK', 'CLAUDE_SKIP_LOCAL_HOOK_CHECK',
+                  'CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE', 'CLAUDE_CONFIG_DIR', 'OBSIDIAN_VAULT_PATH')
+        if ($ExtraSwitch) { $keys += $ExtraSwitch }
+        $prev = @{}
+        foreach ($k in $keys) { $prev[$k] = [Environment]::GetEnvironmentVariable($k) }
+        try {
+            $env:CLAUDE_SKIP_MCP_PROBE = '1'
+            $env:CLAUDE_SKIP_FRESHNESS_CHECK = '1'
+            $env:CLAUDE_SKIP_LOCAL_HOOK_CHECK = '1'
+            $env:CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE = '1'
+            $env:CLAUDE_CONFIG_DIR = (Join-Path $hkdn_tmp 'cfg')
+            $env:OBSIDIAN_VAULT_PATH = $Vault
+            if ($ExtraSwitch) { [Environment]::SetEnvironmentVariable($ExtraSwitch, '1') }
+            $out = '{"source":"startup"}' | & pwsh -NoProfile -File $hkdn_hook 2>$null
+            $rc = $LASTEXITCODE
+            if ($out -is [array]) { $out = $out -join "`n" }
+            return @{ Out = [string]$out; Rc = $rc }
+        } finally {
+            foreach ($k in $keys) { [Environment]::SetEnvironmentVariable($k, $prev[$k]) }
+        }
+    }
+    $hkdn_vault = Join-Path $hkdn_tmp 'vault'
+
+    # lapse -> exit 0, header names the count, list names the note.
+    $hkdn_r = Invoke-DistHook -Vault $hkdn_vault
+    if ($hkdn_r.Rc -eq 0) {
+        _Pass 'hooks-ps-parity.test: claude framework-surface.ps1 distillation lapse exits 0'
+    } else {
+        _Fail 'hooks-ps-parity.test: claude framework-surface.ps1 distillation lapse exits 0' "exit $($hkdn_r.Rc)"
+    }
+    if ($hkdn_r.Out.Contains('Distillation lag — 1 feedback/decision note(s) not yet distilled') -and $hkdn_r.Out.Contains('feedback-test-lapse-note')) {
+        _Pass 'hooks-ps-parity.test: claude framework-surface.ps1 surfaces the distillation lapse + note name'
+    } else {
+        _Fail 'hooks-ps-parity.test: claude framework-surface.ps1 should surface the distillation lapse + note name' "got: $($hkdn_r.Out)"
+    }
+
+    # distilled (name recorded in a lessons note) -> nudge absent.
+    $hkdn_lesson = Join-Path $hkdn_tmp 'vault' '04-Lessons' 'thematic-lesson.md'
+    [System.IO.File]::WriteAllText($hkdn_lesson, "# Thematic lesson`n`n## Source Notes`n`n- feedback-test-lapse-note`n", $hkdn_utf8)
+    $hkdn_r = Invoke-DistHook -Vault $hkdn_vault
+    if ($hkdn_r.Out.Contains('Distillation lag')) {
+        _Fail 'hooks-ps-parity.test: claude framework-surface.ps1 distilled note should drop the nudge' "got: $($hkdn_r.Out)"
+    } else {
+        _Pass 'hooks-ps-parity.test: claude framework-surface.ps1 distilled note drops the nudge'
+    }
+
+    # kill switch (lapse restored) -> nudge absent.
+    Remove-Item -LiteralPath $hkdn_lesson -Force -ErrorAction SilentlyContinue
+    $hkdn_r = Invoke-DistHook -Vault $hkdn_vault -ExtraSwitch 'CLAUDE_SKIP_DISTILLATION_NUDGE'
+    if ($hkdn_r.Out.Contains('Distillation lag')) {
+        _Fail 'hooks-ps-parity.test: claude framework-surface.ps1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 should drop the nudge' "got: $($hkdn_r.Out)"
+    } else {
+        _Pass 'hooks-ps-parity.test: claude framework-surface.ps1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 drops the nudge'
+    }
+
+    # unresolvable vault (nonexistent dir) -> checker exit 2 -> fail-open silent.
+    $hkdn_r = Invoke-DistHook -Vault (Join-Path $hkdn_tmp 'nope')
+    if ($hkdn_r.Rc -eq 0) {
+        _Pass 'hooks-ps-parity.test: claude framework-surface.ps1 unresolvable vault exits 0'
+    } else {
+        _Fail 'hooks-ps-parity.test: claude framework-surface.ps1 unresolvable vault exits 0' "exit $($hkdn_r.Rc)"
+    }
+    if ($hkdn_r.Out.Contains('Distillation lag')) {
+        _Fail 'hooks-ps-parity.test: claude framework-surface.ps1 unresolvable vault should stay silent' "got: $($hkdn_r.Out)"
+    } else {
+        _Pass 'hooks-ps-parity.test: claude framework-surface.ps1 unresolvable vault stays silent'
+    }
+} finally {
+    Remove-Item -LiteralPath $hkdn_tmp -Recurse -Force -ErrorAction SilentlyContinue
+}

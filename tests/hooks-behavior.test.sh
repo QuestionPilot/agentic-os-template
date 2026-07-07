@@ -521,4 +521,71 @@ assert_eq "framework-surface: no jq is silent (open)" "" "${j3#*|}"
 
 rm -rf "$NOJQ_BIN"
 
+# ---------------------------------------------------------------------------
+# <TEAM>-364 — framework-surface distillation-lag nudge (block 2b). READ-ONLY
+# kickoff surfacing of check-distillation-completeness.sh: a lapse (rc 1)
+# names the undistilled notes; every other rc stays silent. Appended section —
+# owns only the dn* fixtures/assertions below; MCP probe disabled throughout
+# for a deterministic payload (its own coverage lives above).
+# lapse (undistilled feedback note)  -> block header + note name, exit 0
+# distilled (name in a lessons note) -> block absent
+# CLAUDE_SKIP_DISTILLATION_NUDGE=1   -> block absent, git-log preserved
+# unresolvable vault path            -> checker exit 2 -> silent, exit 0
+# ---------------------------------------------------------------------------
+DN_ROOT="$(mktemp -d)"
+DN_CFG="$DN_ROOT/cfg"
+DN_VAULT="$DN_ROOT/vault"
+mkdir -p "$DN_CFG/projects/x/memory" "$DN_VAULT/04-Lessons"
+# In-scope note: kebab slug + frontmatter `metadata:`-nested `type: feedback`
+# (the shape the checker's frontmatter scan recognizes). MEMORY.md is always
+# skipped by the checker.
+cat > "$DN_CFG/projects/x/memory/feedback-test-lapse-note.md" <<'DN_NOTE'
+---
+title: test lapse note
+metadata:
+  type: feedback
+---
+A feedback note that has not been distilled into 04-Lessons.
+DN_NOTE
+printf '# Memory index\n' > "$DN_CFG/projects/x/memory/MEMORY.md"
+printf '# Unrelated lesson\n\nNothing about that note here.\n' > "$DN_VAULT/04-Lessons/unrelated.md"
+
+dn1="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' \
+  CLAUDE_FRAMEWORK_SINCE_DAYS=3650 CLAUDE_SKIP_MCP_PROBE=1 \
+  CLAUDE_CONFIG_DIR="$DN_CFG" OBSIDIAN_VAULT_PATH="$DN_VAULT")"
+assert_eq       "framework-surface: distillation lapse exits 0"          "0" "${dn1%%|*}"
+assert_contains "framework-surface: distillation lapse emits header"     "${dn1#*|}" "Distillation lag — 1 feedback/decision note(s) not yet distilled"
+assert_contains "framework-surface: distillation lapse names the note"   "${dn1#*|}" "feedback-test-lapse-note"
+assert_contains "framework-surface: distillation nudge says read-only"   "${dn1#*|}" "read-only lint"
+assert_contains "framework-surface: distillation nudge names its switch" "${dn1#*|}" "CLAUDE_SKIP_DISTILLATION_NUDGE=1"
+
+# Distilled: the note name recorded in a 04-Lessons note -> nudge absent
+# (checker rc 0), git-log block untouched.
+printf '# Thematic lesson\n\n## Source Notes\n\n- feedback-test-lapse-note\n' > "$DN_VAULT/04-Lessons/thematic-lesson.md"
+dn2="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' \
+  CLAUDE_FRAMEWORK_SINCE_DAYS=3650 CLAUDE_SKIP_MCP_PROBE=1 \
+  CLAUDE_CONFIG_DIR="$DN_CFG" OBSIDIAN_VAULT_PATH="$DN_VAULT")"
+assert_eq           "framework-surface: distilled note exits 0"          "0" "${dn2%%|*}"
+assert_not_contains "framework-surface: distilled note drops the nudge"  "${dn2#*|}" "Distillation lag"
+assert_contains     "framework-surface: distilled case keeps git-log"    "${dn2#*|}" "additionalContext"
+
+# Kill switch: lapse restored, nudge suppressed, git-log preserved.
+rm -f "$DN_VAULT/04-Lessons/thematic-lesson.md"
+dn3="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' \
+  CLAUDE_FRAMEWORK_SINCE_DAYS=3650 CLAUDE_SKIP_MCP_PROBE=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 \
+  CLAUDE_CONFIG_DIR="$DN_CFG" OBSIDIAN_VAULT_PATH="$DN_VAULT")"
+assert_eq           "framework-surface: distillation kill switch exits 0"     "0" "${dn3%%|*}"
+assert_not_contains "framework-surface: distillation kill switch drops nudge" "${dn3#*|}" "Distillation lag"
+assert_contains     "framework-surface: distillation kill switch keeps git-log" "${dn3#*|}" "additionalContext"
+
+# Unresolvable vault (nonexistent dir) -> checker exits 2 -> fail-open silent.
+dn4="$(run_hook "$GEN_HOOKS/framework-surface.sh" '{}' \
+  CLAUDE_FRAMEWORK_SINCE_DAYS=3650 CLAUDE_SKIP_MCP_PROBE=1 \
+  CLAUDE_CONFIG_DIR="$DN_CFG" OBSIDIAN_VAULT_PATH="$DN_ROOT/nope")"
+assert_eq           "framework-surface: unresolvable vault exits 0"        "0" "${dn4%%|*}"
+assert_not_contains "framework-surface: unresolvable vault stays silent"   "${dn4#*|}" "Distillation lag"
+assert_contains     "framework-surface: unresolvable vault keeps git-log"  "${dn4#*|}" "additionalContext"
+
+rm -rf "$DN_ROOT"
+
 rm -rf "$HB_OUT"
