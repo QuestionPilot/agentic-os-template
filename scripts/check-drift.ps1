@@ -4,12 +4,17 @@
     PowerShell port of check-drift.sh — manifest-mode + repo-mode portability scans.
 
 .DESCRIPTION
-    <TEAM>-112 — Windows-native twin of scripts/check-drift.sh. Two modes:
+    <TEAM>-112 — Windows-native twin of scripts/check-drift.sh. Three modes:
 
     1. -Manifest <target-dir>: verify the target's .build-manifest.json hashes
        match current files. Used by install.sh / install.ps1 drift detection
        and the acceptance suite. Also runs the post-render extra-file check
        and (optionally) the <TEAM>-106 cure-soft-drift opt-in auto-cure.
+
+    1b. -Auto (<TEAM>-394): resolve every harness render home (CLAUDE_CONFIG_DIR
+       / CODEX_HOME / HERMES_HOME; env first, then local.env read as data) and
+       run mode 1 against each home with a rendered manifest. `make drift`
+       uses the bash twin of this mode so the gate covers all three harnesses.
 
     2. (default): scan the repo root for portability + denylist violations:
        - required core/playbooks/verification/dir files present
@@ -67,6 +72,7 @@
 [CmdletBinding()]
 param(
     [string]$Manifest = '',
+    [switch]$Auto,
     [switch]$CureSoftDrift,
     [Alias('h')][switch]$Help,
 
@@ -87,6 +93,7 @@ $i = 0
 while ($i -lt $Rest.Count) {
     $arg = $Rest[$i]
     switch -CaseSensitive ($arg) {
+        '--auto'            { $Auto = [switch]$true; $i += 1 }
         '--cure-soft-drift' { $CureSoftDrift = [switch]$true; $i += 1 }
         '--manifest' {
             if ($i + 1 -ge $Rest.Count) {
@@ -107,13 +114,20 @@ while ($i -lt $Rest.Count) {
 
 if ($Help.IsPresent) {
     Write-Host @'
-check-drift.ps1 [-Manifest <target-dir> [-CureSoftDrift]] [-Help]
+check-drift.ps1 [-Manifest <target-dir> [-CureSoftDrift]] [-Auto] [-Help]
 
 Modes:
   -Manifest <dir>   Verify the target's .build-manifest.json against current
                     file hashes. Errors on drift unless -CureSoftDrift and the
                     drift fits the <TEAM>-106 soft envelope (settings.json
                     user-preference keys only).
+
+  -Auto             Resolve every harness render home (CLAUDE_CONFIG_DIR /
+                    CODEX_HOME / HERMES_HOME; env var first, then local.env
+                    read as data) and run the -Manifest gate against each home
+                    that has a rendered manifest. Unresolvable / unrendered
+                    homes are skipped with a notice; exit 1 iff any checked
+                    home drifts.
 
   (default)         Run repo-portability + denylist scans on the repo this
                     script lives in.
@@ -193,6 +207,80 @@ function Write-Note {
 function Write-InfoErr {
     param([string]$Msg)
     [Console]::Error.WriteLine("INFO $Msg")
+}
+
+# ---------------------------------------------------------------------------
+# AUTO MODE (<TEAM>-394)
+# ---------------------------------------------------------------------------
+# Resolve EVERY harness render home (env var first, then local.env read as
+# data via the shared parser) and run the manifest gate against each home that
+# has a rendered manifest. Skips are LOUD (one line per harness) so an
+# unresolvable home is visible, never silently green. Exit 1 iff any checked
+# home drifts; 0 otherwise, including the fresh-clone case where nothing is
+# resolvable yet. Byte-parity with scripts/check-drift.sh --auto output.
+# Get-CdLocalEnvValue -Path -Key — read ONE KEY=VALUE from local.env as DATA,
+# never imported into the process environment. Panel C2: Import-LocalEnv
+# pushes EVERY key into process env — a PATH= (or PSModulePath=) line in
+# local.env would then steer the child `pwsh` resolution in the -Auto loop.
+# Only the three harness-home keys are ever read. Mirrors the bash twin's
+# _cd_localenv_get and self-audit.ps1's Get-SaLocalEnvValue precedent: strips
+# an optional `export `, one matching outer quote pair, backslash escapes;
+# last assignment wins; no $VAR expansion.
+function Get-CdLocalEnvValue {
+    param([string]$Path, [string]$Key)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $result = ''
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        $t = $line.Trim()
+        if ($t.Length -eq 0 -or $t.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        if ($t -match '^export\s+(.+)$') { $t = $matches[1] }
+        if (-not $t.StartsWith("$Key=", [StringComparison]::Ordinal)) { continue }
+        $v = $t.Substring($Key.Length + 1)
+        if ($v.Length -ge 2) {
+            $f = $v[0]; $l = $v[$v.Length - 1]
+            if (($f -eq '"' -and $l -eq '"') -or ($f -eq "'" -and $l -eq "'")) {
+                $v = $v.Substring(1, $v.Length - 2)
+            } elseif ($v.Contains('\')) {
+                $v = [regex]::Replace($v, '\\(.)', '$1')
+            }
+        }
+        $result = $v
+    }
+    return $result
+}
+
+if ($Auto.IsPresent) {
+    $autoLocalEnv = if ($env:AI_CONFIG_LOCAL_ENV) { $env:AI_CONFIG_LOCAL_ENV } else { Join-Path $repoRoot 'local.env' }
+    $autoVars = [ordered]@{ claude = 'CLAUDE_CONFIG_DIR'; codex = 'CODEX_HOME'; hermes = 'HERMES_HOME' }
+    $autoFailed = 0
+    foreach ($autoHarness in $autoVars.Keys) {
+        $autoVar = $autoVars[$autoHarness]
+        $autoDir = [Environment]::GetEnvironmentVariable($autoVar)
+        $autoSrc = 'env'
+        if ([string]::IsNullOrEmpty($autoDir)) {
+            $autoDir = Get-CdLocalEnvValue -Path $autoLocalEnv -Key $autoVar
+            $autoSrc = 'local.env'
+        }
+        if ([string]::IsNullOrEmpty($autoDir)) {
+            Write-Host "check-drift --auto: $autoHarness ($autoVar) not set; skipping"
+            continue
+        }
+        # A RESOLVED home always runs the gate — no missing-manifest skip. The
+        # old Makefile recipe FAILED when CLAUDE_CONFIG_DIR was set but the
+        # manifest was gone; a skip here would be the fail-open hole the panel
+        # flagged. Only an UNRESOLVED home skips. Mirrors the bash twin.
+        Write-Host "check-drift --auto: checking $autoHarness render at $autoDir (via $autoSrc)"
+        # Child pwsh process (matches the in-file `& pwsh -NoProfile -File`
+        # convention): `& $PSCommandPath` would run in the SAME process, and
+        # manifest mode's `exit` would kill this loop.
+        if ($CureSoftDrift.IsPresent) {
+            & pwsh -NoProfile -File $PSCommandPath -CureSoftDrift -Manifest $autoDir
+        } else {
+            & pwsh -NoProfile -File $PSCommandPath -Manifest $autoDir
+        }
+        if ($LASTEXITCODE -ne 0) { $autoFailed = 1 }
+    }
+    exit $autoFailed
 }
 
 # ---------------------------------------------------------------------------

@@ -182,6 +182,25 @@ _under_colocated_cfg() {
   return 1
 }
 
+# _parent_git_ignored <path> — 0 when the CONTAINING directory is excluded by
+# the repo's effective ignore rules (.gitignore OR the operator-local
+# .git/info/exclude). <TEAM>-394: the static prunes above name only the
+# framework's own gitignored dirs; an operator's info/exclude'd workspace
+# (a .toolkit/, an extra checkout dir) is invisible to them, so its checkouts'
+# .git dirs / Finder .DS_Store drops failed the junk scans from a living home.
+# Checking the PARENT (not the hit itself) keeps root junk failing: a root
+# .DS_Store's parent is the repo root, which is never ignored, while .DS_Store
+# by NAME is gitignored — filtering on the hit itself would neuter the scan.
+# Outside a git work tree this returns 1 (no filtering — fs-mode keeps the
+# static prunes only, same as check-drift's <TEAM>-213 split).
+# core.excludesFile is pinned to /dev/null (panel C4): without the pin,
+# check-ignore also consults the operator's machine-GLOBAL excludes file, so
+# whether a junk hit is reported would vary per machine — only the repo's own
+# .gitignore + its .git/info/exclude may decide.
+_parent_git_ignored() {
+  git -C "$repo_root" -c core.excludesFile=/dev/null check-ignore -q -- "$(dirname "$1")" 2>/dev/null
+}
+
 # Harness-managed worktrees (.claude/worktrees/, and the parallel .codex/ and
 # .agents/ paths if they ever exist) can legitimately contain .DS_Store from
 # macOS Finder visits or unrelated test fixtures. <TEAM>-60 allowlisted the
@@ -208,13 +227,26 @@ _under_colocated_cfg() {
 # status check (the same shape the secret scan below uses for `git ls-files`)
 # fails closed instead. set +e/-e brackets the capture so find's non-zero lands
 # in the status var rather than aborting the run under `set -e`.
+# projects/ joins the gitignored-runtime prune set (<TEAM>-394): the shipped
+# .gitignore declares it the operator's local project workspace ("never
+# tracked"), and a real workspace holds whole checkouts — Finder .DS_Store
+# drops and nested .git dirs there are operator content, not framework
+# content. Without the prune, `make validate` from a living co-located home
+# fails on state the framework itself told the operator to keep there.
+# TRUE -prune, not a -not -path post-filter (panel C5): a filter still WALKS
+# the excluded tree, so a large project workspace makes the scan slow and an
+# unreadable subdir inside it trips the fail-closed enumeration check for
+# content the scan was never going to report. -prune stops the descent.
 set +e
-ds_raw="$(find "$repo_root" -name .DS_Store \
+ds_raw="$(find "$repo_root" \
+    \( -path "$repo_root/projects" \
+       -o -path "$repo_root/cross-model-out" \
+       -o -path "$repo_root/.codegraph" \) -prune \
+    -o -name .DS_Store \
     -not -path "$repo_root/.claude/worktrees/*" \
     -not -path "$repo_root/.codex/worktrees/*" \
     -not -path "$repo_root/.agents/worktrees/*" \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*")"
+    -print)"
 ds_find_status=$?
 set -e
 if [ "$ds_find_status" -ne 0 ]; then
@@ -225,6 +257,7 @@ ds_hits=""
 while IFS= read -r ds_f; do
   [ -n "$ds_f" ] || continue
   _under_colocated_cfg "$ds_f" && continue
+  _parent_git_ignored "$ds_f" && continue
   ds_hits+="$ds_f"$'\n'
 done <<< "$ds_raw"
 if [ -n "$ds_hits" ]; then
@@ -247,11 +280,14 @@ printf 'PASS no .DS_Store files\n'
 # <TEAM>-328 Item B: same find-exit-status capture as the .DS_Store scan above —
 # a non-zero find (permission-denied subtree, system limit) FAILs closed instead
 # of silently false-passing through an empty hit list.
+# Same TRUE -prune conversion as the .DS_Store scan (panel C5).
 set +e
-git_raw="$(find "$repo_root" -path "$repo_root/.git" -prune -o -name .git -type d \
-    -not -path "$repo_root/cross-model-out/*" \
-    -not -path "$repo_root/.codegraph/*" \
-    -print)"
+git_raw="$(find "$repo_root" \
+    \( -path "$repo_root/.git" \
+       -o -path "$repo_root/projects" \
+       -o -path "$repo_root/cross-model-out" \
+       -o -path "$repo_root/.codegraph" \) -prune \
+    -o -name .git -type d -print)"
 git_find_status=$?
 set -e
 if [ "$git_find_status" -ne 0 ]; then
@@ -262,6 +298,7 @@ git_hits=""
 while IFS= read -r git_d; do
   [ -n "$git_d" ] || continue
   _under_colocated_cfg "$git_d" && continue
+  _parent_git_ignored "$git_d" && continue
   git_hits+="$git_d"$'\n'
 done <<< "$git_raw"
 if [ -n "$git_hits" ]; then
@@ -332,6 +369,23 @@ for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes"
       printf 'PASS co-located harness config dir recognized (out of leak-guard scope): %s\n' "$harness_dir"
       continue
     fi
+  fi
+  # <TEAM>-394: an operator can declare the repo-root .agents/ dir their own
+  # OPERATOR STATE by excluding it in .git/info/exclude — the established
+  # local-only pattern for the ONE harness workspace with no config variable
+  # (a Gemini-family CLI discovers .agents/, carrying its own skills copy;
+  # .claude/.codex/.hermes all have config vars, so co-location above is
+  # their recognition path). Restricted to .agents DELIBERATELY (panel F2):
+  # .claude/skills/ is the actual finding-#8 auto-load surface and the local
+  # harness loads it regardless of git ignore status, so an ignore-based
+  # bypass there would weaken the guard it exists to keep. info/exclude is an
+  # explicit local act the shipped .gitignore can never perform, so a stray
+  # .agents/ in a fresh clone still fails below.
+  if [ "$harness_dir" = "$repo_root/.agents" ] \
+      && git -C "$repo_root" check-ignore -v -- ".agents" 2>/dev/null \
+      | grep -q '^\.git/info/exclude:'; then
+    printf 'PASS operator-declared harness workspace (.git/info/exclude) out of leak-guard scope: %s\n' "$harness_dir"
+    continue
   fi
   # Security precheck — skills/ at a framework repo root is the auto-load
   # attack surface from <TEAM>-67 finding #8: a .claude/skills/ subtree present

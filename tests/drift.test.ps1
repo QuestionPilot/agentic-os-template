@@ -417,3 +417,77 @@ try {
     if ($DR_NGX_LOCKED -and -not $IsWindows -and (Test-Path -LiteralPath $DR_NGX_LOCKED)) { & chmod 755 $DR_NGX_LOCKED 2>$null }
     Remove-Item -LiteralPath $DR_NGX_ROOT -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# --- -Auto: multi-home drift gate (<TEAM>-394) --------------------------------
+# Twin of the bash --auto block. install.ps1 supports only the claude harness
+# on Windows, so the fixture renders one claude home (space in path exercises
+# the shared local.env parser) and asserts codex/hermes skip loudly. Env vars
+# saved/cleared/restored explicitly so resolution comes from the fixture
+# local.env, never runner machine state.
+$AU_SAVED = @{}
+foreach ($v in @('CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME', 'AI_CONFIG_LOCAL_ENV')) {
+    $AU_SAVED[$v] = [Environment]::GetEnvironmentVariable($v)
+    Remove-Item "Env:$v" -ErrorAction SilentlyContinue
+}
+$AU_ROOT = Join-Path ([IO.Path]::GetTempPath()) ('drift-auto-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    $AU_CLAUDE = Join-Path $AU_ROOT 'claude home'
+    New-Item -ItemType Directory -Path $AU_CLAUDE -Force | Out-Null
+    $AU_ENV1 = Join-Path $AU_ROOT 'le-claude'
+    Write-LocalEnvFixture -EnvFile $AU_ENV1 -ConfigDir $AU_CLAUDE -VaultDir (Join-Path $AU_ROOT 'vault')
+    $env:AI_CONFIG_LOCAL_ENV = $AU_ENV1
+    & pwsh -NoProfile -File $INSTALL_PS1 --harness claude *>$null
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+
+    # Synthetic auto local.env naming only the claude home.
+    $AU_AUTO_ENV = Join-Path $AU_ROOT 'local.env'
+    Write-LocalEnvFixture -EnvFile $AU_AUTO_ENV -ConfigDir $AU_CLAUDE -VaultDir (Join-Path $AU_ROOT 'vault')
+    $env:AI_CONFIG_LOCAL_ENV = $AU_AUTO_ENV
+
+    $au_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto 2>&1) -join "`n"
+    $au_rc = $LASTEXITCODE
+    Assert-Eq 'drift.test: -Auto passes with a clean rendered claude home' '0' "$au_rc"
+    Assert-Contains 'drift.test: -Auto checked the claude home (local.env resolution, space in path)' `
+        $au_out "checking claude render at $AU_CLAUDE"
+    Assert-Contains 'drift.test: -Auto skips the unset codex home loudly' `
+        $au_out 'codex (CODEX_HOME) not set; skipping'
+    Assert-Contains 'drift.test: -Auto skips the unset hermes home loudly' `
+        $au_out 'hermes (HERMES_HOME) not set; skipping'
+    # Count-parity with the bash twin's codex-home assertion (install.ps1
+    # supports only the claude harness on Windows, so no codex render exists
+    # to check here — the bash lane carries the multi-home coverage).
+    _Skip 'drift.test: -Auto checks a codex render' 'install.ps1 supports only the claude harness on Windows'
+
+    # Drift in the rendered home fails the gate.
+    [System.IO.File]::AppendAllText((Join-Path $AU_CLAUDE 'skills' 'session-agent' 'SKILL.md'), "`nHAND EDIT`n")
+    & pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto *>$null
+    Assert-Eq 'drift.test: -Auto fails when a resolved home drifts' '1' "$LASTEXITCODE"
+
+    # Env var wins over local.env AND a resolved-but-unrendered home FAILS the
+    # gate (panel F1: no missing-manifest fail-open). Twin of the bash case.
+    $AU_EMPTY = Join-Path $AU_ROOT 'empty'
+    New-Item -ItemType Directory -Path $AU_EMPTY -Force | Out-Null
+    $env:CLAUDE_CONFIG_DIR = $AU_EMPTY
+    $au3_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto 2>&1) -join "`n"
+    $au3_rc = $LASTEXITCODE
+    Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
+    Assert-Eq 'drift.test: -Auto FAILS when a resolved home has no rendered manifest (no fail-open skip)' '1' "$au3_rc"
+    Assert-Contains 'drift.test: -Auto env var wins over local.env (gate runs against the env dir)' `
+        $au3_out "checking claude render at $AU_EMPTY (via env)"
+    Assert-Contains 'drift.test: -Auto missing-manifest failure names the manifest' `
+        $au3_out 'no .build-manifest.json'
+
+    # Nothing resolvable: every home skips, exit 0 (fresh-clone degrade).
+    $env:AI_CONFIG_LOCAL_ENV = Join-Path $AU_ROOT 'nonexistent.env'
+    $au4_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto 2>&1) -join "`n"
+    $au4_rc = $LASTEXITCODE
+    Assert-Eq 'drift.test: -Auto exits 0 when nothing is resolvable (fresh-clone degrade)' '0' "$au4_rc"
+    Assert-Contains 'drift.test: -Auto reports every unresolvable home' `
+        $au4_out 'claude (CLAUDE_CONFIG_DIR) not set; skipping'
+} finally {
+    foreach ($v in $AU_SAVED.Keys) {
+        if ($null -ne $AU_SAVED[$v]) { [Environment]::SetEnvironmentVariable($v, $AU_SAVED[$v]) }
+        else { Remove-Item "Env:$v" -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -LiteralPath $AU_ROOT -Recurse -Force -ErrorAction SilentlyContinue
+}

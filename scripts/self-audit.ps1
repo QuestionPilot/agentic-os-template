@@ -32,6 +32,12 @@
     gaps are attributed per store — <TEAM>-366; set CLAUDE_PRIMARY_MEMORY_DIR
     to pin scoring to a single store).
 
+.PARAMETER CodexMemoryDir
+    Override the codex-native memory registry path. Defaults to
+    $CODEX_HOME/memories when CODEX_HOME resolves (flag > local.env > ambient
+    env). AUDIT-COVERED read-only surface (<TEAM>-394), never canonical:
+    scored only for index presence + the MEMORY.md recall caps; else skipped.
+
 .PARAMETER VaultDir
     Override the vault dir. Defaults to $env:OBSIDIAN_VAULT_PATH.
 
@@ -72,6 +78,7 @@ param(
     [string]$Save = '',
     [string]$RepoRoot = '',
     [string]$MemoryDir = '',
+    [string]$CodexMemoryDir = '',
     [string]$VaultDir = '',
     [string]$ConfigDir = '',
     [string]$InjectionWarnKb = '',
@@ -107,6 +114,10 @@ while ($i -lt $Rest.Count) {
         '--memory-dir' {
             if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --memory-dir needs a path'); exit 2 }
             $MemoryDir = $Rest[$i + 1]; $i += 2
+        }
+        '--codex-memory-dir' {
+            if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --codex-memory-dir needs a path'); exit 2 }
+            $CodexMemoryDir = $Rest[$i + 1]; $i += 2
         }
         '--vault-dir' {
             if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --vault-dir needs a path'); exit 2 }
@@ -145,6 +156,7 @@ self-audit.ps1 — score the agentic OS on five pillars (0-100 total).
 Usage:
   pwsh -File scripts/self-audit.ps1 [-Json] [-Save <path>]
                                     [-RepoRoot <path>] [-MemoryDir <path>]
+                                    [-CodexMemoryDir <path>]
                                     [-VaultDir <path>] [-ConfigDir <path>]
                                     [-InjectionWarnKb <n>] [-Isolated]
 
@@ -163,6 +175,11 @@ Default inputs:
                or $env:CLAUDE_CONFIG_DIR resolves (every store is scanned, gaps
                attributed per store; CLAUDE_PRIMARY_MEMORY_DIR pins to one);
                else skipped. The explicit flag always means exactly one store.
+  -CodexMemoryDir  the codex-native memory registry, default
+               $CODEX_HOME/memories when CODEX_HOME resolves (flag >
+               local.env > ambient env). AUDIT-COVERED read-only surface
+               (<TEAM>-394), never canonical: scored only for index presence
+               + the MEMORY.md recall caps; else skipped.
   -VaultDir    $env:OBSIDIAN_VAULT_PATH if set; else skipped
   -ConfigDir   $env:CLAUDE_CONFIG_DIR if set; else skipped
   -InjectionWarnKb  soft kickoff-injection budget in KB for sub-check 2.4
@@ -312,6 +329,18 @@ if (-not $Isolated.IsPresent) {
             $v = Get-SaLocalEnvValue -Path $localEnv -Key 'INJECTION_SURFACE_WARN_KB'
             if (-not [string]::IsNullOrEmpty($v)) { $InjectionWarnKb = $v }
         }
+        # CODEX_HOME (<TEAM>-394): the codex-native memory registry lives at
+        # $CODEX_HOME/memories. Same precedence as the other paths — flag
+        # (already set above) > local.env > ambient env. Never joins
+        # $MemoryDirs: its registry shape (index + summary/raw sidecars +
+        # rollout_summaries/) would false-trip the note-store orphan/index
+        # checks; it gets its own pillar-2 surface instead.
+        if ([string]::IsNullOrEmpty($CodexMemoryDir)) {
+            $v = Get-SaLocalEnvValue -Path $localEnv -Key 'CODEX_HOME'
+            if (-not [string]::IsNullOrEmpty($v) -and (Test-Path -LiteralPath (Join-Path $v 'memories') -PathType Container)) {
+                $CodexMemoryDir = Join-Path $v 'memories'
+            }
+        }
     }
     if ([string]::IsNullOrEmpty($ConfigDir) -and -not [string]::IsNullOrEmpty($env:CLAUDE_CONFIG_DIR)) {
         $ConfigDir = $env:CLAUDE_CONFIG_DIR
@@ -321,6 +350,10 @@ if (-not $Isolated.IsPresent) {
     }
     if ([string]::IsNullOrEmpty($InjectionWarnKb) -and -not [string]::IsNullOrEmpty($env:INJECTION_SURFACE_WARN_KB)) {
         $InjectionWarnKb = $env:INJECTION_SURFACE_WARN_KB
+    }
+    if ([string]::IsNullOrEmpty($CodexMemoryDir) -and -not [string]::IsNullOrEmpty($env:CODEX_HOME) -and
+        (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'memories') -PathType Container)) {
+        $CodexMemoryDir = Join-Path $env:CODEX_HOME 'memories'
     }
     if ([string]::IsNullOrEmpty($MemoryDir) -and -not [string]::IsNullOrEmpty($ConfigDir)) {
         $MemoryDirs = @(Get-SaMemoryDirs -ConfigDirPath $ConfigDir)
@@ -333,6 +366,13 @@ if (-not $Isolated.IsPresent) {
 if (-not [string]::IsNullOrEmpty($MemoryDir)) {
     if (Test-Path -LiteralPath $MemoryDir -PathType Container) { $MemoryDirs = @($MemoryDir) }
     else { $MemoryDirs = @() }
+}
+
+# Codex registry mirrors that contract: a non-existent path (flag or resolved)
+# empties the surface — reported skipped, never an error (<TEAM>-394).
+if (-not [string]::IsNullOrEmpty($CodexMemoryDir) -and
+    -not (Test-Path -LiteralPath $CodexMemoryDir -PathType Container)) {
+    $CodexMemoryDir = ''
 }
 
 # Validate the resolved injection budget: positive integer KB, else fall back
@@ -755,10 +795,53 @@ function Invoke-Pillar2 {
         }
     }
 
+    # Sub-check 2.5 (<TEAM>-394): the codex-native memory registry — an
+    # AUDIT-COVERED read-only surface, never canonical. $CODEX_HOME/memories is
+    # a registry (MEMORY.md index + summary/raw sidecars + rollout_summaries/),
+    # not a note-per-fact store, so the orphan/index-integrity checks above do
+    # NOT apply — a codex sidecar unnamed by its index is normal, not a gap.
+    # What DOES transfer is what codex sessions actually pay at kickoff: an
+    # index that exists, and the same size/line recall caps as 2.2/2.3.
+    # KNOWN COUPLING (panel C6, accepted): rides the memory pillar — a
+    # codex-ONLY setup with zero claude stores hits the pillar's UNSCORED
+    # early-return before 2.5 runs (sub-check-2.4 precedent).
+    # Twin of self-audit.sh sub-check 2.5.
+    if (-not [string]::IsNullOrEmpty($CodexMemoryDir)) {
+        $cxIndex = Join-Path $CodexMemoryDir 'MEMORY.md'
+        if (-not (Test-Path -LiteralPath $cxIndex -PathType Leaf)) {
+            Use-Deduct $key 6
+            Add-Gap 2 5 `
+                'Codex memory registry has no MEMORY.md index' `
+                "$CodexMemoryDir exists but holds no MEMORY.md — codex kickoffs run blind on native memory" `
+                'Let codex rebuild its native index, or remove the empty registry dir'
+        } else {
+            $cxSize = (Get-Item -LiteralPath $cxIndex).Length
+            if ($cxSize -gt 24400) {
+                Use-Deduct $key 4
+                Add-Gap 2 5 `
+                    'Codex registry MEMORY.md over recall cap' `
+                    "$CodexMemoryDir/MEMORY.md is $cxSize bytes (over the ~24400 recall cap)" `
+                    'Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)'
+            }
+            $cxLong = 0
+            foreach ($ln in [System.IO.File]::ReadAllLines($cxIndex)) {
+                if ($ln.Length -gt 300) { $cxLong++ }
+            }
+            if ($cxLong -gt 0) {
+                Use-Deduct $key 4
+                Add-Gap 2 5 `
+                    'Codex registry MEMORY.md entries over line-length cap' `
+                    "$cxLong index line(s) in $CodexMemoryDir/MEMORY.md exceed the ~300-char per-entry cap" `
+                    'Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)'
+            }
+        }
+    }
+
     # Sub-check 2.4 (<TEAM>-364): per-session injection-surface size. These four
     # components are injected into EVERY kickoff orient — the memory index (worst
-    # case: the LARGEST MEMORY.md across the scanned stores, since any one session
-    # loads one store), the rendered harness CLAUDE.md, the vault entrypoint
+    # case: the LARGEST MEMORY.md across the scanned stores, including the codex
+    # registry when it resolved — any one session, of either harness, loads one
+    # index), the rendered harness CLAUDE.md, the vault entrypoint
     # START.md, and the operator-identity note START.md names — so oversize here
     # is a per-session context tax no other check measures. SOFT threshold only:
     # a design panel explicitly rejected a hard cap (a large surface can be a
@@ -770,7 +853,9 @@ function Invoke-Pillar2 {
     # Twin of self-audit.sh sub-check 2.4.
     $injLargestPath = ''
     $injLargestBytes = [long](-1)
-    foreach ($mdDir in $MemoryDirs) {
+    $injScanDirs = @($MemoryDirs)
+    if (-not [string]::IsNullOrEmpty($CodexMemoryDir)) { $injScanDirs += $CodexMemoryDir }
+    foreach ($mdDir in $injScanDirs) {
         $injIdx = Join-Path $mdDir 'MEMORY.md'
         if (-not (Test-Path -LiteralPath $injIdx -PathType Leaf)) { continue }
         $injB = [long](Get-Item -LiteralPath $injIdx).Length

@@ -212,6 +212,30 @@ function Test-UnderColocatedCfg {
     return $false
 }
 
+# Test-ParentGitIgnored <path> — $true when the CONTAINING directory is
+# excluded by the repo's effective ignore rules (.gitignore OR the
+# operator-local .git/info/exclude). <TEAM>-394: the static prunes name only
+# the framework's own gitignored dirs; an operator's info/exclude'd workspace
+# (a .toolkit/, an extra checkout dir) is invisible to them, so its checkouts'
+# .git dirs / Finder .DS_Store drops failed the junk scans from a living home.
+# Checking the PARENT (not the hit itself) keeps root junk failing: a root
+# .DS_Store's parent is the repo root, which is never ignored, while .DS_Store
+# by NAME is gitignored — filtering on the hit itself would neuter the scan.
+# Outside a git work tree (or with git absent) returns $false — fs-mode keeps
+# the static prunes only, same as the bash twin.
+# core.excludesFile pinned to NUL (panel C4): only the repo's own .gitignore
+# + its .git/info/exclude may decide — never the operator's machine-global
+# excludes, which would make the junk scans machine-dependent.
+function Test-ParentGitIgnored {
+    param([string]$Path)
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $false }
+    $parent = Split-Path -Parent $Path
+    if ([string]::IsNullOrEmpty($parent)) { return $false }
+    $nullFile = if ($IsWindows) { 'NUL' } else { '/dev/null' }
+    & git -C $repo -c "core.excludesFile=$nullFile" check-ignore -q -- $parent 2>$null
+    return ($LASTEXITCODE -eq 0)
+}
+
 # ---------------------------------------------------------------------------
 # 1. .DS_Store scan
 # ---------------------------------------------------------------------------
@@ -220,12 +244,16 @@ function Test-DSStore {
     # Allowlist harness-managed worktree subtrees per validate.sh <TEAM>-60/61,
     # plus the gitignored runtime-artifact dirs (cross-model-out/, .codegraph/)
     # per validate.sh <TEAM>-244 — driver-local per-run output that can never enter
-    # git, mirroring check-drift's gitignored-runtime prune.
+    # git, mirroring check-drift's gitignored-runtime prune. projects/ joins the
+    # set (<TEAM>-394): the shipped .gitignore declares it the operator's local
+    # project workspace ("never tracked"), and a real workspace holds whole
+    # checkouts — Finder .DS_Store drops there are operator content.
     $allowList = @(
         (Join-Path $repo '.claude'  'worktrees'),
         (Join-Path $repo '.codex'   'worktrees'),
         (Join-Path $repo '.agents'  'worktrees'),
         (Join-Path $repo 'cross-model-out'),
+        (Join-Path $repo 'projects'),
         (Join-Path $repo '.codegraph')
     )
     # <TEAM>-328 Item B: capture traversal errors via -ErrorVariable and FAIL
@@ -243,6 +271,9 @@ function Test-DSStore {
             }
             # <TEAM>-319: also drop artifacts inside a co-located config dir.
             if (-not $isAllow -and (Test-UnderColocatedCfg $f)) { $isAllow = $true }
+            # <TEAM>-394: drop artifacts whose containing dir is git-ignored
+            # (operator workspaces incl. info/exclude'd dirs).
+            if (-not $isAllow -and (Test-ParentGitIgnored $f)) { $isAllow = $true }
             -not $isAllow
         }
     )
@@ -273,8 +304,12 @@ function Test-EmbeddedGit {
     # from a cloned repo, or a codegraph index, can leave a nested .git there
     # that is driver-local, never committable framework content. Mirrors
     # validate.sh's prune + check-drift's gitignored-runtime exclusion.
+    # projects/ joins the set (<TEAM>-394): the operator's local project
+    # workspace holds whole repo checkouts by design, so nested .git dirs
+    # there are operator content, never framework content.
     $excludeRoots = @(
         (Join-Path $repo 'cross-model-out'),
+        (Join-Path $repo 'projects'),
         (Join-Path $repo '.codegraph')
     )
     # <TEAM>-328 Item B: same -ErrorVariable fail-closed as the .DS_Store scan —
@@ -292,6 +327,9 @@ function Test-EmbeddedGit {
             # <TEAM>-319: also drop .git dirs inside a co-located config dir
             # (plugin-marketplace clones carry their own .git).
             if (-not $skip -and (Test-UnderColocatedCfg $f)) { $skip = $true }
+            # <TEAM>-394: drop .git dirs whose containing dir is git-ignored
+            # (operator workspaces incl. info/exclude'd dirs).
+            if (-not $skip -and (Test-ParentGitIgnored $f)) { $skip = $true }
             -not $skip
         }
     )
@@ -367,6 +405,20 @@ function Test-ForbiddenArtifacts {
             $hdirPhys = (Resolve-Path -LiteralPath $hdir -ErrorAction SilentlyContinue).Path
             if ($hdirPhys -and ($hdirPhys -eq $cfgPhys)) {
                 Pass-Line "PASS co-located harness config dir recognized (out of leak-guard scope): $hdir"
+                continue
+            }
+        }
+        # <TEAM>-394: an operator can declare the repo-root .agents/ dir their
+        # own OPERATOR STATE by excluding it in .git/info/exclude — the ONE
+        # harness workspace with no config variable (.claude/.codex/.hermes
+        # use the co-location path above). Restricted to .agents DELIBERATELY
+        # (panel F2): .claude/skills/ is the actual finding-#8 auto-load
+        # surface and the harness loads it regardless of git ignore status.
+        # Mirrors validate.sh.
+        if ($hname -eq '.agents' -and (Get-Command git -ErrorAction SilentlyContinue)) {
+            $ciOut = (& git -C $repo check-ignore -v -- $hname 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $ciOut -and (@($ciOut) -join "`n").StartsWith('.git/info/exclude:')) {
+                Pass-Line "PASS operator-declared harness workspace (.git/info/exclude) out of leak-guard scope: $hdir"
                 continue
             }
         }

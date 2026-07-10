@@ -175,8 +175,7 @@ printf 'CLAUDE_CONFIG_DIR=%q\nOBSIDIAN_VAULT_PATH=%q\n' \
 
 # Run with a stub install.sh (so we don't call the real one in this unit test).
 BS_REPO2="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$BS_REPO2/"
-rm -rf "$BS_REPO2/.git"
+copy_repo_tracked "$BS_REPO2"
 # Stub install.sh: exit 0 instantly
 printf '#!/bin/sh\necho "stub install.sh"; exit 0\n' > "$BS_REPO2/scripts/install.sh"
 chmod +x "$BS_REPO2/scripts/install.sh"
@@ -228,7 +227,7 @@ rm -rf "$BS_AUTH_STUBS"
 E2E_HOME="$(mktemp -d)"
 E2E_STUBS="$(mktemp -d)"
 E2E_REPO="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$E2E_REPO/"; rm -rf "$E2E_REPO/.git"
+copy_repo_tracked "$E2E_REPO"
 
 make_stub_cli "$E2E_STUBS" codex "codex 0.132.0"
 make_stub_cli "$E2E_STUBS" jq    "jq-1.7.0"
@@ -270,7 +269,7 @@ rm -rf "$E2E_HOME" "$E2E_STUBS" "$E2E_REPO" 2>/dev/null || true
 # --out lines (install.sh is never actually invoked in --dry-run). validate.sh is
 # stubbed so smoke_test stays fast and quiet.
 CL_REPO="$(mktemp -d)"; CL_HOME="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$CL_REPO/"; rm -rf "$CL_REPO/.git" "$CL_REPO/local.env"
+copy_repo_tracked "$CL_REPO"
 printf '#!/bin/sh\nexit 0\n' > "$CL_REPO/scripts/validate.sh"; chmod +x "$CL_REPO/scripts/validate.sh"
 CL_UNSET="env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH"
 
@@ -303,8 +302,8 @@ rm -rf "$CL_REPO" "$CL_HOME" 2>/dev/null || true
 # DEFAULT in local.env but (B2) preserves an operator-AUTHORED custom path; and the
 # co-located default survives a repo path that contains a space.
 CLE_HOME="$(mktemp -d)"
-cle_setup() {  # <repo> — copy repo, drop .git + local.env, stub validate.sh (fast/quiet)
-  cp -R "$REPO_ROOT/." "$1/"; rm -rf "$1/.git" "$1/local.env"
+cle_setup() {  # <repo> — hermetic tracked-only repo copy (no .git/local.env), stub validate.sh (fast/quiet)
+  copy_repo_tracked "$1"
   printf '#!/bin/sh\nexit 0\n' > "$1/scripts/validate.sh"; chmod +x "$1/scripts/validate.sh"
 }
 cle_run() {  # <repo> <expect-substr> <label> [extra bootstrap flags...]
@@ -457,7 +456,7 @@ if command -v pwsh >/dev/null 2>&1; then
   # completes; in dry-run it doesn't actually run.
   PS_HOME="$(mktemp -d)"
   PS_DRY_REPO="$(mktemp -d)"
-  cp -R "$REPO_ROOT/." "$PS_DRY_REPO/"; rm -rf "$PS_DRY_REPO/.git"
+  copy_repo_tracked "$PS_DRY_REPO"
   # Pre-seed local.env so seed_local_env is a no-op.
   printf 'CLAUDE_CONFIG_DIR=%s\nOBSIDIAN_VAULT_PATH=/tmp/vault\n' \
     "$PS_HOME/cfg" > "$PS_DRY_REPO/local.env"
@@ -476,7 +475,7 @@ if command -v pwsh >/dev/null 2>&1; then
   # check-drift.ps1 are stubbed to exit 0 (the temp repo is not a git checkout,
   # so the real drift gate would false-fail on the freshly generated tree).
   PS133_HOME="$(mktemp -d)"; PS133_REPO="$(mktemp -d)"
-  cp -R "$REPO_ROOT/." "$PS133_REPO/"; rm -rf "$PS133_REPO/.git" "$PS133_REPO/local.env"
+  copy_repo_tracked "$PS133_REPO"
   cat > "$PS133_REPO/scripts/install.ps1" <<'PSSTUB'
 #Requires -Version 7
 param([string]$Harness='claude',[string]$Out='',[Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
@@ -564,7 +563,7 @@ PSSTUB
   # -DryRun "setenv User <VAR>=<path>" lines. Mirrors the bash co-located block;
   # execution-verified under local pwsh.
   CLPS_REPO="$(mktemp -d)"; CLPS_HOME="$(mktemp -d)"
-  cp -R "$REPO_ROOT/." "$CLPS_REPO/"; rm -rf "$CLPS_REPO/.git" "$CLPS_REPO/local.env"
+  copy_repo_tracked "$CLPS_REPO"
   CLPS_UNSET="env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH"
   clps_default="$($CLPS_UNSET HOME="$CLPS_HOME" "$PWSH_BIN" -NoProfile -File \
     "$CLPS_REPO/scripts/bootstrap.ps1" -DryRun 2>&1 || true)"
@@ -580,7 +579,7 @@ PSSTUB
 
   # --- <TEAM>-297: co-located value-flow edge cases (cross-model panel), PS twin ---
   CLEP_HOME="$(mktemp -d)"
-  clep_setup() { cp -R "$REPO_ROOT/." "$1/"; rm -rf "$1/.git" "$1/local.env"; }
+  clep_setup() { copy_repo_tracked "$1"; }
   clep_run() {  # <repo> <expect-substr> <label> [extra -flags...]
     local repo="$1" want="$2" label="$3"; shift 3
     local out
@@ -646,7 +645,7 @@ fi
 PSEED_HOME="$(mktemp -d)"
 PSEED_STUBS="$(mktemp -d)"
 PSEED_REPO="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$PSEED_REPO/"; rm -rf "$PSEED_REPO/.git" "$PSEED_REPO/local.env"
+copy_repo_tracked "$PSEED_REPO"
 make_stub_cli "$PSEED_STUBS" codex "codex 0.132.0"
 make_stub_cli "$PSEED_STUBS" firecrawl "firecrawl 1.0.0"
 make_stub_cli "$PSEED_STUBS" jq    "jq-1.7.0"
@@ -775,7 +774,7 @@ rm -rf "$T90D_TMP" 2>/dev/null || true
 # regression rather than rubber-stamping a no-op stub.
 q133_make_repro() {  # <repo-dir> — populate a fresh repo copy w/ guarded stubs
   local repo="$1"
-  cp -R "$REPO_ROOT/." "$repo/"; rm -rf "$repo/.git" "$repo/local.env"
+  copy_repo_tracked "$repo"
   # Guarded stub install.sh: re-source the seeded local.env and FAIL like the
   # real install.sh:90 if the build target / vault are not resolvable. On
   # success, create the entrypoint in CLAUDE_CONFIG_DIR.

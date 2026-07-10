@@ -68,14 +68,22 @@ else
         "expected '\t\$(MAKE) test' line in recipe"
 fi
 
-# The drift recipe must use $$CLAUDE_CONFIG_DIR (shell-time expansion) — Make
-# substitutes $$ → $, so the shell sees the env var, not an empty string.
-# Codex missing-tests pin.
-if $GREP -qE 'check-drift.sh --manifest "\$\$CLAUDE_CONFIG_DIR"' "$REPO_ROOT/Makefile"; then
-  _pass "Makefile drift recipe uses \$\$CLAUDE_CONFIG_DIR (shell-time expansion)"
+# The drift recipe must run check-drift.sh --auto (<TEAM>-394) — the gate that
+# covers EVERY rendered harness home. The old single-home recipe
+# (--manifest "$$CLAUDE_CONFIG_DIR") checked only the claude render while the
+# codex entrypoint promised $$CODEX_HOME coverage.
+if $GREP -qE 'check-drift.sh --auto' "$REPO_ROOT/Makefile"; then
+  _pass "Makefile drift recipe uses check-drift.sh --auto (all harness homes)"
 else
-  _fail "Makefile drift recipe uses \$\$CLAUDE_CONFIG_DIR (shell-time expansion)" \
-        "expected 'check-drift.sh --manifest \"\$\$CLAUDE_CONFIG_DIR\"'"
+  _fail "Makefile drift recipe uses check-drift.sh --auto (all harness homes)" \
+        "expected 'check-drift.sh --auto' in the drift recipe"
+fi
+# Inverse pin: the single-home recipe shape must NOT come back.
+if $GREP -qE 'check-drift.sh --manifest "\$\$CLAUDE_CONFIG_DIR"' "$REPO_ROOT/Makefile"; then
+  _fail "Makefile drift recipe no longer hardcodes the claude-only manifest call" \
+        "found 'check-drift.sh --manifest \"\$\$CLAUDE_CONFIG_DIR\"'"
+else
+  _pass "Makefile drift recipe no longer hardcodes the claude-only manifest call"
 fi
 
 # --- Pre-Push sections in harness templates --------------------------------
@@ -218,25 +226,32 @@ if command -v make >/dev/null 2>&1; then
   fi
   rm -rf "$MVF_SANDBOX"
   unset MVF_SANDBOX mvf_rc
-  # Fresh-clone safety: `make verify` → `make drift` needs CLAUDE_CONFIG_DIR + a
-  # rendered manifest. On a bare public clone (pre-bootstrap) it is unset; the
-  # drift recipe must skip + exit 0 rather than erroring "--manifest needs a
-  # target directory", so `make verify` is fresh-clone-safe. (Surfaced by the
-  # convergence adversarial pass.)
-  mvd_out="$(env -u CLAUDE_CONFIG_DIR make -C "$REPO_ROOT" drift 2>&1)"; mvd_rc=$?
+  # Fresh-clone safety: `make verify` → `make drift` runs check-drift.sh --auto,
+  # which resolves harness homes from env vars then local.env. On a bare public
+  # clone (pre-bootstrap) none resolve; the recipe must skip every home + exit 0
+  # so `make verify` is fresh-clone-safe. Sandboxed (Makefile + check-drift.sh,
+  # NO local.env) — running against $REPO_ROOT would read the operator's live
+  # local.env and become machine-state-dependent (<TEAM>-394 hermeticity class).
+  MVD_SANDBOX="$(mktemp -d)"
+  cp "$REPO_ROOT/Makefile" "$MVD_SANDBOX/Makefile"
+  mkdir -p "$MVD_SANDBOX/scripts"
+  cp "$REPO_ROOT/scripts/check-drift.sh" "$MVD_SANDBOX/scripts/check-drift.sh"
+  mvd_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME -u AI_CONFIG_LOCAL_ENV \
+    make -C "$MVD_SANDBOX" drift 2>&1)"; mvd_rc=$?
   if [ "$mvd_rc" -eq 0 ] && printf '%s' "$mvd_out" | $GREP -qiE 'not set|skipping'; then
-    _pass "make drift exits 0 + skips when CLAUDE_CONFIG_DIR unset (fresh-clone safety)"
+    _pass "make drift exits 0 + skips on a fresh clone (no env vars, no local.env)"
   else
-    _fail "make drift exits 0 + skips when CLAUDE_CONFIG_DIR unset (fresh-clone safety)" \
+    _fail "make drift exits 0 + skips on a fresh clone (no env vars, no local.env)" \
           "rc=$mvd_rc; output: $mvd_out"
   fi
-  unset mvd_out mvd_rc
+  rm -rf "$MVD_SANDBOX"
+  unset MVD_SANDBOX mvd_out mvd_rc
 else
   for mvtgt in test test-fast; do
     _skip "make ${mvtgt} exits 0 when tests/ absent (public-snapshot safety)" "make not on PATH"
     _skip "make ${mvtgt} prints a skip notice when tests/ absent" "make not on PATH"
   done
   _skip "make test propagates a nonzero tests/run.sh exit (no masking)" "make not on PATH"
-  _skip "make drift exits 0 + skips when CLAUDE_CONFIG_DIR unset (fresh-clone safety)" "make not on PATH"
+  _skip "make drift exits 0 + skips on a fresh clone (no env vars, no local.env)" "make not on PATH"
   unset mvtgt
 fi

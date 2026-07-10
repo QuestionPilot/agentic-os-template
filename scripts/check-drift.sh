@@ -21,6 +21,86 @@ done
 # Restore positional args minus the flag(s) we consumed.
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 
+# --auto: resolve EVERY harness render home (env var first, then local.env as
+# data) and run the --manifest gate against each home that has a rendered
+# manifest. <TEAM>-394: `make drift` previously checked only $CLAUDE_CONFIG_DIR
+# while the codex entrypoint told its operator $CODEX_HOME was covered — a
+# false cross-harness promise. Skips are LOUD (one line per harness) so an
+# unresolvable home is visible, never silently green. Exit: 1 if any checked
+# home drifts; 0 otherwise — including the fresh-clone case where nothing is
+# resolvable yet (same degrade contract as the old Makefile presence-guard).
+if [ "${1:-}" = "--auto" ]; then
+  # _cd_localenv_get <path> <key> — read one KEY=VALUE from local.env as DATA
+  # (never sourced; a hostile or malformed local.env cannot execute). Same
+  # parser as scripts/self-audit.sh::_sa_localenv_get: strips an optional
+  # `export `, one matching outer quote pair, backslash escapes; last
+  # assignment wins. No $VAR expansion — a self-referencing value resolves
+  # literally and lands in the loud no-manifest skip path below.
+  _cd_localenv_get() {
+    local path="$1" key="$2" line t v f l inner result=""
+    [ -f "$path" ] || { printf '%s' ""; return 0; }
+    while IFS= read -r line || [ -n "$line" ]; do
+      t="${line#"${line%%[![:space:]]*}"}"
+      t="${t%"${t##*[![:space:]]}"}"
+      [ -z "$t" ] && continue
+      case "$t" in '#'*) continue ;; esac
+      case "$t" in
+        export[[:space:]]*) t="${t#export}"; t="${t#"${t%%[![:space:]]*}"}" ;;
+      esac
+      case "$t" in
+        "$key="*) v="${t#"$key="}" ;;
+        *) continue ;;
+      esac
+      if [ "${#v}" -ge 2 ]; then
+        f="${v:0:1}"; l="${v:$(( ${#v} - 1 )):1}"
+        if { [ "$f" = '"' ] && [ "$l" = '"' ]; } || { [ "$f" = "'" ] && [ "$l" = "'" ]; }; then
+          inner=$(( ${#v} - 2 )); v="${v:1:$inner}"
+        else
+          case "$v" in
+            *'\'*) v="$(printf '%s' "$v" | sed -E 's/\\(.)/\1/g')" ;;
+          esac
+        fi
+      fi
+      result="$v"
+    done < "$path"
+    printf '%s' "$result"
+  }
+
+  # AI_CONFIG_LOCAL_ENV: same fixture-override convention as install.sh, so
+  # tests can point --auto at a synthetic local.env instead of the operator's.
+  auto_localenv="${AI_CONFIG_LOCAL_ENV:-$repo_root/local.env}"
+  auto_failed=0
+  for auto_pair in "claude:CLAUDE_CONFIG_DIR" "codex:CODEX_HOME" "hermes:HERMES_HOME"; do
+    auto_harness="${auto_pair%%:*}"; auto_var="${auto_pair#*:}"
+    auto_dir="${!auto_var:-}"
+    auto_src="env"
+    if [ -z "$auto_dir" ] && [ -f "$auto_localenv" ]; then
+      auto_dir="$(_cd_localenv_get "$auto_localenv" "$auto_var")"
+      auto_src="local.env"
+    fi
+    if [ -z "$auto_dir" ]; then
+      printf 'check-drift --auto: %s (%s) not set; skipping\n' "$auto_harness" "$auto_var"
+      continue
+    fi
+    # A RESOLVED home always runs the gate — no missing-manifest skip. The old
+    # Makefile recipe FAILED when CLAUDE_CONFIG_DIR was set but the manifest
+    # was gone (a deleted manifest is a hand-edit form); a skip here would be
+    # the fail-open hole the panel flagged: a broken render silently passing
+    # `make drift`. Only an UNRESOLVED home (fresh clone, harness never
+    # configured) skips.
+    printf 'check-drift --auto: checking %s render at %s (via %s)\n' \
+      "$auto_harness" "$auto_dir" "$auto_src"
+    # Self-invoke keeps --manifest the single source of truth for the gate
+    # itself; --cure-soft-drift passes through unchanged.
+    if [ "$CURE_SOFT_DRIFT" -eq 1 ]; then
+      bash "${BASH_SOURCE[0]}" --cure-soft-drift --manifest "$auto_dir" || auto_failed=1
+    else
+      bash "${BASH_SOURCE[0]}" --manifest "$auto_dir" || auto_failed=1
+    fi
+  done
+  exit "$auto_failed"
+fi
+
 # --manifest <target-dir>: verify a built target against its .build-manifest.json.
 # Used by install.sh's drift detection and the acceptance suite. When this mode
 # is selected the script does only the manifest check and exits.

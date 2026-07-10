@@ -204,8 +204,7 @@ rm -rf "$SP_DIR"
 
 # --- a '|' in a capability summary is escaped in the generated catalog ----
 PREPO="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$PREPO/"
-rm -rf "$PREPO/.git"
+copy_repo_tracked "$PREPO"
 awk '/^summary:/ && !done {print "summary: Alpha | Beta pipe test"; done=1; next} {print}' \
   "$REPO_ROOT/capabilities/session-agent.md" > "$PREPO/capabilities/session-agent.md"
 POUT="$(mktemp -d)/out"; mkdir -p "$POUT"

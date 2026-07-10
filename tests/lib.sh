@@ -46,6 +46,23 @@ assert_file() {
   if [ -f "$2" ]; then _pass "$1"; else _fail "$1" "file not found: $2"; fi
 }
 
+# copy_repo_tracked <dest>
+# Hermetic repo fixture (<TEAM>-394): copy only git-TRACKED files (their
+# working-tree versions) into <dest>. The old `cp -R "$REPO_ROOT/." <dest>`
+# dragged every gitignored artifact around the live checkout into the fixture —
+# co-located harness homes (.claude/, .codex/ runtime state), the operator's
+# projects/ workspace, local.env — so fixture behavior depended on operator
+# machine state: green on a clean CI clone, slow + failing in a living home.
+# Tracked files are exactly what a clean clone contains (minus .git, which the
+# old call sites deleted anyway). No silent fallback: if git enumeration fails,
+# the copy fails loudly rather than quietly reverting to a contaminated copy.
+copy_repo_tracked() {
+  local dest="$1"
+  mkdir -p "$dest"
+  # --null -T -: NUL-separated name list on stdin; supported by BSD + GNU tar.
+  (cd "$REPO_ROOT" && git ls-files -z | tar -cf - --null -T -) | tar -xf - -C "$dest"
+}
+
 # make_local_env <env-file> <config-dir> [vault-dir]
 # Writes a minimal but complete local.env for install.sh test builds. install.sh
 # generates CLAUDE.md from a template that references OBSIDIAN_VAULT_PATH; a

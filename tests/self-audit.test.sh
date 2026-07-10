@@ -1515,3 +1515,78 @@ _test_injection_surface_null_when_nothing_resolves() {
     "$md_out" "_(not measured — no injection-surface component resolved)_"
 }
 _test_injection_surface_null_when_nothing_resolves
+
+# --- <TEAM>-394: codex-native memory registry — audit-covered, not canonical ---
+# The registry gets its own pillar-2 surface (sub-check 2.5): index presence +
+# the MEMORY.md recall caps. Its sidecars (memory_summary.md, raw_memories.md)
+# are NOT index-addressed notes, so they must never trip the 2.1 orphan check.
+_sa_mk_codex_case() {  # <root> — clean claude store + codex registry skeleton
+  mkdir -p "$1/mem" "$1/codex-mem/rollout_summaries"
+  printf -- '- [note](note.md) — fixture note\n' > "$1/mem/MEMORY.md"
+  printf 'body\n' > "$1/mem/note.md"
+  printf -- '- codex fact one\n' > "$1/codex-mem/MEMORY.md"
+  printf 'summary sidecar\n' > "$1/codex-mem/memory_summary.md"
+  printf 'raw sidecar\n' > "$1/codex-mem/raw_memories.md"
+}
+
+_test_codex_registry_clean() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-registry clean test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
+  local out score
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  rm -rf "$fixture"
+  assert_eq "codex registry: clean registry + sidecars score 20/20 (no orphan false-trip)" "20" "$score"
+  assert_not_contains "codex registry: sidecars never trip the orphan check" "$out" "Orphan memory file(s)"
+}
+_test_codex_registry_clean
+
+_test_codex_registry_line_cap() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-registry line-cap test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
+  # One >300-char index line in the CODEX registry only.
+  printf -- '- %s\n' "$(printf 'x%.0s' $(seq 1 320))" >> "$fixture/codex-mem/MEMORY.md"
+  local out score
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  rm -rf "$fixture"
+  assert_contains "codex registry: over-cap index line records the codex line-cap gap" \
+    "$out" "Codex registry MEMORY.md entries over line-length cap"
+  assert_eq "codex registry: line-cap deduction lands on pillar 2" "16" "$score"
+}
+_test_codex_registry_line_cap
+
+_test_codex_registry_missing_index() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-registry missing-index test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
+  rm -f "$fixture/codex-mem/MEMORY.md"
+  local out score
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  rm -rf "$fixture"
+  assert_contains "codex registry: missing MEMORY.md records the blind-kickoff gap" \
+    "$out" "Codex memory registry has no MEMORY.md index"
+  assert_eq "codex registry: missing-index deduction lands on pillar 2" "14" "$score"
+}
+_test_codex_registry_missing_index
+
+_test_codex_registry_bogus_path_skips() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-registry bogus-path test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
+  local out score
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/does-not-exist" --json 2>/dev/null)"
+  score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  rm -rf "$fixture"
+  assert_eq "codex registry: non-existent path skips the surface (pillar 2 unaffected)" "20" "$score"
+  assert_not_contains "codex registry: non-existent path records no codex gap" \
+    "$out" "Codex memory registry"
+}
+_test_codex_registry_bogus_path_skips

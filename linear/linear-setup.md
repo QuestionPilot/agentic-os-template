@@ -157,6 +157,11 @@ lineark projects update <PROJECT_NAME_OR_UUID> --status "Completed"
 # Issues in a specific project (Done/Canceled hidden by default; --show-done to include)
 lineark issues list --project <PROJECT_UUID> --format json
 
+# ALL open team issues — any project or none, any state, any assignee (the
+# session-agent O3 global sweep; the only cut that surfaces a projectless
+# Backlog/Blocked/unassigned issue)
+lineark issues list --format json
+
 # Issues assigned to you, In Progress
 lineark issues list --mine --format json
 # (on `list`, .state is a bare string — filter on .state == "In Progress")
