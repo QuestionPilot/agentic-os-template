@@ -25,6 +25,11 @@
 #                  else skipped. The explicit flag always means exactly one store.
 #   --vault-dir    $OBSIDIAN_VAULT_PATH if set; else skipped
 #   --config-dir   $CLAUDE_CONFIG_DIR if set; else skipped
+#   --codex-memory-dir  the codex-native memory registry, default
+#                  $CODEX_HOME/memories when CODEX_HOME resolves (flag >
+#                  local.env > ambient env). AUDIT-COVERED read-only surface
+#                  (<TEAM>-394), never canonical: scored only for index
+#                  presence + the MEMORY.md recall caps; else skipped.
 #   --injection-warn-kb  soft kickoff-injection budget in KB for sub-check 2.4
 #                  (default 32; flag > local.env INJECTION_SURFACE_WARN_KB >
 #                  ambient env > default — <TEAM>-364)
@@ -49,6 +54,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MEMORY_DIR=""
 VAULT_DIR=""
 CONFIG_DIR=""
+# Codex-native memory registry (<TEAM>-394): $CODEX_HOME/memories — an
+# AUDIT-COVERED read-only surface, never canonical. Empty here = not set by
+# flag; the local.env / ambient-env CODEX_HOME fallbacks apply below.
+CODEX_MEMORY_DIR=""
 # Soft injection-surface budget in KB (<TEAM>-364). Empty here = not set by
 # flag; the local.env / ambient-env fallbacks and the default apply below,
 # after the config-resolution block (mirroring CONFIG_DIR / VAULT_DIR).
@@ -63,6 +72,7 @@ while [ $# -gt 0 ]; do
     --save)        SAVE_PATH="${2:?--save needs a path}"; shift 2 ;;
     --repo-root)   REPO_ROOT="${2:?--repo-root needs a path}"; shift 2 ;;
     --memory-dir)  MEMORY_DIR="${2:?--memory-dir needs a path}"; shift 2 ;;
+    --codex-memory-dir) CODEX_MEMORY_DIR="${2:?--codex-memory-dir needs a path}"; shift 2 ;;
     --vault-dir)   VAULT_DIR="${2:?--vault-dir needs a path}"; shift 2 ;;
     --config-dir)  CONFIG_DIR="${2:?--config-dir needs a path}"; shift 2 ;;
     --injection-warn-kb) INJECTION_WARN_KB="${2:?--injection-warn-kb needs a value}"; shift 2 ;;
@@ -190,6 +200,16 @@ if [ "$ISOLATED" -eq 0 ]; then
       _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" INJECTION_SURFACE_WARN_KB)"
       [ -n "$_le_v" ] && INJECTION_WARN_KB="$_le_v"
     fi
+    # CODEX_HOME (<TEAM>-394): the codex-native memory registry lives at
+    # $CODEX_HOME/memories. Same precedence as the other paths — flag (already
+    # set above) > local.env > ambient env. Never joins MEMORY_DIRS: its
+    # registry shape (index + summary/raw sidecars + rollout_summaries/) would
+    # false-trip the note-store orphan/index checks; it gets its own pillar-2
+    # surface instead.
+    if [ -z "$CODEX_MEMORY_DIR" ]; then
+      _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" CODEX_HOME)"
+      [ -n "$_le_v" ] && [ -d "$_le_v/memories" ] && CODEX_MEMORY_DIR="$_le_v/memories"
+    fi
     unset _le_v
   fi
   if [ -z "$CONFIG_DIR" ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
@@ -200,6 +220,9 @@ if [ "$ISOLATED" -eq 0 ]; then
   fi
   if [ -z "$INJECTION_WARN_KB" ] && [ -n "${INJECTION_SURFACE_WARN_KB:-}" ]; then
     INJECTION_WARN_KB="$INJECTION_SURFACE_WARN_KB"
+  fi
+  if [ -z "$CODEX_MEMORY_DIR" ] && [ -n "${CODEX_HOME:-}" ] && [ -d "$CODEX_HOME/memories" ]; then
+    CODEX_MEMORY_DIR="$CODEX_HOME/memories"
   fi
   if [ -z "$MEMORY_DIR" ] && [ -n "$CONFIG_DIR" ] && [ -d "$CONFIG_DIR/projects" ]; then
     # <TEAM>-366: no flag → a $CLAUDE_PRIMARY_MEMORY_DIR pin scopes the scan to
@@ -221,6 +244,12 @@ fi
 # empty scan set, so the memory surface reports skipped — same as before.
 if [ -n "$MEMORY_DIR" ]; then
   if [ -d "$MEMORY_DIR" ]; then MEMORY_DIRS=("$MEMORY_DIR"); else MEMORY_DIRS=(); fi
+fi
+
+# Codex registry mirrors that contract: a non-existent path (flag or resolved)
+# empties the surface — reported skipped, never an error (<TEAM>-394).
+if [ -n "$CODEX_MEMORY_DIR" ] && [ ! -d "$CODEX_MEMORY_DIR" ]; then
+  CODEX_MEMORY_DIR=""
 fi
 
 # Validate the resolved injection budget: positive integer KB, else fall back
@@ -635,10 +664,53 @@ score_memory_hygiene() {
     fi
   done
 
+  # Sub-check 2.5 (<TEAM>-394): the codex-native memory registry — an
+  # AUDIT-COVERED read-only surface, never canonical. $CODEX_HOME/memories is a
+  # registry (MEMORY.md index + summary/raw sidecars + rollout_summaries/), not
+  # a note-per-fact store, so the orphan/index-integrity checks above do NOT
+  # apply — a codex sidecar unnamed by its index is normal, not a gap. What DOES
+  # transfer is what codex sessions actually pay at kickoff: an index that
+  # exists, and the same size/line recall caps as 2.2/2.3. Resolution is
+  # flag > local.env CODEX_HOME > ambient env; when none resolve (claude-only
+  # install) the surface is skipped and scoring is unchanged. KNOWN COUPLING
+  # (panel C6, accepted): this rides the memory pillar, so a codex-ONLY setup
+  # with zero claude stores hits the pillar's UNSCORED early-return before
+  # 2.5 runs — audit-covered means "covered wherever the pillar scores",
+  # matching the sub-check-2.4 precedent, not a standalone codex audit.
+  if [ -n "$CODEX_MEMORY_DIR" ]; then
+    if [ ! -f "$CODEX_MEMORY_DIR/MEMORY.md" ]; then
+      deduct "$key" 6
+      record_gap 2 5 \
+        "Codex memory registry has no MEMORY.md index" \
+        "$CODEX_MEMORY_DIR exists but holds no MEMORY.md — codex kickoffs run blind on native memory" \
+        "Let codex rebuild its native index, or remove the empty registry dir"
+    else
+      local cx_size cx_long
+      cx_size="$(wc -c < "$CODEX_MEMORY_DIR/MEMORY.md" 2>/dev/null | tr -d ' ')"
+      if [ -n "$cx_size" ] && [ "$cx_size" -gt 24400 ]; then
+        deduct "$key" 4
+        record_gap 2 5 \
+          "Codex registry MEMORY.md over recall cap" \
+          "$CODEX_MEMORY_DIR/MEMORY.md is ${cx_size} bytes (over the ~24400 recall cap)" \
+          "Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)"
+      fi
+      # Character-count line-length check, identical mechanics to 2.3.
+      cx_long="$(LC_ALL=C awk '{ s=$0; cont=gsub(/[\200-\277]/,"",s); if ((length($0)-cont) > 300) n++ } END { print n+0 }' "$CODEX_MEMORY_DIR/MEMORY.md" 2>/dev/null)"
+      if [ -n "$cx_long" ] && [ "$cx_long" -gt 0 ]; then
+        deduct "$key" 4
+        record_gap 2 5 \
+          "Codex registry MEMORY.md entries over line-length cap" \
+          "$cx_long index line(s) in $CODEX_MEMORY_DIR/MEMORY.md exceed the ~300-char per-entry cap" \
+          "Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)"
+      fi
+    fi
+  fi
+
   # Sub-check 2.4 (<TEAM>-364): per-session injection-surface size. These four
   # components are injected into EVERY kickoff orient — the memory index (worst
-  # case: the LARGEST MEMORY.md across the scanned stores, since any one session
-  # loads one store), the rendered harness CLAUDE.md, the vault entrypoint
+  # case: the LARGEST MEMORY.md across the scanned stores, including the codex
+  # registry when it resolved — any one session, of either harness, loads one
+  # index), the rendered harness CLAUDE.md, the vault entrypoint
   # START.md, and the operator-identity note START.md names — so oversize here
   # is a per-session context tax no other check measures. SOFT threshold only:
   # a design panel explicitly rejected a hard cap (a large surface can be a
@@ -648,7 +720,9 @@ score_memory_hygiene() {
   # index is the dominant injected component), so when zero stores resolved the
   # pillar returned UNSCORED above and the surface reports not-measured.
   local inj_largest_path="" inj_largest_bytes=-1 inj_b
-  for md_dir in "${MEMORY_DIRS[@]}"; do
+  local inj_scan_dirs=("${MEMORY_DIRS[@]}")
+  [ -n "$CODEX_MEMORY_DIR" ] && inj_scan_dirs+=("$CODEX_MEMORY_DIR")
+  for md_dir in "${inj_scan_dirs[@]}"; do
     [ -f "$md_dir/MEMORY.md" ] || continue
     inj_b="$(wc -c < "$md_dir/MEMORY.md" 2>/dev/null | tr -d ' ')"
     [ -n "$inj_b" ] || continue

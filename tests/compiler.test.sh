@@ -6,8 +6,7 @@ assert_eq "lib: assert_eq matches equal strings" "x" "x"
 
 # --- validate.sh: local.env must be gitignored ---
 vtmp="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$vtmp/"
-rm -rf "$vtmp/.git"
+copy_repo_tracked "$vtmp"
 # A local.env present but NOT gitignored must fail validate.sh.
 printf 'CLAUDE_CONFIG_DIR=/tmp/x\n' > "$vtmp/local.env"
 # Neutralise the.gitignore entry so the check has something to catch.
@@ -98,8 +97,7 @@ rm -rf "$nat_build"
 # capabilities the real agentic-os-template currently authors. Names are chosen to not
 # collide with any real or historical capability.
 VREPO="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$VREPO/"
-rm -rf "$VREPO/.git"
+copy_repo_tracked "$VREPO"
 mkdir -p "$VREPO/capabilities"
 printf -- '---\nname: test-vendored\nsummary: synthetic vendored cap for compile_vendored test\ntriggers: []\nverification: none\nharnesses: [claude]\nkind: vendored\n---\n# test-vendored\n' \
   > "$VREPO/capabilities/test-vendored.md"
@@ -122,8 +120,7 @@ rm -rf "$vbuild" "$VREPO"
 # should emit a "no committed snapshot" warning and still exit 0 — a missing
 # snapshot is non-fatal so the rest of the build still ships.
 MREPO="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$MREPO/"
-rm -rf "$MREPO/.git"
+copy_repo_tracked "$MREPO"
 mkdir -p "$MREPO/capabilities"
 printf -- '---\nname: test-vendored-missing\nsummary: synthetic vendored cap with no committed snapshot\ntriggers: []\nverification: none\nharnesses: [claude]\nkind: vendored\n---\n# test-vendored-missing\n' \
   > "$MREPO/capabilities/test-vendored-missing.md"
@@ -360,8 +357,7 @@ rm -rf "$SUB_DIR"
 
 # --- a capability summary containing ': ' yields valid SKILL.md frontmatter ---
 YREPO="$(mktemp -d)"
-cp -R "$REPO_ROOT/." "$YREPO/"
-rm -rf "$YREPO/.git"
+copy_repo_tracked "$YREPO"
 awk '/^summary:/ && !done {print "summary: Walk the protocol: classify, route, verify — colon test"; done=1; next} {print}' \
   "$REPO_ROOT/capabilities/session-agent.md" > "$YREPO/capabilities/session-agent.md"
 YOUT="$(mktemp -d)/out"; mkdir -p "$YOUT"

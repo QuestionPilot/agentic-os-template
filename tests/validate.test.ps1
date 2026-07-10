@@ -35,14 +35,27 @@ function Write-LfFile {
 # --- Test 1: baseline ---
 Assert-Exit 'validate.test: validate.ps1 passes from $REPO_ROOT' 0 -- pwsh -NoProfile -File $VALIDATE_PS1
 
+# <TEAM>-394: the FAIL-expecting injection tests below run against a hermetic
+# tracked-only fixture copy, NOT $REPO_ROOT — in a co-located living home the
+# real .claude/.codex are the operator's RECOGNIZED config dirs (and .agents an
+# info/exclude-declared workspace), so validate rightly exempts them and an
+# injected sentinel can never produce the expected failure there. Mirrors the
+# bash twin's VAL_GUARD_FIX.
+$VAL_GUARD_FIX = Join-Path ([IO.Path]::GetTempPath()) ('val-guard-' + [Guid]::NewGuid().Guid.Substring(0,8))
+Copy-RepoTracked $VAL_GUARD_FIX
+$GUARD_VALIDATE = Join-Path $VAL_GUARD_FIX 'scripts' 'validate.ps1'
+
 # --- Test 2: hand-edit-only child rejected ---
 $VAL_HAND_EDIT = ".test-t60-hand-edit-$(Get-VtSuffix)"
-$claudeDir = Join-Path $env:REPO_ROOT '.claude'
+$claudeDir = Join-Path $VAL_GUARD_FIX '.claude'
 New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
 Write-LfFile (Join-Path $claudeDir $VAL_HAND_EDIT) "simulated hand-edit`n"
-Assert-Exit 'validate.test: validate.ps1 fails on a non-allowlisted child in .claude/' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
+Assert-Exit 'validate.test: validate.ps1 fails on a non-allowlisted child in .claude/' 1 -- pwsh -NoProfile -File $GUARD_VALIDATE
 Remove-Item -LiteralPath (Join-Path $claudeDir $VAL_HAND_EDIT) -Force -ErrorAction SilentlyContinue
 Remove-IfEmpty $claudeDir
+# Tests 3/4 below deliberately stay on $REPO_ROOT — they expect PASS, which
+# holds both on a clean clone (allowlist) and in a living home (exemption).
+$claudeDir = Join-Path $env:REPO_ROOT '.claude'
 
 # --- Test 3:.claude/worktrees/ as the only child must PASS ---
 $wtName = '.test-t60-fake-worktree-' + (Get-VtSuffix)
@@ -67,18 +80,15 @@ if (Test-Path -LiteralPath $settingsLocal) {
 }
 
 # --- Tests 4a-4f: per-project Claude Code convention files must FAIL ---
+# Runs in the hermetic guard fixture (<TEAM>-394): no skip-if-real needed, and
+# coverage holds even in a co-located living home.
 foreach ($ct_base in @('.claude', '.codex', '.agents')) {
-    $ct_dir = Join-Path $env:REPO_ROOT $ct_base
+    $ct_dir = Join-Path $VAL_GUARD_FIX $ct_base
     foreach ($cc_name in @('CLAUDE.md', 'settings.json')) {
         $cc_target = Join-Path $ct_dir $cc_name
-        if (Test-Path -LiteralPath $cc_target) {
-            _Skip "validate.test: validate.ps1 fails when ${ct_base}/ has only $cc_name" `
-                "real $cc_name present at `$REPO_ROOT/${ct_base}/ — refusing to overwrite"
-            continue
-        }
         New-Item -ItemType Directory -Path $ct_dir -Force | Out-Null
         Write-LfFile $cc_target "# test fixture`n"
-        $val_he_output = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+        $val_he_output = & pwsh -NoProfile -File $GUARD_VALIDATE 2>&1
         $val_he_exit = $LASTEXITCODE
         if ($val_he_output -is [array]) { $val_he_output = $val_he_output -join "`n" }
         Remove-Item -LiteralPath $cc_target -Force -ErrorAction SilentlyContinue
@@ -148,12 +158,14 @@ if (Test-Path -LiteralPath $coloDir) {
 }
 
 # --- Test 5: mixed (worktrees/ + hand-edit) must FAIL ---
+# Hermetic guard fixture (<TEAM>-394).
+$claudeDir = Join-Path $VAL_GUARD_FIX '.claude'
 $wtName = '.test-t60-fake-worktree-' + (Get-VtSuffix)
 $wtPath = Join-Path $claudeDir 'worktrees' $wtName
 New-Item -ItemType Directory -Path $wtPath -Force | Out-Null
 $VAL_MIXED_EDIT = ".test-t60-mixed-$(Get-VtSuffix)"
 Write-LfFile (Join-Path $claudeDir $VAL_MIXED_EDIT) "mixed hand-edit`n"
-Assert-Exit 'validate.test: validate.ps1 fails on mixed .claude/ (worktrees + hand-edit)' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
+Assert-Exit 'validate.test: validate.ps1 fails on mixed .claude/ (worktrees + hand-edit)' 1 -- pwsh -NoProfile -File $GUARD_VALIDATE
 Remove-Item -LiteralPath (Join-Path $claudeDir $VAL_MIXED_EDIT) -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $wtPath -Recurse -Force -ErrorAction SilentlyContinue
 Remove-IfEmpty (Join-Path $claudeDir 'worktrees')
@@ -163,7 +175,7 @@ Remove-IfEmpty $claudeDir
 New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
 $VAL_DIAG_NAME = ".test-t60-diag-$(Get-VtSuffix)"
 Write-LfFile (Join-Path $claudeDir $VAL_DIAG_NAME) "diag content`n"
-$val_output = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+$val_output = & pwsh -NoProfile -File $GUARD_VALIDATE 2>&1
 $val_exit = $LASTEXITCODE
 if ($val_output -is [array]) { $val_output = $val_output -join "`n" }
 Remove-Item -LiteralPath (Join-Path $claudeDir $VAL_DIAG_NAME) -Force -ErrorAction SilentlyContinue
@@ -172,20 +184,20 @@ Assert-Eq 'validate.test: validate.ps1 exits 1 on diag-name injection' '1' "$val
 Assert-Contains 'validate.test: validate.ps1 failure surfaces leaked path' $val_output $VAL_DIAG_NAME
 
 # --- F-1 amendment: parallel coverage for.codex/ and.agents/ ---
+# Hermetic guard fixture (<TEAM>-394): no skip-if-real needed.
 foreach ($ct_base in @('.codex', '.agents')) {
-    $ct_dir = Join-Path $env:REPO_ROOT $ct_base
-    if (Test-Path -LiteralPath $ct_dir) {
-        _Skip "validate.test: validate.ps1 fails on hand-edit in ${ct_base}/" `
-            "real ${ct_base}/ present at `$REPO_ROOT — refusing to inject"
-        continue
-    }
+    $ct_dir = Join-Path $VAL_GUARD_FIX $ct_base
     $CT_INJECT = ".test-t60-${ct_base}-$(Get-VtSuffix)"
     New-Item -ItemType Directory -Path $ct_dir -Force | Out-Null
     Write-LfFile (Join-Path $ct_dir $CT_INJECT) "simulated hand-edit`n"
-    Assert-Exit "validate.test: validate.ps1 fails on hand-edit in ${ct_base}/" 1 -- pwsh -NoProfile -File $VALIDATE_PS1
+    Assert-Exit "validate.test: validate.ps1 fails on hand-edit in ${ct_base}/" 1 -- pwsh -NoProfile -File $GUARD_VALIDATE
     Remove-Item -LiteralPath (Join-Path $ct_dir $CT_INJECT) -Force -ErrorAction SilentlyContinue
     Remove-IfEmpty $ct_dir
 }
+# Guard-fixture teardown — fixture-scoped injection tests end here; the
+# prune tests below target the REAL repo's scan behavior again.
+Remove-Item -LiteralPath $VAL_GUARD_FIX -Recurse -Force -ErrorAction SilentlyContinue
+$claudeDir = Join-Path $env:REPO_ROOT '.claude'
 
 # --- other scans must prune harness-managed worktrees ---
 # Test 7:.DS_Store inside.claude/worktrees/<name>/ must NOT trip validate.
@@ -433,4 +445,51 @@ if (Test-Path -LiteralPath $q328Lock) {
         if (-not $IsWindows -and (Test-Path -LiteralPath $q328Lock)) { & chmod 0755 $q328Lock 2>$null }
         Remove-Item -LiteralPath $q328Lock -Recurse -Force -ErrorAction SilentlyContinue
     }
+}
+
+# --- <TEAM>-394: projects/ workspace junk must not trip the junk scans ---
+# Twin of the bash case: the shipped .gitignore declares projects/ the
+# operator's local project workspace ("never tracked"); a real workspace holds
+# whole checkouts, so a nested .git dir or a Finder .DS_Store there is operator
+# content, not framework content. Plants junk in the REAL repo's projects/
+# (gitignored) and expects validate to stay green.
+$vt394 = Join-Path $env:REPO_ROOT 'projects' (".test-t394-" + (Get-VtSuffix))
+try {
+    New-Item -ItemType Directory -Path (Join-Path $vt394 'nested' '.git') -Force | Out-Null
+    New-Item -ItemType File -Path (Join-Path $vt394 '.DS_Store') -Force | Out-Null
+    & pwsh -NoProfile -File $VALIDATE_PS1 *>$null
+    Assert-Eq 'validate.test: validate.ps1 ignores .DS_Store + nested .git under projects/ (operator workspace)' `
+        '0' "$LASTEXITCODE"
+} finally {
+    Remove-Item -LiteralPath $vt394 -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# --- <TEAM>-394: .git/info/exclude declares an operator harness workspace ---
+# Twin of the bash case: a repo-root .agents/skills with no local declaration
+# still trips the finding-#8 guard; adding `.agents/` to the fixture's
+# .git/info/exclude flips it to a recognized operator workspace.
+$vieFix = Join-Path ([IO.Path]::GetTempPath()) ('vie-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vieFix
+    & git -C $vieFix init -q . 2>$null
+    New-Item -ItemType Directory -Path (Join-Path $vieFix '.agents' 'skills') -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $vieFix '.agents' 'skills' 'SKILL.md'), "fixture`n")
+    & pwsh -NoProfile -File (Join-Path $vieFix 'scripts' 'validate.ps1') *>$null
+    Assert-Eq 'validate.test: validate.ps1 guards a repo-root .agents/skills with no local declaration' `
+        '1' "$LASTEXITCODE"
+    Add-Content -LiteralPath (Join-Path $vieFix '.git' 'info' 'exclude') -Value '.agents/'
+    & pwsh -NoProfile -File (Join-Path $vieFix 'scripts' 'validate.ps1') *>$null
+    Assert-Eq 'validate.test: validate.ps1 recognizes an info/exclude-declared harness workspace (.agents)' `
+        '0' "$LASTEXITCODE"
+    # Panel F2 narrowing: recognition is .agents-ONLY — an info/exclude'd
+    # .claude/skills must STILL fail (the actual finding-#8 auto-load surface).
+    Remove-Item -LiteralPath (Join-Path $vieFix '.agents') -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path (Join-Path $vieFix '.claude' 'skills') -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $vieFix '.claude' 'skills' 'SKILL.md'), "fixture`n")
+    Add-Content -LiteralPath (Join-Path $vieFix '.git' 'info' 'exclude') -Value '.claude/'
+    & pwsh -NoProfile -File (Join-Path $vieFix 'scripts' 'validate.ps1') *>$null
+    Assert-Eq 'validate.test: validate.ps1 still guards .claude/skills even when info/exclude''d (finding #8 kept)' `
+        '1' "$LASTEXITCODE"
+} finally {
+    Remove-Item -LiteralPath $vieFix -Recurse -Force -ErrorAction SilentlyContinue
 }

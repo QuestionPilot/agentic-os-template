@@ -37,12 +37,14 @@ test-fast:
 validate:
 	bash scripts/validate.sh
 
-# Manifest-based drift check against the rendered output dir. Presence-guarded
-# on CLAUDE_CONFIG_DIR so `make verify` is fresh-clone-safe: before bootstrap/
-# install there is no rendered output to diff, so drift skips and exits 0
-# rather than erroring "--manifest needs a target directory".
+# Manifest-based drift check against EVERY rendered harness home — claude
+# ($$CLAUDE_CONFIG_DIR), codex ($$CODEX_HOME), hermes ($$HERMES_HOME) — via
+# check-drift.sh --auto (env var first, then local.env read as data). The old
+# recipe checked only $$CLAUDE_CONFIG_DIR while the codex entrypoint promised
+# $$CODEX_HOME coverage. Fresh-clone-safe: a home that is unset or has no
+# rendered manifest is skipped with a notice and the target still exits 0.
 drift:
-	@if [ -n "$$CLAUDE_CONFIG_DIR" ]; then bash scripts/check-drift.sh --manifest "$$CLAUDE_CONFIG_DIR"; else echo 'make drift: CLAUDE_CONFIG_DIR not set (run bootstrap/install first); skipping'; fi
+	@bash scripts/check-drift.sh --auto
 
 # Re-render harness entrypoints from templates (writes into $CLAUDE_CONFIG_DIR).
 # Not a verify prerequisite — render is an explicit operator action because it
@@ -57,5 +59,5 @@ help:
 	@printf '  test     - run acceptance suite (full tier) when present\n'
 	@printf '  test-fast- run only fast-tier tests (skips clone/build-heavy; inner loop)\n'
 	@printf '  validate - run repo validation (scripts/validate.sh)\n'
-	@printf '  drift    - run drift gate against $$CLAUDE_CONFIG_DIR\n'
+	@printf '  drift    - run drift gate against every rendered harness home (claude/codex/hermes; $$CLAUDE_CONFIG_DIR et al.)\n'
 	@printf '  render   - re-render harness entrypoints (writes to $$CLAUDE_CONFIG_DIR)\n'

@@ -35,7 +35,8 @@ _Skip 'make-verify.test: Makefile marks validate as .PHONY' $reason
 _Skip 'make-verify.test: Makefile marks drift as .PHONY' $reason
 _Skip 'make-verify.test: Makefile marks render as .PHONY' $reason
 _Skip 'make-verify.test: Makefile verify recipe calls $(MAKE) test sequentially' $reason
-_Skip 'make-verify.test: Makefile drift recipe uses $$CLAUDE_CONFIG_DIR (shell-time expansion)' $reason
+_Skip 'make-verify.test: Makefile drift recipe uses check-drift.sh --auto (all harness homes)' $reason
+_Skip 'make-verify.test: Makefile drift recipe no longer hardcodes the claude-only manifest call' $reason
 _Skip 'make-verify.test: harnesses/claude/CLAUDE.template.md has ## Pre-Push section' $reason
 _Skip 'make-verify.test: harnesses/claude/CLAUDE.template.md Pre-Push body names ''make verify''' $reason
 _Skip 'make-verify.test: harnesses/claude/CLAUDE.template.md Pre-Push body names tests/run.sh' $reason
@@ -65,4 +66,4 @@ _Skip 'make-verify.test: make test prints a skip notice when tests/ absent' $rea
 _Skip 'make-verify.test: make test-fast exits 0 when tests/ absent (public-snapshot safety)' $reason
 _Skip 'make-verify.test: make test-fast prints a skip notice when tests/ absent' $reason
 _Skip 'make-verify.test: make test propagates a nonzero tests/run.sh exit (no masking)' $reason
-_Skip 'make-verify.test: make drift exits 0 + skips when CLAUDE_CONFIG_DIR unset (fresh-clone safety)' $reason
+_Skip 'make-verify.test: make drift exits 0 + skips on a fresh clone (no env vars, no local.env)' $reason

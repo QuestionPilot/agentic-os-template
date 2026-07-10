@@ -428,3 +428,68 @@ else
   git -C "$REPO_ROOT" reset -q -- "$DR_Q248" >/dev/null 2>&1 || true
 fi
 unset DR_Q248
+
+# --- --auto: multi-home drift gate (<TEAM>-394) -----------------------------
+# `make drift` runs check-drift.sh --auto so the gate covers EVERY rendered
+# harness home, not just $CLAUDE_CONFIG_DIR. Fixture: render a claude home and
+# a codex home into space-containing paths (exercises the local.env
+# backslash-unescape parse), name both in a synthetic local.env via
+# AI_CONFIG_LOCAL_ENV, leave hermes unset. All env vars cleared so resolution
+# comes from the fixture local.env, never operator machine state.
+AU_DIR="$(mktemp -d)"
+AU_CLAUDE="$AU_DIR/claude home"; AU_CODEX="$AU_DIR/codex home"
+mkdir -p "$AU_CLAUDE" "$AU_CODEX"
+AU_ENV1="$AU_DIR/le-claude"; make_local_env "$AU_ENV1" "$AU_CLAUDE"
+AI_CONFIG_LOCAL_ENV="$AU_ENV1" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+AU_ENV2="$AU_DIR/le-codex"; make_codex_env "$AU_ENV2" "$AU_CODEX"
+AI_CONFIG_LOCAL_ENV="$AU_ENV2" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>&1
+AU_AUTO_ENV="$AU_DIR/local.env"
+{ printf 'CLAUDE_CONFIG_DIR=%q\n' "$AU_CLAUDE"
+  printf 'CODEX_HOME=%q\n' "$AU_CODEX"
+} > "$AU_AUTO_ENV"
+
+au_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+  AI_CONFIG_LOCAL_ENV="$AU_AUTO_ENV" \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au_rc=$?
+assert_eq "--auto passes with two clean rendered homes" "0" "$au_rc"
+assert_contains "--auto checked the claude home (local.env resolution, space in path)" \
+  "$au_out" "checking claude render at $AU_CLAUDE"
+assert_contains "--auto checked the codex home (local.env resolution, space in path)" \
+  "$au_out" "checking codex render at $AU_CODEX"
+assert_contains "--auto skips the unset hermes home loudly" \
+  "$au_out" "hermes (HERMES_HOME) not set; skipping"
+
+# Drift in ONE home fails the whole gate — and the other homes still get
+# checked (no fail-fast bail that would hide a second home's drift).
+printf '\nHAND EDIT\n' >> "$AU_CLAUDE/skills/session-agent/SKILL.md"
+au2_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+  AI_CONFIG_LOCAL_ENV="$AU_AUTO_ENV" \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au2_rc=$?
+assert_eq "--auto fails when one home drifts" "1" "$au2_rc"
+assert_contains "--auto still checks the clean codex home after the claude failure" \
+  "$au2_out" "checking codex render at $AU_CODEX"
+
+# Env var wins over local.env AND a resolved-but-unrendered home FAILS the
+# gate (panel F1: no missing-manifest fail-open — the old single-home Makefile
+# recipe failed this case too; a deleted manifest must never read as green).
+AU_EMPTY="$AU_DIR/empty"; mkdir -p "$AU_EMPTY"
+au3_out="$(env -u CODEX_HOME -u HERMES_HOME \
+  CLAUDE_CONFIG_DIR="$AU_EMPTY" AI_CONFIG_LOCAL_ENV="$AU_AUTO_ENV" \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au3_rc=$?
+assert_eq "--auto FAILS when a resolved home has no rendered manifest (no fail-open skip)" "1" "$au3_rc"
+assert_contains "--auto env var wins over local.env (gate runs against the env dir)" \
+  "$au3_out" "checking claude render at $AU_EMPTY (via env)"
+assert_contains "--auto missing-manifest failure names the manifest" \
+  "$au3_out" "no .build-manifest.json"
+
+# Nothing resolvable at all (no env vars, missing local.env): every home skips
+# and the gate exits 0 — the fresh-clone degrade contract `make verify` needs.
+au4_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+  AI_CONFIG_LOCAL_ENV="$AU_DIR/nonexistent.env" \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au4_rc=$?
+assert_eq "--auto exits 0 when nothing is resolvable (fresh-clone degrade)" "0" "$au4_rc"
+assert_contains "--auto reports every unresolvable home" \
+  "$au4_out" "claude (CLAUDE_CONFIG_DIR) not set; skipping"
+rm -rf "$AU_DIR"
+unset AU_DIR AU_CLAUDE AU_CODEX AU_ENV1 AU_ENV2 AU_AUTO_ENV AU_EMPTY
+unset au_out au_rc au2_out au2_rc au3_out au3_rc au4_out au4_rc

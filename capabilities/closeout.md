@@ -90,6 +90,18 @@ classification machinery for work that should never have shipped is wasted.
    contract above.
 4. Does Linear need updating — a completed issue moved to Done, a status
    corrected, or a follow-up issue created?
+
+   **Q4a — project-note closeout edit.** If a Linear project transitioned to
+   Completed (or Canceled) this session, the vault's project note gets its
+   closeout edit NOW, in the same session — not deferred: flip the note's
+   status field to the terminal state, rewrite live-state prose ("currently",
+   "next step is", "treat X as the active successor") into past tense, and add
+   a one-line successor pointer when another project or issue carries the work
+   forward. A completed note that still reads as active is the semantic-drift
+   class a whole-system review flagged across five project notes at once —
+   each one passed the structural audit while misdirecting the next agent that
+   loaded it. The mechanical audit cannot catch prose tense; this edit is the
+   only gate.
 5. Does the durable knowledge base (Obsidian is the canonical example) need a
    note?
 6. Did the work reveal a missing data path (an unprepared silver platter), an

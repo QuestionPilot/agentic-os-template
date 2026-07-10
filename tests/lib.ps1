@@ -181,6 +181,30 @@ function Write-LocalEnvFixture {
     [System.IO.File]::WriteAllText($EnvFile, $content, $utf8NoBom)
 }
 
+# Copy-RepoTracked <dest>
+# Hermetic repo fixture (<TEAM>-394) — PS twin of tests/lib.sh
+# copy_repo_tracked: copy only git-TRACKED files (their working-tree versions)
+# into <dest>. A recursive whole-dir copy drags every gitignored artifact
+# around a living checkout into the fixture (co-located harness homes, the
+# operator's projects/ workspace, local.env), making fixture behavior depend
+# on operator machine state. Tracked files are exactly what a clean clone
+# contains (minus .git). Fails loudly if git enumeration fails.
+function Copy-RepoTracked {
+    param([Parameter(Mandatory)][string]$Dest)
+    New-Item -ItemType Directory -Path $Dest -Force | Out-Null
+    $files = @(& git -C $env:REPO_ROOT ls-files)
+    if ($LASTEXITCODE -ne 0) { throw "Copy-RepoTracked: git ls-files failed in $env:REPO_ROOT" }
+    foreach ($f in $files) {
+        $src = Join-Path $env:REPO_ROOT $f
+        $dst = Join-Path $Dest $f
+        $dir = Split-Path -Parent $dst
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $src -Destination $dst -Force
+    }
+}
+
 # Write-CodexEnvFixture <env-file> <codex-home> [vault-dir]
 #
 # Mirrors `make_codex_env` in tests/lib.sh. (Not exercised by the

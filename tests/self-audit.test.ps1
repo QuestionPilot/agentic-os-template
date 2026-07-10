@@ -1356,3 +1356,80 @@ if ($jqAvail) {
 } else {
     _Skip 'self-audit.test: injection-surface null test' 'jq not installed'
 }
+
+# --- <TEAM>-394: codex-native memory registry — audit-covered, not canonical ---
+# Twin of the bash codex-registry block: the registry gets its own pillar-2
+# surface (sub-check 2.5) — index presence + the MEMORY.md recall caps; its
+# sidecars must never trip the 2.1 orphan check.
+function New-SaCodexCase {
+    param([string]$Root)
+    $mem = Join-Path $Root 'mem'
+    $cx = Join-Path $Root 'codex-mem'
+    New-Item -ItemType Directory -Path $mem -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cx 'rollout_summaries') -Force | Out-Null
+    Write-LfFile (Join-Path $mem 'MEMORY.md') "- [note](note.md) — fixture note`n"
+    Write-LfFile (Join-Path $mem 'note.md') "body`n"
+    Write-LfFile (Join-Path $cx 'MEMORY.md') "- codex fact one`n"
+    Write-LfFile (Join-Path $cx 'memory_summary.md') "summary sidecar`n"
+    Write-LfFile (Join-Path $cx 'raw_memories.md') "raw sidecar`n"
+}
+
+if ($jqAvail) {
+    # Clean registry + sidecars → 20/20, no orphan false-trip.
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-SaCodexCase $fixture
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
+    $score = Get-SaPillarScore $out 'memory-hygiene'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: codex registry clean registry + sidecars score 20/20 (no orphan false-trip)' '20' "$score"
+    Assert-NotContains 'self-audit.test: codex registry sidecars never trip the orphan check' $out 'Orphan memory file(s)'
+
+    # Over-cap index line in the codex registry → line-cap gap + 16/20.
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-SaCodexCase $fixture
+    [System.IO.File]::AppendAllText((Join-Path $fixture 'codex-mem' 'MEMORY.md'), ('- ' + ('x' * 320) + "`n"))
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
+    $score = Get-SaPillarScore $out 'memory-hygiene'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Contains 'self-audit.test: codex registry over-cap index line records the codex line-cap gap' `
+        $out 'Codex registry MEMORY.md entries over line-length cap'
+    Assert-Eq 'self-audit.test: codex registry line-cap deduction lands on pillar 2' '16' "$score"
+
+    # Missing MEMORY.md in the registry → blind-kickoff gap + 14/20.
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-SaCodexCase $fixture
+    Remove-Item -LiteralPath (Join-Path $fixture 'codex-mem' 'MEMORY.md') -Force
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
+    $score = Get-SaPillarScore $out 'memory-hygiene'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Contains 'self-audit.test: codex registry missing MEMORY.md records the blind-kickoff gap' `
+        $out 'Codex memory registry has no MEMORY.md index'
+    Assert-Eq 'self-audit.test: codex registry missing-index deduction lands on pillar 2' '14' "$score"
+
+    # Non-existent path → surface skipped, pillar 2 unaffected, no codex gap.
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-SaCodexCase $fixture
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--codex-memory-dir', (Join-Path $fixture 'does-not-exist'), '--json')
+    $score = Get-SaPillarScore $out 'memory-hygiene'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: codex registry non-existent path skips the surface (pillar 2 unaffected)' '20' "$score"
+    Assert-NotContains 'self-audit.test: codex registry non-existent path records no codex gap' `
+        $out 'Codex memory registry'
+} else {
+    _Skip 'self-audit.test: codex-registry clean test' 'jq not installed'
+    _Skip 'self-audit.test: codex-registry line-cap test' 'jq not installed'
+    _Skip 'self-audit.test: codex-registry missing-index test' 'jq not installed'
+    _Skip 'self-audit.test: codex-registry bogus-path test' 'jq not installed'
+}

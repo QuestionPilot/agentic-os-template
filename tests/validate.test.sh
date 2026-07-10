@@ -24,17 +24,28 @@
 assert_exit "validate.sh passes from \$REPO_ROOT" 0 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
 
+# <TEAM>-394: the FAIL-expecting injection tests below run against a hermetic
+# tracked-only fixture copy, NOT $REPO_ROOT. In a co-located living home the
+# real .claude/.codex are the operator's RECOGNIZED config dirs (and .agents an
+# info/exclude-declared workspace), so validate rightly exempts them — an
+# injected sentinel there can never produce the expected failure, and these
+# tests were part of the standing false-failure set that made the living-home
+# suite permanently red. The fixture has no co-location, no local.env, and no
+# info/exclude, so every guard branch fires exactly as on a fresh clone.
+VAL_GUARD_FIX="$(mktemp -d)"
+copy_repo_tracked "$VAL_GUARD_FIX"
+
 # --- Test 2: hand-edit-only child rejected ---
 # Differentiator under current code: validate FAILs because.claude/ exists at
 # all. After the fix: validate FAILs because the sentinel is not in the
 # allowlist. Both exit 1 — this test catches regressions, not the bug.
 VAL_HAND_EDIT=".test-t60-hand-edit-$$-${RANDOM:-x}"
-mkdir -p "$REPO_ROOT/.claude"
-printf 'simulated hand-edit\n' > "$REPO_ROOT/.claude/$VAL_HAND_EDIT"
+mkdir -p "$VAL_GUARD_FIX/.claude"
+printf 'simulated hand-edit\n' > "$VAL_GUARD_FIX/.claude/$VAL_HAND_EDIT"
 assert_exit "validate.sh fails on a non-allowlisted child in .claude/" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-rm -f "$REPO_ROOT/.claude/$VAL_HAND_EDIT"
-rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
+  bash "$VAL_GUARD_FIX/scripts/validate.sh"
+rm -f "$VAL_GUARD_FIX/.claude/$VAL_HAND_EDIT"
+rmdir "$VAL_GUARD_FIX/.claude" 2>/dev/null || true
 
 # --- Test 3:.claude/worktrees/ as the only child must PASS (KEY BUG FIX) ---
 # Before the fix: validate FAILs (existence is enough to reject) — RED.
@@ -76,25 +87,20 @@ fi
 # agnostic and stands independently). This block expects FAIL across all
 # three harness dirs to enforce the boundary uniformly.
 #
-# Skip-if-real preserves the F-2 discipline: never overwrite real
-# operator-managed state. (After Task 2's one-time stray-file cleanup,
-# claude/CLAUDE.md + settings.json should be absent and tests will run.)
-for ct_dir in "$REPO_ROOT/.claude" "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
+# Runs in the hermetic guard fixture (<TEAM>-394): the fixture carries no real
+# harness dirs, so no skip-if-real branch is needed and coverage holds even
+# in a co-located living home where the real dirs are recognized/exempt.
+for ct_dir in "$VAL_GUARD_FIX/.claude" "$VAL_GUARD_FIX/.codex" "$VAL_GUARD_FIX/.agents"; do
   ct_base="$(basename "$ct_dir")"
   for cc_name in "CLAUDE.md" "settings.json"; do
     cc_target="$ct_dir/$cc_name"
-    if [ -e "$cc_target" ]; then
-      _skip "validate.sh fails when ${ct_base}/ has only $cc_name" \
-        "real $cc_name present at \$REPO_ROOT/${ct_base}/ — refusing to overwrite"
-      continue
-    fi
     mkdir -p "$ct_dir"
     printf '# test fixture\n' > "$cc_target"
     # F-1 (cross-model review, Codex): assert both exit + message content.
     # The spec's behavior matrix says these scenarios FAIL "with hand-edit
     # message" — a regression that changed validate.sh's stderr text but
     # kept exit=1 would silently violate that. Pattern mirrors Tests 4g-4i.
-    val_he_output="$(bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" \
+    val_he_output="$(bash "$VAL_GUARD_FIX/scripts/validate.sh" 2>&1)" \
       && val_he_exit=0 || val_he_exit=$?
     rm -f "$cc_target"
     rmdir "$ct_dir" 2>/dev/null || true
@@ -171,27 +177,27 @@ else
 fi
 
 # --- Test 5: mixed (worktrees/ + hand-edit) must FAIL ---
-# Regression: both pre and post fix → FAIL.
-mkdir -p "$REPO_ROOT/.claude/worktrees/.test-t60-fake-worktree"
+# Regression: both pre and post fix → FAIL. Hermetic guard fixture (<TEAM>-394).
+mkdir -p "$VAL_GUARD_FIX/.claude/worktrees/.test-t60-fake-worktree"
 VAL_MIXED_EDIT=".test-t60-mixed-$$-${RANDOM:-x}"
-printf 'mixed hand-edit\n' > "$REPO_ROOT/.claude/$VAL_MIXED_EDIT"
+printf 'mixed hand-edit\n' > "$VAL_GUARD_FIX/.claude/$VAL_MIXED_EDIT"
 assert_exit "validate.sh fails on mixed .claude/ (worktrees + hand-edit)" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-rm -f "$REPO_ROOT/.claude/$VAL_MIXED_EDIT"
-rm -rf "$REPO_ROOT/.claude/worktrees/.test-t60-fake-worktree"
-rmdir "$REPO_ROOT/.claude/worktrees" 2>/dev/null || true
-rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
+  bash "$VAL_GUARD_FIX/scripts/validate.sh"
+rm -f "$VAL_GUARD_FIX/.claude/$VAL_MIXED_EDIT"
+rm -rf "$VAL_GUARD_FIX/.claude/worktrees/.test-t60-fake-worktree"
+rmdir "$VAL_GUARD_FIX/.claude/worktrees" 2>/dev/null || true
+rmdir "$VAL_GUARD_FIX/.claude" 2>/dev/null || true
 
 # --- Test 6: failure message surfaces the leaked path (diagnostic) ---
 # Before the fix: message is "forbidden local or legacy artifact present:
 # path/.claude" — no per-child detail. After: message lists the actual
 # hand-edited path so the operator knows what to move/delete.
-mkdir -p "$REPO_ROOT/.claude"
+mkdir -p "$VAL_GUARD_FIX/.claude"
 VAL_DIAG_NAME=".test-t60-diag-$$-${RANDOM:-x}"
-printf 'diag content\n' > "$REPO_ROOT/.claude/$VAL_DIAG_NAME"
-val_output="$(bash "$REPO_ROOT/scripts/validate.sh" 2>&1)" && val_exit=0 || val_exit=$?
-rm -f "$REPO_ROOT/.claude/$VAL_DIAG_NAME"
-rmdir "$REPO_ROOT/.claude" 2>/dev/null || true
+printf 'diag content\n' > "$VAL_GUARD_FIX/.claude/$VAL_DIAG_NAME"
+val_output="$(bash "$VAL_GUARD_FIX/scripts/validate.sh" 2>&1)" && val_exit=0 || val_exit=$?
+rm -f "$VAL_GUARD_FIX/.claude/$VAL_DIAG_NAME"
+rmdir "$VAL_GUARD_FIX/.claude" 2>/dev/null || true
 assert_eq "validate.sh exits 1 on diag-name injection" "1" "$val_exit"
 assert_contains "validate.sh failure surfaces leaked path" "$val_output" "$VAL_DIAG_NAME"
 
@@ -200,23 +206,21 @@ assert_contains "validate.sh failure surfaces leaked path" "$val_output" "$VAL_D
 # scripts/validate.sh loops over all three harness-config dirs identically.
 # The.claude/ branch is exhaustively covered above; the other two are
 # textually equivalent but should at least have a hand-edit-reject test to
-# catch a regression that affects only their loop iteration. Skip-if-real
-# mirrors the F-2 discipline: real-state preservation > test coverage.
-for ct_dir in "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
+# catch a regression that affects only their loop iteration. Runs in the
+# hermetic guard fixture (<TEAM>-394), so no skip-if-real branch is needed.
+for ct_dir in "$VAL_GUARD_FIX/.codex" "$VAL_GUARD_FIX/.agents"; do
   ct_base="$(basename "$ct_dir")"
-  if [ -e "$ct_dir" ]; then
-    _skip "validate.sh fails on hand-edit in ${ct_base}/" \
-      "real ${ct_base}/ present at \$REPO_ROOT — refusing to inject"
-    continue
-  fi
   CT_INJECT=".test-t60-${ct_base}-$$-${RANDOM:-x}"
   mkdir -p "$ct_dir"
   printf 'simulated hand-edit\n' > "$ct_dir/$CT_INJECT"
   assert_exit "validate.sh fails on hand-edit in ${ct_base}/" 1 -- \
-    bash "$REPO_ROOT/scripts/validate.sh"
+    bash "$VAL_GUARD_FIX/scripts/validate.sh"
   rm -f "$ct_dir/$CT_INJECT"
   rmdir "$ct_dir" 2>/dev/null || true
 done
+# Guard-fixture teardown — the fixture-scoped injection tests end here.
+rm -rf "$VAL_GUARD_FIX"
+unset VAL_GUARD_FIX
 
 # --- other scans must prune harness-managed worktrees ---
 # After the forbidden-roots check allowlists.claude/worktrees/, but
@@ -658,3 +662,48 @@ else
 fi
 rm -rf "$vle_tmp"
 unset vle_src vle_tmp vle_out vle_sentinel
+
+# --- <TEAM>-394: projects/ workspace junk must not trip the junk scans ---
+# The shipped .gitignore declares projects/ the operator's local project
+# workspace ("never tracked"); a real workspace holds whole checkouts, so a
+# nested .git dir or a Finder .DS_Store there is operator content, not
+# framework content. Pre-fix, `make validate` from a living co-located home
+# failed on the workspace's own checkouts — 41 suite assertions fell to that
+# one enumeration. Plants junk in the REAL repo's projects/ (gitignored) and
+# expects validate to stay green, mirroring the Test-7 worktrees pattern.
+VAL_T394="$REPO_ROOT/projects/.test-t394-$$"
+mkdir -p "$VAL_T394/nested/.git"
+touch "$VAL_T394/.DS_Store"
+assert_exit "validate.sh ignores .DS_Store + nested .git under projects/ (operator workspace)" 0 -- \
+  bash "$REPO_ROOT/scripts/validate.sh"
+rm -rf "$VAL_T394"
+unset VAL_T394
+
+# --- <TEAM>-394: .git/info/exclude declares an operator harness workspace ---
+# A repo-root harness dir with NO config variable (.agents/) is guarded by the
+# finding-#8 skills reject on a fresh clone; an operator who excluded the dir
+# in .git/info/exclude has made the explicit operator-state declaration, and
+# validate recognizes exactly that source — never the shipped .gitignore, so
+# the guard's fresh-clone posture is unchanged.
+VIE_FIX="$(mktemp -d)"
+copy_repo_tracked "$VIE_FIX"
+git -C "$VIE_FIX" init -q .
+mkdir -p "$VIE_FIX/.agents/skills"
+printf 'fixture\n' > "$VIE_FIX/.agents/skills/SKILL.md"
+assert_exit "validate.sh guards a repo-root .agents/skills with no local declaration" 1 -- \
+  bash "$VIE_FIX/scripts/validate.sh"
+printf '.agents/\n' >> "$VIE_FIX/.git/info/exclude"
+assert_exit "validate.sh recognizes an info/exclude-declared harness workspace (.agents)" 0 -- \
+  bash "$VIE_FIX/scripts/validate.sh"
+# Panel F2 narrowing: the recognition applies to .agents ONLY. A .claude/skills
+# with an info/exclude entry must STILL fail — .claude/skills/ is the actual
+# finding-#8 auto-load surface and the harness loads it regardless of git
+# ignore status; an ignore-based bypass there would gut the guard.
+rm -rf "$VIE_FIX/.agents"
+mkdir -p "$VIE_FIX/.claude/skills"
+printf 'fixture\n' > "$VIE_FIX/.claude/skills/SKILL.md"
+printf '.claude/\n' >> "$VIE_FIX/.git/info/exclude"
+assert_exit "validate.sh still guards .claude/skills even when info/exclude'd (finding #8 kept)" 1 -- \
+  bash "$VIE_FIX/scripts/validate.sh"
+rm -rf "$VIE_FIX"
+unset VIE_FIX

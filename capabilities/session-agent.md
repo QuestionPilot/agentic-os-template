@@ -42,8 +42,9 @@ Skipping a sub-step is a Mode 1 failure — re-run the missed sub-step before ro
 The harness autoloads `MEMORY.md` — a one-line index of headlines. **Headlines are
 not the source of truth.** For any project-type memory note (`metadata.type: project`)
 referenced there whose headline names active or recently-active work, read the file body before acting on the
-headline. Cross-issue Linear claims embedded in those bodies (e.g. "TEAM-X is Done")
-are particularly stale-prone — Mode 1's O5 step re-checks them against Linear.
+headline. Cross-issue Linear claims embedded in those bodies (e.g. "`<PREFIX>`-X is
+Done", where `<PREFIX>` is your workspace's tracker issue prefix) are particularly
+stale-prone — Mode 1's O5 step re-checks them against Linear.
 
 **Tool calls:**
 - For each project-type memory note (`metadata.type: project`) referenced in `MEMORY.md` whose headline names active work: `Read` the absolute path under the harness config dir's `projects/<project-slug>/memory/` directory. Detect the kind by frontmatter `metadata.type`, not a `project_*.md` filename glob — the auto-memory store is kebab-named.
@@ -52,10 +53,15 @@ are particularly stale-prone — Mode 1's O5 step re-checks them against Linear.
 ### O2. Reconcile session-start hints against memory headlines
 
 The framework session-start hook surfaces the last 7–10 days of `agentic-os-template` commits
-in `additionalContext`. For any `TEAM-\d+` identifiers in those commits whose parent
-project's memory headline says `COMPLETE` / `CLOSED` / `DONE`, that's a contradiction
-— flag it in the first turn and dig before trusting the memory headline. Memory
-captures what was true when written; the session-start window captures what is true now.
+in `additionalContext`. Scan those commits for tracker issue identifiers — the
+`<PREFIX>-<number>` shape, where **`<PREFIX>` is your workspace's issue prefix**
+(your Linear team key; recorded as `TRACKER_ISSUE_PREFIX` in `local.env`). `TEAM`
+is only the framework documentation placeholder — a literal `TEAM-\d+` match finds
+nothing in a real workspace, which silently disables this whole reconciliation
+step. For any such identifier whose parent project's memory headline says
+`COMPLETE` / `CLOSED` / `DONE`, that's a contradiction — flag it in the first turn
+and dig before trusting the memory headline. Memory captures what was true when
+written; the session-start window captures what is true now.
 
 **Tool calls:** none specific — this step reads the session-start-injected context
 that is already in the model's first turn and compares against the memory bodies
@@ -85,6 +91,17 @@ for token cost but does not require it.
    (continuation of work in flight) — e.g. `lineark issues list --mine`, filtering
    on state: `.state == "In Progress"` for lineark (where `.state` is a bare
    string) or `.state.name == "In Progress"` for the MCP's nested object (§4.3).
+4. **Global open-issues sweep — the projectless-issue net.** List ALL open
+   issues team-wide with no project, assignee, or state filter — e.g. a bare
+   `lineark issues list` (Done/Canceled hidden by default, so the output IS the
+   team-wide open cut) or the Linear MCP's `list_issues` with no project filter
+   (drop Done/Canceled client-side). A standalone issue that belongs to no
+   project is invisible to sweep 2, and unless it happens to be assigned + In
+   Progress it is invisible to cut 3 as well — a Backlog, Blocked, or unassigned
+   standalone issue surfaces ONLY here. Cheap (one list call); never skip it.
+   If the surface paginates or truncates (a bounded first page), page through
+   to exhaustion — a projectless issue on page two is exactly the one this
+   sweep exists to catch.
 
 **Always run the project sweep first.** The assignee+In-Progress cut alone misses
 fresh-spawned projects entirely — a just-created project's issues sit in Backlog
@@ -140,12 +157,13 @@ relevant slice, never the whole vault:
 ### O5. Cross-issue Linear state verification
 
 For any cross-issue Linear claims surfaced in O1's memory bodies (claims about
-*other* issues' states — "TEAM-X is Done", "TEAM-Y is gating", etc.), verify
+*other* issues' states — "`<PREFIX>`-X is Done", "`<PREFIX>`-Y is gating", etc.,
+in your workspace's issue prefix — `TEAM` is only the docs placeholder), verify
 against Linear at kickoff regardless. Cross-issue claims aren't self-correcting
 at the body-read step.
 
 **Tool calls:**
-- For each cross-issue claim with a concrete `TEAM-\d+` identifier: query the
+- For each cross-issue claim with a concrete `<PREFIX>-<number>` identifier: query the
   Linear surface for the issue and compare the `state` field against the memory
   body's claim (see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the per-surface read command).
   Flag mismatches in the orient summary.
@@ -156,7 +174,7 @@ End the orient pass with a structured summary the user sees:
 
 ```
 Orient:
-- Active Linear project(s): <list with TEAM-IDs + state>
+- Active Linear project(s): <list with issue IDs + state>
 - Open issues in active project(s): <count + headline list>
 - Memory contradictions vs session-start commits: <one line per contradiction, or "none">
 - Vault: <one line of context from START.md>
