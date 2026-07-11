@@ -169,13 +169,15 @@ lineark issues list --mine --format json
 # Read full issue body + comments
 lineark issues read TEAM-NN --format json
 
-# Create an issue
+# Create an issue — full metadata at create time, per linear/issue-template.md
+# (project, deliberate priority, >=1 label, assignee; --parent when decomposing)
 lineark issues create "Title" \
   --team <TEAM_KEY> \
-  --project <PROJECT_UUID> \
+  --project <PROJECT_NAME_OR_UUID> \
   --labels "label-a,label-b" \
   --priority medium \
-  --description "Markdown body" \
+  --assignee <owner> \
+  --description "Markdown body per the issue-template.md sections" \
   --format json
 
 # Comment on an issue
@@ -243,7 +245,7 @@ Single-step trivial changes (e.g. a one-line fix) can declare `Linear gate: none
 
 **Closeout — update.** At session end, the closeout pass posts a structured comment to any active Linear issue (Result / Verification / State Deltas / Running State / Residual Risk / Lessons / Pick up here). If the session completes an issue, closeout moves it to Done with the proving artifact link (PR URL, merged commit, deployed change).
 
-**Issue creation — operator-owned.** Agents draft Linear-ready markdown for new issues when no write-capable surface is available, but creation of multi-session workstreams is the operator's call. The framework's `linear/issue-template.md` is the canonical issue shape.
+**Issue creation — operator-owned, standard-conforming.** Agents draft Linear-ready markdown for new issues when no write-capable surface is available, but creation of multi-session workstreams is the operator's call. The framework's `linear/issue-template.md` is the canonical issue shape — BOTH halves: the required-metadata checklist (project, deliberate priority, labels, assignee, parent/relations when spawned by other tracked work) and the structured description body. Metadata is set at create time, not deferred — a title + prose-blob issue is nonconforming even when the prose is good. The advisory `scripts/check-linear-hygiene.sh` (PowerShell twin available) sweeps open issues against this standard and WARNs on gaps; it is a soft signal, never a gate, and deliberately not part of `make verify` (issue hygiene is workspace state, not repo state).
 
 ## 6. Templates
 
@@ -251,7 +253,7 @@ Three templates ship in `linear/`. Use them when authoring new issues, project c
 
 | Template | Use when |
 | --- | --- |
-| [`issue-template.md`](issue-template.md) | Creating a new actionable issue. Includes the outcome / scope / AC / verification / dependencies / links structure. |
+| [`issue-template.md`](issue-template.md) | Creating a new actionable issue. The canonical standard: the required-metadata checklist (project / priority / labels / assignee / relations, set at create time) plus the outcome / scope / acceptance-criteria / verification / dependencies / links body. |
 | [`closeout-format.md`](closeout-format.md) | Posting a session closeout block as a Linear comment. Includes the Result / Verification / State Deltas / Running State / Residual Risk / Lessons / Pick up here shape. |
 | [`tool-agnostic-linear.md`](tool-agnostic-linear.md) | Working with Linear via a harness that has no native skill (markdown-drafts mode). |
 

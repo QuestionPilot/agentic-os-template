@@ -227,10 +227,16 @@ Choose the matching gate from `$AI_CONFIG_DIR/verification/` — e.g. `code-chan
 ### R4. Apply the Linear gate
 
 If the task is multi-step or spans more than one session, a Linear issue or
-project must exist **before execution**. Draft into the issue shape from
-`$AI_CONFIG_DIR/linear/tool-agnostic-linear.md` (outcome, scope, AC, verification,
-links) and create it via the operator's installed Linear surface (see
-`$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the per-surface create command).
+project must exist **before execution**. Create it to the canonical standard in
+`$AI_CONFIG_DIR/linear/issue-template.md` — BOTH halves, at create time: the
+required-metadata checklist (team; project, or an explicit
+deliberately-projectless reason in the body; a deliberate priority — never the
+default "No priority"; at least one label; an assignee; parent/relations when
+the issue is spawned by other tracked work) AND the structured body (outcome,
+scope, acceptance criteria, verification, links). A title + prose-blob issue
+is nonconforming even when the prose is good. Create it via the operator's
+installed Linear surface (see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for
+the per-surface create command).
 
 Single-file fixes, trivial edits, and questions stay as session todos. If no
 write-capable Linear access exists, produce a Linear-ready markdown draft.

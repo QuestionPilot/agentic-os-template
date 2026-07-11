@@ -46,6 +46,17 @@ Use milestones for sequence. Use issue dependencies for hard blockers.
 
 ## Issue Shape
 
+The canonical standard lives in `issue-template.md` — a required-metadata
+checklist plus the description body below. Both halves apply in every access
+mode, including draft-only: a draft that omits the metadata just moves the gap
+to whoever executes the draft.
+
+Set the metadata at create time: team; project (or an explicit
+`Deliberately projectless: <reason>` line in the body); a deliberate priority —
+never the default "No priority"; at least one label from `labels.md`; an
+assignee; and parent or blocking/related relations when the issue is spawned by
+other tracked work.
+
 Each issue should be executable by a future agent without rereading the whole conversation:
 
 ```markdown
@@ -57,14 +68,18 @@ What state should be true when this issue is complete.
 
 What is included and excluded.
 
-## Acceptance Criteria
+## Acceptance criteria
 
-- Observable criterion
-- Observable criterion
+- [ ] Observable criterion
+- [ ] Observable criterion
 
 ## Verification
 
 - Command, browser flow, review, or live proof
+
+## Dependencies & sequencing
+
+- Blocking / related issues, mirrored as real relations (omit when standalone)
 
 ## Links
 
