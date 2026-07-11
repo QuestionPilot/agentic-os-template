@@ -100,7 +100,17 @@ classification machinery for work that should never have shipped is wasted.
    the candidate row is the entire write; promotion stays manual via the trust
    contract above.
 4. Does Linear need updating — a completed issue moved to Done, a status
-   corrected, or a follow-up issue created?
+   corrected, or a follow-up issue created? A follow-up issue created at
+   closeout conforms to the canonical standard in
+   `$AI_CONFIG_DIR/linear/issue-template.md` — full metadata at create time
+   (project, deliberate priority, at least one label, assignee, a relation
+   back to the spawning issue; the template's deliberately-projectless /
+   deliberately-unassigned escapes apply) plus the structured body. Closeout
+   speed is how bare issues are born: an issue spun out of a finishing session
+   with title + prose alone strands its metadata on whoever picks it up. The
+   issue's `state-delta` line records it as created `to-standard` (a
+   draft-only session with no write surface records the draft as
+   `drafted-to-standard` instead — the issue does not exist yet).
 
    **Q4a — project-note closeout edit.** If a Linear project transitioned to
    Completed (or Canceled) this session, the vault's project note gets its
@@ -185,7 +195,7 @@ For each lesson, pick exactly one class and route it. The classes are defined in
 | `rule` | `$AI_CONFIG_DIR/core/*.md` or the harness entrypoint | Propose the edit, get explicit user approval before writing — shared framework content requires explicit user direction. |
 | `check` | `$AI_CONFIG_DIR/scripts/` or project-local | Small deterministic validator. |
 | `script` | `$AI_CONFIG_DIR/scripts/` or project-local | Automation for repeated manual work. |
-| `linear` | A Linear issue | Create or comment; reference the closeout summary. |
+| `linear` | A Linear issue | Create or comment; reference the closeout summary. A NEW issue conforms to `$AI_CONFIG_DIR/linear/issue-template.md` (metadata checklist + structured body — see Q4). |
 | `obsidian` | The durable knowledge base | A NEW lesson distilled fresh from this session's events: propose path + body to the user; do not write directly. A `feedback_*` / `decision` memory note ALREADY written to the native store this session: promote it into its `04-Lessons` home at closeout (a cache→durable promotion — see "Distill this session's feedback into the durable Lessons layer" below). |
 | `playbook` | `$AI_CONFIG_DIR/playbooks/*.md` | New or updated workflow file (requires user approval). |
 | `skill` | The harness's capability/skill set | Use a skill-creation capability for new ones. When a *successful repeatable flow* this session is worth keeping, promote it via the seven-step trust contract in `$AI_CONFIG_DIR/skills/skill-authoring.md` (principle 11): provenance → synthesize a deterministic script → fixture test → temp staging → test must pass → **explicit user approval** → atomic commit. The fixture-test and explicit-approval steps are non-optional — an unvetted auto-promoted skill is the failure mode. |
