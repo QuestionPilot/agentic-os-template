@@ -173,6 +173,43 @@ When such an index exists:
   contradict. Memory captures what was true when written; signal captures what
   is true now.
 
+### Read Side — Task-Time Lesson Recall
+
+The write side of this model (closeout distillation, index hygiene, vault
+promotion) can be perfectly healthy while recall still fails: a rule that is
+recorded but never re-enters context at task time changes nothing. Three
+contracts close the read side:
+
+- **The vault lesson index is the cross-store, cross-harness recall surface.**
+  Autoloaded memory indexes are per-store — and on harnesses that key the
+  store to the working directory (Claude Code's per-project stores), a rule
+  recorded in one store is invisible to sessions started anywhere else. The
+  durable lessons layer (`04-Lessons/_index.md`, with its **Trigger** column)
+  is the one surface every session reads regardless of store or harness: the
+  session-agent orient reads it at O4, and the routing step R1a matches the
+  classified task against its triggers, body-reading only the few lessons that
+  fire (capped, harness-scope-filtered). The declaration's `Lessons:` line —
+  enforced by the pre-edit gate alongside `Linear gate:` — is what keeps the
+  first declaration's scan from being skipped; the hook enforces once per
+  session, and Mode 2 re-declarations are protocol discipline on top of it.
+- **Triggers are the retrieval contract.** A lesson is durable only when it
+  has a concrete future trigger; R1a makes that operational. Phrase Trigger
+  entries as task-surface conditions a routing scan can match ("Before
+  installing any external skill", "Before the first fetch of a research
+  task"), not as topic labels. A rule that was in context but skipped usually
+  traces to a trigger too vague to match — fix the phrasing, not the rule.
+- **Per-project store indexes carry a cross-store pointer.** A project store's
+  index opens with a standing line naming where cross-project rules live (the
+  framework home store + the vault lessons layer, both read at orient), so a
+  session that only autoloads the project store knows what it is NOT seeing —
+  the same pattern as the operator-identity pointer.
+
+An operator having to re-teach a recorded rule is a **recall failure**;
+closeout Q1a (`core/self-improvement.md`) classifies which surface failed
+(not-loaded vs loaded-but-ignored) and the `self-audit` recall-efficacy check
+counts these events — the read-side counterpart to the write-side hygiene
+scores.
+
 ### Cache Contract — Harness-Native Stores Are Local Caches
 
 Harness-native memory stores (a harness's autoloaded memory directory and

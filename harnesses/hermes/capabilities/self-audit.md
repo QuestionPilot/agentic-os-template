@@ -20,5 +20,5 @@ lifecycle: shipped
   checkout via the script's own redirection, not via a Hermes file tool.
 - **Edit-gate interaction:** the `terminal` invocation of a read-only audit
   script still passes through the pre_tool_call edit-gate matcher — the gate
-  must be open (session-agent ran + `Linear gate:` declared) before the audit
-  runs, same as any other terminal use.
+  must be open (session-agent ran + `Linear gate:` and `Lessons:` declared)
+  before the audit runs, same as any other terminal use.

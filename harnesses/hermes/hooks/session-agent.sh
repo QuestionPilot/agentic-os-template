@@ -2,7 +2,10 @@
 # Session-agent enforcement hook (Hermes pre_tool_call event,
 # matcher write_file|patch|terminal).
 # Blocks the first file-modifying tool use of a session unless the
-# session-agent capability ran and a `Linear gate:` declaration exists.
+# session-agent capability ran and a complete routing declaration exists —
+# BOTH the `Linear gate:` line (active-work disposition) and the `Lessons:`
+# line (recall outcome: matched lesson names, `none match`, or `index
+# unreachable`).
 # SAFETY NET — primary auto-fire is via the on_session_start directive
 # emitted by framework-surface.sh.
 #
@@ -20,15 +23,16 @@
 # Detection (Hermes stores transcripts in state.db, not files — two channels):
 #   1. GATE FILE — the session-agent realization instructs the model to declare
 #      the gate by writing `<HERMES_HOME>/agentic-os/gate-<session_id>` via the
-#      write_file tool, body carrying the full `Linear gate:` line. This hook
-#      ALLOWS exactly that write pre-gate (structured-field match — path +
-#      content; no shell parsing), then later calls find the marker on disk.
+#      write_file tool, body carrying the full declaration (`Linear gate:` AND
+#      `Lessons:` lines). This hook ALLOWS exactly that write pre-gate
+#      (structured-field match — path + content; no shell parsing), then later
+#      calls find the marker on disk.
 #   2. state.db BACKSTOP — when sqlite3 is available, a read-only query for
 #      this session's messages matching the skill-read marker
-#      (skills/session-agent/SKILL.md, user/assistant rows) plus an
-#      ASSISTANT-authored line-anchored `Linear gate:` declaration also opens
-#      the gate (covers multi-turn sessions where the declaration is already
-#      persisted, with no gate file written).
+#      (skills/session-agent/SKILL.md, user/assistant rows) plus
+#      ASSISTANT-authored line-anchored `Linear gate:` AND `Lessons:`
+#      declarations also opens the gate (covers multi-turn sessions where the
+#      declaration is already persisted, with no gate file written).
 
 set -uo pipefail
 
@@ -69,20 +73,28 @@ GATE_FILE="$STATE_DIR/gate-$SESSION_ID"
 find "$STATE_DIR" -name 'gate-*' -mtime +7 -delete 2>/dev/null || true
 
 # 1. The gate-declaration write itself is allowed through: write_file to the
-#    exact per-session gate path with a `Linear gate:` line in the content.
+#    exact per-session gate path with both declaration lines in the content —
+#    line-anchored, case-sensitive, and with a non-empty value after the colon
+#    (panel finding: the earlier bare-substring match let prose that merely
+#    MENTIONED the phrases open the gate; this aligns the Hermes marker
+#    contract with the Claude twin's).
 if [[ "$TOOL" == "write_file" ]]; then
   WPATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.path // empty')"
   WCONTENT="$(printf '%s' "$INPUT" | jq -r '.tool_input.content // empty')"
   if [[ "$WPATH" == "$GATE_FILE" ]]; then
-    if [[ "$WCONTENT" == *"Linear gate:"* ]]; then
+    if printf '%s\n' "$WCONTENT" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
+        && printf '%s\n' "$WCONTENT" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
       exit 0
     fi
-    block "The gate file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line in its content."
+    block "The gate file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line AND the \`Lessons: <matched lesson names> | none match | index unreachable | skipped — <reason>\` line in its content."
   fi
 fi
 
-# 2. Gate already declared this session (marker on disk).
-if [[ -f "$GATE_FILE" ]] && grep -qF 'Linear gate:' "$GATE_FILE" 2>/dev/null; then
+# 2. Gate already declared this session (marker on disk, both contract lines,
+#    same line-anchored non-empty match as the write path).
+if [[ -f "$GATE_FILE" ]] \
+    && grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' "$GATE_FILE" 2>/dev/null \
+    && grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]' "$GATE_FILE" 2>/dev/null; then
   exit 0
 fi
 
@@ -102,11 +114,11 @@ if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB" ]]; then
   # which would accept `linear gate:` here while the other harnesses' grep does
   # not — pin it case-sensitive for cross-harness parity.
   HIT="$(sqlite3 -readonly "$DB" \
-    "PRAGMA case_sensitive_like=ON; SELECT (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role IN ('user','assistant') AND (COALESCE(content,'') LIKE '%skills/session-agent/SKILL.md%' OR COALESCE(tool_calls,'') LIKE '%skills/session-agent/SKILL.md%')) > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role='assistant' AND (COALESCE(content,'') LIKE 'Linear gate:%' OR COALESCE(content,'') LIKE '%'||char(10)||'Linear gate:%')) > 0;" \
+    "PRAGMA case_sensitive_like=ON; SELECT (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role IN ('user','assistant') AND (COALESCE(content,'') LIKE '%skills/session-agent/SKILL.md%' OR COALESCE(tool_calls,'') LIKE '%skills/session-agent/SKILL.md%')) > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role='assistant' AND (COALESCE(content,'') LIKE 'Linear gate:%' OR COALESCE(content,'') LIKE '%'||char(10)||'Linear gate:%')) > 0 AND (SELECT COUNT(*) FROM messages WHERE session_id='$SID_SQL' AND role='assistant' AND (COALESCE(content,'') LIKE 'Lessons:%' OR COALESCE(content,'') LIKE '%'||char(10)||'Lessons:%')) > 0;" \
     2>/dev/null | tail -n 1 || true)"
   if [[ "$HIT" == "1" ]]; then
     exit 0
   fi
 fi
 
-block "First file-modifying tool use detected but the session-agent gate is not open for this session. Invoke /session-agent to walk the kickoff orient (Mode 1) then route the request (R1-R5), and declare the gate by writing the file $GATE_FILE via the write_file tool with the full routing declaration including the \`Linear gate:\` line as its content. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
+block "First file-modifying tool use detected but the session-agent gate is not open for this session. Invoke /session-agent to walk the kickoff orient (Mode 1) then route the request (R1-R5, including the R1a lesson recall), and declare the gate by writing the file $GATE_FILE via the write_file tool with the full routing declaration including the \`Linear gate:\` and \`Lessons:\` lines as its content. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."

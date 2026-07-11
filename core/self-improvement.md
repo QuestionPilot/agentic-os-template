@@ -61,6 +61,23 @@ Do not let lessons stay buried in chat, comments, or raw logs.
   write stands. The `closeout` capability performs the promotion, and
   `scripts/check-distillation-completeness.{sh,ps1}` is the pre-wipe guard that
   verifies no feedback note ever strands undistilled.
+- **Match the store to the rule's scope, and phrase the lesson Trigger for
+  recall.** On harnesses whose autoloaded memory store is keyed to the working
+  directory (Claude Code's per-project stores), a cross-cutting rule written
+  only to the current project's store is invisible to every session that
+  starts anywhere else — the silo that caused an operator to re-teach a
+  recorded rule. Two writes close it, and they do different jobs: (a) the
+  **vault lesson is what actually reaches every session** — when distilling
+  into `04-Lessons`, phrase the lesson's **Trigger** as the concrete
+  task-surface condition a future session will match at the session-agent R1a
+  recall step ("Before the first fetch of any research/scrape task…"); the
+  lesson index is read at every orient on every harness, which no store can
+  claim. (b) The cross-cutting feedback/decision note's **canonical cache
+  home is the framework home store** (the store autoloaded when working in
+  the framework checkout) — NOT because it autoloads elsewhere (it does not;
+  no store does), but so maintenance sweeps, consolidation, and framework
+  sessions find every cross-cutting rule in one place instead of scattered
+  across project stores. A project-specific rule stays in its project store.
 - If it can be checked, add or update the check.
 - If a successful repeatable flow is worth keeping, promote it to a `skill` — but only through the seven-step trust contract in `skills/skill-authoring.md` (principle 11). Provenance → synthesize a deterministic script → fixture test → temp staging → test must pass → explicit user approval → atomic commit. The fixture-test and explicit-approval steps are non-optional: auto-promoting an unvetted flow into the trusted skill set is the failure mode this gate exists to prevent.
 - Every meaningful closeout ALSO writes a durable, append-only **session log** to the vault (`30-Archive/Sessions/`) — the always-on capture of what happened, distinct from the propose-don't-write `obsidian` class. It records the candidate lessons/decisions so nothing is lost when promotion to a curated note is deferred, and treats the transcript as untrusted, mixed-origin evidence (provenance labels; quarantine; injection scan before write). See `capabilities/closeout.md` → Session-log drain.
@@ -85,6 +102,22 @@ outcome is `no-action` with rationale and the rest of the walk is wasted.
 
 0. **EAD gate (Eliminate / Automate / Delegate):** What did we build this session that we should have eliminated instead? Would the system be worse if we just didn't ship this? If the answer is "nothing breaks if we don't ship it", log the win and classify the work as `no-action`. State-delta lessons remain mandatory regardless of Q0 outcome — they were enumerated in the Inputs section above and the memory writes happen during closeout itself, never deferred. The Q7 file sweep below ALSO remains mandatory regardless of Q0 outcome — junk files survive a `no-action` close just as readily as a substantive one. Q7a verification (operator-main git-state cleanliness) is mandatory under the same logic — a stray staged change propagates to the next session as a false-RED whether the current session was substantive or `no-action`. Q0 skips only the remaining lesson-classification walk (questions 1–6), not the State Deltas, file sweep, Q7a git-state verification, Linear updates, or the output block. The principle behind this question is named in `core/operating-system.md` → `## Boring is Beautiful`.
 1. Did we learn anything that should change future behavior?
+
+   **Q1a — recall-failure capture.** Did the operator (or live evidence) have to
+   re-teach a rule that ALREADY existed in a memory note, vault lesson, or
+   framework file this session? If yes, that is a **recall failure**, and the
+   lesson to classify is about the recall surface — never a re-write of the
+   rule as a new duplicate note. Name which surface failed and fix that:
+   - **not-loaded** — the rule's note never entered context (store silo /
+     stale harness index / vault unreachable / lesson index skipped at O4):
+     fix the store placement or the orient discipline.
+   - **loaded-but-ignored** — the rule was in context (autoloaded headline,
+     lesson index row) but the session acted against it (trigger phrased too
+     vaguely to match at R1a, headline not actionable): rephrase the lesson's
+     Trigger / the note's headline so the next R1a scan matches.
+   Record the recall failure explicitly in the session log's Lessons section —
+   the `self-audit` recall-efficacy check counts these to measure the read
+   side of this loop.
 2. Is the lesson already represented in the right source of truth?
 3. Can the lesson become a check or script instead of prose?
 

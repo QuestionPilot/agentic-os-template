@@ -235,7 +235,11 @@ assert_eq "codex session-agent: no routing exits 0" "0" "${cr2%%|*}"
 assert_eq "codex session-agent: no routing blocks"  "block" "$(cx_classify_block "$cr2")"
 
 cr3="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-session-agent-ok.jsonl")")"
-assert_eq "codex session-agent: invoked+Linear allows" "allow" "$(cx_classify_block "$cr3")"
+assert_eq "codex session-agent: invoked+Linear+Lessons allows" "allow" "$(cx_classify_block "$cr3")"
+
+# Both declaration lines are required — `Linear gate:` without `Lessons:` blocks.
+cr3b="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-session-agent-no-lessons.jsonl")")"
+assert_eq "codex session-agent: invoked+Linear w/o Lessons blocks" "block" "$(cx_classify_block "$cr3b")"
 
 cr4="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-session-agent-no-linear.jsonl")")"
 assert_eq "codex session-agent: invoked w/o Linear blocks" "block" "$(cx_classify_block "$cr4")"
@@ -254,7 +258,8 @@ assert_contains "codex session-agent: catalog-only deny is the not-invoked reaso
 cx_nl_fixture="$(cat "$fix/codex-transcript-session-agent-no-linear.jsonl")"
 assert_contains "codex no-linear fixture models the catalog path line"    "$cx_nl_fixture" 'skills/session-agent/SKILL.md'
 assert_contains "codex no-linear fixture models the injected template line" "$cx_nl_fixture" 'Linear gate: <ISSUE-ID'
-assert_contains "codex no-linear fixture models a prior deny message"     "$cx_nl_fixture" 'no `Linear gate:` declaration'
+assert_contains "codex no-linear fixture models the Lessons template line" "$cx_nl_fixture" 'Lessons: <matched'
+assert_contains "codex no-linear fixture models a prior deny message"     "$cx_nl_fixture" 'no complete routing declaration'
 
 # Windows-separator ran marker (panel follow-up): the bash twin must accept a
 # backslash SKILL.md path in a function_call, like the PS twin's F-1 amendment.
@@ -262,7 +267,7 @@ assert_contains "codex no-linear fixture models a prior deny message"     "$cx_n
 cr_bs_fix="$(mktemp -d)/codex-bs.jsonl"
 cat > "$cr_bs_fix" <<'CR_BS'
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"type skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}
-{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}
 CR_BS
 cr7="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$cr_bs_fix")")"
 assert_eq "codex session-agent: backslash marker path allows (bash twin)" "allow" "$(cx_classify_block "$cr7")"
@@ -273,11 +278,22 @@ rm -rf "${cr_bs_fix%/codex-bs.jsonl}"
 cr_lc_fix="$(mktemp -d)/codex-lc.jsonl"
 cat > "$cr_lc_fix" <<'CR_LC'
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
-{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlinear gate: PROJ-1"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlessons: none match\nlinear gate: PROJ-1"}]}}
 CR_LC
 cr8="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$cr_lc_fix")")"
 assert_eq "codex session-agent: lowercase declaration still blocks" "block" "$(cx_classify_block "$cr8")"
 rm -rf "${cr_lc_fix%/codex-lc.jsonl}"
+
+# Value-less declarations do not open the gate (panel finding): a bare
+# `Lessons:` / `Linear gate:` with nothing after the colon is not a disposition.
+cr_ev_fix="$(mktemp -d)/codex-ev.jsonl"
+cat > "$cr_ev_fix" <<'CR_EV'
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons:\nLinear gate:"}]}}
+CR_EV
+cr9="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$cr_ev_fix")")"
+assert_eq "codex session-agent: value-less declaration blocks" "block" "$(cx_classify_block "$cr9")"
+rm -rf "${cr_ev_fix%/codex-ev.jsonl}"
 
 cr5="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-empty.jsonl")" CLAUDE_SKIP_SESSION_AGENT=1)"
 assert_eq "codex session-agent: kill switch allows" "allow" "$(cx_classify_block "$cr5")"

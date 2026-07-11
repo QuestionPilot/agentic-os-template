@@ -44,13 +44,14 @@ lifecycle: shipped
   the hook can see it mid-turn. After emitting the R5 routing declaration in
   your response, write the gate file via the `write_file` tool:
   - path: `$HERMES_HOME/agentic-os/gate-<session_id>` (your session id)
-  - content: the full R5 declaration block, including the `Linear gate:` line.
+  - content: the full R5 declaration block, including the `Linear gate:` and
+    `Lessons:` lines.
   The enforcement hook allows exactly this write through pre-gate and treats
   the file as the open-gate marker for the rest of the session. A read-only
   `state.db` query is the multi-turn backstop: the skill-read marker in this
-  session's user/assistant rows plus an ASSISTANT-authored `Linear gate:`
-  declaration at line start (tool-result rows — the injected skill body, prior
-  deny text — do not open the gate).
+  session's user/assistant rows plus ASSISTANT-authored `Linear gate:` and
+  `Lessons:` declarations at line start (tool-result rows — the injected skill
+  body, prior deny text — do not open the gate).
 - **Catalog inputs (R2):** the orchestration sub-routine consults the OS
   capability catalog in `$HERMES_HOME/SOUL.md` and the capability specs under
   `$AI_CONFIG_DIR/capabilities/`. The capabilities the sub-routine routes to

@@ -27,9 +27,9 @@ work. Load only the relevant slice; never the whole framework by default.
   hook directs this, gated to the first turn). Mode 1 orients — memory + Linear + vault + reconciliation —
   then routes the request. Re-invoke on each non-trivial prompt to route only
   (Mode 2). A `pre_tool_call` gate enforces this before file edits as a safety
-  net: it opens once the routing declaration (including its `Linear gate:` line)
-  is written to `$HERMES_HOME/agentic-os/gate-<session_id>` per the
-  `/session-agent` skill body.
+  net: it opens once the routing declaration (including its `Linear gate:` and
+  `Lessons:` lines) is written to `$HERMES_HOME/agentic-os/gate-<session_id>`
+  per the `/session-agent` skill body.
 - **Active work → Linear** (`lineark` CLI or Linear MCP). Multi-step or
   multi-session work gets a Linear issue *before* execution; session todos track
   only the steps within an issue being actively executed.

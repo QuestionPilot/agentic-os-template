@@ -14,8 +14,9 @@ lifecycle: shipped
 - **Enforcement:** class `pre-edit-gate` → the `PreToolUse` hook
   `hooks/session-agent.sh`, matcher `apply_patch` (Codex file edits report
   `tool_name: "apply_patch"`). Blocks the first file-modifying tool use of a
-  session unless a `session-agent` declaration including a `Linear gate:` line
-  appears in the transcript. Safety net only — not the primary trigger.
+  session unless a `session-agent` declaration including both the
+  `Linear gate:` and `Lessons:` lines appears in the transcript. Safety net
+  only — not the primary trigger.
   Kill switch: env `CLAUDE_SKIP_SESSION_AGENT=1` — the same name as on Claude
   Code, so one kill switch works regardless of harness.
 - **Mode marker:** Codex has no `Skill` tool — capabilities are

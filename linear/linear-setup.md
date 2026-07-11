@@ -239,7 +239,7 @@ This order matters: an assignee-first cut alone misses brand-new projects whose 
 Linear gate: TEAM-NN
 ```
 
-Single-step trivial changes (e.g. a one-line fix) can declare `Linear gate: none — single-step`. The framework's harness-side enforcement hook checks for this line before allowing file edits; missing it blocks the edit.
+Single-step trivial changes (e.g. a one-line fix) can declare `Linear gate: none — single-step`. The framework's harness-side enforcement hook checks for this line — together with the routing declaration's `Lessons:` recall line (see `capabilities/session-agent.md` R1a/R5) — before allowing file edits; missing either blocks the edit.
 
 **Closeout — update.** At session end, the closeout pass posts a structured comment to any active Linear issue (Result / Verification / State Deltas / Running State / Residual Risk / Lessons / Pick up here). If the session completes an issue, closeout moves it to Done with the proving artifact link (PR URL, merged commit, deployed change).
 

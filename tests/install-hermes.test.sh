@@ -182,19 +182,35 @@ if command -v jq >/dev/null 2>&1; then
     "$ih_out" '"decision":"block"'
 
   # 5c. the gate-declaration write itself is allowed through (exact per-session
-  # path + a Linear gate: line in the content) and silent.
+  # path + both the Lessons: and Linear gate: lines in the content) and silent.
   ih_decl_path="$IH_OUT/agentic-os/gate-$IH_SID"
-  ih_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"%s","content":"Routing: x\\nLinear gate: none — single-step"},"session_id":"%s","cwd":"/tmp"}' \
+  ih_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"%s","content":"Routing: x\\nLessons: none match\\nLinear gate: none — single-step"},"session_id":"%s","cwd":"/tmp"}' \
     "$ih_decl_path" "$IH_SID" | bash "$IH_GATE")"
   assert_eq "the gate-declaration write is allowed (silent stdout)" "" "$ih_out"
 
-  # 5d. once the gate file exists with a Linear gate: line, writes pass.
+  # 5c2. a declaration write carrying only the Linear gate: line (no Lessons:)
+  # is NOT a complete declaration — blocked (the recall-line contract).
+  ih_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"%s","content":"Routing: x\\nLinear gate: none — single-step"},"session_id":"%s","cwd":"/tmp"}' \
+    "$ih_decl_path" "$IH_SID" | bash "$IH_GATE")"
+  assert_contains "a Lessons-less gate-declaration write is blocked" \
+    "$ih_out" '"decision":"block"'
+
+  # 5d. once the gate file exists with both declaration lines, writes pass.
   mkdir -p "$IH_OUT/agentic-os"
-  printf 'Routing: x\nLinear gate: none — single-step\n' > "$ih_decl_path"
+  printf 'Routing: x\nLessons: none match\nLinear gate: none — single-step\n' > "$ih_decl_path"
   ih_out="$(printf '%s' \
     '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"'"$IH_SID"'","cwd":"/tmp"}' \
     | bash "$IH_GATE")"
   assert_eq "writes pass once the session gate file is declared" "" "$ih_out"
+
+  # 5d2. a gate file carrying only the Linear gate: line does NOT open the gate.
+  printf 'Routing: x\nLinear gate: none — single-step\n' > "$ih_decl_path"
+  ih_out="$(printf '%s' \
+    '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"'"$IH_SID"'","cwd":"/tmp"}' \
+    | bash "$IH_GATE")"
+  assert_contains "a Lessons-less gate file does not open the gate" \
+    "$ih_out" '"decision":"block"'
+  printf 'Routing: x\nLessons: none match\nLinear gate: none — single-step\n' > "$ih_decl_path"
 
   # 5e. kill switch bypasses the gate entirely.
   ih_out="$(printf '%s' \
@@ -223,8 +239,9 @@ if command -v jq >/dev/null 2>&1; then
     sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','tool','# Session Agent — Session Kickoff Orient + Routing
 read of skills/session-agent/SKILL.md
 Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);"
-    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','tool','blocked: include the full Linear gate: line as its content.',NULL,2);"
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','tool','blocked: include the full Lessons: and Linear gate: lines as its content.',NULL,2);"
     ih_bs_payload='{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"'"$IH_SID2"'","cwd":"/tmp"}'
     ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
     assert_contains "state.db backstop: skill-body noise alone does not open the gate" \
@@ -237,14 +254,21 @@ Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1
     # case-insensitive by default — the hook pins case_sensitive_like, so a
     # lowercase declaration must NOT open the gate (bash grep parity).
     sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','assistant','Routing: x
+lessons: none match
 linear gate: none — single-step',NULL,4);"
     ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
     assert_contains "state.db backstop: lowercase assistant declaration still blocks (case parity)" \
       "$ih_out" '"decision":"block"'
+    # Both contract lines are required — an assistant Linear gate: declaration
+    # without a Lessons: line stays blocked.
     sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','assistant','Routing: x
 Linear gate: none — single-step',NULL,5);"
     ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
-    assert_eq "state.db backstop: assistant line-anchored declaration opens the gate" "" "$ih_out"
+    assert_contains "state.db backstop: Lessons-less assistant declaration still blocks" \
+      "$ih_out" '"decision":"block"'
+    sqlite3 "$IH_DB" "INSERT INTO messages VALUES ('$IH_SID2','assistant','Lessons: none match',NULL,6);"
+    ih_out="$(printf '%s' "$ih_bs_payload" | bash "$IH_GATE")"
+    assert_eq "state.db backstop: assistant line-anchored declarations open the gate" "" "$ih_out"
     rm -f "$IH_DB"
   else
     _skip "hermes state.db backstop suite" "sqlite3 not installed"

@@ -130,7 +130,7 @@ if command -v pwsh >/dev/null 2>&1; then
   hkps_trans="$hkps_tmpdir/trans-sa-fwd.jsonl"
   cat > "$hkps_trans" <<'HKPS_SA_FWD'
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
-{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}
 HKPS_SA_FWD
   hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
@@ -147,7 +147,7 @@ HKPS_SA_FWD
   hkps_trans="$hkps_tmpdir/trans-sa-bs.jsonl"
   cat > "$hkps_trans" <<'HKPS_SA_BS'
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}
-{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}
 HKPS_SA_BS
   hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
@@ -164,7 +164,7 @@ HKPS_SA_BS
   hkps_trans="$hkps_tmpdir/trans-sa-lc.jsonl"
   cat > "$hkps_trans" <<'HKPS_SA_LC'
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
-{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlinear gate: PROJ-1"}]}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nlinear gate: PROJ-1"}]}}
 HKPS_SA_LC
   hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   case "$hkps_out" in
@@ -285,7 +285,7 @@ HKPS_CLAUDE_STUB
 
   # the marker Write itself (exact path + line-anchored declaration) → ALLOW.
   hkps_wpayload="$(jq -nc --arg t "$hkps_sa365_fix" --arg sid "$hkps_sa365_sid" --arg p "$hkps_sa365_gate" \
-    '{transcript_path: $t, session_id: $sid, tool_name: "Write", tool_input: {file_path: $p, content: "Routing: fix\nLinear gate: none — single-step\n"}}')"
+    '{transcript_path: $t, session_id: $sid, tool_name: "Write", tool_input: {file_path: $p, content: "Routing: fix\nLessons: none match\nLinear gate: none — single-step\n"}}')"
   hkps_out="$(printf '%s' "$hkps_wpayload" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: claude session-agent.ps1 ALLOWS the marker write through pre-gate"
@@ -295,7 +295,7 @@ HKPS_CLAUDE_STUB
 
   # marker on disk with the declaration → ALLOW subsequent edits.
   mkdir -p "$hkps_sa365/agentic-os"
-  printf 'Routing: fix\nLinear gate: none — single-step\n' > "$hkps_sa365_gate"
+  printf 'Routing: fix\nLessons: none match\nLinear gate: none — single-step\n' > "$hkps_sa365_gate"
   hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$hkps_sa365_fix" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: claude session-agent.ps1 ALLOWS once marker is on disk"
@@ -312,8 +312,61 @@ HKPS_CLAUDE_STUB
       _fail "hooks-ps-parity: claude session-agent.ps1 should DENY marker w/o skill invocation"             "got: ${hkps_out:-<empty = allow>}" ;;
   esac
 
+  # --- 3h2. hermes session-agent.ps1 — gate-file channel (panel findings) ---
+  # The Hermes ps1 gate-file channel was previously untested end-to-end, and its
+  # `-like` matching was case-INsensitive + substring (a Windows-only false-allow
+  # vs the bash twin). These rows pin the tightened contract: line-anchored,
+  # case-sensitive, non-empty values, BOTH lines.
+  hkps_hm="$hkps_tmpdir/hermes-home"
+  mkdir -p "$hkps_hm/hooks"
+  cp "$REPO_ROOT/harnesses/hermes/hooks/session-agent.ps1" "$hkps_hm/hooks/"
+  hkps_hm_sid="ps-hm-0000"
+  hkps_hm_gate="$hkps_hm/agentic-os/gate-$hkps_hm_sid"
+  hkps_hm_payload() { # <content-json-escaped-string> -> a write_file event to the gate path
+    printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"%s","content":"%s"},"session_id":"%s","cwd":"/tmp"}' \
+      "$hkps_hm_gate" "$1" "$hkps_hm_sid"
+  }
+  # (a) marker write with both proper lines → ALLOW (silent).
+  hkps_out="$(hkps_hm_payload 'Routing: x\nLessons: none match\nLinear gate: none — single-step' | pwsh -NoProfile -File "$hkps_hm/hooks/session-agent.ps1" 2>/dev/null)"
+  if [ -z "$hkps_out" ]; then
+    _pass "hooks-ps-parity: hermes session-agent.ps1 ALLOWS the full-declaration gate write"
+  else
+    _fail "hooks-ps-parity: hermes session-agent.ps1 should ALLOW the full-declaration gate write" "got: $hkps_out"
+  fi
+  # (b) marker write with only the Linear gate line → BLOCK.
+  hkps_out="$(hkps_hm_payload 'Routing: x\nLinear gate: none — single-step' | pwsh -NoProfile -File "$hkps_hm/hooks/session-agent.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"decision":"block"'*) _pass "hooks-ps-parity: hermes session-agent.ps1 BLOCKS a Lessons-less gate write" ;;
+    *) _fail "hooks-ps-parity: hermes session-agent.ps1 should BLOCK a Lessons-less gate write" "got: ${hkps_out:-<empty = allow>}" ;;
+  esac
+  # (c) marker ON DISK, lowercase both lines → BLOCK (case parity with bash twin).
+  mkdir -p "$hkps_hm/agentic-os"
+  printf 'Routing: x\nlessons: none match\nlinear gate: none — single-step\n' > "$hkps_hm_gate"
+  hkps_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"%s","cwd":"/tmp"}' "$hkps_hm_sid" | pwsh -NoProfile -File "$hkps_hm/hooks/session-agent.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"decision":"block"'*) _pass "hooks-ps-parity: hermes session-agent.ps1 BLOCKS a lowercase on-disk marker (case parity)" ;;
+    *) _fail "hooks-ps-parity: hermes session-agent.ps1 should BLOCK a lowercase on-disk marker" "got: ${hkps_out:-<empty = allow>}" ;;
+  esac
+  # (d) asymmetric case: proper Linear gate + lowercase lessons → BLOCK
+  #     (pins the Lessons pattern's case-sensitivity independently).
+  printf 'Routing: x\nlessons: none match\nLinear gate: none — single-step\n' > "$hkps_hm_gate"
+  hkps_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"%s","cwd":"/tmp"}' "$hkps_hm_sid" | pwsh -NoProfile -File "$hkps_hm/hooks/session-agent.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *'"decision":"block"'*) _pass "hooks-ps-parity: hermes session-agent.ps1 BLOCKS lowercase-lessons asymmetric marker" ;;
+    *) _fail "hooks-ps-parity: hermes session-agent.ps1 should BLOCK lowercase-lessons asymmetric marker" "got: ${hkps_out:-<empty = allow>}" ;;
+  esac
+  # (e) marker on disk with both proper lines → ALLOW subsequent writes.
+  printf 'Routing: x\nLessons: none match\nLinear gate: none — single-step\n' > "$hkps_hm_gate"
+  hkps_out="$(printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"/tmp/x.txt","content":"hi"},"session_id":"%s","cwd":"/tmp"}' "$hkps_hm_sid" | pwsh -NoProfile -File "$hkps_hm/hooks/session-agent.ps1" 2>/dev/null)"
+  if [ -z "$hkps_out" ]; then
+    _pass "hooks-ps-parity: hermes session-agent.ps1 ALLOWS once the full marker is on disk"
+  else
+    _fail "hooks-ps-parity: hermes session-agent.ps1 should ALLOW with the full marker on disk" "got: $hkps_out"
+  fi
+
   rm -rf "$hkps_tmpdir"
-  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs hkps_sa365 hkps_sa365_fix hkps_sa365_sid hkps_sa365_gate hkps_wpayload
+  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs hkps_sa365 hkps_sa365_fix hkps_sa365_sid hkps_sa365_gate hkps_wpayload hkps_hm hkps_hm_sid hkps_hm_gate
+  unset -f hkps_hm_payload
 else
   _pass "hooks-ps-parity: skipping pwsh behavioral parity (pwsh not on PATH)"
 fi

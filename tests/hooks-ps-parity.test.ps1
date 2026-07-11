@@ -105,7 +105,7 @@ try {
     $trans = Join-Path $hkps_tmpdir 'trans-sa-fwd.jsonl'
     Write-LfFile $trans (@(
         '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}'
-        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}'
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}'
     ) -join "`n")
     $payload = '{"transcript_path":"' + ($trans -replace '\\', '/') + '"}'
     $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $payload
@@ -123,7 +123,7 @@ try {
     $trans = Join-Path $hkps_tmpdir 'trans-sa-bs.jsonl'
     Write-LfFile $trans (@(
         '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}'
-        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLinear gate: PROJ-1"}]}}'
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}'
     ) -join "`n")
     $payload = '{"transcript_path":"' + ($trans -replace '\\', '/') + '"}'
     $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $payload
@@ -141,7 +141,7 @@ try {
     $trans = Join-Path $hkps_tmpdir 'trans-sa-lc.jsonl'
     Write-LfFile $trans (@(
         '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}'
-        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nlinear gate: PROJ-1"}]}}'
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nlinear gate: PROJ-1"}]}}'
     ) -join "`n")
     $payload = '{"transcript_path":"' + ($trans -replace '\\', '/') + '"}'
     $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $payload

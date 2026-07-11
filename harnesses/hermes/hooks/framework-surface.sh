@@ -256,7 +256,7 @@ Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
 
 After the R5 routing declaration, open the edit-gate by writing the file
 \`${INSTALL_DIR_SA}/agentic-os/gate-${SESSION_ID}\` via the write_file tool with
-the full declaration (including the \`Linear gate:\` line) as its content."
+the full declaration (including the \`Linear gate:\` and \`Lessons:\` lines) as its content."
     fi
   fi
 fi

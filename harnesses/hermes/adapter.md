@@ -87,18 +87,19 @@ asking the model to echo back its injected context verbatim.
 
 | Enforcement class | Hook event | `matcher` | Hook script | Behavior |
 | --- | --- | --- | --- | --- |
-| `pre-edit-gate` | `pre_tool_call` | `write_file\|patch\|terminal` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until session-agent ran and a `Linear gate:` declaration exists. `terminal` is in the matcher because the shell can write files (the Bash-bypass). Safety net; primary auto-fire is the `pre_llm_call` directive in `framework-surface.sh` (see the Fact 2 context-injection note). |
+| `pre-edit-gate` | `pre_tool_call` | `write_file\|patch\|terminal` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until session-agent ran and a complete routing declaration (`Linear gate:` + `Lessons:` lines) exists. `terminal` is in the matcher because the shell can write files (the Bash-bypass). Safety net; primary auto-fire is the `pre_llm_call` directive in `framework-surface.sh` (see the Fact 2 context-injection note). |
 
 **Gate detection (Hermes-specific).** Hermes persists transcripts in
 `$HERMES_HOME/state.db` (SQLite `messages(session_id, role, content)` — schema
 pinned at v0.16.0), not in per-session files, and mid-turn assistant text may
 not be persisted before `pre_tool_call` fires. The gate therefore uses a
 **per-session gate file**: the session-agent realization instructs the model to
-write its R5 routing declaration (including the `Linear gate:` line) to
-`$HERMES_HOME/agentic-os/gate-<session_id>` via `write_file`; the hook allows
-exactly that structured write through pre-gate and treats the file as the
-open-gate marker. A read-only `state.db` query (skill-read marker +
-`Linear gate:` line) is the multi-turn backstop when `sqlite3` is available.
+write its R5 routing declaration (including the `Linear gate:` and `Lessons:`
+lines) to `$HERMES_HOME/agentic-os/gate-<session_id>` via `write_file`; the
+hook allows exactly that structured write through pre-gate and treats the file
+as the open-gate marker. A read-only `state.db` query (skill-read marker +
+`Linear gate:` + `Lessons:` lines) is the multi-turn backstop when `sqlite3`
+is available.
 
 **Non-capability hook.** `hooks/framework-surface.sh` runs on **`pre_llm_call`**
 (no matcher — matchers apply to tool-call events only) and surfaces recent

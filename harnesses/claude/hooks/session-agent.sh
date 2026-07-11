@@ -28,11 +28,17 @@
 #      `<install>/agentic-os/gate-<session_id>` (path surfaced in the
 #      SessionStart directive and in this hook's deny message). The marker
 #      write itself is allowed through pre-gate via a structured-field match
-#      (exact per-session path + line-anchored `Linear gate:` content); later
-#      calls find the marker on disk. Same pattern as the Hermes gate file.
+#      (exact per-session path + line-anchored `Linear gate:` AND `Lessons:`
+#      content); later calls find the marker on disk. Same pattern as the
+#      Hermes gate file.
 #   2. TRANSCRIPT — assistant-authored text block carrying the line-anchored
 #      declaration (works on the CLI variant, whose transcript persists
 #      assistant text; behavior unchanged from <TEAM>-360).
+# The declaration contract is TWO lines — `Linear gate:` (the active-work
+# disposition) and `Lessons:` (the recall step's outcome: matched lesson names,
+# `none match`, or `index unreachable`). Both are required on whichever channel
+# opens the gate; the Lessons line exists because recorded rules kept getting
+# skipped when nothing forced the recall scan (read side of self-improvement).
 # Both channels require the session-agent Skill invocation in the transcript
 # first — tool_use records persist reliably on ALL known variants.
 
@@ -123,41 +129,51 @@ if [[ -n "$GATE_FILE" ]]; then
   if [[ "$TOOL_NAME" == "Write" ]]; then
     WPATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty')"
     if [[ "$WPATH" == "$GATE_FILE" ]]; then
-      if printf '%s' "$INPUT" | jq -r '.tool_input.content // empty' 2>/dev/null \
-          | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]'; then
+      MARKER_CONTENT="$(printf '%s' "$INPUT" | jq -r '.tool_input.content // empty' 2>/dev/null)"
+      if printf '%s' "$MARKER_CONTENT" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
+          && printf '%s' "$MARKER_CONTENT" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
         exit 0
       fi
-      deny "The gate marker file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line in its content, then retry."
+      deny "The gate marker file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line AND the \`Lessons: <matched lesson names> | none match | index unreachable | skipped — <reason>\` line in its content, then retry."
     fi
   fi
-  # 1b. Marker already on disk with a line-anchored declaration → gate open.
-  if [[ -f "$GATE_FILE" ]] && grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' "$GATE_FILE" 2>/dev/null; then
+  # 1b. Marker already on disk with both line-anchored declaration lines → gate open.
+  if [[ -f "$GATE_FILE" ]] \
+      && grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' "$GATE_FILE" 2>/dev/null \
+      && grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]' "$GATE_FILE" 2>/dev/null; then
     exit 0
   fi
 fi
 
-# Channel 2 — transcript. session-agent ran; confirm the Linear gate was
-# declared BY THE ASSISTANT. A whole-transcript grep is vacuous here: the
-# skill body carries its own `Linear gate:` template lines (injected into the
-# transcript the moment the skill loads) and a prior deny from this very hook
-# quotes the phrase — so the gate would open as soon as it was explained,
-# never enforcing the declaration. Parse the transcript records instead: keep
-# only assistant-authored text blocks (skill-body injection and deny text land
-# in user/tool_result records) and require the declaration at line start.
-if jq -rR '
+# Channel 2 — transcript. session-agent ran; confirm the Linear gate AND the
+# Lessons recall outcome were declared BY THE ASSISTANT. A whole-transcript
+# grep is vacuous here: the skill body carries its own `Linear gate:` /
+# `Lessons:` template lines (injected into the transcript the moment the skill
+# loads) and a prior deny from this very hook quotes the phrases — so the gate
+# would open as soon as it was explained, never enforcing the declaration.
+# Parse the transcript records instead: keep only assistant-authored text
+# blocks (skill-body injection and deny text land in user/tool_result records)
+# and require each declaration line at line start WITH a non-empty value after
+# the colon (a bare `Lessons:` is not a recall outcome — panel finding; same
+# contract as the marker channel). The two lines may land in different
+# assistant messages (a Mode 2 re-route may re-declare one), so each pattern
+# is checked independently over the combined assistant text.
+ASSISTANT_TEXT="$(jq -rR '
     fromjson?
     | select(.type == "assistant")
     | .message.content
     | if type == "string" then .
       elif type == "array" then (.[]? | select(.type == "text") | .text // empty)
       else empty end
-  ' "$TRANSCRIPT" 2>/dev/null | grep -qE '^[[:space:]]*Linear gate:'; then
+  ' "$TRANSCRIPT" 2>/dev/null)"
+if printf '%s\n' "$ASSISTANT_TEXT" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
+    && printf '%s\n' "$ASSISTANT_TEXT" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
   exit 0
 fi
 
-# session-agent ran but no Linear-gate declaration reached either channel.
-DENY_MSG="The session-agent capability ran but no \`Linear gate:\` declaration was found this session. Re-run the routing steps (R1–R5) and emit the full declaration including the \`Linear gate:\` line. If the task is multi-step or multi-session, a Linear issue/project must exist first."
+# session-agent ran but the declaration did not reach either channel complete.
+DENY_MSG="The session-agent capability ran but no complete routing declaration was found this session — both the \`Linear gate:\` line AND the \`Lessons:\` line are required. Re-run the routing steps (R1–R5, including the R1a lesson recall) and emit the full declaration. If the task is multi-step or multi-session, a Linear issue/project must exist first."
 if [[ -n "$GATE_FILE" ]]; then
-  DENY_MSG="$DENY_MSG If you HAVE already declared and this deny persists, this harness variant does not persist assistant text into the transcript — persist the declaration to the gate marker instead: write the routing declaration (including the \`Linear gate:\` line) to $GATE_FILE (the Write tool call to that exact path is allowed through this gate; a Bash heredoc works too)."
+  DENY_MSG="$DENY_MSG If you HAVE already declared and this deny persists, this harness variant does not persist assistant text into the transcript — persist the declaration to the gate marker instead: write the routing declaration (including the \`Linear gate:\` and \`Lessons:\` lines) to $GATE_FILE (the Write tool call to that exact path is allowed through this gate; a Bash heredoc works too)."
 fi
 deny "$DENY_MSG Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."

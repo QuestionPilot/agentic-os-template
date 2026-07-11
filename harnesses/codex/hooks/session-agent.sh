@@ -15,7 +15,8 @@
 # Marker: Codex has no `Skill` tool — capabilities are context-injected. The
 # hook detects session-agent ran by finding the injected capability body (its
 # H1) or an assistant function_call reading the SKILL.md path, plus an
-# assistant-authored line-anchored `Linear gate:` declaration.
+# assistant-authored line-anchored declaration carrying BOTH contract lines:
+# `Linear gate:` (active-work disposition) and `Lessons:` (recall outcome).
 
 set -uo pipefail
 
@@ -82,17 +83,23 @@ if [[ "$SA_RAN" != "ran" ]]; then
   deny "First file-modifying tool use detected but the session-agent capability has not been invoked this session. Invoke \`\$session-agent\` to walk the kickoff orient (Mode 1) then route the request. One invocation per session for Mode 1; re-invoke for each subsequent non-trivial prompt (Mode 2). Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
 fi
 
-# session-agent ran — confirm the Linear gate was declared BY THE ASSISTANT.
-# A whole-transcript grep is vacuous here: the injected capability body carries
-# its own `Linear gate:` template lines and a prior deny from this very hook
-# quotes the phrase. Keep only assistant-authored message text and require the
-# declaration at line start.
-if jq -rR '
+# session-agent ran — confirm the Linear gate AND the Lessons recall outcome
+# were declared BY THE ASSISTANT. A whole-transcript grep is vacuous here: the
+# injected capability body carries its own `Linear gate:` / `Lessons:` template
+# lines and a prior deny from this very hook quotes the phrases. Keep only
+# assistant-authored message text and require each declaration line at line
+# start WITH a non-empty value after the colon (a bare `Lessons:` is not a
+# recall outcome — panel finding); the two lines may land in different
+# assistant messages, so each pattern is checked independently over the
+# combined assistant text.
+ASSISTANT_TEXT="$(jq -rR '
     fromjson? | select(.type == "response_item")
     | .payload | select(.type == "message" and .role == "assistant")
     | .content[]? | .text? // empty
-  ' "$TRANSCRIPT" 2>/dev/null | grep -qE '^[[:space:]]*Linear gate:'; then
+  ' "$TRANSCRIPT" 2>/dev/null)"
+if printf '%s\n' "$ASSISTANT_TEXT" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
+    && printf '%s\n' "$ASSISTANT_TEXT" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
   exit 0
 fi
 
-deny "The session-agent capability ran but no \`Linear gate:\` declaration was found this session. Re-run the routing steps (R1–R5) and emit the full declaration including the \`Linear gate:\` line. If the task is multi-step or multi-session, a Linear issue/project must exist first. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
+deny "The session-agent capability ran but no complete routing declaration was found this session — both the \`Linear gate:\` line AND the \`Lessons:\` line are required. Re-run the routing steps (R1–R5, including the R1a lesson recall) and emit the full declaration. If the task is multi-step or multi-session, a Linear issue/project must exist first. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."

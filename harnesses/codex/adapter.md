@@ -100,7 +100,7 @@ script in `harnesses/codex/hooks/`:
 
 | Enforcement class | Hook event | `matcher` | Hook script | Behavior |
 | --- | --- | --- | --- | --- |
-| `pre-edit-gate` | `PreToolUse` | `apply_patch` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and a `Linear gate:` line was declared. Codex file edits report `tool_name: "apply_patch"`. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
+| `pre-edit-gate` | `PreToolUse` | `apply_patch` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and both declaration lines — `Linear gate:` and `Lessons:` — were declared. Codex file edits report `tool_name: "apply_patch"`. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
 
 (The `session-end-gate` class — a `Stop` hook for `closeout` — was removed;
 `closeout` is now manual-fire. `pre-edit-gate` is the only

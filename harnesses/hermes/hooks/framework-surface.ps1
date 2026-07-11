@@ -258,7 +258,7 @@ Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.
 
 After the R5 routing declaration, open the edit-gate by writing the file
 ``$gatePath`` via the write_file tool with the full declaration (including the
-``Linear gate:`` line) as its content.
+``Linear gate:`` and ``Lessons:`` lines) as its content.
 "@
         }
     }
