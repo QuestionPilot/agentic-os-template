@@ -271,55 +271,65 @@ if (Test-Path -LiteralPath $DR_Q213_LOG) {
     Remove-Item -LiteralPath $DR_Q213_LOG -Force -ErrorAction SilentlyContinue
 }
 
+# (c) + (d) + t248 below assert on COMMITTABLE / TRACKED fixtures, so they run
+# in a hermetic tracked-only GIT fixture (New-TrackedGitFixture, <TEAM>-432)
+# rather than the live checkout: an untracked-committable root file is exactly
+# what a concurrent `git add -A`-style commit sweeps up, and the previous
+# `git add -f` staging for (d)/t248 mutated the LIVE index — racing any commit
+# made while the suite runs. check-drift.ps1 resolves its repo root from its
+# own script location, so the fixture's copy scans the fixture tree + index.
+# NOTE: use the helper's RETURNED (git-canonicalized) path — see the
+# New-TrackedGitFixture doc comment for the macOS /var symlink trap.
+$DR_FIX = New-TrackedGitFixture (Join-Path ([System.IO.Path]::GetTempPath()) ("dr-fix-$PID-" + [Guid]::NewGuid().Guid.Substring(0,8)))
+$CHECK_DRIFT_FIX = Join-Path $DR_FIX 'scripts' 'check-drift.ps1'
+
+# Clean-fixture baseline (panel hardening): every DR_FIX assertion below
+# expects exit 1, so a broken fixture could make the group pass vacuously.
+# Pin exit 0 on the untouched fixture first.
+Assert-Exit 'drift.test: check-drift.ps1 passes on the clean fixture' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_FIX
+
 # (c) REGRESSION GUARD: an untracked-but-NOT-ignored (committable) file with the
 # same machine path is STILL caught -> exit 1. Pins that narrowed the scan
 # to gitignored-only; a future "tracked-only" switch would false-PASS here.
-$DR_Q213_COMMIT = Join-Path $env:REPO_ROOT (".test-t213-committable-" + (Get-DrSuffix) + ".md")
-if (Test-Path -LiteralPath $DR_Q213_COMMIT) {
-    _Skip 'drift.test: check-drift.ps1 still catches a committable machine path' "fixture collision: $DR_Q213_COMMIT"
+$DR_Q213_COMMIT = Join-Path $DR_FIX (".test-t213-committable-" + (Get-DrSuffix) + ".md")
+Write-LfFile $DR_Q213_COMMIT ('leak at ' + $q213_home + "`n")
+& git -C $DR_FIX check-ignore -q -- $DR_Q213_COMMIT
+if ($LASTEXITCODE -eq 0) {
+    _Skip 'drift.test: check-drift.ps1 still catches a committable machine path' 'unexpected: .md fixture is gitignored'
 } else {
-    Write-LfFile $DR_Q213_COMMIT ('leak at ' + $q213_home + "`n")
-    & git -C $env:REPO_ROOT check-ignore -q -- $DR_Q213_COMMIT
-    if ($LASTEXITCODE -eq 0) {
-        _Skip 'drift.test: check-drift.ps1 still catches a committable machine path' 'unexpected: .md fixture is gitignored'
-    } else {
-        Assert-Exit 'drift.test: check-drift.ps1 still catches a committable machine path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-    }
-    Remove-Item -LiteralPath $DR_Q213_COMMIT -Force -ErrorAction SilentlyContinue
+    Assert-Exit 'drift.test: check-drift.ps1 still catches a committable machine path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_FIX
 }
+Remove-Item -LiteralPath $DR_Q213_COMMIT -Force -ErrorAction SilentlyContinue
 
 # (d) AC literal + Codex adversarial F4: a TRACKED file with the machine path is
-# STILL caught -> exit 1. Staged via `git add -f`, then unstaged + removed
-# immediately so no orphan survives. Runs in CI (fresh clone) / isolated worktree.
-$DR_Q213_TRACKED = Join-Path $env:REPO_ROOT (".test-t213-tracked-" + (Get-DrSuffix) + ".md")
-if (Test-Path -LiteralPath $DR_Q213_TRACKED) {
-    _Skip 'drift.test: check-drift.ps1 catches a TRACKED machine path' "fixture collision: $DR_Q213_TRACKED"
-} else {
-    Write-LfFile $DR_Q213_TRACKED ('leak at ' + $q213_home + "`n")
-    & git -C $env:REPO_ROOT add -f -- $DR_Q213_TRACKED 2>&1 | Out-Null
-    Assert-Exit 'drift.test: check-drift.ps1 catches a TRACKED machine path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-    & git -C $env:REPO_ROOT reset -q -- $DR_Q213_TRACKED 2>&1 | Out-Null
-    Remove-Item -LiteralPath $DR_Q213_TRACKED -Force -ErrorAction SilentlyContinue
-}
+# STILL caught -> exit 1. Staged via `git add -f` into the FIXTURE's throwaway
+# index, then unstaged + removed so the fixture is clean for t248. The
+# operator's live index is never touched (<TEAM>-432).
+$DR_Q213_TRACKED = Join-Path $DR_FIX (".test-t213-tracked-" + (Get-DrSuffix) + ".md")
+Write-LfFile $DR_Q213_TRACKED ('leak at ' + $q213_home + "`n")
+& git -C $DR_FIX add -f -- $DR_Q213_TRACKED 2>&1 | Out-Null
+Assert-Exit 'drift.test: check-drift.ps1 catches a TRACKED machine path' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_FIX
+& git -C $DR_FIX reset -q -- $DR_Q213_TRACKED 2>&1 | Out-Null
+Remove-Item -LiteralPath $DR_Q213_TRACKED -Force -ErrorAction SilentlyContinue
 
 # --- content scans FAIL CLOSED on a listed-but-unreadable file -------
 # A committable file `git ls-files` enumerates but Test-ScanPath cannot read must
 # FAIL, never be silently skipped. Pre-fix the ReadLines try/catch{} swallowed
-# the error and failed OPEN. Modeled as a tracked file removed from the worktree:
-# still in --cached (LISTED), absent on disk -> ReadLines throws -> the new catch
-# fails closed to match the bash twin (grep exit-2). Parity sibling of
-# drift.test.sh. Content carries no machine path so the unreadable file is the
-# sole failure cause. Index reset in cleanup; runs in CI / isolated worktree.
-$DR_Q248 = Join-Path $env:REPO_ROOT (".test-t248-unreadable-" + (Get-DrSuffix) + ".md")
-if (Test-Path -LiteralPath $DR_Q248) {
-    _Skip 'drift.test: check-drift.ps1 fails closed on an unreadable listed file' "fixture collision: $DR_Q248"
-} else {
-    Write-LfFile $DR_Q248 "placeholder`n"
-    & git -C $env:REPO_ROOT add -f -- $DR_Q248 2>&1 | Out-Null
-    Remove-Item -LiteralPath $DR_Q248 -Force -ErrorAction SilentlyContinue
-    Assert-Exit 'drift.test: check-drift.ps1 fails closed on an unreadable listed file' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
-    & git -C $env:REPO_ROOT reset -q -- $DR_Q248 2>&1 | Out-Null
-}
+# the error and failed OPEN. Modeled as a file staged into the FIXTURE index
+# then removed from the fixture worktree: still in --cached (LISTED), absent on
+# disk -> ReadLines throws -> the new catch fails closed to match the bash twin
+# (grep exit-2). Parity sibling of drift.test.sh. Content carries no machine
+# path so the unreadable file is the sole failure cause. The fixture (and its
+# index) is discarded below (<TEAM>-432).
+$DR_Q248 = Join-Path $DR_FIX (".test-t248-unreadable-" + (Get-DrSuffix) + ".md")
+Write-LfFile $DR_Q248 "placeholder`n"
+& git -C $DR_FIX add -f -- $DR_Q248 2>&1 | Out-Null
+Remove-Item -LiteralPath $DR_Q248 -Force -ErrorAction SilentlyContinue
+Assert-Exit 'drift.test: check-drift.ps1 fails closed on an unreadable listed file' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_FIX
+& git -C $DR_FIX reset -q -- $DR_Q248 2>&1 | Out-Null
+
+# Hermetic fixture teardown (<TEAM>-432).
+Remove-Item -Recurse -Force -LiteralPath $DR_FIX -ErrorAction SilentlyContinue
 
 # --- NON-GIT fallback fails closed on an unreadable DIRECTORY -----------------
 # Sibling of the unreadable-FILE test above, for the directory-traversal gap. In

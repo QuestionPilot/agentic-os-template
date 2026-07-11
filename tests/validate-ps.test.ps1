@@ -444,61 +444,67 @@ try {
 # ---------------------------------------------------------------------------
 # secret scan: fail-closed on unreadable files + root-exact README
 #
-# These inject into the REAL $env:REPO_ROOT worktree (a genuine git repo),
-# mirroring the bash twin tests/validate.test.sh, rather than an ephemeral
-# New-FixtureRepo. New-FixtureRepo trees live under the OS temp dir, which on
-# macOS is the /var -> /private/var symlink: validate.ps1's Resolve-Path-based
-# git detection does not canonicalize that symlink (git --show-toplevel does),
-# so it misclassifies the fixture as non-git and takes the filesystem-walk
-# fallback — which cannot see a deleted-but-listed file and exercises the wrong
-# README branch. The real worktree is unsymlinked, so the git-enumeration branch
-# (the production path) runs on every platform. (The /var detection divergence
-# is pre-existing and shared with the bash twin's pwd -P handling; out of scope
-# here.) Index resets in cleanup so no staged orphan survives.
+# These three cuts need the GIT-enumeration branch (the production path) AND a
+# real tracked tree (root README.md, real .gitignore). They previously injected
+# into the REAL $env:REPO_ROOT worktree because New-FixtureRepo trees under the
+# OS temp dir sit behind macOS's /var -> /private/var symlink, which validate's
+# Resolve-Path-based git detection does not canonicalize — misclassifying the
+# fixture as non-git. That live-worktree injection force-added into the LIVE
+# index and appended to the LIVE README.md, racing any concurrent `git commit`
+# (<TEAM>-432). New-TrackedGitFixture resolves both problems: a hermetic
+# tracked-only copy with its own throwaway index, addressed via the
+# git-CANONICALIZED path (`rev-parse --show-toplevel`), so -RepoRoot matches
+# git's toplevel and the git-enumeration branch runs on every platform.
 # ---------------------------------------------------------------------------
+$VPS_GIT_FIX = New-TrackedGitFixture (Join-Path ([System.IO.Path]::GetTempPath()) ("vps-fix-$PID-" + [Guid]::NewGuid().Guid.Substring(0,8)))
 
-# cut 1: secret scan FAILS CLOSED on a listed-but-unreadable file. A tracked file
-# removed from the worktree stays in --cached (LISTED) but is absent on disk ->
-# Select-String -EA Stop throws -> the new read-error flag fails closed. Pre-
-# -EA SilentlyContinue silently skipped it (failed OPEN). Non-.md
-# extension isolates the failure to the secret scan.
-$Q248_DEL = Join-Path $env:REPO_ROOT (".test-t248-unreadable-" + ([Guid]::NewGuid().Guid.Substring(0,8)) + ".txt")
-if (Test-Path -LiteralPath $Q248_DEL) {
-    _Skip 'validate-ps.test: secret scan fails closed on an unreadable listed file' "fixture collision: $Q248_DEL"
+# Clean-fixture baseline (panel hardening): pin exit 0 on the untouched
+# fixture before the fail-expecting cuts, so a broken fixture cannot make
+# them pass vacuously; also proves the git-enumeration branch is live via
+# -RepoRoot on the canonical path.
+$vpsBase = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $VPS_GIT_FIX 2>&1
+if ($LASTEXITCODE -eq 0) {
+    _Pass 'validate-ps.test: validate.ps1 passes on the clean fixture'
 } else {
-    [System.IO.File]::WriteAllText($Q248_DEL, "placeholder`n", [System.Text.UTF8Encoding]::new($false))
-    & git -C $env:REPO_ROOT add -f -- $Q248_DEL 2>&1 | Out-Null
-    Remove-Item -LiteralPath $Q248_DEL -Force -ErrorAction SilentlyContinue
-    $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
-    $code = $LASTEXITCODE
-    & git -C $env:REPO_ROOT reset -q -- $Q248_DEL 2>&1 | Out-Null
-    if ($code -eq 1) {
-        _Pass 'validate-ps.test: secret scan fails closed on an unreadable listed file'
-    } else {
-        _Fail 'validate-ps.test: secret scan fails closed on an unreadable listed file' "expected exit 1, got $code", ($out -join "`n")
-    }
+    _Fail 'validate-ps.test: validate.ps1 passes on the clean fixture' "expected exit 0, got $LASTEXITCODE", ($vpsBase -join "`n")
+}
+
+# cut 1: secret scan FAILS CLOSED on a listed-but-unreadable file. A file staged
+# into the FIXTURE index then removed from the fixture worktree stays in
+# --cached (LISTED) but is absent on disk -> Select-String -EA Stop throws ->
+# the new read-error flag fails closed. Pre- -EA SilentlyContinue silently
+# skipped it (failed OPEN). Non-.md extension isolates the failure to the
+# secret scan. Fixture index reset so later cuts see a clean index.
+$Q248_DEL = Join-Path $VPS_GIT_FIX (".test-t248-unreadable-" + ([Guid]::NewGuid().Guid.Substring(0,8)) + ".txt")
+[System.IO.File]::WriteAllText($Q248_DEL, "placeholder`n", [System.Text.UTF8Encoding]::new($false))
+& git -C $VPS_GIT_FIX add -f -- $Q248_DEL 2>&1 | Out-Null
+Remove-Item -LiteralPath $Q248_DEL -Force -ErrorAction SilentlyContinue
+$out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $VPS_GIT_FIX 2>&1
+$code = $LASTEXITCODE
+& git -C $VPS_GIT_FIX reset -q -- $Q248_DEL 2>&1 | Out-Null
+if ($code -eq 1) {
+    _Pass 'validate-ps.test: secret scan fails closed on an unreadable listed file'
+} else {
+    _Fail 'validate-ps.test: secret scan fails closed on an unreadable listed file' "expected exit 1, got $code", ($out -join "`n")
 }
 
 # cut 2: a nested README.md IS scanned (root-exact, not basename). Pre-fix the
 # scan excluded README.md by basename (Split-Path -Leaf / $_.Name), blinding every
 # README anywhere. Sentinel built from non-matching halves per
 # [[feedback_self_tripping_test_source]] so this source doesn't self-trip. The
-# force-added fixture's unstage+remove is wrapped in try/finally so it ALWAYS
-# runs — even if validate throws or the run is interrupted — otherwise an
-# interrupted run orphans the fixture in the index + on disk.
-$Q248_NEST_DIR = Join-Path $env:REPO_ROOT (Join-Path 'tests' (Join-Path 'fixtures' ("t248-nested-" + ([Guid]::NewGuid().Guid.Substring(0,8)))))
+# old try/finally protected the LIVE index from an orphaned staged fixture; the
+# fixture index is throwaway (<TEAM>-432) — inline cleanup keeps it clean for
+# the next cut.
+$Q248_NEST_DIR = Join-Path $VPS_GIT_FIX (Join-Path 'tests' (Join-Path 'fixtures' ("t248-nested-" + ([Guid]::NewGuid().Guid.Substring(0,8)))))
 $Q248_NEST = Join-Path $Q248_NEST_DIR 'README.md'
-try {
-    New-Item -ItemType Directory -Path $Q248_NEST_DIR -Force | Out-Null
-    $sentinel = 'sk' + '-bCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKl'
-    [System.IO.File]::WriteAllText($Q248_NEST, "value: $sentinel`n", [System.Text.UTF8Encoding]::new($false))
-    & git -C $env:REPO_ROOT add -f -- $Q248_NEST 2>&1 | Out-Null
-    $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
-    $code = $LASTEXITCODE
-} finally {
-    & git -C $env:REPO_ROOT reset -q -- $Q248_NEST 2>&1 | Out-Null
-    Remove-Item -LiteralPath $Q248_NEST_DIR -Recurse -Force -ErrorAction SilentlyContinue
-}
+New-Item -ItemType Directory -Path $Q248_NEST_DIR -Force | Out-Null
+$sentinel = 'sk' + '-bCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKl'
+[System.IO.File]::WriteAllText($Q248_NEST, "value: $sentinel`n", [System.Text.UTF8Encoding]::new($false))
+& git -C $VPS_GIT_FIX add -f -- $Q248_NEST 2>&1 | Out-Null
+$out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $VPS_GIT_FIX 2>&1
+$code = $LASTEXITCODE
+& git -C $VPS_GIT_FIX reset -q -- $Q248_NEST 2>&1 | Out-Null
+Remove-Item -LiteralPath $Q248_NEST_DIR -Recurse -Force -ErrorAction SilentlyContinue
 if ($code -eq 1) {
     _Pass 'validate-ps.test: nested README.md is scanned for secrets'
 } else {
@@ -507,29 +513,25 @@ if ($code -eq 1) {
 
 # cut 2: the ROOT README.md remains excepted (documented example key shapes). A
 # secret-shaped line appended to the repo-root README must NOT fail the scan.
-# The mutate-and-restore is wrapped in try/finally so the `git checkout --`
-# restore ALWAYS runs — even if validate throws or the run is interrupted —
-# because a leaked sentinel in the tracked README.md would make this test _Skip
-# forever (the guard below requires a clean README.md). Guarded on the file being
-# clean first so a dirty tree is never clobbered.
-& git -C $env:REPO_ROOT diff --quiet -- README.md 2>$null
-if ($LASTEXITCODE -eq 0) {
-    $sentinel2 = 'sk' + '-cDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkLm'
-    try {
-        Add-Content -LiteralPath (Join-Path $env:REPO_ROOT 'README.md') -Value "value: $sentinel2"
-        $out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $env:REPO_ROOT 2>&1
-        $code = $LASTEXITCODE
-    } finally {
-        & git -C $env:REPO_ROOT checkout -- README.md 2>&1 | Out-Null
-    }
-    if ($code -eq 0) {
-        _Pass 'validate-ps.test: ROOT README secret-shaped example is excepted'
-    } else {
-        _Fail 'validate-ps.test: ROOT README secret-shaped example is excepted' "expected exit 0, got $code", ($out -join "`n")
-    }
+# Appends to the FIXTURE's README.md (<TEAM>-432) — appending to the LIVE
+# tracked README raced a concurrent `git commit -am`, which would have captured
+# the secret-shaped sentinel into history. Restored from the fixture index
+# (checkout works from an unborn HEAD's index) so any later fixture assertion
+# sees a clean tree; the old clean-file guard + try/finally protected the live
+# README and are unnecessary on a throwaway copy.
+$sentinel2 = 'sk' + '-cDeFgHiJkLmNoPqRsTuVwXyZaBcDeFgHiJkLm'
+Add-Content -LiteralPath (Join-Path $VPS_GIT_FIX 'README.md') -Value "value: $sentinel2"
+$out = & pwsh -NoProfile -File $VALIDATE_PS1 -RepoRoot $VPS_GIT_FIX 2>&1
+$code = $LASTEXITCODE
+& git -C $VPS_GIT_FIX checkout -- README.md 2>&1 | Out-Null
+if ($code -eq 0) {
+    _Pass 'validate-ps.test: ROOT README secret-shaped example is excepted'
 } else {
-    _Skip 'validate-ps.test: ROOT README secret-shaped example is excepted' 'README.md not clean'
+    _Fail 'validate-ps.test: ROOT README secret-shaped example is excepted' "expected exit 0, got $code", ($out -join "`n")
 }
+
+# Hermetic fixture teardown (<TEAM>-432).
+Remove-Item -Recurse -Force -LiteralPath $VPS_GIT_FIX -ErrorAction SilentlyContinue
 
 # cut 1 parity (Codex finding 1): the README exception is case-SENSITIVE — a root
 # readme.md / ReadMe.md is NOT the exempt README and MUST be scanned. PS `-eq` and
