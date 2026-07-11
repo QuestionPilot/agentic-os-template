@@ -130,9 +130,9 @@ returns an empty array, treat it as the silent-empty-MCP-tools failure pattern
 harness's MCP connection (or fall back to `lineark` if installed) before
 accepting "no active work" as the answer.
 
-### O4. Vault orient — entrypoint AND operator-identity master
+### O4. Vault orient — entrypoint, operator-identity master, AND lesson index
 
-Ground the session in the vault. Read **two** notes explicitly — load only the
+Ground the session in the vault. Read **three** notes explicitly — load only the
 relevant slice, never the whole vault:
 
 1. **`START.md`** — the vault's working rules.
@@ -144,15 +144,31 @@ relevant slice, never the whole vault:
    Soul first") as optional — a prose pointer is an instruction *chain* agents
    skip, so naming the read here is the fix: the identity master must land every
    session, not only when the chain is followed.
+3. **The lesson index — `04-Lessons/_index.md`.** The durable-lessons table whose
+   **Trigger column** ("Before installing any external skill", "Before fanning out
+   parallel subagents", …) is the retrieval hook the R1a recall step matches
+   against. This read exists because lessons were previously write-only in
+   practice: sessions distilled lessons INTO the vault at closeout, but no orient
+   or routing step ever read one back OUT, so operators re-taught rules that were
+   already recorded. The **canonical** index is read (not the generated per-harness
+   view) because only it carries the Trigger column; the harness-scope filter is
+   applied at body-read time instead — before reading a matched lesson's body,
+   check its frontmatter `harness:` key and skip notes scoped to another harness.
 
 **Tool calls:**
 - `Read` `$OBSIDIAN_VAULT_PATH/START.md`.
 - `Read` the operator-identity note START.md designates (vault-specific path).
+- `Read` `$OBSIDIAN_VAULT_PATH/04-Lessons/_index.md` (or the vault's equivalent
+  lessons index if the vault names a different layout). Keep the index in context
+  for the session — Mode 2 routing re-scans it without re-reading the file.
 - **Degrade gracefully — never fail the orient.** If the vault is unreachable
   (Drive/VPN down) *or* reachable but no identity note is configured/named, read
   what you can (or skip) and continue with a one-line note. If the harness keeps a
   per-machine identity cache (a lean projection of the master), use it as the
-  offline fallback; otherwise continue without identity context.
+  offline fallback; otherwise continue without identity context. An unreachable
+  lesson index degrades the same way: note it in the orient summary, declare
+  `Lessons: index unreachable` at R5, and fall back to the autoloaded memory-index
+  feedback headlines as the only recall surface.
 
 ### O5. Cross-issue Linear state verification
 
@@ -178,6 +194,7 @@ Orient:
 - Open issues in active project(s): <count + headline list>
 - Memory contradictions vs session-start commits: <one line per contradiction, or "none">
 - Vault: <one line of context from START.md>
+- Lesson index: <N lessons / triggers loaded | unreachable — recall degraded to memory-index headlines>
 - Cross-issue Linear claim verification: <pass / mismatches found>
 - Safety posture: <default "safe"; name any active tightening from a session-guardrail skill or unattended-governance flag>
 ```
@@ -204,6 +221,52 @@ session context.
 
 Bug fix, new feature, refactor, UI, security-sensitive change, data analysis,
 infra, docs, audit, ops, review-only, planning, implementation, publish/live.
+
+### R1a. Recall applicable lessons — match triggers, read the few that fire
+
+Durable lessons only compound if they re-enter context at task time; this step
+is the read side of the self-improvement loop (closeout is the write side).
+Match the just-classified surface + the concrete task against **two recall
+surfaces**:
+
+1. **The lesson index Trigger column** read at O4. Mode 2: it is normally
+   already in context from Mode 1 — re-scan it without re-reading the file.
+   But if the index is NO LONGER in context (a compaction summarized it away),
+   re-read the file before declaring — never declare `none match` from a
+   remembered index (panel finding: a post-compaction scan over nothing
+   silently becomes a false `none match`).
+2. **The autoloaded memory-index headlines** — the feedback/decision one-liners
+   the harness injected at session start. These are rules too; a match here
+   counts the same as an index-trigger match.
+
+For each match, `Read` the lesson/feedback note **body** before executing —
+the headline names the rule, the body carries the how and the edge cases.
+Bounds, so this stays a slice and not a vault load:
+
+- **Respect harness scope:** if the index carries an explicit scope/harness
+  column, filter on it before reading; otherwise check a matched note's
+  frontmatter `harness:` key first and skip notes scoped to another harness.
+- **Cap the APPLICABLE body-reads at ~3**, most-specific-first. Scope-skipped
+  notes do not consume the cap (panel finding: foreign-scope matches must not
+  starve the recall of applicable lessons), but bound the total probes at ~6 —
+  needing more than that means the triggers are too broad; read the most
+  specific 3 and name the rest in the declaration without reading them.
+- **Zero matches is a normal outcome** — declare `Lessons: none match` and
+  proceed. Do not force-fit a lesson to satisfy the declaration.
+- **Vault unreachable** (index never loaded at O4): match against the
+  autoloaded headlines only and declare `Lessons: index unreachable`.
+- **Recall out of scope by policy:** a contained task may legitimately forbid
+  vault or extra-file reads (a sandboxed run, an isolation worktree with no
+  vault mount). Declare `Lessons: skipped — <reason>` honestly rather than
+  faking `none match` (which claims a scan) or `index unreachable` (which
+  claims a failure).
+
+The result feeds the `Lessons:` line of the R5 declaration. If, later in the
+session, the operator corrects you with a rule that WAS in a recall surface
+this step should have matched, that is a **recall failure** — record it at
+closeout per `core/self-improvement.md` (which surface failed: not-loaded vs
+loaded-but-ignored), so the miss tunes the triggers instead of re-writing the
+rule as a duplicate.
 
 ### R2. Pick the primary capability
 
@@ -240,6 +303,7 @@ write-capable Linear access exists, produce a Linear-ready markdown draft.
 ```
 Routing: <one-sentence task surface>
 Primary skill: <capability name, or "ad-hoc — no specific capability">
+Lessons: <matched lesson/note names, body-read ones first> | none match | index unreachable | skipped — <reason>
 Verification: <gate name from $AI_CONFIG_DIR/verification/>
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted
 ```
@@ -297,10 +361,21 @@ Orchestration rules:
   is a Mode 1 re-run.
 - **The protocol's value is in the model thinking through the steps** — not in
   any single line of the declaration. The pre-edit-gate enforcement class checks
-  only that session-agent ran and that the `Linear gate:` line was declared; it
-  does not police the judgment.
+  only that session-agent ran and that the `Linear gate:` and `Lessons:` lines
+  were declared; it does not police the judgment.
 - **Be honest on the Linear gate.** Splitting genuine multi-session work into
   "single-step" to skip the gate defeats the protocol.
+- **Be honest on the Lessons line.** `none match` after an actual trigger scan
+  is a valid answer; `none match` as a reflex to satisfy the gate defeats the
+  recall step — the whole line exists because rules that were already recorded
+  kept getting skipped.
+- **The gate enforces the first complete declaration per session.** Once both
+  lines have been declared, later Mode 2 routes re-declare by protocol but the
+  hook does not re-police them per task — it is a discipline net with a kill
+  switch, not a security boundary. The recall habit on subsequent prompts is
+  carried by the protocol, same as every other R-step.
 - **Token cost.** Mode 1 is expensive (multiple Linear queries + memory body
-  reads + vault read). Mode 2 is cheap (no tool calls beyond consulting the
-  catalog). Don't re-orient on every prompt.
+  reads + vault reads, including the lesson index). Mode 2 is cheap (no tool
+  calls beyond consulting the catalog and re-scanning the in-context lesson
+  index; R1a body-reads only fire on a trigger match). Don't re-orient on
+  every prompt.

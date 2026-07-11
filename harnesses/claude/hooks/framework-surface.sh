@@ -384,7 +384,7 @@ After emitting the R5 routing declaration, ALSO persist it to the pre-edit
 gate's marker file — on harness variants that do not persist assistant text
 into the transcript (desktop/SDK), the marker is the only declaration channel
 the gate can see; elsewhere it is a harmless no-op. Write the declaration
-(including the \`Linear gate:\` line) to:
+(including the \`Linear gate:\` and \`Lessons:\` lines) to:
 
     $SA_INSTALL_DIR/agentic-os/gate-$SA_SESSION_ID
 

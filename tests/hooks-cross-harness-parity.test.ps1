@@ -24,7 +24,7 @@ $xh_sh_reason = 'bash-engine lanes — install.ps1 emits .ps1 hooks; the .sh mat
 _Skip 'xh: rendered claude session-agent.sh' $xh_sh_reason
 _Skip 'xh: rendered codex session-agent.sh'  $xh_sh_reason
 _Skip 'xh: rendered hermes session-agent.sh' $xh_sh_reason
-foreach ($xh_sc in @('S1 no-orient', 'S2 orient-declared', 'S3 orient-undeclared-with-noise', 'S4 kill-switch')) {
+foreach ($xh_sc in @('S1 no-orient', 'S2 orient-declared', 'S3 orient-undeclared-with-noise', 'S4 kill-switch', 'S5 orient-lessons-less')) {
     _Skip "xh[sh] ${xh_sc}: claude decision"      $xh_sh_reason
     _Skip "xh[sh] ${xh_sc}: codex decision"       $xh_sh_reason
     _Skip "xh[sh] ${xh_sc}: parity claude==codex" $xh_sh_reason
@@ -40,8 +40,9 @@ foreach ($xh_sc in @('S1 no-orient', 'S2 orient-declared', 'S3 orient-undeclared
 if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
     $xh_jq_reason = 'jq not on PATH — the claude/codex gate hooks fail closed without it'
     _Skip 'xh: hermes S3 state models the injected template line' $xh_jq_reason
+    _Skip 'xh: hermes S3 state models the Lessons template line'  $xh_jq_reason
     _Skip 'xh: hermes S3 state models a prior deny quote'         $xh_jq_reason
-    foreach ($xh_sc in @('S1 no-orient', 'S2 orient-declared', 'S3 orient-undeclared-with-noise', 'S4 kill-switch')) {
+    foreach ($xh_sc in @('S1 no-orient', 'S2 orient-declared', 'S3 orient-undeclared-with-noise', 'S4 kill-switch', 'S5 orient-lessons-less')) {
         _Skip "xh[ps1] ${xh_sc}: claude decision"      $xh_jq_reason
         _Skip "xh[ps1] ${xh_sc}: codex decision"       $xh_jq_reason
         _Skip "xh[ps1] ${xh_sc}: parity claude==codex" $xh_jq_reason
@@ -83,25 +84,38 @@ INSERT INTO messages VALUES ('xh-s1','assistant','hi',NULL,2);
 INSERT INTO messages VALUES ('xh-s2','user','# Session Agent — Session Kickoff Orient + Routing
 injected body: skills/session-agent/SKILL.md
 Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);
-INSERT INTO messages VALUES ('xh-s2','tool','blocked: The session-agent capability ran but no `Linear gate:` declaration was found this session. Emit the full declaration including the `Linear gate:` line.',NULL,2);
+INSERT INTO messages VALUES ('xh-s2','tool','blocked: The session-agent capability ran but no complete routing declaration was found this session — both the `Linear gate:` line AND the `Lessons:` line are required. Emit the full declaration.',NULL,2);
 INSERT INTO messages VALUES ('xh-s2','assistant','Routing: infra change
+Lessons: none match
 Linear gate: PROJ-1',NULL,3);
 INSERT INTO messages VALUES ('xh-s3','user','# Session Agent — Session Kickoff Orient + Routing
 injected body: skills/session-agent/SKILL.md
 Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);
-INSERT INTO messages VALUES ('xh-s3','tool','blocked: The session-agent capability ran but no `Linear gate:` declaration was found this session. Emit the full declaration including the `Linear gate:` line.',NULL,2);
+INSERT INTO messages VALUES ('xh-s3','tool','blocked: The session-agent capability ran but no complete routing declaration was found this session — both the `Linear gate:` line AND the `Lessons:` line are required. Emit the full declaration.',NULL,2);
 INSERT INTO messages VALUES ('xh-s3','assistant','Routing: infra change',NULL,3);
+INSERT INTO messages VALUES ('xh-s5','user','# Session Agent — Session Kickoff Orient + Routing
+injected body: skills/session-agent/SKILL.md
+Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
+Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);
+INSERT INTO messages VALUES ('xh-s5','tool','blocked: The session-agent capability ran but no complete routing declaration was found this session — both the `Linear gate:` line AND the `Lessons:` line are required. Emit the full declaration.',NULL,2);
+INSERT INTO messages VALUES ('xh-s5','assistant','Routing: infra change
+Linear gate: PROJ-1',NULL,3);
 '@
         & sqlite3 $xh_db $xh_sql 2>$null
         # Scenario-realism guard: S3's deny must be earned against both
         # vacuousness triggers sitting in NON-assistant rows.
         $xh_s3_noise = (@(& sqlite3 -readonly $xh_db "SELECT content FROM messages WHERE session_id='xh-s3' AND role <> 'assistant';" 2>$null) -join "`n")
         Assert-Contains 'xh: hermes S3 state models the injected template line' $xh_s3_noise 'Linear gate: <ISSUE-ID'
-        Assert-Contains 'xh: hermes S3 state models a prior deny quote'         $xh_s3_noise 'no `Linear gate:` declaration'
+        Assert-Contains 'xh: hermes S3 state models the Lessons template line'  $xh_s3_noise 'Lessons: <matched'
+        Assert-Contains 'xh: hermes S3 state models a prior deny quote'         $xh_s3_noise 'no complete routing declaration'
     } else {
         _Skip 'xh: hermes S3 state models the injected template line' 'sqlite3 not installed'
+        _Skip 'xh: hermes S3 state models the Lessons template line'  'sqlite3 not installed'
         _Skip 'xh: hermes S3 state models a prior deny quote'         'sqlite3 not installed'
     }
 
@@ -161,6 +175,8 @@ INSERT INTO messages VALUES ('xh-s3','assistant','Routing: infra change',NULL,3)
                    $cxFix = Join-Path $xh_fix 'codex-transcript-session-agent-ok.jsonl' }
             'S3' { $clFix = Join-Path $xh_fix 'transcript-session-agent-no-linear.jsonl'
                    $cxFix = Join-Path $xh_fix 'codex-transcript-session-agent-no-linear.jsonl' }
+            'S5' { $clFix = Join-Path $xh_fix 'transcript-session-agent-no-lessons.jsonl'
+                   $cxFix = Join-Path $xh_fix 'codex-transcript-session-agent-no-lessons.jsonl' }
             # S1 + S4 share the no-orient input — S4 proves the kill switch
             # flips exactly that deny to an allow in every harness.
             default { $clFix = Join-Path $xh_fix 'transcript-empty.jsonl'
@@ -195,6 +211,7 @@ INSERT INTO messages VALUES ('xh-s3','assistant','Routing: infra change',NULL,3)
     Test-XhScenario -Id S2 -Name 'orient-declared'              -Want allow
     Test-XhScenario -Id S3 -Name 'orient-undeclared-with-noise' -Want deny
     Test-XhScenario -Id S4 -Name 'kill-switch'                  -Want allow -ExtraEnv @{ CLAUDE_SKIP_SESSION_AGENT = '1' }
+    Test-XhScenario -Id S5 -Name 'orient-lessons-less'          -Want deny
 } finally {
     Remove-Item -LiteralPath $xh_root -Recurse -Force -ErrorAction SilentlyContinue
 }

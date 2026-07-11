@@ -91,7 +91,7 @@ script in `harnesses/claude/hooks/`:
 
 | Enforcement class | Hook event | `matcher` | Hook script | Behavior |
 | --- | --- | --- | --- | --- |
-| `pre-edit-gate` | `PreToolUse` | `Write\|Edit\|NotebookEdit` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and a `Linear gate:` line was declared. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
+| `pre-edit-gate` | `PreToolUse` | `Write\|Edit\|NotebookEdit` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and both declaration lines — `Linear gate:` and `Lessons:` — were declared. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
 
 (The `session-end-gate` class — a `Stop` hook for `closeout` — was removed;
 `closeout` is now manual-fire. `pre-edit-gate` is the only

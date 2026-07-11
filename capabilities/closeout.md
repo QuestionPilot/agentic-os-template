@@ -67,6 +67,17 @@ classification machinery for work that should never have shipped is wasted.
    The principle behind this question is named in
    `core/operating-system.md` → `## Boring is Beautiful`.
 1. Did we learn anything that should change future behavior?
+
+   **Q1a — recall-failure capture.** Did the operator (or live evidence) have
+   to re-teach a rule that ALREADY existed in a memory note, vault lesson, or
+   framework file this session? If yes, that is a **recall failure** — the
+   lesson to classify is about the recall surface, never a duplicate re-write
+   of the rule. Name which surface failed: **not-loaded** (store silo / stale
+   harness index / vault unreachable / lesson index skipped at O4 — fix store
+   placement or orient discipline) vs **loaded-but-ignored** (in context but
+   acted against — rephrase the lesson's Trigger / headline so the next
+   session-agent R1a scan matches). Record it explicitly in the session log's
+   Lessons section; the `self-audit` recall-efficacy check counts these.
 2. Is the lesson already represented in the right source of truth?
 3. Can the lesson become a check or script instead of prose? **And — did this
    session run a successful, repeatable flow worth promoting to a permanent
@@ -249,6 +260,22 @@ wrote no new feedback/decision notes records `_none_` and skips the steps.
    `04-Lessons/YYYY-MM-DD - <Theme>.md` from the lesson template only when none
    fits. Refresh, don't blindly append — the Keep / Update / Consolidate lifecycle
    from the Memory-hygiene section above applies to the Lessons note too.
+
+   **2a. Scope the store + phrase the Trigger for recall.** Two read-side checks
+   land here (see `core/self-improvement.md` → Promotion Rule): (a) Phrase the
+   lesson's **Trigger** column entry as the concrete task-surface condition a
+   future session-agent R1a scan will match ("Before the first fetch of any
+   research/scrape task…") — the lesson index is the ONLY surface read at every
+   orient on every harness, so its Trigger is what carries a cross-cutting rule
+   across stores; a vague trigger is the loaded-but-ignored failure class.
+   (b) If the feedback note captures a **cross-cutting** rule but was written to
+   a per-project store (Claude Code keys stores to the working directory), move
+   or copy it to the framework home store — the canonical cache home where
+   maintenance sweeps and framework sessions find every cross-cutting rule
+   (stores never autoload outside their own directory; cross-project recall
+   flows through the lesson index, not the store). A cross-cutting rule left
+   siloed in one project's store with a weak lesson Trigger is the not-loaded
+   recall failure Q1a records.
 3. **Record provenance.** Add the promoted note's name to that lesson's
    `## Source Notes` section — this is the linkage the completeness guard keys on.
    The guard normalizes separators, so either slug style resolves.

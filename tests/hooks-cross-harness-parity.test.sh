@@ -103,11 +103,14 @@ cp "$REPO_ROOT/harnesses/hermes/hooks/session-agent.ps1" "$XH_HM/hooks/" 2>/dev/
 # the claude/codex fixtures record for record:
 #   xh-s1  benign chatter only            == transcript-empty.jsonl
 #   xh-s2  injected skill body (the ran-marker SKILL.md path + the template
-#          `Linear gate: <ISSUE-ID` line) + a prior deny quote + an ASSISTANT
-#          row with the line-anchored declaration
+#          `Lessons:` + `Linear gate: <ISSUE-ID` lines) + a prior deny quote +
+#          an ASSISTANT row with both line-anchored declaration lines
 #                                          == transcript-session-agent-ok.jsonl
 #   xh-s3  same noise rows, but the assistant never declares
 #                                          == transcript-session-agent-no-linear.jsonl
+#   xh-s5  same noise rows; the assistant declares `Linear gate:` but not
+#          `Lessons:` — the incomplete-declaration deny
+#                                          == transcript-session-agent-no-lessons.jsonl
 # The user-role body row and the tool-role deny row are the two vacuousness
 # triggers: only the role-filtered, line-anchored query keeps S3 a deny.
 XH_DB="$XH_HM/state.db"
@@ -122,16 +125,27 @@ INSERT INTO messages VALUES ('xh-s1','assistant','hi',NULL,2);
 INSERT INTO messages VALUES ('xh-s2','user','# Session Agent — Session Kickoff Orient + Routing
 injected body: skills/session-agent/SKILL.md
 Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);
-INSERT INTO messages VALUES ('xh-s2','tool','blocked: The session-agent capability ran but no `Linear gate:` declaration was found this session. Emit the full declaration including the `Linear gate:` line.',NULL,2);
+INSERT INTO messages VALUES ('xh-s2','tool','blocked: The session-agent capability ran but no complete routing declaration was found this session — both the `Linear gate:` line AND the `Lessons:` line are required. Emit the full declaration.',NULL,2);
 INSERT INTO messages VALUES ('xh-s2','assistant','Routing: infra change
+Lessons: none match
 Linear gate: PROJ-1',NULL,3);
 INSERT INTO messages VALUES ('xh-s3','user','# Session Agent — Session Kickoff Orient + Routing
 injected body: skills/session-agent/SKILL.md
 Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);
-INSERT INTO messages VALUES ('xh-s3','tool','blocked: The session-agent capability ran but no `Linear gate:` declaration was found this session. Emit the full declaration including the `Linear gate:` line.',NULL,2);
+INSERT INTO messages VALUES ('xh-s3','tool','blocked: The session-agent capability ran but no complete routing declaration was found this session — both the `Linear gate:` line AND the `Lessons:` line are required. Emit the full declaration.',NULL,2);
 INSERT INTO messages VALUES ('xh-s3','assistant','Routing: infra change',NULL,3);
+INSERT INTO messages VALUES ('xh-s5','user','# Session Agent — Session Kickoff Orient + Routing
+injected body: skills/session-agent/SKILL.md
+Routing: <one-sentence task surface>
+Lessons: <matched lesson/note names> | none match | index unreachable
+Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted',NULL,1);
+INSERT INTO messages VALUES ('xh-s5','tool','blocked: The session-agent capability ran but no complete routing declaration was found this session — both the `Linear gate:` line AND the `Lessons:` line are required. Emit the full declaration.',NULL,2);
+INSERT INTO messages VALUES ('xh-s5','assistant','Routing: infra change
+Linear gate: PROJ-1',NULL,3);
 XH_SQL
   # Scenario-realism guard (mirrors the fixture-noise assertions in
   # tests/hooks-behavior.test.sh): the S3 state must actually carry both
@@ -139,7 +153,8 @@ XH_SQL
   # pass vacuously without exercising the role filter.
   xh_s3_noise="$(sqlite3 -readonly "$XH_DB" "SELECT content FROM messages WHERE session_id='xh-s3' AND role <> 'assistant';")"
   assert_contains "xh: hermes S3 state models the injected template line" "$xh_s3_noise" 'Linear gate: <ISSUE-ID'
-  assert_contains "xh: hermes S3 state models a prior deny quote"         "$xh_s3_noise" 'no `Linear gate:` declaration'
+  assert_contains "xh: hermes S3 state models the Lessons template line"  "$xh_s3_noise" 'Lessons: <matched'
+  assert_contains "xh: hermes S3 state models a prior deny quote"         "$xh_s3_noise" 'no complete routing declaration'
 else
   _skip "xh: hermes S3 state models the injected template line" "sqlite3 not installed"
   _skip "xh: hermes S3 state models a prior deny quote"         "sqlite3 not installed"
@@ -230,12 +245,14 @@ xh_scenario() {
         cx_fix="$XH_FIX/codex-transcript-session-agent-ok.jsonl" ;;
     S3) cl_fix="$XH_FIX/transcript-session-agent-no-linear.jsonl"
         cx_fix="$XH_FIX/codex-transcript-session-agent-no-linear.jsonl" ;;
+    S5) cl_fix="$XH_FIX/transcript-session-agent-no-lessons.jsonl"
+        cx_fix="$XH_FIX/codex-transcript-session-agent-no-lessons.jsonl" ;;
     # S1 and S4 share the no-orient input — S4 proves the kill switch flips
     # exactly that deny to an allow in every harness.
     *)  cl_fix="$XH_FIX/transcript-empty.jsonl"
         cx_fix="$XH_FIX/codex-transcript-empty.jsonl" ;;
   esac
-  # xh-s1..xh-s4 — keys the hermes state.db rows and the per-session marker
+  # xh-s1..xh-s5 — keys the hermes state.db rows and the per-session marker
   # paths; no scenario writes a marker, so sessions cannot cross-contaminate.
   local sid="xh-s${id#S}"
   local d_cl d_cx d_hm
@@ -262,6 +279,7 @@ xh_scenario sh S1 "no-orient"                    deny
 xh_scenario sh S2 "orient-declared"              allow
 xh_scenario sh S3 "orient-undeclared-with-noise" deny
 xh_scenario sh S4 "kill-switch"                  allow CLAUDE_SKIP_SESSION_AGENT=1
+xh_scenario sh S5 "orient-lessons-less"          deny
 
 # --- The matrix, pwsh engine: the .ps1 twins, SAME semantic inputs ----------
 # All three harnesses ship a session-agent.ps1 twin; drive them from bash via
@@ -272,8 +290,9 @@ if command -v pwsh >/dev/null 2>&1; then
   xh_scenario ps1 S2 "orient-declared"              allow
   xh_scenario ps1 S3 "orient-undeclared-with-noise" deny
   xh_scenario ps1 S4 "kill-switch"                  allow CLAUDE_SKIP_SESSION_AGENT=1
+  xh_scenario ps1 S5 "orient-lessons-less"          deny
 else
-  _skip "xh[ps1] S1-S4 cross-harness matrix (.ps1 twins)" "pwsh not on PATH"
+  _skip "xh[ps1] S1-S5 cross-harness matrix (.ps1 twins)" "pwsh not on PATH"
 fi
 
 # Cleanup — tests/run.sh dot-sources every test file into one shell, so scrub
