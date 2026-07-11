@@ -222,7 +222,7 @@ function Write-InfoErr {
 # never imported into the process environment. Panel C2: Import-LocalEnv
 # pushes EVERY key into process env — a PATH= (or PSModulePath=) line in
 # local.env would then steer the child `pwsh` resolution in the -Auto loop.
-# Only the three harness-home keys are ever read. Mirrors the bash twin's
+# Only the four render-home keys are ever read. Mirrors the bash twin's
 # _cd_localenv_get and self-audit.ps1's Get-SaLocalEnvValue precedent: strips
 # an optional `export `, one matching outer quote pair, backslash escapes;
 # last assignment wins; no $VAR expansion.
@@ -251,7 +251,10 @@ function Get-CdLocalEnvValue {
 
 if ($Auto.IsPresent) {
     $autoLocalEnv = if ($env:AI_CONFIG_LOCAL_ENV) { $env:AI_CONFIG_LOCAL_ENV } else { Join-Path $repoRoot 'local.env' }
-    $autoVars = [ordered]@{ claude = 'CLAUDE_CONFIG_DIR'; codex = 'CODEX_HOME'; hermes = 'HERMES_HOME' }
+    # "agents" is the codex pass's .agents co-render (install corender), not a
+    # harness of its own — but it has a manifest and hand-edits to it are drift
+    # like any other render, so it runs the same gate.
+    $autoVars = [ordered]@{ claude = 'CLAUDE_CONFIG_DIR'; codex = 'CODEX_HOME'; hermes = 'HERMES_HOME'; agents = 'AGENTS_DIR' }
     $autoFailed = 0
     foreach ($autoHarness in $autoVars.Keys) {
         $autoVar = $autoVars[$autoHarness]

@@ -150,7 +150,7 @@ CXB_OUT="$(mktemp -d)/target"; mkdir -p "$CXB_OUT"
 CXB_ENV="$(mktemp -d)/local.env"
 make_codex_env "$CXB_ENV" "$CXB_OUT"
 cxb_err="$(mktemp)"
-AI_CONFIG_LOCAL_ENV="$CXB_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>"$cxb_err"
+env -u AGENTS_DIR AI_CONFIG_LOCAL_ENV="$CXB_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>"$cxb_err"
 cxb_status=$?
 assert_eq "codex full install exits 0" "0" "$cxb_status"
 # The codex build is inert until the user trusts its hooks.json — install.sh
@@ -166,6 +166,31 @@ assert_eq "codex install leaves no backup/temp dirs" "" "$cx_leftover"
 # A clean codex build passes the drift gate.
 assert_exit "codex drift check passes on a clean build" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$CXB_OUT"
+
+# === .agents co-render: loud skip + live-overlay guard ======================
+# Without AGENTS_DIR the codex install skips the co-render LOUDLY (a
+# configured-but-forgotten overlay must be visible, never silently stale).
+# The happy path — byte-identity, Shape C preservation, agents manifest,
+# --auto coverage — is exercised in tests/drift.test.sh's --auto block.
+assert_contains "codex install skips the .agents co-render loudly when AGENTS_DIR is unset" \
+  "$(cat "$cxb_err")" "AGENTS_DIR not set"
+
+# A throwaway local.env whose AGENTS_DIR names the repo's LIVE overlay must be
+# refused (the same inherited-var corruption guard the harness-home targets
+# have) — the die fires before any write to the overlay. String-compare based,
+# so it holds whether or not .agents exists in this checkout.
+CXA_WORK="$(mktemp -d)"
+CXA_OUT="$CXA_WORK/target"; mkdir -p "$CXA_OUT"
+CXA_ENV="$CXA_WORK/local.env"
+{ printf 'CODEX_HOME=%q\n' "$CXA_OUT"
+  printf 'OBSIDIAN_VAULT_PATH=%q\n' "/tmp/test-vault"
+  printf 'AGENTS_DIR=%q\n' "$REPO_ROOT/.agents"
+} > "$CXA_ENV"
+cxa_out="$(AI_CONFIG_LOCAL_ENV="$CXA_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness codex 2>&1)"; cxa_rc=$?
+assert_eq "codex install refuses a throwaway-local.env co-render into the live overlay" "1" "$cxa_rc"
+assert_contains "live-overlay refusal names the guard" \
+  "$cxa_out" "refusing the .agents co-render into the live overlay"
+rm -rf "$CXA_WORK"
 
 # === Codex hook behaviour ===================================================
 # Feed each compiled Codex hook a mock Codex event payload, assert exit code +

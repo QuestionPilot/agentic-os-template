@@ -808,6 +808,155 @@ write_manifest() {
     '{harness: $harness, adapterVersion: $adapterVersion, sources: $sources, generated: $generated}' \
     > "$BUILD/.build-manifest.json"
 }
+
+# corender_agents — mirrors the just-installed codex spine skills into the
+# repo-level Gemini overlay dir ($AGENTS_DIR, conventionally <repo>/.agents)
+# byte-identically, with an "agents"-harness manifest so check-drift --auto
+# governs the copy like any other render.
+#
+# Why: Codex >=0.14x discovers repo-root .agents/skills alongside
+# $CODEX_HOME/skills, so a same-name skill existing in both places is a
+# duplicate in Codex's catalog — and if the copies diverge, which one wins is
+# ambiguous. Gemini (agy/Antigravity) discovers .agents/skills as its
+# workspace skill root. Keeping the two copies byte-identical makes the
+# duplication harmless for Codex while Gemini stays fully equipped; the
+# manifest makes any hand-edit to the mirror visible as drift instead of a
+# silent re-divergence. Runs only for --harness codex, only on a real install
+# (never --dry-run/--build-only), and only when AGENTS_DIR is set — an
+# operator without a Gemini overlay has no collision to manage, so unset
+# skips with a notice (same degrade contract as check-drift --auto).
+#
+# Derivation, not a second build: the mirrored bases and the manifest are both
+# derived from the codex manifest just swapped into $TARGET, and the files are
+# copied from $TARGET itself — so byte-identity with what codex actually loads
+# is structural, and the drift gate re-verifies it (the copied files must hash
+# to the same values the codex build recorded). Non-spine subdirs already in
+# $AGENTS_DIR/skills are operator content (Shape C) — untouched here and
+# exempt from the manifest gate, exactly like $CODEX_HOME/skills.
+corender_agents() {
+  local adir="${AGENTS_DIR%/}"
+  local mani="$TARGET/.build-manifest.json"
+  [ -f "$mani" ] || die ".agents co-render: codex manifest missing at $mani"
+  command -v jq >/dev/null 2>&1 || die ".agents co-render: jq unavailable"
+
+  # A relative AGENTS_DIR resolves against an unpredictable CWD — and, worse,
+  # a relative spelling of the live overlay (`.agents`) would slip past the
+  # string-compare guard below (panel finding). Absolute only, like every
+  # other build-target var.
+  case "$adir" in
+    /*) ;;
+    *) die ".agents co-render: AGENTS_DIR must be an absolute path (got '$adir') — set it absolute in local.env" ;;
+  esac
+
+  # Canonicalize even when the leaf does not exist yet: physically resolve
+  # the deepest EXISTING ancestor, then re-append the remainder. A plain
+  # exists-only canonicalization lets a symlinked ancestor or dot-segments in
+  # a not-yet-created path alias the live overlay past the guard (panel
+  # finding).
+  local _acmp="$adir" _walk="$adir" _tail=""
+  while [ ! -d "$_walk" ] && [ "$_walk" != "/" ]; do
+    _tail="$(basename "$_walk")${_tail:+/$_tail}"
+    _walk="$(dirname "$_walk")"
+  done
+  if [ -d "$_walk" ]; then
+    _walk="$(CDPATH= cd "$_walk" 2>/dev/null && pwd -P || printf '%s' "$_walk")"
+    _acmp="${_walk%/}${_tail:+/$_tail}"
+  fi
+  _acmp="${_acmp%/}"
+
+  # The overlay must be disjoint from the codex target: with
+  # AGENTS_DIR == CODEX_HOME the manifest rewrite below would truncate the
+  # very file jq is reading (shell redirect opens the output first) and the
+  # codex manifest would be destroyed (panel finding). Nested either way is
+  # the same corruption class.
+  local _tgt_p
+  _tgt_p="$(CDPATH= cd "$TARGET" 2>/dev/null && pwd -P || printf '%s' "$TARGET")"
+  _tgt_p="${_tgt_p%/}"
+  case "$_acmp/" in
+    "$_tgt_p"/*) die ".agents co-render: AGENTS_DIR ($_acmp) must be disjoint from the codex target ($_tgt_p) — the mirror cannot live at or inside \$CODEX_HOME" ;;
+  esac
+  case "$_tgt_p/" in
+    "$_acmp"/*) die ".agents co-render: the codex target ($_tgt_p) lies inside AGENTS_DIR ($_acmp) — the mirror must be disjoint from \$CODEX_HOME" ;;
+  esac
+
+  # Same live-dir guard rule as the main target: a throwaway local.env build
+  # must never write the repo's live overlay (an inherited AGENTS_DIR leaking
+  # into a fixture build is the exact corruption vector the TARGET guard
+  # exists for).
+  if [ "${AI_CONFIG_ALLOW_LIVE_TARGET:-}" != 1 ] \
+     && ! [ "$LOCAL_ENV" -ef "$repo_root/local.env" ]; then
+    local _live_p
+    _live_p="$(CDPATH= cd "$repo_root" 2>/dev/null && pwd -P || printf '%s' "$repo_root")/.agents"
+    if [ "$_acmp" = "$_live_p" ] || [ "$_acmp" = "$repo_root/.agents" ]; then
+      die "refusing the .agents co-render into the live overlay $_acmp — this build uses a throwaway local.env ($LOCAL_ENV) but AGENTS_DIR resolved to the live dir. Set AGENTS_DIR to a temp dir in the local.env; set AI_CONFIG_ALLOW_LIVE_TARGET=1 to override."
+    fi
+  fi
+
+  local -a bases=()
+  local b
+  while IFS= read -r b; do [ -n "$b" ] && bases+=("$b"); done \
+    < <(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$mani" | LC_ALL=C sort -u)
+  if [ "${#bases[@]}" -eq 0 ]; then
+    warn ".agents co-render: codex build generated no skills — nothing to mirror"
+    return 0
+  fi
+
+  mkdir -p "$adir/skills" || die ".agents co-render: cannot create $adir/skills"
+
+  # Stage the full copy before touching any live subdir, so a mid-copy failure
+  # leaves the overlay exactly as it was.
+  local stage
+  stage="$(mktemp -d "$adir/.agents-corender.XXXXXX")" \
+    || die ".agents co-render: mktemp failed under $adir"
+  for b in "${bases[@]}"; do
+    cp -R "$TARGET/skills/$b" "$stage/$b" \
+      || { rm -rf "$stage"; die ".agents co-render: staging copy of skills/$b failed"; }
+  done
+
+  # N1-style honesty (mirrors swap_in): replacing a live subdir no prior
+  # co-render authored is a name collision with operator content — warn, but
+  # the framework copy still wins (lockstep with $CODEX_HOME is the contract).
+  local old_managed=""
+  if [ -f "$adir/.build-manifest.json" ]; then
+    old_managed="$(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$adir/.build-manifest.json" 2>/dev/null | LC_ALL=C sort -u)"
+  fi
+  for b in "${bases[@]}"; do
+    if [ -e "$adir/skills/$b" ] && ! grep -qxF "$b" <<<"$old_managed"; then
+      warn ".agents co-render: replacing $adir/skills/$b (existed but no prior co-render authored it — the mirror must stay in lockstep with the codex render)"
+    fi
+    rm -rf "$adir/skills/$b"
+    mv "$stage/$b" "$adir/skills/$b" \
+      || { rm -rf "$stage"; die ".agents co-render: activate of skills/$b failed"; }
+  done
+  rm -rf "$stage"
+
+  # Prune bases a PRIOR co-render authored that this build no longer
+  # produces. Without this, a removed/renamed spine capability survives in
+  # the overlay as an unmanaged skill that Gemini — and Codex's workspace
+  # discovery — keep loading indefinitely (panel finding). Only prior-
+  # manifest-managed bases are ever deleted (the same ownership rule as the
+  # codex home's orphan sweep); operator content is untouched.
+  if [ -n "$old_managed" ]; then
+    local ob keep
+    while IFS= read -r ob; do
+      [ -n "$ob" ] || continue
+      keep=0
+      for b in "${bases[@]}"; do [ "$b" = "$ob" ] && { keep=1; break; }; done
+      [ "$keep" -eq 1 ] && continue
+      rm -rf "$adir/skills/$ob"
+      printf 'install.sh: .agents co-render: pruned stale mirrored skill skills/%s (authored by a prior co-render, absent from this build)\n' "$ob" >&2
+    done <<<"$old_managed"
+  fi
+
+  # The agents manifest = the codex manifest narrowed to its skills/ outputs,
+  # re-labeled. Sources stay as-recorded (same build inputs); jq -S keeps the
+  # emission deterministic, matching write_manifest.
+  jq -S '.harness = "agents" | .generated |= with_entries(select(.key | startswith("skills/")))' \
+    "$mani" > "$adir/.build-manifest.json" \
+    || die ".agents co-render: manifest write failed"
+  printf 'install.sh: co-rendered %d codex spine skill(s) into %s (byte-identical, drift-governed)\n' \
+    "${#bases[@]}" "$adir" >&2
+}
 # validate_build filled below in Step 2
 # fs_case_insensitive <dir> — exit 0 (true) if the filesystem backing <dir>
 # treats names case-insensitively (default macOS APFS, Windows). Probes by
@@ -1411,6 +1560,18 @@ main() {
   done
   rm -rf "$TARGET/.install-bak.d"
   printf 'install.sh: built %s harness into %s\n' "$HARNESS" "$TARGET" >&2
+
+  # Gemini/.agents co-render (codex-only; see corender_agents for the full
+  # rationale). Gated on AGENTS_DIR so operators without a Gemini overlay are
+  # untouched; the skip is loud so a configured-but-forgotten overlay is
+  # visible, never silently stale.
+  if [ "$HARNESS" = codex ]; then
+    if [ -n "${AGENTS_DIR:-}" ]; then
+      corender_agents
+    else
+      printf 'install.sh: AGENTS_DIR not set — skipping the .agents co-render (set it in local.env if a Gemini/.agents overlay should mirror the codex spine skills)\n' >&2
+    fi
+  fi
 
   # Catalog-honesty warn (claude-only): every skill dir living under
   # $TARGET/skills/ should appear backtick-quoted in the rendered SKILLS.md —

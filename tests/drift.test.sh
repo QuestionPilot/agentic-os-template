@@ -443,26 +443,118 @@ AU_ENV1="$AU_DIR/le-claude"; make_local_env "$AU_ENV1" "$AU_CLAUDE"
 AI_CONFIG_LOCAL_ENV="$AU_ENV1" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
 AU_ENV2="$AU_DIR/le-codex"; make_codex_env "$AU_ENV2" "$AU_CODEX"
 AI_CONFIG_LOCAL_ENV="$AU_ENV2" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>&1
+
+# .agents co-render fixture: a codex build with AGENTS_DIR set mirrors the
+# codex spine skills into the overlay byte-identically, preserves operator
+# subdirs (Shape C), and writes an "agents" manifest the --auto gate covers.
+# Space-containing path exercises the same local.env parse as the harness homes.
+AU_AGENTS="$AU_DIR/agents overlay"
+mkdir -p "$AU_AGENTS/skills/opskill"
+printf 'operator content — must survive the co-render\n' > "$AU_AGENTS/skills/opskill/SKILL.md"
+# A same-name subdir with NO prior agents manifest is a collision with
+# operator content — the co-render must replace it with an N1-style warn.
+mkdir -p "$AU_AGENTS/skills/session-agent"
+printf 'stale hand copy — must be replaced with a warn\n' > "$AU_AGENTS/skills/session-agent/SKILL.md"
+AU_ENV3="$AU_DIR/le-codex-agents"
+{ printf 'CODEX_HOME=%q\n' "$AU_CODEX"
+  printf 'OBSIDIAN_VAULT_PATH=%q\n' "/tmp/test-vault"
+  printf 'AGENTS_DIR=%q\n' "$AU_AGENTS"
+} > "$AU_ENV3"
+# --dry-run never touches the overlay (the co-render runs only on a real install).
+au_dry_out="$(AI_CONFIG_LOCAL_ENV="$AU_ENV3" bash "$REPO_ROOT/scripts/install.sh" --harness codex --dry-run 2>&1)"
+assert_not_contains "--dry-run performs no co-render" "$au_dry_out" "co-rendered"
+assert_exit "--dry-run writes no agents manifest" 1 -- test -f "$AU_AGENTS/.build-manifest.json"
+au_co_out="$(AI_CONFIG_LOCAL_ENV="$AU_ENV3" bash "$REPO_ROOT/scripts/install.sh" --harness codex 2>&1)"; au_co_rc=$?
+assert_eq "codex install with AGENTS_DIR set succeeds" "0" "$au_co_rc"
+assert_contains "codex install co-renders the spine skills into AGENTS_DIR" \
+  "$au_co_out" "co-rendered"
+assert_contains "co-render N1-warns when replacing an unauthored same-name subdir" \
+  "$au_co_out" "no prior co-render authored it"
+assert_exit "co-rendered session-agent is byte-identical to the codex render" 0 -- \
+  cmp -s "$AU_CODEX/skills/session-agent/SKILL.md" "$AU_AGENTS/skills/session-agent/SKILL.md"
+assert_exit "operator (Shape C) subdir in the overlay survives the co-render" 0 -- \
+  test -f "$AU_AGENTS/skills/opskill/SKILL.md"
+au_mani_harness="$(jq -r '.harness' "$AU_AGENTS/.build-manifest.json" 2>/dev/null)"
+assert_eq "agents manifest is labeled with its own harness name" "agents" "$au_mani_harness"
+
 AU_AUTO_ENV="$AU_DIR/local.env"
 { printf 'CLAUDE_CONFIG_DIR=%q\n' "$AU_CLAUDE"
   printf 'CODEX_HOME=%q\n' "$AU_CODEX"
+  printf 'AGENTS_DIR=%q\n' "$AU_AGENTS"
 } > "$AU_AUTO_ENV"
 
-au_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+au_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME -u AGENTS_DIR \
   AI_CONFIG_LOCAL_ENV="$AU_AUTO_ENV" \
   bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au_rc=$?
-assert_eq "--auto passes with two clean rendered homes" "0" "$au_rc"
+assert_eq "--auto passes with three clean rendered homes" "0" "$au_rc"
 assert_contains "--auto checked the claude home (local.env resolution, space in path)" \
   "$au_out" "checking claude render at $AU_CLAUDE"
 assert_contains "--auto checked the codex home (local.env resolution, space in path)" \
   "$au_out" "checking codex render at $AU_CODEX"
+assert_contains "--auto checked the agents co-render (local.env resolution, space in path)" \
+  "$au_out" "checking agents render at $AU_AGENTS"
 assert_contains "--auto skips the unset hermes home loudly" \
   "$au_out" "hermes (HERMES_HOME) not set; skipping"
+
+# A hand-edit to a MIRRORED skill in the overlay is drift like any other
+# render — the whole point of the agents manifest (a silent re-divergence
+# between .agents and $CODEX_HOME is what makes codex's duplicate-name
+# resolution ambiguous). The operator subdir stays exempt.
+printf '\nHAND EDIT\n' >> "$AU_AGENTS/skills/closeout/SKILL.md"
+au5_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME -u AGENTS_DIR \
+  AI_CONFIG_LOCAL_ENV="$AU_AUTO_ENV" \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au5_rc=$?
+assert_eq "--auto fails when the agents co-render drifts" "1" "$au5_rc"
+assert_contains "--auto names the hand-edited mirrored skill" \
+  "$au5_out" "skills/closeout/SKILL.md was hand-edited"
+# Re-running the codex install re-converges the mirror (the cure path).
+AI_CONFIG_LOCAL_ENV="$AU_ENV3" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>&1
+assert_exit "re-render re-converges the drifted mirror" 0 -- \
+  cmp -s "$AU_CODEX/skills/closeout/SKILL.md" "$AU_AGENTS/skills/closeout/SKILL.md"
+
+# Stale-prune: a base the PRIOR agents manifest authored but the new build no
+# longer produces must be deleted (panel finding — a removed spine capability
+# must not survive as an unmanaged skill). Ownership rule: only prior-managed
+# bases are pruned; the operator subdir stays.
+mkdir -p "$AU_AGENTS/skills/zzz-gone"
+printf 'stale managed copy\n' > "$AU_AGENTS/skills/zzz-gone/SKILL.md"
+jq '.generated["skills/zzz-gone/SKILL.md"] = "0000000000000000000000000000000000000000000000000000000000000000"' \
+  "$AU_AGENTS/.build-manifest.json" > "$AU_AGENTS/.build-manifest.json.tmp" \
+  && mv "$AU_AGENTS/.build-manifest.json.tmp" "$AU_AGENTS/.build-manifest.json"
+au_pr_out="$(AI_CONFIG_LOCAL_ENV="$AU_ENV3" bash "$REPO_ROOT/scripts/install.sh" --harness codex 2>&1)"
+assert_contains "co-render prunes a prior-managed base absent from the new build" \
+  "$au_pr_out" "pruned stale mirrored skill skills/zzz-gone"
+assert_exit "pruned stale base is gone from the overlay" 1 -- test -e "$AU_AGENTS/skills/zzz-gone"
+assert_exit "operator subdir survives the prune pass" 0 -- test -f "$AU_AGENTS/skills/opskill/SKILL.md"
+
+# Relative AGENTS_DIR is rejected up front — a relative spelling of the live
+# overlay would bypass the string-compare guard (panel finding).
+AU_ENV4="$AU_DIR/le-codex-agents-rel"
+{ printf 'CODEX_HOME=%q\n' "$AU_CODEX"
+  printf 'OBSIDIAN_VAULT_PATH=%q\n' "/tmp/test-vault"
+  printf 'AGENTS_DIR=%s\n' ".agents"
+} > "$AU_ENV4"
+au_rel_out="$(AI_CONFIG_LOCAL_ENV="$AU_ENV4" bash "$REPO_ROOT/scripts/install.sh" --harness codex 2>&1)"; au_rel_rc=$?
+assert_eq "relative AGENTS_DIR fails the install" "1" "$au_rel_rc"
+assert_contains "relative AGENTS_DIR rejection names the rule" \
+  "$au_rel_out" "must be an absolute path"
+
+# AGENTS_DIR aliasing the codex target is refused — the manifest rewrite
+# would truncate the very codex manifest it reads (panel finding).
+AU_ENV5="$AU_DIR/le-codex-agents-alias"
+{ printf 'CODEX_HOME=%q\n' "$AU_CODEX"
+  printf 'OBSIDIAN_VAULT_PATH=%q\n' "/tmp/test-vault"
+  printf 'AGENTS_DIR=%q\n' "$AU_CODEX"
+} > "$AU_ENV5"
+au_alias_out="$(AI_CONFIG_LOCAL_ENV="$AU_ENV5" bash "$REPO_ROOT/scripts/install.sh" --harness codex 2>&1)"; au_alias_rc=$?
+assert_eq "AGENTS_DIR == CODEX_HOME fails the install" "1" "$au_alias_rc"
+assert_contains "overlap rejection names the disjointness rule" \
+  "$au_alias_out" "must be disjoint"
 
 # Drift in ONE home fails the whole gate — and the other homes still get
 # checked (no fail-fast bail that would hide a second home's drift).
 printf '\nHAND EDIT\n' >> "$AU_CLAUDE/skills/session-agent/SKILL.md"
-au2_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+au2_out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME -u AGENTS_DIR \
   AI_CONFIG_LOCAL_ENV="$AU_AUTO_ENV" \
   bash "$REPO_ROOT/scripts/check-drift.sh" --auto 2>&1)"; au2_rc=$?
 assert_eq "--auto fails when one home drifts" "1" "$au2_rc"

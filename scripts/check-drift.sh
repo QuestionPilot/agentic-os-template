@@ -70,7 +70,10 @@ if [ "${1:-}" = "--auto" ]; then
   # tests can point --auto at a synthetic local.env instead of the operator's.
   auto_localenv="${AI_CONFIG_LOCAL_ENV:-$repo_root/local.env}"
   auto_failed=0
-  for auto_pair in "claude:CLAUDE_CONFIG_DIR" "codex:CODEX_HOME" "hermes:HERMES_HOME"; do
+  # "agents" is the codex pass's .agents co-render (install.sh corender_agents),
+  # not a harness of its own — but it has a manifest and hand-edits to it are
+  # drift like any other render, so it runs the same gate.
+  for auto_pair in "claude:CLAUDE_CONFIG_DIR" "codex:CODEX_HOME" "hermes:HERMES_HOME" "agents:AGENTS_DIR"; do
     auto_harness="${auto_pair%%:*}"; auto_var="${auto_pair#*:}"
     auto_dir="${!auto_var:-}"
     auto_src="env"

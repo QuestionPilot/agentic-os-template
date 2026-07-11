@@ -419,13 +419,14 @@ try {
 }
 
 # --- -Auto: multi-home drift gate (<TEAM>-394) --------------------------------
-# Twin of the bash --auto block. install.ps1 supports only the claude harness
-# on Windows, so the fixture renders one claude home (space in path exercises
-# the shared local.env parser) and asserts codex/hermes skip loudly. Env vars
-# saved/cleared/restored explicitly so resolution comes from the fixture
-# local.env, never runner machine state.
+# Twin of the bash --auto block. install.ps1 supports the claude AND codex
+# harnesses (<TEAM>-296), so the fixture renders a claude home, a codex home,
+# and the codex pass's .agents co-render (space in paths exercises the shared
+# local.env parser); hermes still skips loudly. Env vars saved/cleared/restored
+# explicitly so resolution comes from the fixture local.env, never runner
+# machine state.
 $AU_SAVED = @{}
-foreach ($v in @('CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME', 'AI_CONFIG_LOCAL_ENV')) {
+foreach ($v in @('CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'HERMES_HOME', 'AGENTS_DIR', 'AI_CONFIG_LOCAL_ENV')) {
     $AU_SAVED[$v] = [Environment]::GetEnvironmentVariable($v)
     Remove-Item "Env:$v" -ErrorAction SilentlyContinue
 }
@@ -439,29 +440,144 @@ try {
     & pwsh -NoProfile -File $INSTALL_PS1 --harness claude *>$null
     Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
 
-    # Synthetic auto local.env naming only the claude home.
+    # Codex home + .agents co-render fixture: a codex build with AGENTS_DIR set
+    # mirrors the codex spine skills into the overlay byte-identically,
+    # preserves operator subdirs (Shape C), and writes an "agents" manifest the
+    # -Auto gate covers. Twin of the bash au_co block.
+    $AU_CODEX = Join-Path $AU_ROOT 'codex home'
+    New-Item -ItemType Directory -Path $AU_CODEX -Force | Out-Null
+    $AU_AGENTS = Join-Path $AU_ROOT 'agents overlay'
+    New-Item -ItemType Directory -Path (Join-Path $AU_AGENTS 'skills' 'opskill') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $AU_AGENTS 'skills' 'opskill' 'SKILL.md') `
+        -Value 'operator content - must survive the co-render'
+    # A same-name subdir with NO prior agents manifest is a collision with
+    # operator content — the co-render must replace it with an N1-style warn.
+    New-Item -ItemType Directory -Path (Join-Path $AU_AGENTS 'skills' 'session-agent') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $AU_AGENTS 'skills' 'session-agent' 'SKILL.md') `
+        -Value 'stale hand copy - must be replaced with a warn'
+    $AU_ENV3 = Join-Path $AU_ROOT 'le-codex-agents'
+    $au_env3_lines = @(
+        "CODEX_HOME=`"$AU_CODEX`"",
+        "OBSIDIAN_VAULT_PATH=`"$(Join-Path $AU_ROOT 'vault')`"",
+        "AGENTS_DIR=`"$AU_AGENTS`""
+    )
+    [System.IO.File]::WriteAllText($AU_ENV3, (($au_env3_lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+    $env:AI_CONFIG_LOCAL_ENV = $AU_ENV3
+    # --dry-run never touches the overlay (the co-render runs only on a real install).
+    $au_dry_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness codex --dry-run 2>&1) -join "`n"
+    Assert-NotContains 'drift.test: --dry-run performs no co-render' $au_dry_out 'co-rendered'
+    Assert-Eq 'drift.test: --dry-run writes no agents manifest' 'False' `
+        "$(Test-Path -LiteralPath (Join-Path $AU_AGENTS '.build-manifest.json') -PathType Leaf)"
+    $au_co_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1) -join "`n"
+    $au_co_rc = $LASTEXITCODE
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+    Assert-Eq 'drift.test: codex install with AGENTS_DIR set succeeds' '0' "$au_co_rc"
+    Assert-Contains 'drift.test: codex install co-renders the spine skills into AGENTS_DIR' `
+        $au_co_out 'co-rendered'
+    Assert-Contains 'drift.test: co-render N1-warns when replacing an unauthored same-name subdir' `
+        $au_co_out 'no prior co-render authored it'
+    $au_hash_cx = (Get-FileHash -LiteralPath (Join-Path $AU_CODEX 'skills' 'session-agent' 'SKILL.md') -Algorithm SHA256).Hash
+    $au_hash_ag = (Get-FileHash -LiteralPath (Join-Path $AU_AGENTS 'skills' 'session-agent' 'SKILL.md') -Algorithm SHA256).Hash
+    Assert-Eq 'drift.test: co-rendered session-agent is byte-identical to the codex render' $au_hash_cx $au_hash_ag
+    Assert-File 'drift.test: operator (Shape C) subdir in the overlay survives the co-render' `
+        (Join-Path $AU_AGENTS 'skills' 'opskill' 'SKILL.md')
+    $au_mani = Get-Content -LiteralPath (Join-Path $AU_AGENTS '.build-manifest.json') -Raw | ConvertFrom-Json
+    Assert-Eq 'drift.test: agents manifest is labeled with its own harness name' 'agents' "$($au_mani.harness)"
+
+    # Synthetic auto local.env naming the claude + codex homes and the overlay.
     $AU_AUTO_ENV = Join-Path $AU_ROOT 'local.env'
     Write-LocalEnvFixture -EnvFile $AU_AUTO_ENV -ConfigDir $AU_CLAUDE -VaultDir (Join-Path $AU_ROOT 'vault')
+    $au_auto_extra = "CODEX_HOME=`"$AU_CODEX`"`nAGENTS_DIR=`"$AU_AGENTS`"`n"
+    [System.IO.File]::AppendAllText($AU_AUTO_ENV, $au_auto_extra, [System.Text.UTF8Encoding]::new($false))
     $env:AI_CONFIG_LOCAL_ENV = $AU_AUTO_ENV
 
     $au_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto 2>&1) -join "`n"
     $au_rc = $LASTEXITCODE
-    Assert-Eq 'drift.test: -Auto passes with a clean rendered claude home' '0' "$au_rc"
+    Assert-Eq 'drift.test: -Auto passes with three clean rendered homes' '0' "$au_rc"
     Assert-Contains 'drift.test: -Auto checked the claude home (local.env resolution, space in path)' `
         $au_out "checking claude render at $AU_CLAUDE"
-    Assert-Contains 'drift.test: -Auto skips the unset codex home loudly' `
-        $au_out 'codex (CODEX_HOME) not set; skipping'
+    Assert-Contains 'drift.test: -Auto checked the codex home (local.env resolution, space in path)' `
+        $au_out "checking codex render at $AU_CODEX"
+    Assert-Contains 'drift.test: -Auto checked the agents co-render (local.env resolution, space in path)' `
+        $au_out "checking agents render at $AU_AGENTS"
     Assert-Contains 'drift.test: -Auto skips the unset hermes home loudly' `
         $au_out 'hermes (HERMES_HOME) not set; skipping'
-    # Count-parity with the bash twin's codex-home assertion (install.ps1
-    # supports only the claude harness on Windows, so no codex render exists
-    # to check here — the bash lane carries the multi-home coverage).
-    _Skip 'drift.test: -Auto checks a codex render' 'install.ps1 supports only the claude harness on Windows'
+
+    # A hand-edit to a MIRRORED skill in the overlay is drift like any other
+    # render; a re-render re-converges the mirror. Twin of the bash au5 block.
+    [System.IO.File]::AppendAllText((Join-Path $AU_AGENTS 'skills' 'closeout' 'SKILL.md'), "`nHAND EDIT`n")
+    $au5_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto 2>&1) -join "`n"
+    $au5_rc = $LASTEXITCODE
+    Assert-Eq 'drift.test: -Auto fails when the agents co-render drifts' '1' "$au5_rc"
+    Assert-Contains 'drift.test: -Auto names the hand-edited mirrored skill' `
+        $au5_out 'skills/closeout/SKILL.md was hand-edited'
+    $env:AI_CONFIG_LOCAL_ENV = $AU_ENV3
+    & pwsh -NoProfile -File $INSTALL_PS1 --harness codex *>$null
+    $env:AI_CONFIG_LOCAL_ENV = $AU_AUTO_ENV
+    $au_rehash_cx = (Get-FileHash -LiteralPath (Join-Path $AU_CODEX 'skills' 'closeout' 'SKILL.md') -Algorithm SHA256).Hash
+    $au_rehash_ag = (Get-FileHash -LiteralPath (Join-Path $AU_AGENTS 'skills' 'closeout' 'SKILL.md') -Algorithm SHA256).Hash
+    Assert-Eq 'drift.test: re-render re-converges the drifted mirror' $au_rehash_cx $au_rehash_ag
+
+    # Stale-prune: a base the PRIOR agents manifest authored but the new build
+    # no longer produces must be deleted (panel finding). Ownership rule: only
+    # prior-managed bases are pruned; the operator subdir stays. Twin of the
+    # bash block.
+    New-Item -ItemType Directory -Path (Join-Path $AU_AGENTS 'skills' 'zzz-gone') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $AU_AGENTS 'skills' 'zzz-gone' 'SKILL.md') -Value 'stale managed copy'
+    $au_pr_mani = Join-Path $AU_AGENTS '.build-manifest.json'
+    $au_pr_obj = Get-Content -LiteralPath $au_pr_mani -Raw | ConvertFrom-Json
+    $au_pr_obj.generated | Add-Member -NotePropertyName 'skills/zzz-gone/SKILL.md' `
+        -NotePropertyValue '0000000000000000000000000000000000000000000000000000000000000000'
+    [System.IO.File]::WriteAllText($au_pr_mani, ($au_pr_obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+    $env:AI_CONFIG_LOCAL_ENV = $AU_ENV3
+    $au_pr_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1) -join "`n"
+    $env:AI_CONFIG_LOCAL_ENV = $AU_AUTO_ENV
+    Assert-Contains 'drift.test: co-render prunes a prior-managed base absent from the new build' `
+        $au_pr_out 'pruned stale mirrored skill skills/zzz-gone'
+    Assert-Eq 'drift.test: pruned stale base is gone from the overlay' 'False' `
+        "$(Test-Path -LiteralPath (Join-Path $AU_AGENTS 'skills' 'zzz-gone'))"
+    Assert-File 'drift.test: operator subdir survives the prune pass' `
+        (Join-Path $AU_AGENTS 'skills' 'opskill' 'SKILL.md')
+
+    # Relative AGENTS_DIR is rejected up front (panel finding). Twin of bash.
+    $AU_ENV4 = Join-Path $AU_ROOT 'le-codex-agents-rel'
+    $au_env4_lines = @(
+        "CODEX_HOME=`"$AU_CODEX`"",
+        "OBSIDIAN_VAULT_PATH=`"$(Join-Path $AU_ROOT 'vault')`"",
+        'AGENTS_DIR=.agents'
+    )
+    [System.IO.File]::WriteAllText($AU_ENV4, (($au_env4_lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+    $env:AI_CONFIG_LOCAL_ENV = $AU_ENV4
+    $au_rel_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1) -join "`n"
+    $au_rel_rc = $LASTEXITCODE
+    $env:AI_CONFIG_LOCAL_ENV = $AU_AUTO_ENV
+    Assert-Eq 'drift.test: relative AGENTS_DIR fails the install' '1' "$au_rel_rc"
+    Assert-Contains 'drift.test: relative AGENTS_DIR rejection names the rule' `
+        $au_rel_out 'must be an absolute path'
+
+    # AGENTS_DIR aliasing the codex target is refused (panel finding). Twin of bash.
+    $AU_ENV5 = Join-Path $AU_ROOT 'le-codex-agents-alias'
+    $au_env5_lines = @(
+        "CODEX_HOME=`"$AU_CODEX`"",
+        "OBSIDIAN_VAULT_PATH=`"$(Join-Path $AU_ROOT 'vault')`"",
+        "AGENTS_DIR=`"$AU_CODEX`""
+    )
+    [System.IO.File]::WriteAllText($AU_ENV5, (($au_env5_lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+    $env:AI_CONFIG_LOCAL_ENV = $AU_ENV5
+    $au_alias_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1) -join "`n"
+    $au_alias_rc = $LASTEXITCODE
+    $env:AI_CONFIG_LOCAL_ENV = $AU_AUTO_ENV
+    Assert-Eq 'drift.test: AGENTS_DIR == CODEX_HOME fails the install' '1' "$au_alias_rc"
+    Assert-Contains 'drift.test: overlap rejection names the disjointness rule' `
+        $au_alias_out 'must be disjoint'
 
     # Drift in the rendered home fails the gate.
     [System.IO.File]::AppendAllText((Join-Path $AU_CLAUDE 'skills' 'session-agent' 'SKILL.md'), "`nHAND EDIT`n")
-    & pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto *>$null
-    Assert-Eq 'drift.test: -Auto fails when a resolved home drifts' '1' "$LASTEXITCODE"
+    $au2_out = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --auto 2>&1) -join "`n"
+    $au2_rc = $LASTEXITCODE
+    Assert-Eq 'drift.test: -Auto fails when a resolved home drifts' '1' "$au2_rc"
+    Assert-Contains 'drift.test: -Auto still checks the clean codex home after the claude failure' `
+        $au2_out "checking codex render at $AU_CODEX"
 
     # Env var wins over local.env AND a resolved-but-unrendered home FAILS the
     # gate (panel F1: no missing-manifest fail-open). Twin of the bash case.
