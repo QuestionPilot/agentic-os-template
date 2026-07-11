@@ -77,6 +77,17 @@ When a design choice, a dependency or tool choice, or unfamiliar domain behavior
 
 This serves Boring is Beautiful — it does not override it. Search to find the smallest correct approach, not a reason to add tools, dependencies, or scope; a clearly local edit needs no survey. Completeness means a finished small lake, not a boiled one.
 
+## Delegating to subagents
+
+When work fans out to a delegated executor — a parallel subagent, a headless one-shot run, a lower-capability model — the brief for each delegated step carries a four-line contract, because happy-path plans strand cheap delegates on the hard 20%:
+
+1. **Success signal** — what the executor should see if the step worked.
+2. **Likeliest failure + countermove** — the most probable way it breaks, and the first move to make when it does.
+3. **Stop-when** — the conditions under which to stop and report rather than improvise around a blocker.
+4. **Flag the unverified** — name anything that could not be verified instead of presenting it as done.
+
+The brief fixes the destination and the guardrails; it does not script every step. A delegate carrying these four lines returns a clean, reported failure on the hard part instead of quietly inventing a workaround — which is exactly the 20% a happy-path plan leaves uncovered.
+
 ## Internal vs Boundary
 
 agentic-os-template's own source files (`capabilities/`, `core/`, `harnesses/<h>/*` pre-render) are **internal** — refactor freely, no compat shims for internal callers. The rendered output that lands at `$CLAUDE_CONFIG_DIR` (and `$CODEX_HOME` for the codex harness) is a **boundary** — older installs may carry stale hooks, settings, or skill files until the operator next re-renders.
