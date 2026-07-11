@@ -99,6 +99,23 @@ classification machinery for work that should never have shipped is wasted.
    realization names its concrete destination. No autonomous skill creation:
    the candidate row is the entire write; promotion stays manual via the trust
    contract above.
+
+   **Q3b — golden-session extraction (positive-lesson capture).** Was any
+   deliverable this session *unusually good* — a one-off result that came out
+   notably better than usual? This is the positive twin of Q1a's recall-failure
+   capture and complements Q3a's repeated-procedure capture: here the trigger
+   is quality, not repetition or failure. If yes, mine the session for the
+   *method* behind it — what was thought about (the framing, the decomposition,
+   the checks that were weighed) and how it was proven (the evidence that made
+   the result trustworthy). Route the extracted method to an EXISTING class as a
+   candidate, never an autonomous write: a `skill` candidate via the Q3a
+   candidate-row mechanism when the method is a repeatable procedure, or a
+   `playbook` proposal (new/updated workflow file — requires explicit user
+   approval, per the Lesson-classification table) when it is a workflow. If it
+   fits neither, capture it as an `obsidian` lesson (propose-don't-write).
+   Positive lessons strand more easily than failures because nothing forces
+   them to surface; naming the method is what lets a future session reproduce
+   the result deliberately instead of by luck.
 4. Does Linear need updating — a completed issue moved to Done, a status
    corrected, or a follow-up issue created? A follow-up issue created at
    closeout conforms to the canonical standard in
