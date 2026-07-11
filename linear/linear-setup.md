@@ -143,7 +143,22 @@ Both surfaces expose the same Linear semantics; the syntax differs.
 
 ### 4.1 Common commands — lineark CLI
 
+**Before guessing any subcommand or flag, run `lineark usage`.** It prints the
+entire command surface as one compact LLM-friendly reference — the authoritative
+source of truth for what commands and flags exist. Reach for `lineark <cmd>
+--help` only for the long-tail detail *after* `usage` has shown you the command
+exists; do **not** re-derive the surface by trying per-subcommand `--help` and
+inferring from failures. Two shapes that bite when guessed: comments are the
+**top-level** `lineark comments create <ISSUE> --body "<text>"` (not
+`issues comment`), and the subcommand groups are **plural**
+(`projects`/`issues`/`comments`/`labels`/`documents`) — `project-milestones` is
+the only hyphenated group. The examples below are the common cuts; `lineark
+usage` is the full list.
+
 ```bash
+# Full command reference — start here when unsure of a flag
+lineark usage
+
 # All projects (`projects list` carries no state field or state filter — only --led-by-me;
 # read one project's state via `projects read` below)
 lineark projects list --format json
