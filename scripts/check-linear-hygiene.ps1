@@ -10,34 +10,45 @@
     Answers: "do the workspace's OPEN issues meet the issue-creation standard
     in linear/issue-template.md?" Per open issue it flags: no-project,
     no-priority (the "No priority" default), no-labels, no-assignee, and
-    no-acceptance-criteria (description without an '## Acceptance criteria'
-    heading, case-insensitive).
+    no-acceptance-criteria (no '## Acceptance criteria' H2 heading —
+    line-anchored, case-insensitive, so a '###' heading or a prose mention
+    does not count).
+
+    The standard's documented escapes are honored: a body containing
+    "Deliberately projectless" / "Deliberately unassigned" (case-insensitive)
+    suppresses the corresponding gap — those are CONFORMING per
+    linear/issue-template.md. The escapes live in the description, so they
+    apply only to issues whose read succeeded.
+
+    SCOPE: the machine-visible subset of the standard. Team is enforced by
+    the create command itself; parent/relations and body completeness beyond
+    the AC heading are judgment calls the sweep does not police. The PASS
+    line claims exactly the checked fields. Open-only scope relies on
+    lineark's documented default of hiding Done/Canceled in `issues list`
+    (linear/linear-setup.md §4.1/§4.3).
 
     ADVISORY, WARN-only — never a gate. Deliberately NOT wired into
-    `make verify`: CI has no Linear token, and issue hygiene is workspace
-    state, not repo state. Run it manually or as part of a periodic hygiene
-    sweep; the fix is upgrading the flagged issues.
-
-    The list payload carries priority/labels/assignee but NOT project or
-    description, so those two checks need a per-issue read. Reads run
-    sequentially (Linear rate limits; linear/linear-setup.md §7), capped by
-    --max-reads; issues beyond the cap stay list-level-checked and are NAMED
-    as unchecked — no silent truncation.
+    `make verify`. Reads run sequentially, capped by --max-reads; issues
+    beyond the cap (or with a failed read) stay list-level-checked and are
+    NAMED as unchecked in BOTH output modes — no silent truncation.
 
 .PARAMETER MaxReads
     Cap on per-issue read calls for the project/body checks (default 50;
-    0 = list-level checks only).
+    0 = list-level checks only). Must be non-negative in this native form
+    too — a negative value exits 2 like any other bad argument.
 
 .PARAMETER List
-    Machine mode: one line per flagged issue, `IDENTIFIER<TAB>gap[,gap...]`.
-    Nothing when clean.
+    Machine mode: one line per flagged OR unchecked issue,
+    `IDENTIFIER<TAB>token[,token...]` — the five gap slugs plus `unchecked`.
+    Nothing when every issue is fully checked and clean.
 
 .NOTES
     Exit codes (BOTH modes), parity with the bash twin:
-      0  clean — no checked issue has a hygiene gap
+      0  clean — no evaluated issue has a hygiene gap (unchecked-only is clean)
       1  gaps  — at least one open issue has a hygiene gap (advisory WARN)
-      2  skip  — could not determine (no lineark / list call failed / bad
-                 argument). Callers treat exit 2 as "say nothing".
+      2  skip  — could not determine (no lineark / list call failed /
+                 unparseable payload / bad argument). Callers treat exit 2
+                 as "say nothing".
 
     Requires the lineark CLI (linear/linear-setup.md §3.2). Override the
     binary with $env:LINEARK_BIN — the hermetic tests inject a stub .ps1 that
@@ -84,6 +95,13 @@ while ($i -lt $Rest.Count) {
     }
 }
 
+# The native -MaxReads form bypasses the $Rest regex — validate it too, or a
+# negative cap silently marks every issue unchecked and returns a false PASS.
+if ($MaxReads -lt 0) {
+    [Console]::Error.WriteLine('check-linear-hygiene: --max-reads must be a non-negative integer')
+    exit 2
+}
+
 # skip <reason> — emit the reason (human mode only) and exit 2 (indeterminate).
 function Skip-Hygiene([string]$reason) {
     if (-not $List) { [Console]::Error.WriteLine("SKIP $reason") }
@@ -93,19 +111,23 @@ function Skip-Hygiene([string]$reason) {
 # Get-Field <obj> <name> — flatten a payload field to a display string: ''
 # for missing/null, joined names for Linear-MCP-shaped arrays/objects where
 # lineark returns flat strings (parity with the bash twin's jq s() helper).
+# Null-safe on array elements: a [null] entry contributes '', never a
+# StrictMode property-access crash.
 function Get-Field($obj, [string]$name) {
+    if ($null -eq $obj) { return '' }
     $p = $obj.PSObject.Properties[$name]
     if ($null -eq $p -or $null -eq $p.Value) { return '' }
     $v = $p.Value
     if ($v -is [array]) {
         return (($v | ForEach-Object {
-            if ($_ -is [string]) { $_ }
-            elseif ($null -ne $_.PSObject.Properties['name'] -and $null -ne $_.name) { $_.name }
+            if ($null -eq $_) { '' }
+            elseif ($_ -is [string]) { $_ }
+            elseif ($null -ne $_.PSObject.Properties['name'] -and $null -ne $_.PSObject.Properties['name'].Value) { "$($_.PSObject.Properties['name'].Value)" }
             else { "$_" }
         }) -join ', ')
     }
     if ($v -is [PSCustomObject]) {
-        if ($null -ne $v.PSObject.Properties['name'] -and $null -ne $v.name) { return "$($v.name)" }
+        if ($null -ne $v.PSObject.Properties['name'] -and $null -ne $v.PSObject.Properties['name'].Value) { return "$($v.PSObject.Properties['name'].Value)" }
         return "$v"
     }
     return "$v"
@@ -133,16 +155,19 @@ if ($total -eq 0) {
 
 $flagged = 0
 $reads = 0
+$evaluated = 0
+$malformed = 0
 $unchecked = @()
 
 foreach ($it in $issues) {
     $ident = Get-Field $it 'identifier'
-    if (-not $ident) { continue }
+    if (-not $ident) { $malformed++; continue }
+    $evaluated++
     $priority = Get-Field $it 'priority'
     $labels = Get-Field $it 'labels'
     $assignee = Get-Field $it 'assignee'
 
-    $gProject = $false; $gAc = $false
+    $gProject = $false; $gAc = $false; $isUnchecked = $false
     $gPriority = ($priority -eq '' -or $priority -eq 'No priority')
     $gLabels = ($labels -eq '')
     $gAssignee = ($assignee -eq '')
@@ -158,12 +183,19 @@ foreach ($it in $issues) {
             $proj = $robj.PSObject.Properties['project']
             if ($null -eq $proj -or $null -eq $proj.Value) { $gProject = $true }
             $desc = Get-Field $robj 'description'
-            if (-not $desc.ToLowerInvariant().Contains('## acceptance criteria')) { $gAc = $true }
+            if (-not [regex]::IsMatch($desc, '(?im)^##[ \t]+acceptance criteria')) { $gAc = $true }
+            # Standard-blessed escapes (issue-template.md): a stated reason in
+            # the body makes projectless / unassigned CONFORMING — suppress.
+            $descLc = $desc.ToLowerInvariant()
+            if ($gProject -and $descLc.Contains('deliberately projectless')) { $gProject = $false }
+            if ($gAssignee -and $descLc.Contains('deliberately unassigned')) { $gAssignee = $false }
         } else {
             # Read failed — project/body state is UNKNOWN, not a gap. Name it.
+            $isUnchecked = $true
             $unchecked += $ident
         }
     } else {
+        $isUnchecked = $true
         $unchecked += $ident
     }
 
@@ -173,31 +205,45 @@ foreach ($it in $issues) {
     if ($gLabels) { $gaps += 'no-labels' }
     if ($gAssignee) { $gaps += 'no-assignee' }
     if ($gAc) { $gaps += 'no-acceptance-criteria' }
-    if ($gaps.Count -gt 0) {
-        $flagged++
-        $joined = $gaps -join ','
-        if ($List) { Write-Output ("{0}`t{1}" -f $ident, $joined) }
-        else { Write-Output "WARN ${ident}: $joined" }
+    if ($gaps.Count -gt 0) { $flagged++ }
+    if ($List) {
+        $tokens = @($gaps)
+        if ($isUnchecked) { $tokens += 'unchecked' }
+        if ($tokens.Count -gt 0) {
+            Write-Output ("{0}`t{1}" -f $ident, ($tokens -join ','))
+        }
+    } elseif ($gaps.Count -gt 0) {
+        Write-Output "WARN ${ident}: $($gaps -join ',')"
     }
 }
 
-if ($unchecked.Count -gt 0 -and -not $List) {
-    Write-Output ("NOTE {0} open issue(s) not checked for project/body (read cap --max-reads={1}, or a failed read): {2}" -f `
-        $unchecked.Count, $MaxReads, ($unchecked -join ' '))
+# Shape audit — never let an identifier-less payload read as a clean verdict.
+if ($evaluated -eq 0) {
+    Skip-Hygiene "no parseable issues in list payload ($malformed of $total entries lack an identifier)"
+}
+
+if (-not $List) {
+    if ($malformed -gt 0) {
+        Write-Output ("NOTE {0} list entr(y/ies) without an identifier skipped" -f $malformed)
+    }
+    if ($unchecked.Count -gt 0) {
+        Write-Output ("NOTE {0} open issue(s) not checked for project/body (read cap --max-reads={1}, or a failed read): {2}" -f `
+            $unchecked.Count, $MaxReads, ($unchecked -join ' '))
+    }
 }
 
 if ($flagged -eq 0) {
     if (-not $List) {
-        if ($unchecked.Count -gt 0) {
-            Write-Output ("PASS {0} open issue(s) meet the standard on all checked fields ({1} unchecked for project/body)" -f $total, $unchecked.Count)
+        if ($unchecked.Count -gt 0 -or $malformed -gt 0) {
+            Write-Output ("PASS {0} evaluated open issue(s) clean on the checked fields ({1} unchecked for project/body)" -f $evaluated, $unchecked.Count)
         } else {
-            Write-Output ("PASS all {0} open issue(s) meet the issue-creation standard" -f $total)
+            Write-Output ("PASS all {0} open issue(s) clean on the checked fields (project, priority, labels, assignee, acceptance-criteria heading)" -f $evaluated)
         }
     }
     exit 0
 }
 
 if (-not $List) {
-    Write-Output ("SUMMARY {0} of {1} open issue(s) have hygiene gaps — advisory; the standard is linear/issue-template.md" -f $flagged, $total)
+    Write-Output ("SUMMARY {0} of {1} evaluated open issue(s) have hygiene gaps — advisory; the standard is linear/issue-template.md" -f $flagged, $evaluated)
 }
 exit 1

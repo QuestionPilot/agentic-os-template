@@ -7,8 +7,22 @@
 #   no-priority             (left at the "No priority" default)
 #   no-labels               (no label applied)
 #   no-assignee             (no owner)
-#   no-acceptance-criteria  (description has no '## Acceptance criteria' heading,
-#                            case-insensitive)
+#   no-acceptance-criteria  (description has no '## Acceptance criteria'
+#                            H2 heading — line-anchored, case-insensitive, so a
+#                            '###' heading or a prose mention does not count)
+#
+# The standard's documented escapes are honored: when the issue body contains
+# "Deliberately projectless" / "Deliberately unassigned" (case-insensitive),
+# the corresponding gap is suppressed — those are CONFORMING per
+# linear/issue-template.md. The escapes live in the description, so they can
+# only be honored for issues whose read succeeded (see --max-reads below).
+#
+# SCOPE: this checks the machine-visible subset of the standard. Team is
+# enforced by the create command itself; parent/relations and body-section
+# completeness beyond the AC heading are judgment calls the sweep does not
+# police. The PASS line claims exactly the checked fields, nothing more.
+# Open-only scope relies on lineark's documented default of hiding
+# Done/Canceled in `issues list` (linear/linear-setup.md §4.1/§4.3).
 #
 # ADVISORY, WARN-only — never a gate. Deliberately NOT wired into `make verify`:
 # CI has no Linear token, and issue hygiene is workspace state, not repo state.
@@ -21,24 +35,29 @@
 # testable.
 #
 # The list payload carries priority/labels/assignee but NOT project or
-# description, so those two checks need a per-issue read. Reads run
-# sequentially (Linear rate limits; see linear/linear-setup.md §7) and are
-# capped by --max-reads; issues beyond the cap are still list-level-checked
-# and are NAMED as unchecked — no silent truncation.
+# description, so those checks need a per-issue read. Reads run sequentially
+# (Linear rate limits; see linear/linear-setup.md §7) and are capped by
+# --max-reads; issues beyond the cap (or whose read fails) stay
+# list-level-checked and are NAMED as unchecked — no silent truncation, in
+# EITHER output mode.
 #
 # Usage:
 #   check-linear-hygiene.sh [--max-reads <n>] [--list]
 #
 #   --max-reads <n>  cap on per-issue read calls for the project/body checks
 #                    (default 50; 0 = list-level checks only).
-#   --list           machine mode: one line per flagged issue,
-#                    `IDENTIFIER<TAB>gap[,gap...]`. Nothing when clean.
+#   --list           machine mode: one line per flagged OR unchecked issue,
+#                    `IDENTIFIER<TAB>token[,token...]`. Tokens are the five
+#                    gap slugs above plus `unchecked` (project/body state
+#                    unknown — read capped or failed). Nothing when every
+#                    issue is fully checked and clean.
 #
 # Exit codes (BOTH modes):
-#   0  clean — no checked issue has a hygiene gap
+#   0  clean — no evaluated issue has a hygiene gap (unchecked-only is clean)
 #   1  gaps  — at least one open issue has a hygiene gap (advisory WARN)
 #   2  skip  — could not determine (no lineark / no jq / list call failed /
-#              bad argument). Callers treat exit 2 as "say nothing".
+#              unparseable payload / bad argument). Callers treat exit 2 as
+#              "say nothing".
 set -uo pipefail
 
 LINEARK_BIN="${LINEARK_BIN:-lineark}"
@@ -79,6 +98,9 @@ fi
 
 flagged=0
 reads=0
+rows_seen=0
+evaluated=0
+malformed=0
 unchecked=()
 
 # Iterate in the CURRENT shell via process substitution (not a pipe, which
@@ -87,9 +109,16 @@ unchecked=()
 # adjacent tabs from empty middle fields would collapse and misalign `read`.
 # The s() helper also tolerates the Linear-MCP-shaped payloads (arrays /
 # objects where lineark returns flat strings) rather than crashing @tsv.
+# rows_seen/evaluated are audited after the loop: a jq crash mid-stream or a
+# payload of identifier-less entries must yield skip (2), never a false PASS.
 while IFS=$'\t' read -r ident priority labels assignee; do
-  [ -n "$ident" ] && [ "$ident" != "-" ] || continue
-  g_project=0; g_priority=0; g_labels=0; g_assignee=0; g_ac=0
+  rows_seen=$((rows_seen + 1))
+  if [ -z "$ident" ] || [ "$ident" = "-" ]; then
+    malformed=$((malformed + 1))
+    continue
+  fi
+  evaluated=$((evaluated + 1))
+  g_project=0; g_priority=0; g_labels=0; g_assignee=0; g_ac=0; is_unchecked=0
   case "$priority" in "No priority"|"-") g_priority=1 ;; esac
   [ "$labels" = "-" ] && g_labels=1
   [ "$assignee" = "-" ] && g_assignee=1
@@ -99,12 +128,27 @@ while IFS=$'\t' read -r ident priority labels assignee; do
     if read_json="$("$LINEARK_BIN" issues read "$ident" --format json 2>/dev/null)" \
        && printf '%s' "$read_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
       printf '%s' "$read_json" | jq -e '.project != null' >/dev/null 2>&1 || g_project=1
-      printf '%s' "$read_json" | jq -e '(.description // "") | ascii_downcase | contains("## acceptance criteria")' >/dev/null 2>&1 || g_ac=1
+      # Line-anchored H2 match via split: this jq build's `^` anchors only at
+      # STRING start (no per-line anchoring), so test alone would miss any
+      # heading that is not the first line.
+      printf '%s' "$read_json" | jq -e '(.description // "") | split("\n") | map(test("^##[ \\t]+acceptance criteria"; "i")) | any' >/dev/null 2>&1 || g_ac=1
+      # Standard-blessed escapes (issue-template.md): a stated reason in the
+      # body makes projectless / unassigned CONFORMING — suppress those gaps.
+      if [ "$g_project" -eq 1 ] \
+         && printf '%s' "$read_json" | jq -e '(.description // "") | ascii_downcase | contains("deliberately projectless")' >/dev/null 2>&1; then
+        g_project=0
+      fi
+      if [ "$g_assignee" -eq 1 ] \
+         && printf '%s' "$read_json" | jq -e '(.description // "") | ascii_downcase | contains("deliberately unassigned")' >/dev/null 2>&1; then
+        g_assignee=0
+      fi
     else
       # Read failed — project/body state is UNKNOWN, not a gap. Name it.
+      is_unchecked=1
       unchecked+=("$ident")
     fi
   else
+    is_unchecked=1
     unchecked+=("$ident")
   fi
 
@@ -114,12 +158,18 @@ while IFS=$'\t' read -r ident priority labels assignee; do
   [ "$g_labels"   -eq 1 ] && gaps+=("no-labels")
   [ "$g_assignee" -eq 1 ] && gaps+=("no-assignee")
   [ "$g_ac"       -eq 1 ] && gaps+=("no-acceptance-criteria")
-  if [ "${#gaps[@]}" -gt 0 ]; then
-    flagged=$((flagged + 1))
-    joined="$(IFS=,; printf '%s' "${gaps[*]}")"
-    if [ "$MODE_LIST" -eq 1 ]; then
+  [ "${#gaps[@]}" -gt 0 ] && flagged=$((flagged + 1))
+  if [ "$MODE_LIST" -eq 1 ]; then
+    tokens=()
+    [ "${#gaps[@]}" -gt 0 ] && tokens=("${gaps[@]}")
+    [ "$is_unchecked" -eq 1 ] && tokens+=("unchecked")
+    if [ "${#tokens[@]}" -gt 0 ]; then
+      joined="$(IFS=,; printf '%s' "${tokens[*]}")"
       printf '%s\t%s\n' "$ident" "$joined"
-    else
+    fi
+  else
+    if [ "${#gaps[@]}" -gt 0 ]; then
+      joined="$(IFS=,; printf '%s' "${gaps[*]}")"
       printf 'WARN %s: %s\n' "$ident" "$joined"
     fi
   fi
@@ -132,23 +182,32 @@ done < <(printf '%s' "$list_json" | jq -r '
     | if . == "" then "-" else . end;
   .[] | [ s(.identifier), s(.priority), s(.labels), s(.assignee) ] | @tsv')
 
-if [ "${#unchecked[@]}" -gt 0 ] && [ "$MODE_LIST" -eq 0 ]; then
-  printf 'NOTE %s open issue(s) not checked for project/body (read cap --max-reads=%s, or a failed read): %s\n' \
-    "${#unchecked[@]}" "$MAX_READS" "${unchecked[*]}"
+# Stream/shape audit — never let a truncated or identifier-less payload read
+# as a clean verdict.
+[ "$rows_seen" -eq "$total" ] || skip "issues-list parse truncated ($rows_seen of $total rows processed)"
+[ "$evaluated" -gt 0 ] || skip "no parseable issues in list payload ($malformed of $total entries lack an identifier)"
+
+if [ "$MODE_LIST" -eq 0 ]; then
+  [ "$malformed" -gt 0 ] && \
+    printf 'NOTE %s list entr(y/ies) without an identifier skipped\n' "$malformed"
+  [ "${#unchecked[@]}" -gt 0 ] && \
+    printf 'NOTE %s open issue(s) not checked for project/body (read cap --max-reads=%s, or a failed read): %s\n' \
+      "${#unchecked[@]}" "$MAX_READS" "${unchecked[*]}"
 fi
 
 if [ "$flagged" -eq 0 ]; then
   if [ "$MODE_LIST" -eq 0 ]; then
-    if [ "${#unchecked[@]}" -gt 0 ]; then
-      printf 'PASS %s open issue(s) meet the standard on all checked fields (%s unchecked for project/body)\n' \
-        "$total" "${#unchecked[@]}"
+    if [ "${#unchecked[@]}" -gt 0 ] || [ "$malformed" -gt 0 ]; then
+      printf 'PASS %s evaluated open issue(s) clean on the checked fields (%s unchecked for project/body)\n' \
+        "$evaluated" "${#unchecked[@]}"
     else
-      printf 'PASS all %s open issue(s) meet the issue-creation standard\n' "$total"
+      printf 'PASS all %s open issue(s) clean on the checked fields (project, priority, labels, assignee, acceptance-criteria heading)\n' \
+        "$evaluated"
     fi
   fi
   exit 0
 fi
 
-[ "$MODE_LIST" -eq 1 ] || printf 'SUMMARY %s of %s open issue(s) have hygiene gaps — advisory; the standard is linear/issue-template.md\n' \
-  "$flagged" "$total"
+[ "$MODE_LIST" -eq 1 ] || printf 'SUMMARY %s of %s evaluated open issue(s) have hygiene gaps — advisory; the standard is linear/issue-template.md\n' \
+  "$flagged" "$evaluated"
 exit 1

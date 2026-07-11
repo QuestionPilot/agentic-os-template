@@ -9,10 +9,15 @@
 #
 # Hermetic: $LINEARK_BIN is pointed at a stub that serves fixture JSON from
 # its own directory — no live Linear access, no token. Verified here: clean→0,
-# gappy→1 with the exact gap list, --list machine mode, the --max-reads cap
-# (list-level checks still run; unchecked issues NAMED, project/body NOT
-# false-flagged), read-failure→unchecked-not-flagged, empty workspace→0, and
-# the fail-SOFT skip contract (exit 2) for no-lineark / failed-list / bad-arg.
+# gappy→1 with the exact gap list, --list machine mode (incl. the `unchecked`
+# token — no silent truncation in machine mode), the --max-reads cap at 0 and
+# at a partial boundary (list-level checks still run; unchecked issues NAMED,
+# never false-flagged for unread fields), the standard's deliberately-
+# projectless / deliberately-unassigned escapes, the line-anchored AC-heading
+# match (a '###' heading does not count), read-failure and non-object-read →
+# unchecked-not-flagged, null/identifier-less list entries (skipped + NOTEd,
+# all-malformed → skip 2), empty workspace→0, and the fail-SOFT skip contract
+# (exit 2) for no-jq / no-lineark / failed-list / non-array / bad-arg.
 #
 # Sourced by tests/run.sh — must not call exit or set -e/-u/pipefail.
 
@@ -71,8 +76,8 @@ o="$(LINEARK_BIN="$D1/stub" bash "$CLH" --list 2>/dev/null)"; rc=$?
 assert_eq "check-linear-hygiene: --list exits 1"    1 "$rc"
 assert_eq "check-linear-hygiene: --list line shape" "$(printf 'ABC-9\t%s' "$ALL_GAPS")" "$o"
 
-# --- mixed --max-reads 0: list-level gaps only; unchecked NAMED, project/body
-# --- NOT false-flagged ---------------------------------------------------------
+# --- mixed --max-reads 0: list-level gaps only; unchecked NAMED in BOTH modes,
+# --- project/body NOT false-flagged -------------------------------------------
 o="$(LINEARK_BIN="$D1/stub" bash "$CLH" --max-reads 0 2>/dev/null)"; rc=$?
 assert_eq           "check-linear-hygiene: --max-reads 0 still exits 1 (list-level gaps)" 1 "$rc"
 assert_contains     "check-linear-hygiene: --max-reads 0 flags list-level gaps only" \
@@ -81,6 +86,12 @@ assert_not_contains "check-linear-hygiene: --max-reads 0 does not false-flag pro
   "$o" "no-project"
 assert_contains     "check-linear-hygiene: --max-reads 0 names both unchecked issues" \
   "$o" "NOTE 2 open issue(s) not checked"
+o="$(LINEARK_BIN="$D1/stub" bash "$CLH" --max-reads 0 --list 2>/dev/null)"; rc=$?
+assert_eq       "check-linear-hygiene: --list --max-reads 0 exits 1" 1 "$rc"
+assert_contains "check-linear-hygiene: --list emits clean-but-unchecked issue" \
+  "$o" "$(printf 'ABC-1\tunchecked')"
+assert_contains "check-linear-hygiene: --list appends unchecked to gappy issue tokens" \
+  "$o" "$(printf 'ABC-9\tno-priority,no-labels,no-assignee,unchecked')"
 rm -rf "$D1"
 
 # --- clean workspace: PASS, exit 0, empty --list ------------------------------
@@ -100,6 +111,54 @@ assert_eq       "check-linear-hygiene: clean --list exits 0" 0 "$rc"
 assert_eq       "check-linear-hygiene: clean --list is empty" "" "$o"
 rm -rf "$D2"
 
+# --- standard's escapes: deliberately projectless + unassigned conform --------
+D6="$(mktemp -d)"; clh_stub "$D6"
+cat > "$D6/list.json" <<'EOF'
+[{"identifier": "ABC-3", "priority": "Medium", "labels": "Improvement", "assignee": "", "state": "Backlog"}]
+EOF
+cat > "$D6/read-ABC-3.json" <<'EOF'
+{"identifier": "ABC-3", "project": null,
+ "description": "## Outcome\n\nx. Deliberately projectless: standalone maintenance sweep. Deliberately unassigned: next free agent picks it up.\n\n## Acceptance criteria\n\n- [ ] y\n"}
+EOF
+o="$(LINEARK_BIN="$D6/stub" bash "$CLH" 2>/dev/null)"; rc=$?
+assert_eq           "check-linear-hygiene: documented escapes exit 0"    0 "$rc"
+assert_not_contains "check-linear-hygiene: stated projectless not flagged" "$o" "no-project"
+assert_not_contains "check-linear-hygiene: stated unassigned not flagged"  "$o" "no-assignee"
+rm -rf "$D6"
+
+# --- AC heading is line-anchored H2: '###' or prose mention does NOT count ----
+D7="$(mktemp -d)"; clh_stub "$D7"
+cat > "$D7/list.json" <<'EOF'
+[{"identifier": "ABC-7", "priority": "High", "labels": "Bug", "assignee": "Owner", "state": "Backlog"}]
+EOF
+cat > "$D7/read-ABC-7.json" <<'EOF'
+{"identifier": "ABC-7", "project": {"id": "p1", "name": "Some Project"},
+ "description": "### Acceptance criteria\n\n- x\n\nprose saying ## acceptance criteria inline does not count\n"}
+EOF
+o="$(LINEARK_BIN="$D7/stub" bash "$CLH" 2>/dev/null)"; rc=$?
+assert_eq       "check-linear-hygiene: H3/prose AC mention exits 1"      1 "$rc"
+assert_contains "check-linear-hygiene: H3/prose AC mention is flagged"   "$o" "WARN ABC-7: no-acceptance-criteria"
+rm -rf "$D7"
+
+# --- partial read cap (--max-reads 1): first read, second NAMED unchecked -----
+D8="$(mktemp -d)"; clh_stub "$D8"
+cat > "$D8/list.json" <<'EOF'
+[
+  {"identifier": "ABC-1", "priority": "High", "labels": "Feature", "assignee": "Owner", "state": "Backlog"},
+  {"identifier": "ABC-5", "priority": "Low", "labels": "Improvement", "assignee": "Owner", "state": "Backlog"}
+]
+EOF
+cat > "$D8/read-ABC-1.json" <<'EOF'
+{"identifier": "ABC-1", "project": {"id": "p1", "name": "Some Project"},
+ "description": "## Acceptance criteria\n\n- [ ] y\n"}
+EOF
+o="$(LINEARK_BIN="$D8/stub" bash "$CLH" --max-reads 1 2>/dev/null)"; rc=$?
+assert_eq           "check-linear-hygiene: partial cap exits 0"          0 "$rc"
+assert_contains     "check-linear-hygiene: partial cap names the capped issue" "$o" "ABC-5"
+assert_contains     "check-linear-hygiene: partial cap NOTE counts 1"    "$o" "NOTE 1 open issue(s) not checked"
+assert_not_contains "check-linear-hygiene: partial cap does not flag the read issue" "$o" "WARN ABC-1"
+rm -rf "$D8"
+
 # --- read failure: list-level clean, read fixture missing → unchecked, exit 0 -
 D3="$(mktemp -d)"; clh_stub "$D3"
 cat > "$D3/list.json" <<'EOF'
@@ -109,7 +168,34 @@ o="$(LINEARK_BIN="$D3/stub" bash "$CLH" 2>/dev/null)"; rc=$?
 assert_eq       "check-linear-hygiene: read-failure exits 0 (unknown is not a gap)" 0 "$rc"
 assert_contains "check-linear-hygiene: read-failure names the unchecked issue" "$o" "ABC-2"
 assert_contains "check-linear-hygiene: read-failure PASS is qualified" "$o" "1 unchecked for project/body"
+# non-object read payload → same unchecked path, and --list carries the token
+cat > "$D3/read-ABC-2.json" <<'EOF'
+[1, 2]
+EOF
+o="$(LINEARK_BIN="$D3/stub" bash "$CLH" --list 2>/dev/null)"; rc=$?
+assert_eq "check-linear-hygiene: non-object read exits 0 (unchecked, not a gap)" 0 "$rc"
+assert_eq "check-linear-hygiene: --list names non-object-read issue unchecked" \
+  "$(printf 'ABC-2\tunchecked')" "$o"
 rm -rf "$D3"
+
+# --- null / identifier-less list entries: skipped + NOTEd; all-malformed → 2 --
+D9="$(mktemp -d)"; clh_stub "$D9"
+cat > "$D9/list.json" <<'EOF'
+[null, {"identifier": "ABC-1", "priority": "High", "labels": "Feature", "assignee": "Owner", "state": "Backlog"}]
+EOF
+cat > "$D9/read-ABC-1.json" <<'EOF'
+{"identifier": "ABC-1", "project": {"id": "p1", "name": "Some Project"},
+ "description": "## Acceptance criteria\n\n- [ ] y\n"}
+EOF
+o="$(LINEARK_BIN="$D9/stub" bash "$CLH" 2>/dev/null)"; rc=$?
+assert_eq       "check-linear-hygiene: null list entry exits 0"          0 "$rc"
+assert_contains "check-linear-hygiene: null list entry NOTEd as malformed" "$o" "NOTE 1 list entr"
+cat > "$D9/list.json" <<'EOF'
+[{}, null]
+EOF
+o="$(LINEARK_BIN="$D9/stub" bash "$CLH" 2>/dev/null)"; rc=$?
+assert_eq "check-linear-hygiene: all-malformed payload exits 2 (skip, not false PASS)" 2 "$rc"
+rm -rf "$D9"
 
 # --- empty workspace ----------------------------------------------------------
 D4="$(mktemp -d)"; clh_stub "$D4"
@@ -121,6 +207,12 @@ rm -rf "$D4"
 
 # --- skip contract: fail-SOFT exit 2, never a crash or false verdict ----------
 D5="$(mktemp -d)"
+# jq unavailable (empty PATH dir; LINEARK_BIN is absolute so only jq lookup
+# fails). Invoke via "$BASH" — an assignment-prefixed PATH also governs the
+# COMMAND lookup itself, so a bare `bash` would resolve to nothing (rc 127).
+clh_stub "$D5"; printf '[]\n' > "$D5/list.json"
+PATH="$D5/emptypath" LINEARK_BIN="$D5/stub" "${BASH:-bash}" "$CLH" >/dev/null 2>&1; rc=$?
+assert_eq "check-linear-hygiene: missing jq exits 2 (skip)" 2 "$rc"
 LINEARK_BIN="$D5/does-not-exist" bash "$CLH" >/dev/null 2>&1; rc=$?
 assert_eq "check-linear-hygiene: missing lineark exits 2 (skip)" 2 "$rc"
 cat > "$D5/broken" <<'EOF'
@@ -143,4 +235,6 @@ bash "$CLH" --max-reads >/dev/null 2>&1; rc=$?
 assert_eq "check-linear-hygiene: value-less --max-reads exits 2" 2 "$rc"
 bash "$CLH" --max-reads abc >/dev/null 2>&1; rc=$?
 assert_eq "check-linear-hygiene: non-numeric --max-reads exits 2" 2 "$rc"
+bash "$CLH" --max-reads -1 >/dev/null 2>&1; rc=$?
+assert_eq "check-linear-hygiene: negative --max-reads exits 2" 2 "$rc"
 rm -rf "$D5"

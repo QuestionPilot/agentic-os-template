@@ -231,7 +231,8 @@ project must exist **before execution**. Create it to the canonical standard in
 `$AI_CONFIG_DIR/linear/issue-template.md` — BOTH halves, at create time: the
 required-metadata checklist (team; project, or an explicit
 deliberately-projectless reason in the body; a deliberate priority — never the
-default "No priority"; at least one label; an assignee; parent/relations when
+default "No priority"; at least one label; an assignee, or the standard's
+stated deliberately-unassigned reason; parent/relations when
 the issue is spawned by other tracked work) AND the structured body (outcome,
 scope, acceptance criteria, verification, links). A title + prose-blob issue
 is nonconforming even when the prose is good. Create it via the operator's

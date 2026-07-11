@@ -67,7 +67,13 @@ relations, not prose only. Omit this section when the issue is standalone.
 ## Hygiene check
 
 The advisory `scripts/check-linear-hygiene.sh` (PowerShell twin:
-`check-linear-hygiene.ps1`) sweeps the workspace's open issues against this
-standard and WARNs on gaps — missing project, default priority, no labels, no
-assignee, or a body without an `## Acceptance criteria` heading. It is a soft
-signal, never a gate.
+`check-linear-hygiene.ps1`) sweeps the workspace's open issues against the
+machine-visible subset of this standard and WARNs on gaps — missing project,
+default priority, no labels, no assignee, or a body without an
+`## Acceptance criteria` H2 heading. The documented escapes above are honored:
+a body stating `Deliberately projectless: <reason>` or
+`Deliberately unassigned: <reason>` suppresses the corresponding warning.
+Fields the sweep does not police: team (the create command enforces it),
+parent/relations and body completeness beyond the AC heading (judgment calls).
+Issues it could not fully read are named `unchecked`, never silently skipped.
+It is a soft signal, never a gate.

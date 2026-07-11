@@ -54,8 +54,9 @@ to whoever executes the draft.
 Set the metadata at create time: team; project (or an explicit
 `Deliberately projectless: <reason>` line in the body); a deliberate priority —
 never the default "No priority"; at least one label from `labels.md`; an
-assignee; and parent or blocking/related relations when the issue is spawned by
-other tracked work.
+assignee (or the standard's stated `Deliberately unassigned: <reason>` line);
+and parent or blocking/related relations when the issue is spawned by other
+tracked work.
 
 Each issue should be executable by a future agent without rereading the whole conversation:
 

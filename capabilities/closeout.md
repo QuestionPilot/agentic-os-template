@@ -93,10 +93,13 @@ classification machinery for work that should never have shipped is wasted.
    closeout conforms to the canonical standard in
    `$AI_CONFIG_DIR/linear/issue-template.md` — full metadata at create time
    (project, deliberate priority, at least one label, assignee, a relation
-   back to the spawning issue) plus the structured body. Closeout speed is
-   how bare issues are born: an issue spun out of a finishing session with
-   title + prose alone strands its metadata on whoever picks it up. The
-   issue's `state-delta` line records it as created `to-standard`.
+   back to the spawning issue; the template's deliberately-projectless /
+   deliberately-unassigned escapes apply) plus the structured body. Closeout
+   speed is how bare issues are born: an issue spun out of a finishing session
+   with title + prose alone strands its metadata on whoever picks it up. The
+   issue's `state-delta` line records it as created `to-standard` (a
+   draft-only session with no write surface records the draft as
+   `drafted-to-standard` instead — the issue does not exist yet).
 
    **Q4a — project-note closeout edit.** If a Linear project transitioned to
    Completed (or Canceled) this session, the vault's project note gets its
