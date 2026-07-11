@@ -83,12 +83,12 @@ When work fans out to a delegated executor — a parallel subagent, a headless o
 
 1. **Success signal** — what the executor should see if the step worked.
 2. **Likeliest failure + countermove** — the most probable way it breaks, and the first move to make when it does.
-3. **Stop-when** — the conditions under which to stop and report rather than improvise around a blocker.
+3. **Stop-when** — the conditions under which to stop and report rather than improvise around a blocker. The list adds task-specific tripwires on top of the standing default — an unlisted blocker, and any irreversible or outward-facing action the brief does not explicitly grant, is also a stop, never a license to improvise.
 4. **Flag the unverified** — name anything that could not be verified instead of presenting it as done.
 
 The brief fixes the destination and the guardrails; it does not script every step. A delegate carrying these four lines returns a clean, reported failure on the hard part instead of quietly inventing a workaround — which is exactly the 20% a happy-path plan leaves uncovered.
 
-Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kernel.md)) as the standard preamble for delegated work — a compact restatement of the operating gates for executors that do not carry the full spine (subagents, headless one-shot runs, smaller-model renders). The kernel sets the posture (scope with a check, evidence before reasoning, adversarial self-review, verify at the claim layer, calibrated reporting); the four-line brief above sets the destination and guardrails for the specific step. Do not inject the kernel into full-spine sessions, which already carry these gates.
+Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kernel.md)) as the standard preamble for delegated work — a compact restatement of the operating gates for executors that do not carry the full spine (subagents, headless one-shot runs, smaller-model renders). Prepend only the kernel's gate block (the file marks where the preamble starts — the delegator-facing intro stays behind). The kernel sets the posture (scope with a check, evidence before reasoning, adversarial self-review, verify at the claim layer, authority boundary, calibrated reporting); the four-line brief above sets the destination and guardrails for the specific step. Do not inject the kernel into full-spine sessions, which already carry these gates.
 
 ## Internal vs Boundary
 
