@@ -88,6 +88,8 @@ When work fans out to a delegated executor — a parallel subagent, a headless o
 
 The brief fixes the destination and the guardrails; it does not script every step. A delegate carrying these four lines returns a clean, reported failure on the hard part instead of quietly inventing a workaround — which is exactly the 20% a happy-path plan leaves uncovered.
 
+Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kernel.md)) as the standard preamble for delegated work — a compact restatement of the operating gates for executors that do not carry the full spine (subagents, headless one-shot runs, smaller-model renders). The kernel sets the posture (scope with a check, evidence before reasoning, adversarial self-review, verify at the claim layer, calibrated reporting); the four-line brief above sets the destination and guardrails for the specific step. Do not inject the kernel into full-spine sessions, which already carry these gates.
+
 ## Internal vs Boundary
 
 agentic-os-template's own source files (`capabilities/`, `core/`, `harnesses/<h>/*` pre-render) are **internal** — refactor freely, no compat shims for internal callers. The rendered output that lands at `$CLAUDE_CONFIG_DIR` (and `$CODEX_HOME` for the codex harness) is a **boundary** — older installs may carry stale hooks, settings, or skill files until the operator next re-renders.
