@@ -99,6 +99,28 @@ classification machinery for work that should never have shipped is wasted.
    realization names its concrete destination. No autonomous skill creation:
    the candidate row is the entire write; promotion stays manual via the trust
    contract above.
+
+   **Q3b — golden-session extraction (positive-lesson capture).** Was any
+   deliverable this session *unusually good* — notably better than the usual
+   bar? Name the observable signal that says so (operator reaction, a
+   comparative result, an independent review) — a retrospective vibe is not a
+   trigger. This is the positive counterpart of Q1a's recall-failure capture
+   and complements Q3a's repeated-procedure capture: here the trigger is
+   quality, not repetition or failure. If it fires, mine the session for the
+   *method* behind the result — what was thought about (the framing, the
+   decomposition, the checks that were weighed) and how it was proven (the
+   evidence that made the result trustworthy), labeling the reconstruction as
+   inferred unless the session demonstrates it — then classify the method
+   through the Lesson-classification table like any other lesson, exactly one
+   class. The common landings: a `skill` candidate via the Q3a candidate-row
+   mechanism (a repeatable procedure) or a `playbook` proposal (a workflow);
+   any other class the table assigns is equally valid. Write boundary: the
+   Q3a catalog candidate row is the ONLY direct write on this path — every
+   other landing is proposal-only (propose path + body, explicit user approval
+   before any write). A method that fires both Q3a and Q3b is one lesson —
+   log it once. Positive lessons strand more easily than failures because
+   nothing forces them to surface; naming the method is what lets a future
+   session reproduce the result deliberately instead of by luck.
 4. Does Linear need updating — a completed issue moved to Done, a status
    corrected, or a follow-up issue created? A follow-up issue created at
    closeout conforms to the canonical standard in
