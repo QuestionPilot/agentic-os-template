@@ -1051,6 +1051,164 @@ function Write-Manifest {
     Write-LfFile -Path (Join-Path $BUILD '.build-manifest.json') -Content $sorted
 }
 
+# Invoke-AgentsCorender — mirrors the just-installed codex spine skills into
+# the repo-level Gemini overlay dir ($env:AGENTS_DIR, conventionally
+# <repo>/.agents) byte-identically, with an "agents"-harness manifest so
+# check-drift -Auto governs the copy like any other render. Mirrors
+# install.sh's corender_agents — see that function for the full rationale
+# (Codex >=0.14x discovers repo-root .agents/skills alongside
+# $CODEX_HOME/skills; byte-identity keeps the duplicate-name collision
+# harmless while Gemini stays fully equipped; the manifest makes hand-edits
+# visible as drift instead of a silent re-divergence). Runs only for
+# -Harness codex on a real install, and only when AGENTS_DIR is set.
+function Invoke-AgentsCorender {
+    $adir = $env:AGENTS_DIR.TrimEnd('/', '\')
+    $mani = Join-Path $TARGET '.build-manifest.json'
+    if (-not (Test-Path -LiteralPath $mani -PathType Leaf)) {
+        Die ".agents co-render: codex manifest missing at $mani"
+    }
+
+    # A relative AGENTS_DIR resolves against an unpredictable CWD — and a
+    # relative spelling of the live overlay would slip past the compare guard
+    # below (panel finding). Absolute only, like every other target var.
+    if (-not [System.IO.Path]::IsPathRooted($adir)) {
+        Die ".agents co-render: AGENTS_DIR must be an absolute path (got '$adir') — set it absolute in local.env"
+    }
+
+    # Canonicalize even when the leaf does not exist yet: physically resolve
+    # the deepest EXISTING ancestor, then re-append the remainder. A plain
+    # exists-only canonicalization lets a symlinked ancestor or dot-segments
+    # in a not-yet-created path alias the live overlay past the guard (panel
+    # finding). Mirrors the bash twin.
+    $acmp = $adir
+    $walk = $adir; $tail = ''
+    while (-not (Test-Path -LiteralPath $walk -PathType Container)) {
+        $parent = Split-Path -Parent $walk
+        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $walk) { break }
+        $leaf = Split-Path -Leaf $walk
+        $tail = if ($tail) { Join-Path $leaf $tail } else { $leaf }
+        $walk = $parent
+    }
+    if (Test-Path -LiteralPath $walk -PathType Container) {
+        $walkResolved = (Resolve-Path -LiteralPath $walk).Path
+        $acmp = if ($tail) { Join-Path $walkResolved $tail } else { $walkResolved }
+    }
+    $acmp = $acmp.TrimEnd('/', '\')
+
+    # The overlay must be disjoint from the codex target: with
+    # AGENTS_DIR == CODEX_HOME the manifest rewrite below would replace the
+    # codex manifest with the narrowed agents one, destroying drift
+    # governance for the codex home (panel finding). Nested either way is
+    # the same corruption class. Mirrors the bash twin.
+    $tgtResolved = if (Test-Path -LiteralPath $TARGET -PathType Container) {
+        (Resolve-Path -LiteralPath $TARGET).Path.TrimEnd('/', '\')
+    } else { $TARGET.TrimEnd('/', '\') }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    if (($acmp -eq $tgtResolved) -or $acmp.StartsWith("$tgtResolved$sep", [StringComparison]::Ordinal)) {
+        Die ".agents co-render: AGENTS_DIR ($acmp) must be disjoint from the codex target ($tgtResolved) — the mirror cannot live at or inside `$CODEX_HOME"
+    }
+    if ($tgtResolved.StartsWith("$acmp$sep", [StringComparison]::Ordinal)) {
+        Die ".agents co-render: the codex target ($tgtResolved) lies inside AGENTS_DIR ($acmp) — the mirror must be disjoint from `$CODEX_HOME"
+    }
+
+    # Same live-dir guard rule as the main target (bash twin parity): a
+    # throwaway local.env build must never write the repo's live overlay.
+    if (($env:AI_CONFIG_ALLOW_LIVE_TARGET -ne '1') -and (-not $isDefaultEnv)) {
+        $liveAgents = Join-Path $repoRoot '.agents'
+        if (Test-Path -LiteralPath $liveAgents -PathType Container) {
+            $liveAgents = (Resolve-Path -LiteralPath $liveAgents).Path
+        }
+        if ($acmp -eq $liveAgents.TrimEnd('/', '\')) {
+            Die "refusing the .agents co-render into the live overlay $acmp — this build uses a throwaway local.env ($LOCAL_ENV) but AGENTS_DIR resolved to the live dir. Set AGENTS_DIR to a temp dir in the local.env; set AI_CONFIG_ALLOW_LIVE_TARGET=1 to override."
+        }
+    }
+
+    $maniObj = Get-Content -LiteralPath $mani -Raw | ConvertFrom-Json
+    $bases = @($maniObj.generated.PSObject.Properties.Name |
+        Where-Object { $_.StartsWith('skills/', [StringComparison]::Ordinal) } |
+        ForEach-Object { ($_ -split '/')[1] } |
+        Select-Object -Unique)
+    [Array]::Sort($bases, [System.StringComparer]::Ordinal)
+    if ($bases.Count -eq 0) {
+        Warn ".agents co-render: codex build generated no skills — nothing to mirror"
+        return
+    }
+
+    $adirSkills = Join-Path $adir 'skills'
+    New-Item -ItemType Directory -Path $adirSkills -Force -ErrorAction Stop | Out-Null
+
+    # Stage the full copy before touching any live subdir, so a mid-copy
+    # failure leaves the overlay exactly as it was.
+    $stage = Join-Path $adir ('.agents-corender.' + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $stage -Force -ErrorAction Stop | Out-Null
+    foreach ($b in $bases) {
+        try {
+            Copy-Item -LiteralPath (Join-Path (Join-Path $TARGET 'skills') $b) `
+                -Destination (Join-Path $stage $b) -Recurse -ErrorAction Stop
+        } catch {
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+            Die ".agents co-render: staging copy of skills/$b failed: $($_.Exception.Message)"
+        }
+    }
+
+    # N1-style honesty (mirrors the swap path): replacing a live subdir no
+    # prior co-render authored is a name collision with operator content —
+    # warn, but the framework copy still wins (lockstep with $CODEX_HOME is
+    # the contract).
+    $oldManaged = @()
+    $oldMani = Join-Path $adir '.build-manifest.json'
+    if (Test-Path -LiteralPath $oldMani -PathType Leaf) {
+        try {
+            $oldObj = Get-Content -LiteralPath $oldMani -Raw | ConvertFrom-Json
+            $oldManaged = @($oldObj.generated.PSObject.Properties.Name |
+                Where-Object { $_.StartsWith('skills/', [StringComparison]::Ordinal) } |
+                ForEach-Object { ($_ -split '/')[1] } |
+                Select-Object -Unique)
+        } catch { $oldManaged = @() }
+    }
+    foreach ($b in $bases) {
+        $live = Join-Path $adirSkills $b
+        if ((Test-Path -LiteralPath $live) -and ($oldManaged -notcontains $b)) {
+            Warn ".agents co-render: replacing $live (existed but no prior co-render authored it — the mirror must stay in lockstep with the codex render)"
+        }
+        if (Test-Path -LiteralPath $live) {
+            Remove-Item -LiteralPath $live -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        try {
+            Move-Item -LiteralPath (Join-Path $stage $b) -Destination $live -ErrorAction Stop
+        } catch {
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+            Die ".agents co-render: activate of skills/$b failed: $($_.Exception.Message)"
+        }
+    }
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Prune bases a PRIOR co-render authored that this build no longer
+    # produces — a removed/renamed spine capability must not survive in the
+    # overlay as an unmanaged skill (panel finding). Only prior-manifest-
+    # managed bases are ever deleted; operator content is untouched. Mirrors
+    # the bash twin.
+    foreach ($ob in $oldManaged) {
+        if ([string]::IsNullOrEmpty($ob)) { continue }
+        if ($bases -contains $ob) { continue }
+        $stalePath = Join-Path $adirSkills $ob
+        if (Test-Path -LiteralPath $stalePath) {
+            Remove-Item -LiteralPath $stalePath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        [Console]::Error.WriteLine("install.ps1: .agents co-render: pruned stale mirrored skill skills/$ob (authored by a prior co-render, absent from this build)")
+    }
+
+    # The agents manifest = the codex manifest narrowed to its skills/ outputs,
+    # re-labeled. jq -S keeps the emission byte-parity with the bash twin.
+    $json = Get-Content -LiteralPath $mani -Raw
+    $sortedOut = $json | & $script:JqBin -S '.harness = "agents" | .generated |= with_entries(select(.key | startswith("skills/")))'
+    if ($LASTEXITCODE -ne 0) { Die ".agents co-render: manifest write failed" }
+    $sorted = if ($sortedOut -is [array]) { $sortedOut -join "`n" } else { $sortedOut }
+    if (-not $sorted) { Die ".agents co-render: manifest canonicalization produced empty output" }
+    Write-LfFile -Path (Join-Path $adir '.build-manifest.json') -Content $sorted
+    [Console]::Error.WriteLine("install.ps1: co-rendered $($bases.Count) codex spine skill(s) into $adir (byte-identical, drift-governed)")
+}
+
 # ---------------------------------------------------------------------------
 # validate_build — sanity-check before swap.
 # ---------------------------------------------------------------------------
@@ -1805,6 +1963,18 @@ try {
     Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
 
     [Console]::Error.WriteLine("install.ps1: built $Harness harness into $TARGET")
+
+    # Gemini/.agents co-render (codex-only; see Invoke-AgentsCorender for the
+    # full rationale). Gated on AGENTS_DIR so operators without a Gemini
+    # overlay are untouched; the skip is loud so a configured-but-forgotten
+    # overlay is visible, never silently stale. Mirrors install.sh.
+    if ($Harness -eq 'codex') {
+        if ($env:AGENTS_DIR) {
+            Invoke-AgentsCorender
+        } else {
+            [Console]::Error.WriteLine('install.ps1: AGENTS_DIR not set — skipping the .agents co-render (set it in local.env if a Gemini/.agents overlay should mirror the codex spine skills)')
+        }
+    }
 
     # Catalog-honesty warn (claude-only): every skill dir living under
     # $TARGET/skills/ should appear backtick-quoted in the rendered SKILLS.md —

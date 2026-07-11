@@ -301,8 +301,13 @@ try {
     Write-CodexEnvFixture -EnvFile $CXB_ENV -CodexHome $CXB_OUT -VaultDir $CX_VAULT
     $cxb_err = Join-Path $CXB_ROOT 'install.err'
     $env:AI_CONFIG_LOCAL_ENV = $CXB_ENV
+    # Hermetic: an inherited AGENTS_DIR would flip the co-render on for this
+    # fixture build (mirrors the bash twin's `env -u AGENTS_DIR`).
+    $cxb_saved_agents = [Environment]::GetEnvironmentVariable('AGENTS_DIR')
+    Remove-Item Env:AGENTS_DIR -ErrorAction SilentlyContinue
     & pwsh -NoProfile -File $INSTALL_PS1 --harness codex 1>$null 2>$cxb_err
     $cxb_status = $LASTEXITCODE
+    if ($null -ne $cxb_saved_agents) { $env:AGENTS_DIR = $cxb_saved_agents }
     Assert-Eq 'codex.test: codex full install exits 0' '0' "$cxb_status"
     # The codex build is inert until the user trusts its hooks.json — install.ps1
     # must surface that manual step (adapter.md Fact 2 documents it as surfaced).
@@ -318,6 +323,35 @@ try {
     Assert-Eq 'codex.test: codex install leaves no backup/temp dirs' '0' "$($cx_leftover.Count)"
     # A clean codex build passes the drift gate.
     Assert-Exit 'codex.test: codex drift check passes on a clean build' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $CXB_OUT
+
+    # === .agents co-render: loud skip + live-overlay guard ==================
+    # Twin of the bash block. Without AGENTS_DIR the codex install skips the
+    # co-render LOUDLY; the happy path is covered in drift.test.ps1's -Auto
+    # fixture.
+    Assert-Contains 'codex.test: codex install skips the .agents co-render loudly when AGENTS_DIR is unset' `
+        $cxb_errtext 'AGENTS_DIR not set'
+
+    # A throwaway local.env whose AGENTS_DIR names the repo's LIVE overlay must
+    # be refused (the same inherited-var corruption guard the harness-home
+    # targets have) — the die fires before any write to the overlay.
+    # String-compare based, so it holds whether or not .agents exists here.
+    $CXA_ROOT = Join-Path ([IO.Path]::GetTempPath()) ("codex-agents-guard-" + [Guid]::NewGuid().Guid.Substring(0,8))
+    $CXA_OUT = Join-Path $CXA_ROOT 'target'
+    New-Item -ItemType Directory -Path $CXA_OUT -Force | Out-Null
+    $CXA_ENV = Join-Path $CXA_ROOT 'local.env'
+    $cxa_lines = @(
+        "CODEX_HOME=`"$CXA_OUT`"",
+        "OBSIDIAN_VAULT_PATH=`"$CX_VAULT`"",
+        "AGENTS_DIR=`"$(Join-Path $env:REPO_ROOT '.agents')`""
+    )
+    [System.IO.File]::WriteAllText($CXA_ENV, (($cxa_lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+    $env:AI_CONFIG_LOCAL_ENV = $CXA_ENV
+    $cxa_out = (& pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1) -join "`n"
+    $cxa_rc = $LASTEXITCODE
+    $env:AI_CONFIG_LOCAL_ENV = $CXB_ENV
+    Assert-Eq 'codex.test: codex install refuses a throwaway-local.env co-render into the live overlay' '1' "$cxa_rc"
+    Assert-Contains 'codex.test: live-overlay refusal names the guard' $cxa_out 'refusing the .agents co-render into the live overlay'
+    Remove-Item -LiteralPath $CXA_ROOT -Recurse -Force -ErrorAction SilentlyContinue
 
     # === Codex hook behaviour — _Skip on the Windows lane ====================
     # Per [[feedback_port_parity_vs_regression_split]]: the .ps1 codex hooks'

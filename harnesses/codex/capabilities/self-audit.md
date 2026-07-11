@@ -18,3 +18,11 @@ lifecycle: shipped
   it also writes a tracked artifact to the operator's checkout. Codex has no
   `Write` tool envelope at the skill level — the `--save` path is realized via
   the script's own `printf > path`, not via Codex's `apply_patch`.
+- **`.agents` co-render (Gemini):** this compiled skill is mirrored
+  byte-identically into the repo-level `.agents/skills/` overlay when
+  `AGENTS_DIR` is set in `local.env` (install co-render); Gemini discovers it
+  as a workspace skill, and Codex ≥0.14x discovers the same copy alongside
+  `$CODEX_HOME/skills/` — byte-identity keeps the duplicate-name collision
+  harmless. The capability is opt-in and script-backed everywhere: a Gemini
+  session invokes the same `$AI_CONFIG_DIR/scripts/self-audit.sh` via its
+  shell tool.

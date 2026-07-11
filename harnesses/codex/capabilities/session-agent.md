@@ -32,3 +32,13 @@ lifecycle: shipped
   capability catalog in `$CODEX_HOME/AGENTS.md` and the capability specs under
   `$AI_CONFIG_DIR/capabilities/`. The capabilities the sub-routine routes to are the
   compiled skills under `$CODEX_HOME/skills/`.
+- **`.agents` co-render (Gemini):** this compiled skill is mirrored
+  byte-identically into the repo-level `.agents/skills/` overlay when
+  `AGENTS_DIR` is set in `local.env` (install co-render). Gemini
+  (agy/Antigravity) discovers that copy as a workspace skill; Codex ≥0.14x
+  discovers it too, alongside `$CODEX_HOME/skills/` — byte-identity is what
+  keeps the duplicate-name collision harmless. A Gemini session consuming
+  this copy has no hook runtime: the auto-fire directive and pre-edit gate
+  above do not apply there — invoke the capability as the first action and
+  emit the R5 declaration as prescribed by the shared body; enforcement is
+  advisory.

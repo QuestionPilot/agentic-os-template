@@ -62,7 +62,7 @@ re-audit to score them. The bands above describe a fully-measured run.
 
 **Companion qualitative check — skill/capability authoring quality (Pillar 4).** Beyond the scored
 recipe-coverage check, when auditing skill or capability quality judge it against the authoring
-standard in [`../skills/skill-authoring.md`](../skills/skill-authoring.md): a skill that bloats its
+standard in `$AI_CONFIG_DIR/skills/skill-authoring.md`: a skill that bloats its
 body with conditional content (multiplicative cost), buries a load-bearing rule behind a reference,
 re-implements deterministic processing the model should offload to a script, or asserts prose instead
 of structure is *thinning* even when no PASS/FAIL gate fires — which is exactly the kind of erosion

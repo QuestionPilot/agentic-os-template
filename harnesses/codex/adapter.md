@@ -275,3 +275,16 @@ user-owned and is not touched by the build.
 verifies the live output against `.build-manifest.json`. A hand-edit to any
 generated file (`skills/`, `hooks/`, `hooks.json`, `AGENTS.md`) is reported as
 drift.
+
+**`.agents` co-render (Gemini overlay).** When `AGENTS_DIR` is set in
+`local.env`, the codex build additionally mirrors its compiled spine skills
+into `<AGENTS_DIR>/skills/` byte-identically and writes an `"agents"`-labeled
+manifest there (`install.sh` `corender_agents` / `install.ps1`
+`Invoke-AgentsCorender`). Rationale: Codex ≥0.14x discovers repo-root
+`.agents/skills` alongside `$CODEX_HOME/skills`, so a divergent same-name copy
+makes which-skill-wins ambiguous; byte-identity keeps the duplication harmless
+while Gemini (agy/Antigravity) keeps its workspace skills. Non-spine subdirs in
+the overlay are operator content — preserved, never clobbered, exempt from the
+manifest gate (the same Shape C contract as `$CODEX_HOME/skills`).
+`check-drift.sh --auto` runs the manifest gate against the overlay via the
+`agents:AGENTS_DIR` pair; unset skips with a notice.
