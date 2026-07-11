@@ -63,6 +63,32 @@ copy_repo_tracked() {
   (cd "$REPO_ROOT" && git ls-files -z | tar -cf - --null -T -) | tar -xf - -C "$dest"
 }
 
+# make_tracked_git_fixture <dest>
+# Hermetic GIT fixture (<TEAM>-432): copy_repo_tracked + a throwaway `git init`
+# + `git add -f -A`, so the fixture carries its OWN index tracking exactly the
+# copied set — the same committable enumeration a clean CI clone sees. Tests
+# that pin index-dependent behavior (a TRACKED sentinel, a listed-but-unreadable
+# path) used to `git add -f` into the LIVE repo index and unstage afterwards;
+# any concurrent `git commit` in the same checkout raced those transients (a
+# real commit captured the docs/plans/README.md lifecycle fixture mid-suite).
+# scripts/validate.sh + scripts/check-drift.sh resolve their repo root from
+# their own script location, so running the FIXTURE's copy scans the fixture
+# tree with the fixture index — zero writes to the operator's checkout. No
+# commit is made (nothing needs HEAD: ls-files/check-ignore/rev-parse all work
+# from the index), so no git identity is required. init.defaultBranch is pinned
+# to keep git's unset-branch-name hint off stderr regardless of machine config.
+make_tracked_git_fixture() {
+  local dest="$1"
+  copy_repo_tracked "$dest"
+  # Loud on failure (PS-twin parity): a fixture without a working index would
+  # flip the scripts under test into fs-mode and skew every assertion that
+  # follows. The per-file clean-fixture baseline assertion is the enforcing
+  # guard; this line makes the root cause visible in the transcript.
+  git -C "$dest" -c init.defaultBranch=main init -q &&
+    git -C "$dest" add -f -A ||
+    { printf 'make_tracked_git_fixture: git init/add failed in %s\n' "$dest" >&2; return 1; }
+}
+
 # make_local_env <env-file> <config-dir> [vault-dir]
 # Writes a minimal but complete local.env for install.sh test builds. install.sh
 # generates CLAUDE.md from a template that references OBSIDIAN_VAULT_PATH; a

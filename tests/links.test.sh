@@ -14,53 +14,64 @@
 # 6. Failure messages must name BOTH the file and the broken target so an
 # engineer can fix without re-running with -x.
 #
-# Tests INJECT temp.md files into $REPO_ROOT, git-track them so the scanner
-# (which walks `git ls-files '*.md'`) sees them, and clean up inline (no
-# trap EXIT — tests/run.sh sources files, traps would leak across siblings).
-# Sentinel names include $$-${RANDOM:-x} to avoid collisions across parallel
-# runs and obvious.test-t53- prefixes to make stragglers easy to find.
+# Tests INJECT temp.md files into a hermetic tracked-only git fixture
+# ($LK_FIX via make_tracked_git_fixture, <TEAM>-432 — never the live repo
+# index), git-track them there so the scanner (which walks `git ls-files
+# '*.md'`) sees them, and clean up inline (no trap EXIT — tests/run.sh sources
+# files, traps would leak across siblings). Planting in $REPO_ROOT and
+# `git add -f`-ing into the LIVE index raced any concurrent `git commit` in
+# the same checkout. validate.sh resolves its repo root from its own script
+# location, so the fixture's copy scans the fixture tree with the throwaway
+# index. Sentinel names include $$-${RANDOM:-x} to avoid collisions across
+# parallel runs and obvious.test-t53- prefixes to make stragglers easy to find.
 
 # --- Test 1: baseline — validate passes on the unmodified repo ---
 # Regression guard: if any pre-existing tracked.md has a broken internal link
 # the C7 scanner would catch, this fails RED and forces fix-before-merge.
+# Deliberately runs against the LIVE repo — this is the one assertion whose
+# subject is the operator's actual tree, and it is read-only.
 assert_exit "validate.sh passes on unmodified repo" 0 -- \
   bash "$REPO_ROOT/scripts/validate.sh"
+
+# Hermetic injection fixture for every test below (<TEAM>-432).
+LK_FIX="$(mktemp -d)"
+make_tracked_git_fixture "$LK_FIX"
 
 # --- Test 2: broken internal link rejected ---
 # A tracked.md outside the vendored allowlist with [text](missing.md) must
 # trigger a FAIL from check_internal_links.
 LINK_BROKEN=".test-t53-links-broken-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_BROKEN" <<'MD'
+cat > "$LK_FIX/$LINK_BROKEN" <<'MD'
 # Test fixture
 This points to a [missing file](does-not-exist-anywhere.md) on purpose.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_BROKEN"
+git -C "$LK_FIX" add -f "$LINK_BROKEN"
 assert_exit "validate.sh fails on broken internal markdown link" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_BROKEN"
-rm -f "$REPO_ROOT/$LINK_BROKEN"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_BROKEN"
+rm -f "$LK_FIX/$LINK_BROKEN"
 
 # --- Test 3: broken link inside vendored/ allowlist is permitted ---
 # Vendored snapshots are immutable. A broken ref inside
 # harnesses/<h>/vendored/** must NOT trip the check.
 LINK_VENDORED_DIR="harnesses/claude/vendored/_test-t53-$$-${RANDOM:-x}"
 LINK_VENDORED_FILE="$LINK_VENDORED_DIR/fixture.md"
-mkdir -p "$REPO_ROOT/$LINK_VENDORED_DIR"
-cat > "$REPO_ROOT/$LINK_VENDORED_FILE" <<'MD'
+mkdir -p "$LK_FIX/$LINK_VENDORED_DIR"
+cat > "$LK_FIX/$LINK_VENDORED_FILE" <<'MD'
 # Vendored fixture
 [Broken upstream ref](../../docs/never-copied.md) — allowlisted.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_VENDORED_FILE"
+git -C "$LK_FIX" add -f "$LINK_VENDORED_FILE"
 assert_exit "validate.sh allows broken links inside vendored/" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_VENDORED_FILE"
-rm -rf "$REPO_ROOT/$LINK_VENDORED_DIR"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_VENDORED_FILE"
+rm -rf "$LK_FIX/$LINK_VENDORED_DIR"
 
 # --- Test 4: links inside code fences are skipped ---
 # A ```fenced block``` containing [foo](missing.md) is documentation, not a
 # real link. The scanner must not false-positive.
 LINK_FENCED=".test-t53-links-fenced-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_FENCED" <<'MD'
+cat > "$LK_FIX/$LINK_FENCED" <<'MD'
 # Test fixture
 Here is a code example:
 
@@ -70,26 +81,26 @@ Here is a code example:
 
 End of file.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_FENCED"
+git -C "$LK_FIX" add -f "$LINK_FENCED"
 assert_exit "validate.sh ignores links inside code fences" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_FENCED"
-rm -f "$REPO_ROOT/$LINK_FENCED"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_FENCED"
+rm -f "$LK_FIX/$LINK_FENCED"
 
 # --- Test 5: external schemes and pure anchors are skipped ---
 # [foo](https://...), [foo](mailto:...), [foo](#section) must not be checked.
 LINK_EXTERNAL=".test-t53-links-external-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_EXTERNAL" <<'MD'
+cat > "$LK_FIX/$LINK_EXTERNAL" <<'MD'
 # Test fixture
 - [Example](https://example.com/owner/repo)
 - [Email](mailto:nobody@example.com)
 - [Anchor](#section-x)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_EXTERNAL"
+git -C "$LK_FIX" add -f "$LINK_EXTERNAL"
 assert_exit "validate.sh ignores external schemes + pure anchors" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_EXTERNAL"
-rm -f "$REPO_ROOT/$LINK_EXTERNAL"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_EXTERNAL"
+rm -f "$LK_FIX/$LINK_EXTERNAL"
 
 # --- Test 6: failure message surfaces the broken link (diagnostic) ---
 # When the check fails, the message must name the file AND the broken target,
@@ -97,18 +108,18 @@ rm -f "$REPO_ROOT/$LINK_EXTERNAL"
 # Uses assert_contains (the only public string-assertion helper in tests/lib.sh)
 # split across two assertions — file path AND target each verified independently.
 LINK_DIAG=".test-t53-links-diag-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_DIAG" <<'MD'
+cat > "$LK_FIX/$LINK_DIAG" <<'MD'
 # Test fixture
 [diagnostic broken](path-DIAG-SENTINEL.md)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_DIAG"
-diag_out="$(bash "$REPO_ROOT/scripts/validate.sh" 2>&1 || true)"
+git -C "$LK_FIX" add -f "$LINK_DIAG"
+diag_out="$(bash "$LK_FIX/scripts/validate.sh" 2>&1 || true)"
 assert_contains "validate.sh failure message names the file" \
   "$diag_out" "$LINK_DIAG"
 assert_contains "validate.sh failure message names the broken target" \
   "$diag_out" "path-DIAG-SENTINEL.md"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_DIAG"
-rm -f "$REPO_ROOT/$LINK_DIAG"
+git -C "$LK_FIX" rm -f --quiet "$LINK_DIAG"
+rm -f "$LK_FIX/$LINK_DIAG"
 
 # =============================================================================
 # fence + inline-code parser improvements
@@ -124,16 +135,16 @@ rm -f "$REPO_ROOT/$LINK_DIAG"
 # the scanner doesn't strip inline-code spans before extraction. Post-fix:
 # inline `…` spans are stripped, so example links inside backtick prose pass.
 LINK_INLINE_CODE=".test-t63-links-inline-code-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_INLINE_CODE" <<'MD'
+cat > "$LK_FIX/$LINK_INLINE_CODE" <<'MD'
 # Test fixture
 
 Use `[example](pretend-inline-missing.md)` as the canonical syntax in docs.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_INLINE_CODE"
+git -C "$LK_FIX" add -f "$LINK_INLINE_CODE"
 assert_exit "validate.sh skips links inside inline-code spans" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_INLINE_CODE"
-rm -f "$REPO_ROOT/$LINK_INLINE_CODE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_INLINE_CODE"
+rm -f "$LK_FIX/$LINK_INLINE_CODE"
 
 # --- Test 8: tilde-fenced code blocks are recognized ---
 # A ~~~-delimited fence is a CommonMark code block, equivalent to ```. The
@@ -141,36 +152,36 @@ rm -f "$REPO_ROOT/$LINK_INLINE_CODE"
 # the scan. Post-fix: the parser tracks fence char + length and recognizes
 # both delimiters.
 LINK_TILDE_FENCE=".test-t63-links-tilde-fence-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_TILDE_FENCE" <<'MD'
+cat > "$LK_FIX/$LINK_TILDE_FENCE" <<'MD'
 # Test fixture
 
 ~~~markdown
 [example only](pretend-tilde-missing.md)
 ~~~
 MD
-git -C "$REPO_ROOT" add -f "$LINK_TILDE_FENCE"
+git -C "$LK_FIX" add -f "$LINK_TILDE_FENCE"
 assert_exit "validate.sh recognizes ~~~ fences" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_TILDE_FENCE"
-rm -f "$REPO_ROOT/$LINK_TILDE_FENCE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_TILDE_FENCE"
+rm -f "$LK_FIX/$LINK_TILDE_FENCE"
 
 # --- Test 9: fences indented 1-3 spaces are recognized ---
 # Per CommonMark, code fences may be indented up to 3 spaces. The pre-fix
 # regex requires fence at column 1 (^```), so an indented fence is not
 # recognized and its contents leak into the scan.
 LINK_INDENTED_FENCE=".test-t63-links-indented-fence-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_INDENTED_FENCE" <<'MD'
+cat > "$LK_FIX/$LINK_INDENTED_FENCE" <<'MD'
 # Test fixture
 
    ```markdown
    [example only](pretend-indented-missing.md)
    ```
 MD
-git -C "$REPO_ROOT" add -f "$LINK_INDENTED_FENCE"
+git -C "$LK_FIX" add -f "$LINK_INDENTED_FENCE"
 assert_exit "validate.sh recognizes fences indented 1-3 spaces" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_INDENTED_FENCE"
-rm -f "$REPO_ROOT/$LINK_INDENTED_FENCE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_INDENTED_FENCE"
+rm -f "$LK_FIX/$LINK_INDENTED_FENCE"
 
 # --- Test 10: nested triple-backticks inside outer 4-backtick
 # fence don't prematurely close ---
@@ -180,7 +191,7 @@ rm -f "$REPO_ROOT/$LINK_INDENTED_FENCE"
 # ^```/ toggle treats the 3-backtick line as a close, leaking the rest of
 # the file into scan.
 LINK_NESTED_FENCE=".test-t63-links-nested-fence-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_NESTED_FENCE" <<'MD'
+cat > "$LK_FIX/$LINK_NESTED_FENCE" <<'MD'
 # Test fixture
 
 ````markdown
@@ -193,11 +204,11 @@ Example:
 End of nested block.
 ````
 MD
-git -C "$REPO_ROOT" add -f "$LINK_NESTED_FENCE"
+git -C "$LK_FIX" add -f "$LINK_NESTED_FENCE"
 assert_exit "validate.sh handles nested triple-backticks inside 4-backtick fence" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_NESTED_FENCE"
-rm -f "$REPO_ROOT/$LINK_NESTED_FENCE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_NESTED_FENCE"
+rm -f "$LK_FIX/$LINK_NESTED_FENCE"
 
 # --- Test 11: reference-style links are NOT checked ---
 # The scanner only extracts inline links of the form [text](target). Reference-
@@ -206,18 +217,18 @@ rm -f "$REPO_ROOT/$LINK_NESTED_FENCE"
 # NOT trip the gate. Documenting this prevents future "obvious bug" reports
 # and signals the limitation to operators.
 LINK_REFSTYLE=".test-t63-links-ref-style-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_REFSTYLE" <<'MD'
+cat > "$LK_FIX/$LINK_REFSTYLE" <<'MD'
 # Test fixture
 
 See [the example][ex] for details.
 
 [ex]: pretend-ref-missing.md
 MD
-git -C "$REPO_ROOT" add -f "$LINK_REFSTYLE"
+git -C "$LK_FIX" add -f "$LINK_REFSTYLE"
 assert_exit "validate.sh does not check reference-style links" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_REFSTYLE"
-rm -f "$REPO_ROOT/$LINK_REFSTYLE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_REFSTYLE"
+rm -f "$LK_FIX/$LINK_REFSTYLE"
 
 # --- Test 12: escaped parens in destinations ---
 # CommonMark allows [text](foo\(bar\).md) where \(and \) are escaped parens
@@ -226,16 +237,16 @@ rm -f "$REPO_ROOT/$LINK_REFSTYLE"
 # truncated target won't exist on disk, so the gate FAILs. Pin this current
 # behavior; a future enhancement could parse balanced/escaped parens.
 LINK_ESC_PAREN=".test-t63-links-esc-paren-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_ESC_PAREN" <<'MD'
+cat > "$LK_FIX/$LINK_ESC_PAREN" <<'MD'
 # Test fixture
 
 This uses [escaped parens](foo\(bar\).md) in the destination.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_ESC_PAREN"
+git -C "$LK_FIX" add -f "$LINK_ESC_PAREN"
 assert_exit "validate.sh treats escaped-paren destinations as broken" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_ESC_PAREN"
-rm -f "$REPO_ROOT/$LINK_ESC_PAREN"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_ESC_PAREN"
+rm -f "$LK_FIX/$LINK_ESC_PAREN"
 
 # --- Test 13: broken links under docs/plans/ are caught after
 # allowlist narrowing ---
@@ -246,17 +257,17 @@ rm -f "$REPO_ROOT/$LINK_ESC_PAREN"
 # test plants a genuinely broken link in a temp plan file and confirms it IS
 # caught.
 LINK_PLAN_BROKEN="docs/plans/.test-t63-plan-broken-$$-${RANDOM:-x}.md"
-mkdir -p "$REPO_ROOT/docs/plans"
-cat > "$REPO_ROOT/$LINK_PLAN_BROKEN" <<'MD'
+mkdir -p "$LK_FIX/docs/plans"
+cat > "$LK_FIX/$LINK_PLAN_BROKEN" <<'MD'
 # Test fixture
 
 This plan references a [genuinely missing target](does-not-exist-PLAN-SENTINEL.md).
 MD
-git -C "$REPO_ROOT" add -f "$LINK_PLAN_BROKEN"
+git -C "$LK_FIX" add -f "$LINK_PLAN_BROKEN"
 assert_exit "validate.sh catches broken links under docs/plans/ after allowlist narrowing" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_PLAN_BROKEN"
-rm -f "$REPO_ROOT/$LINK_PLAN_BROKEN"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_PLAN_BROKEN"
+rm -f "$LK_FIX/$LINK_PLAN_BROKEN"
 
 # =============================================================================
 # cross-model review amendments (Codex + Gemini, 2026-05-24)
@@ -276,7 +287,7 @@ rm -f "$REPO_ROOT/$LINK_PLAN_BROKEN"
 # enforces homogeneous fence character, plus a manual scan that counts
 # only consecutive same-character chars from the start.
 LINK_MIXED_CLOSE=".test-t63-links-mixed-close-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_MIXED_CLOSE" <<'MD'
+cat > "$LK_FIX/$LINK_MIXED_CLOSE" <<'MD'
 # Test fixture
 
 ~~~markdown
@@ -285,11 +296,11 @@ cat > "$REPO_ROOT/$LINK_MIXED_CLOSE" <<'MD'
 [also inside fence](still-pretend-mixed.md)
 ~~~
 MD
-git -C "$REPO_ROOT" add -f "$LINK_MIXED_CLOSE"
+git -C "$LK_FIX" add -f "$LINK_MIXED_CLOSE"
 assert_exit "validate.sh treats mixed-char fence-like lines as content" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_MIXED_CLOSE"
-rm -f "$REPO_ROOT/$LINK_MIXED_CLOSE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_MIXED_CLOSE"
+rm -f "$LK_FIX/$LINK_MIXED_CLOSE"
 
 # --- Test 15 (Codex+Gemini agreed): multi-backtick inline-code spans
 # are stripped ---
@@ -300,16 +311,16 @@ rm -f "$REPO_ROOT/$LINK_MIXED_CLOSE"
 # to the link extractor. After: three longest-first gsub passes strip
 # triple, double, and single-backtick spans.
 LINK_MULTI_INLINE=".test-t63-links-multi-inline-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_MULTI_INLINE" <<'MD'
+cat > "$LK_FIX/$LINK_MULTI_INLINE" <<'MD'
 # Test fixture
 
 Both forms should be stripped: ``[double-tick link](pretend-double-missing.md)`` and `[single-tick link](pretend-single-missing.md)`.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_MULTI_INLINE"
+git -C "$LK_FIX" add -f "$LINK_MULTI_INLINE"
 assert_exit "validate.sh strips multi-backtick inline-code spans" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_MULTI_INLINE"
-rm -f "$REPO_ROOT/$LINK_MULTI_INLINE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_MULTI_INLINE"
+rm -f "$LK_FIX/$LINK_MULTI_INLINE"
 
 # --- Test 16 (Codex regression): real broken links AFTER a fenced block
 # are still detected ---
@@ -318,7 +329,7 @@ rm -f "$REPO_ROOT/$LINK_MULTI_INLINE"
 # test plants a clean fenced block followed by a genuinely broken link
 # and confirms the broken link IS caught (exit 1).
 LINK_AFTER_FENCE=".test-t63-links-after-fence-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_AFTER_FENCE" <<'MD'
+cat > "$LK_FIX/$LINK_AFTER_FENCE" <<'MD'
 # Test fixture
 
 ```bash
@@ -327,11 +338,11 @@ example_command
 
 This line has a [genuinely broken link](does-not-exist-AFTER-FENCE-SENTINEL.md).
 MD
-git -C "$REPO_ROOT" add -f "$LINK_AFTER_FENCE"
+git -C "$LK_FIX" add -f "$LINK_AFTER_FENCE"
 assert_exit "validate.sh detects real broken links after a fenced block" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_AFTER_FENCE"
-rm -f "$REPO_ROOT/$LINK_AFTER_FENCE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_AFTER_FENCE"
+rm -f "$LK_FIX/$LINK_AFTER_FENCE"
 
 # =============================================================================
 # GNU awk / BSD awk portability
@@ -354,28 +365,28 @@ rm -f "$REPO_ROOT/$LINK_AFTER_FENCE"
 # whenever those engines are on PATH so a future regression in either
 # direction trips locally before CI.
 
-# --- Test 17: validate.sh passes on unmodified repo under GNU awk ---
+# --- Test 17: validate.sh passes on the clean fixture under GNU awk ---
 # Direct port of Test 1 with AWK=gawk. RED-state on pre-fix main: the
 # plan's 4-backtick fence content leaks into link extraction, producing 12+
 # false-positive broken-link errors. Skips silently when gawk isn't on PATH
 # (typical on minimal macOS installs; install via `brew install gawk`).
 if command -v gawk >/dev/null 2>&1; then
-  assert_exit "validate.sh passes on unmodified repo under GNU awk" 0 -- \
-    env AWK=gawk bash "$REPO_ROOT/scripts/validate.sh"
+  assert_exit "validate.sh passes on the clean fixture under GNU awk" 0 -- \
+    env AWK=gawk bash "$LK_FIX/scripts/validate.sh"
 else
-  _skip "validate.sh passes on unmodified repo under GNU awk" "gawk not on PATH (brew install gawk)"
+  _skip "validate.sh passes on the clean fixture under GNU awk" "gawk not on PATH (brew install gawk)"
 fi
 
-# --- Test 18: validate.sh passes on unmodified repo under mawk ---
+# --- Test 18: validate.sh passes on the clean fixture under mawk ---
 # Direct port of Test 1 with AWK=mawk. mawk is the default `awk` on
 # Ubuntu/Debian; this test pins parity with the CI default-awk lane on
 # macOS where /usr/bin/awk is BSD awk. Skips silently when mawk isn't on
 # PATH.
 if command -v mawk >/dev/null 2>&1; then
-  assert_exit "validate.sh passes on unmodified repo under mawk" 0 -- \
-    env AWK=mawk bash "$REPO_ROOT/scripts/validate.sh"
+  assert_exit "validate.sh passes on the clean fixture under mawk" 0 -- \
+    env AWK=mawk bash "$LK_FIX/scripts/validate.sh"
 else
-  _skip "validate.sh passes on unmodified repo under mawk" "mawk not on PATH (brew install mawk)"
+  _skip "validate.sh passes on unmodified repo under mawk (clean fixture)" "mawk not on PATH (brew install mawk)"
 fi
 
 # --- Test 19: nested 4-backtick fence under GNU awk ---
@@ -385,7 +396,7 @@ fi
 # 4-backtick fences, this fails first with a clearly-named assertion.
 if command -v gawk >/dev/null 2>&1; then
   LINK_GAWK_4TICK=".test-t88-gawk-4tick-fence-$$-${RANDOM:-x}.md"
-  cat > "$REPO_ROOT/$LINK_GAWK_4TICK" <<'MD'
+  cat > "$LK_FIX/$LINK_GAWK_4TICK" <<'MD'
 # Test fixture
 
 ````markdown
@@ -398,11 +409,11 @@ Example:
 End of nested block.
 ````
 MD
-  git -C "$REPO_ROOT" add -f "$LINK_GAWK_4TICK"
+  git -C "$LK_FIX" add -f "$LINK_GAWK_4TICK"
   assert_exit "validate.sh handles nested 4-backtick fence under GNU awk" 0 -- \
-    env AWK=gawk bash "$REPO_ROOT/scripts/validate.sh"
-  git -C "$REPO_ROOT" rm -f --quiet "$LINK_GAWK_4TICK"
-  rm -f "$REPO_ROOT/$LINK_GAWK_4TICK"
+    env AWK=gawk bash "$LK_FIX/scripts/validate.sh"
+  git -C "$LK_FIX" rm -f --quiet "$LINK_GAWK_4TICK"
+  rm -f "$LK_FIX/$LINK_GAWK_4TICK"
 else
   _skip "validate.sh handles nested 4-backtick fence under GNU awk" "gawk not on PATH"
 fi
@@ -415,18 +426,18 @@ fi
 # LC_ALL / LC_CTYPE before invoking validate.sh.
 if command -v gawk >/dev/null 2>&1; then
   LINK_GAWK_INLINE=".test-t88-gawk-inline-code-$$-${RANDOM:-x}.md"
-  cat > "$REPO_ROOT/$LINK_GAWK_INLINE" <<'MD'
+  cat > "$LK_FIX/$LINK_GAWK_INLINE" <<'MD'
 # Test fixture
 
 This prose mentions `[example](pretend-gawk-inline-missing.md)` as a syntax
 demo. The inline-code span must be stripped before link extraction or the
 broken-link scan false-positives under GNU awk in misconfigured locales.
 MD
-  git -C "$REPO_ROOT" add -f "$LINK_GAWK_INLINE"
+  git -C "$LK_FIX" add -f "$LINK_GAWK_INLINE"
   assert_exit "validate.sh strips inline-code spans under GNU awk in blank locale" 0 -- \
-    env AWK=gawk LANG= LC_ALL= LC_CTYPE= bash "$REPO_ROOT/scripts/validate.sh"
-  git -C "$REPO_ROOT" rm -f --quiet "$LINK_GAWK_INLINE"
-  rm -f "$REPO_ROOT/$LINK_GAWK_INLINE"
+    env AWK=gawk LANG= LC_ALL= LC_CTYPE= bash "$LK_FIX/scripts/validate.sh"
+  git -C "$LK_FIX" rm -f --quiet "$LINK_GAWK_INLINE"
+  rm -f "$LK_FIX/$LINK_GAWK_INLINE"
 else
   _skip "validate.sh strips inline-code spans under GNU awk in blank locale" "gawk not on PATH"
 fi
@@ -455,36 +466,36 @@ fi
 # link. Pre-fix: FAIL (link check resolves `../../issues` as a local path
 # and finds nothing). Post-fix: PASS (case glob skips the prefix).
 LINK_GH_ISSUES=".test-t105-gh-issues-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_ISSUES" <<'MD'
+cat > "$LK_FIX/$LINK_GH_ISSUES" <<'MD'
 # Test fixture
 
 Open an [issue](../../issues) on this repository.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_ISSUES"
+git -C "$LK_FIX" add -f "$LINK_GH_ISSUES"
 assert_exit "validate.sh recognizes ../../issues as a GitHub-platform link" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_ISSUES"
-rm -f "$REPO_ROOT/$LINK_GH_ISSUES"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_ISSUES"
+rm -f "$LK_FIX/$LINK_GH_ISSUES"
 
 # --- Test 22: `../../issues/123` (specific issue) is external ---
 # The `/*` suffix glob must catch numbered sub-paths the same way.
 LINK_GH_ISSUE_N=".test-t105-gh-issue-n-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_ISSUE_N" <<'MD'
+cat > "$LK_FIX/$LINK_GH_ISSUE_N" <<'MD'
 # Test fixture
 
 See [the broken-link bug](../../issues/123) for the full incident write-up.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_ISSUE_N"
+git -C "$LK_FIX" add -f "$LINK_GH_ISSUE_N"
 assert_exit "validate.sh recognizes ../../issues/123 as a GitHub-platform link" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_ISSUE_N"
-rm -f "$REPO_ROOT/$LINK_GH_ISSUE_N"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_ISSUE_N"
+rm -f "$LK_FIX/$LINK_GH_ISSUE_N"
 
 # --- Test 23: `../../wiki`, `../../pulls`, `../../releases` are external ---
 # Bundle the remaining canonical GitHub-platform prefixes in one fixture so
 # a regression in any one of them surfaces a single named assertion.
 LINK_GH_MISC=".test-t105-gh-misc-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_MISC" <<'MD'
+cat > "$LK_FIX/$LINK_GH_MISC" <<'MD'
 # Test fixture
 
 - [Wiki home](../../wiki)
@@ -504,11 +515,11 @@ cat > "$REPO_ROOT/$LINK_GH_MISC" <<'MD'
 - [Discussions](../../discussions)
 - [Discussion #7](../../discussions/7)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_MISC"
+git -C "$LK_FIX" add -f "$LINK_GH_MISC"
 assert_exit "validate.sh recognizes all canonical GitHub-platform prefixes" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_MISC"
-rm -f "$REPO_ROOT/$LINK_GH_MISC"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_MISC"
+rm -f "$LK_FIX/$LINK_GH_MISC"
 
 # --- Test 24: regular broken local links STILL fail (negative regression) ---
 # Critical negative test: the new skip-list MUST NOT swallow regular broken
@@ -516,16 +527,16 @@ rm -f "$REPO_ROOT/$LINK_GH_MISC"
 # trigger a FAIL exactly as before. If this fails GREEN it means the
 # skip-list is over-broad and we've lost the gate's value.
 LINK_T105_BROKEN=".test-t105-still-broken-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_T105_BROKEN" <<'MD'
+cat > "$LK_FIX/$LINK_T105_BROKEN" <<'MD'
 # Test fixture
 
 This is a [genuinely broken local link](does-not-exist-T105-SENTINEL.md).
 MD
-git -C "$REPO_ROOT" add -f "$LINK_T105_BROKEN"
+git -C "$LK_FIX" add -f "$LINK_T105_BROKEN"
 assert_exit "validate.sh still rejects regular broken local links" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_T105_BROKEN"
-rm -f "$REPO_ROOT/$LINK_T105_BROKEN"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_T105_BROKEN"
+rm -f "$LK_FIX/$LINK_T105_BROKEN"
 
 # --- Test 25: broken local link with `../` prefix STILL fails ---
 # Specifically guard against a regression where the skip-list pattern
@@ -533,17 +544,17 @@ rm -f "$REPO_ROOT/$LINK_T105_BROKEN"
 # from a tracked.md must still fail — only the listed GitHub-platform
 # segments are skipped.
 LINK_T105_PARENT="docs/.test-t105-parent-broken-$$-${RANDOM:-x}.md"
-mkdir -p "$REPO_ROOT/docs"
-cat > "$REPO_ROOT/$LINK_T105_PARENT" <<'MD'
+mkdir -p "$LK_FIX/docs"
+cat > "$LK_FIX/$LINK_T105_PARENT" <<'MD'
 # Test fixture
 
 See [parent ref](../never-existed-T105-PARENT-SENTINEL.md) for details.
 MD
-git -C "$REPO_ROOT" add -f "$LINK_T105_PARENT"
+git -C "$LK_FIX" add -f "$LINK_T105_PARENT"
 assert_exit "validate.sh still rejects ../ broken local links" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_T105_PARENT"
-rm -f "$REPO_ROOT/$LINK_T105_PARENT"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_T105_PARENT"
+rm -f "$LK_FIX/$LINK_T105_PARENT"
 
 # --- Test 26: bare `../../tree` and `../../blob` ---
 # Codex confirmation review F-1 (cross-model, 2026-05-27): the initial
@@ -554,17 +565,17 @@ rm -f "$REPO_ROOT/$LINK_T105_PARENT"
 # included for symmetry. The case-arm was widened to also match the
 # bare segment. This test pins both forms.
 LINK_GH_TREE_BLOB_BARE=".test-t105-gh-tree-blob-bare-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_TREE_BLOB_BARE" <<'MD'
+cat > "$LK_FIX/$LINK_GH_TREE_BLOB_BARE" <<'MD'
 # Test fixture
 
 - [Default branch tree](../../tree)
 - [Default branch blob](../../blob)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_TREE_BLOB_BARE"
+git -C "$LK_FIX" add -f "$LINK_GH_TREE_BLOB_BARE"
 assert_exit "validate.sh recognizes bare ../../tree and ../../blob" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_TREE_BLOB_BARE"
-rm -f "$REPO_ROOT/$LINK_GH_TREE_BLOB_BARE"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_TREE_BLOB_BARE"
+rm -f "$LK_FIX/$LINK_GH_TREE_BLOB_BARE"
 
 # --- Test 27: near-prefix boundary check ---
 # Codex confirmation review MT-2 (cross-model, 2026-05-27): explicitly
@@ -581,7 +592,7 @@ rm -f "$REPO_ROOT/$LINK_GH_TREE_BLOB_BARE"
 # is unresolved, so this verifies the overall behavior; per-shape
 # coverage would require three separate fixtures.
 LINK_GH_NEAR_PREFIX=".test-t105-gh-near-prefix-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_NEAR_PREFIX" <<'MD'
+cat > "$LK_FIX/$LINK_GH_NEAR_PREFIX" <<'MD'
 # Test fixture
 
 These near-prefixes should each be treated as a local-resolution attempt:
@@ -589,11 +600,11 @@ These near-prefixes should each be treated as a local-resolution attempt:
 - [broken with bare suffix](../../wikifoo/T105-NEAR-SENTINEL.md)
 - [broken with bare suffix on plural](../../pullsbar/T105-NEAR-SENTINEL.md)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_NEAR_PREFIX"
+git -C "$LK_FIX" add -f "$LINK_GH_NEAR_PREFIX"
 assert_exit "validate.sh still rejects GitHub-platform near-prefixes" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_NEAR_PREFIX"
-rm -f "$REPO_ROOT/$LINK_GH_NEAR_PREFIX"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_NEAR_PREFIX"
+rm -f "$LK_FIX/$LINK_GH_NEAR_PREFIX"
 
 # --- Test 28: query + anchor variants ---
 # Codex confirmation review MT-3 (cross-model, 2026-05-27): pin the
@@ -603,18 +614,18 @@ rm -f "$REPO_ROOT/$LINK_GH_NEAR_PREFIX"
 # `../../issues` and matches the GH_ISSUES skip-list. This test pins
 # that the two strip steps + the new skip-list compose correctly.
 LINK_GH_QUERY_ANCHOR=".test-t105-gh-query-anchor-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_QUERY_ANCHOR" <<'MD'
+cat > "$LK_FIX/$LINK_GH_QUERY_ANCHOR" <<'MD'
 # Test fixture
 
 - [Open issues](../../issues?q=is:open)
 - [Specific discussion comment](../../discussions/7#discussioncomment-123)
 - [Branch tree at anchor](../../tree/main#section)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_QUERY_ANCHOR"
+git -C "$LK_FIX" add -f "$LINK_GH_QUERY_ANCHOR"
 assert_exit "validate.sh recognizes GitHub-platform links with query/anchor" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_QUERY_ANCHOR"
-rm -f "$REPO_ROOT/$LINK_GH_QUERY_ANCHOR"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_QUERY_ANCHOR"
+rm -f "$LK_FIX/$LINK_GH_QUERY_ANCHOR"
 
 # --- Test 29: singular pull/N + commit/SHA ---
 # Codex adversarial review A-2 (cross-model, 2026-05-27): GitHub's canonical
@@ -625,7 +636,7 @@ rm -f "$REPO_ROOT/$LINK_GH_QUERY_ANCHOR"
 # was incorrectly rejecting. Case-arm widened to cover both singular and
 # plural forms; this test pins the new coverage.
 LINK_GH_SINGULAR=".test-t105-gh-singular-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LINK_GH_SINGULAR" <<'MD'
+cat > "$LK_FIX/$LINK_GH_SINGULAR" <<'MD'
 # Test fixture
 
 - [Specific PR (singular)](../../pull/123)
@@ -634,11 +645,11 @@ cat > "$REPO_ROOT/$LINK_GH_SINGULAR" <<'MD'
 - [Bare pull listing fallback](../../pull)
 - [Bare commit listing fallback](../../commit)
 MD
-git -C "$REPO_ROOT" add -f "$LINK_GH_SINGULAR"
+git -C "$LK_FIX" add -f "$LINK_GH_SINGULAR"
 assert_exit "validate.sh recognizes singular ../../pull/N and ../../commit/SHA" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --quiet "$LINK_GH_SINGULAR"
-rm -f "$REPO_ROOT/$LINK_GH_SINGULAR"
+  bash "$LK_FIX/scripts/validate.sh"
+git -C "$LK_FIX" rm -f --quiet "$LINK_GH_SINGULAR"
+rm -f "$LK_FIX/$LINK_GH_SINGULAR"
 
 # --- T-T89: explicit existence of the Setup pages ---
 # linear-setup.md, obsidian/vault-guide.md.
@@ -648,3 +659,9 @@ assert_file "Setup page exists: linear/linear-setup.md" \
   "$REPO_ROOT/linear/linear-setup.md"
 assert_file "Setup page exists: obsidian/vault-guide.md" \
   "$REPO_ROOT/obsidian/vault-guide.md"
+
+# Hermetic fixture teardown (<TEAM>-432): the throwaway clone (and its index)
+# is the only thing the injection tests touched — remove it. No trap EXIT (see
+# header); inline removal is the cleanup contract, same as the per-test rm -f.
+rm -rf "$LK_FIX"
+unset LK_FIX

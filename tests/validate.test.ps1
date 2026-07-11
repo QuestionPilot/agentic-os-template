@@ -251,24 +251,42 @@ foreach ($ct_base in @('.codex', '.agents')) {
     Remove-IfEmpty $ct_dir
 }
 
+# The COMMITTABLE-set tests below (t66 force-add, the t244 root-anchored
+# sibling, q246 — this file's PS q248/root-README siblings live in
+# validate-ps.test.ps1) plant tracked / committable fixtures. They run in a
+# hermetic tracked-only GIT fixture (New-TrackedGitFixture, <TEAM>-432), never
+# the live checkout: force-adding into the LIVE index — or leaving an
+# untracked-committable secret sentinel — raced any concurrent `git commit` in
+# the same checkout. validate.ps1 resolves its repo root from its own script
+# location, so the fixture's copy scans the fixture tree + throwaway index.
+# NOTE: use the helper's RETURNED (git-canonicalized) path — see the
+# New-TrackedGitFixture doc comment for the macOS /var symlink trap.
+$VAL_GIT_FIX = New-TrackedGitFixture (Join-Path ([System.IO.Path]::GetTempPath()) ("val-fix-$PID-" + [Guid]::NewGuid().Guid.Substring(0,8)))
+$VALIDATE_GIT_FIX = Join-Path $VAL_GIT_FIX 'scripts' 'validate.ps1'
+
+# Clean-fixture baseline (panel hardening): every fixture assertion below
+# expects exit 1, so a broken fixture could make the group pass vacuously.
+# Pin exit 0 on the untouched fixture first.
+Assert-Exit 'validate.test: validate.ps1 passes on the clean fixture' 0 -- pwsh -NoProfile -File $VALIDATE_GIT_FIX
+
 # --- secret-pattern scan catches a secret in a non-harness
 # worktrees/ dir — re-premised on COMMITTABILITY (twin of
 # tests/validate.test.sh)..gitignore ignores worktrees/ globally, so an
 # untracked fixture there is uncommittable → pruned; the meaningful case is a
 # TRACKED (force-added) file, which CAN be committed and MUST be scanned. The
-# index is reset in cleanup so the force-added fixture leaves no staged orphan.
+# FIXTURE index is reset in cleanup so later fixture tests see a clean index.
 $suffix = Get-VtSuffix
 $VAL_T66_FA_PARENT = "tests/fixtures/t66-fa-$suffix"
 $VAL_T66_FA_DIR = "$VAL_T66_FA_PARENT/worktrees"
-$secPath = Join-Path $env:REPO_ROOT $VAL_T66_FA_DIR
+$secPath = Join-Path $VAL_GIT_FIX $VAL_T66_FA_DIR
 New-Item -ItemType Directory -Path $secPath -Force | Out-Null
 $val_t66fa_prefix = 'sk-'
 $val_t66fa_body = 'fakefake1234567890_abcdefghij_test'
 Write-LfFile (Join-Path $secPath 'secret.txt') ($val_t66fa_prefix + $val_t66fa_body + "`n")
-& git -C $env:REPO_ROOT add -f "$VAL_T66_FA_DIR/secret.txt" 2>$null | Out-Null
-Assert-Exit 'validate.test: validate.ps1 catches secrets in a tracked non-harness worktrees/ dir' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
-& git -C $env:REPO_ROOT reset -q -- "$VAL_T66_FA_DIR/secret.txt" 2>$null | Out-Null
-Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $VAL_T66_FA_PARENT) -Recurse -Force -ErrorAction SilentlyContinue
+& git -C $VAL_GIT_FIX add -f "$VAL_T66_FA_DIR/secret.txt" 2>$null | Out-Null
+Assert-Exit 'validate.test: validate.ps1 catches secrets in a tracked non-harness worktrees/ dir' 1 -- pwsh -NoProfile -File $VALIDATE_GIT_FIX
+& git -C $VAL_GIT_FIX reset -q -- "$VAL_T66_FA_DIR/secret.txt" 2>$null | Out-Null
+Remove-Item -LiteralPath (Join-Path $VAL_GIT_FIX $VAL_T66_FA_PARENT) -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- gitignored runtime-artifact dir cross-model-out/ pruned from the
 # secret-pattern scan ---
@@ -296,12 +314,12 @@ Remove-IfEmpty (Join-Path $env:REPO_ROOT 'cross-model-out')
 # bare StartsWith (no separator) would over-match and skip it (a real blind
 # spot). Sentinel constructed at runtime.
 $VAL_T244_SIB = "cross-model-out-.test-t244-sib-$(Get-VtSuffix)"
-$t244SibPath = Join-Path $env:REPO_ROOT $VAL_T244_SIB
+$t244SibPath = Join-Path $VAL_GIT_FIX $VAL_T244_SIB
 New-Item -ItemType Directory -Path $t244SibPath -Force | Out-Null
 $val_t244sib_prefix = 'sk-'
 $val_t244sib_body = 'fakefake1234567890_abcdefghij_test'
 Write-LfFile (Join-Path $t244SibPath 'secret.txt') ($val_t244sib_prefix + $val_t244sib_body + "`n")
-Assert-Exit 'validate.test: validate.ps1 still catches secrets in a cross-model-out* sibling dir' 1 -- pwsh -NoProfile -File $VALIDATE_PS1
+Assert-Exit 'validate.test: validate.ps1 still catches secrets in a cross-model-out* sibling dir' 1 -- pwsh -NoProfile -File $VALIDATE_GIT_FIX
 Remove-Item -LiteralPath $t244SibPath -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- a TRACKED file whose NAME matches a gitignore rule is still
@@ -312,12 +330,16 @@ Remove-Item -LiteralPath $t244SibPath -Recurse -Force -ErrorAction SilentlyConti
 foreach ($q246name in @("fixture-t246-$(Get-VtSuffix).log", ".test-t246-$(Get-VtSuffix).mcp.json")) {
     $q246prefix = 'sk-'
     $q246body = 'fakefake1234567890_abcdefghij_test'
-    Write-LfFile (Join-Path $env:REPO_ROOT $q246name) ($q246prefix + $q246body + "`n")
-    & git -C $env:REPO_ROOT add -f $q246name 2>$null | Out-Null
-    Assert-Exit "validate.test: validate.ps1 scans a tracked gitignored-name file ($q246name)" 1 -- pwsh -NoProfile -File $VALIDATE_PS1
-    & git -C $env:REPO_ROOT reset -q -- $q246name 2>$null | Out-Null
-    Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $q246name) -Force -ErrorAction SilentlyContinue
+    Write-LfFile (Join-Path $VAL_GIT_FIX $q246name) ($q246prefix + $q246body + "`n")
+    & git -C $VAL_GIT_FIX add -f $q246name 2>$null | Out-Null
+    Assert-Exit "validate.test: validate.ps1 scans a tracked gitignored-name file ($q246name)" 1 -- pwsh -NoProfile -File $VALIDATE_GIT_FIX
+    & git -C $VAL_GIT_FIX reset -q -- $q246name 2>$null | Out-Null
+    Remove-Item -LiteralPath (Join-Path $VAL_GIT_FIX $q246name) -Force -ErrorAction SilentlyContinue
 }
+
+# Hermetic fixture teardown (<TEAM>-432) — q246 above is this file's last
+# fixture user (the q248/README cuts live in validate-ps.test.ps1).
+Remove-Item -Recurse -Force -LiteralPath $VAL_GIT_FIX -ErrorAction SilentlyContinue
 
 # the committable-set scan still PASSES clean on the live tree — a
 # positive guard that the enumeration didn't over-prune into a vacuous pass.

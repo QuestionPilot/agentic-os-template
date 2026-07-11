@@ -367,67 +367,78 @@ else
   rm -f "$DR_Q213_LOG"
 fi
 
+# (c) + (d) + t248 below assert on COMMITTABLE / TRACKED fixtures, so they run
+# in a hermetic tracked-only GIT fixture (make_tracked_git_fixture, <TEAM>-432)
+# rather than the live checkout: an untracked-committable root file is exactly
+# what a concurrent `git add -A`-style commit sweeps up, and the previous
+# `git add -f` staging for (d)/t248 mutated the LIVE index — racing any commit
+# made while the suite runs. check-drift.sh resolves its repo root from its own
+# script location, so the fixture's copy scans the fixture tree + index.
+DR_FIX="$(mktemp -d)"
+make_tracked_git_fixture "$DR_FIX"
+
+# Clean-fixture baseline (panel hardening): every DR_FIX assertion below
+# expects exit 1, so a broken fixture (failed init/add -> fs-mode, or a leaked
+# index entry) could make the whole group pass vacuously. Pin exit 0 on the
+# untouched fixture first — this also proves the git-enumeration branch is
+# live, since t248 below can only fail-closed via `git ls-files --cached`.
+assert_exit "check-drift.sh passes on the clean fixture" 0 -- \
+  bash "$DR_FIX/scripts/check-drift.sh"
+
 # (c) REGRESSION GUARD: an untracked-but-NOT-ignored (committable) file with the
 # same machine path is STILL caught -> exit 1. Pins that narrowed the scan
 # to gitignored-only; a future "tracked-only" switch would false-PASS here (the
 # hazard in [[feedback_git_lsfiles_test_skips_untracked]]). Untracked-not-ignored
 # is itself committable content, so this also covers the AC's "a tracked file
 # still fails" without mutating the index.
-DR_Q213_COMMIT="$REPO_ROOT/.test-t213-committable-$$-${RANDOM:-x}.md"
-if [ -e "$DR_Q213_COMMIT" ]; then
-  _skip "check-drift.sh still catches a committable machine path" "fixture collision: $DR_Q213_COMMIT"
+DR_Q213_COMMIT="$DR_FIX/.test-t213-committable-$$-${RANDOM:-x}.md"
+printf 'leak at %s\n' "$q213_home" > "$DR_Q213_COMMIT"
+if git -C "$DR_FIX" check-ignore -q "$DR_Q213_COMMIT"; then
+  _skip "check-drift.sh still catches a committable machine path" \
+    "unexpected: .md fixture is gitignored"
 else
-  printf 'leak at %s\n' "$q213_home" > "$DR_Q213_COMMIT"
-  if git -C "$REPO_ROOT" check-ignore -q "$DR_Q213_COMMIT"; then
-    _skip "check-drift.sh still catches a committable machine path" \
-      "unexpected: .md fixture is gitignored"
-  else
-    assert_exit "check-drift.sh still catches a committable machine path" 1 -- \
-      bash "$REPO_ROOT/scripts/check-drift.sh"
-  fi
-  rm -f "$DR_Q213_COMMIT"
+  assert_exit "check-drift.sh still catches a committable machine path" 1 -- \
+    bash "$DR_FIX/scripts/check-drift.sh"
 fi
+rm -f "$DR_Q213_COMMIT"
 
 # (d) AC literal + Codex adversarial F4: a TRACKED file with the machine path is
-# STILL caught -> exit 1. Staged via `git add -f` (tracked via --cached), then
-# UNSTAGED + removed immediately so no orphan survives (per
-# [[feedback_orphan_staged_fixtures]]). Runs in CI (fresh clone) / isolated
-# worktree, never operator-main.
-DR_Q213_TRACKED="$REPO_ROOT/.test-t213-tracked-$$-${RANDOM:-x}.md"
-if [ -e "$DR_Q213_TRACKED" ]; then
-  _skip "check-drift.sh catches a TRACKED machine path" "fixture collision: $DR_Q213_TRACKED"
-else
-  printf 'leak at %s\n' "$q213_home" > "$DR_Q213_TRACKED"
-  git -C "$REPO_ROOT" add -f -- "$DR_Q213_TRACKED" >/dev/null 2>&1
-  assert_exit "check-drift.sh catches a TRACKED machine path" 1 -- \
-    bash "$REPO_ROOT/scripts/check-drift.sh"
-  git -C "$REPO_ROOT" reset -q -- "$DR_Q213_TRACKED" >/dev/null 2>&1 || true
-  rm -f "$DR_Q213_TRACKED"
-fi
+# STILL caught -> exit 1. Staged via `git add -f` into the FIXTURE's throwaway
+# index (tracked via --cached), then unstaged + removed so the fixture is clean
+# for t248 (per [[feedback_orphan_staged_fixtures]]). The operator's live index
+# is never touched.
+DR_Q213_TRACKED="$DR_FIX/.test-t213-tracked-$$-${RANDOM:-x}.md"
+printf 'leak at %s\n' "$q213_home" > "$DR_Q213_TRACKED"
+git -C "$DR_FIX" add -f -- "$DR_Q213_TRACKED" >/dev/null 2>&1
+assert_exit "check-drift.sh catches a TRACKED machine path" 1 -- \
+  bash "$DR_FIX/scripts/check-drift.sh"
+git -C "$DR_FIX" reset -q -- "$DR_Q213_TRACKED" >/dev/null 2>&1 || true
+rm -f "$DR_Q213_TRACKED"
 unset q213_home DR_Q213_IGN_DIR DR_Q213_IGN DR_Q213_MADE_DIR DR_Q213_LOG DR_Q213_COMMIT DR_Q213_TRACKED
 
 # --- content scans FAIL CLOSED on a listed-but-unreadable file -------
 # A committable file `git ls-files` enumerates but the scanner cannot read must
 # FAIL, never be silently skipped into a pass. Modeled as a file staged via
-# `git add -f` then removed from the worktree: still in --cached (LISTED), absent
-# on disk (grep cannot read it). The bash twin already fails closed via grep's
-# exit-2 tri-state; this pins that contract and is the parity sibling of
-# check-drift.ps1's new Test-ScanPath fail-closed (PS previously swallowed the
-# ReadLines error via catch{}). Content carries no machine path / secret so the
-# unreadable file is the sole failure cause. Index reset in cleanup; runs in CI /
-# isolated worktree, never operator-main.
-DR_Q248="$REPO_ROOT/.test-t248-unreadable-$$-${RANDOM:-x}.md"
-if [ -e "$DR_Q248" ]; then
-  _skip "check-drift.sh fails closed on an unreadable listed file" "fixture collision: $DR_Q248"
-else
-  printf 'placeholder\n' > "$DR_Q248"
-  git -C "$REPO_ROOT" add -f -- "$DR_Q248" >/dev/null 2>&1
-  rm -f "$DR_Q248"
-  assert_exit "check-drift.sh fails closed on an unreadable listed file" 1 -- \
-    bash "$REPO_ROOT/scripts/check-drift.sh"
-  git -C "$REPO_ROOT" reset -q -- "$DR_Q248" >/dev/null 2>&1 || true
-fi
+# `git add -f` into the FIXTURE index then removed from the fixture worktree:
+# still in --cached (LISTED), absent on disk (grep cannot read it). The bash
+# twin already fails closed via grep's exit-2 tri-state; this pins that
+# contract and is the parity sibling of check-drift.ps1's Test-ScanPath
+# fail-closed (PS previously swallowed the ReadLines error via catch{}).
+# Content carries no machine path / secret so the unreadable file is the sole
+# failure cause. The fixture (and its index) is discarded below (<TEAM>-432).
+DR_Q248="$DR_FIX/.test-t248-unreadable-$$-${RANDOM:-x}.md"
+printf 'placeholder\n' > "$DR_Q248"
+git -C "$DR_FIX" add -f -- "$DR_Q248" >/dev/null 2>&1
+rm -f "$DR_Q248"
+assert_exit "check-drift.sh fails closed on an unreadable listed file" 1 -- \
+  bash "$DR_FIX/scripts/check-drift.sh"
+git -C "$DR_FIX" reset -q -- "$DR_Q248" >/dev/null 2>&1 || true
 unset DR_Q248
+
+# Hermetic fixture teardown (<TEAM>-432). No trap EXIT — tests/run.sh sources
+# files; inline removal is the cleanup contract.
+rm -rf "$DR_FIX"
+unset DR_FIX
 
 # --- --auto: multi-home drift gate (<TEAM>-394) -----------------------------
 # `make drift` runs check-drift.sh --auto so the gate covers EVERY rendered

@@ -205,6 +205,41 @@ function Copy-RepoTracked {
     }
 }
 
+# New-TrackedGitFixture <dest> -> canonical fixture root (string)
+# Hermetic GIT fixture (<TEAM>-432) — PS twin of tests/lib.sh
+# make_tracked_git_fixture: Copy-RepoTracked + a throwaway `git init` +
+# `git add -f -A`, so the fixture carries its OWN index tracking exactly the
+# copied set — the same committable enumeration a clean CI clone sees. Tests
+# that pin index-dependent behavior used to `git add -f` into the LIVE repo
+# index and unstage afterwards; any concurrent `git commit` in the same
+# checkout raced those transients. validate.ps1 + check-drift.ps1 resolve
+# their repo root from their own script location, so running the FIXTURE's
+# copy scans the fixture tree with the fixture index — zero writes to the
+# operator's checkout. No commit is made (nothing needs HEAD), so no git
+# identity is required. init.defaultBranch is pinned to keep git's
+# unset-branch-name hint off stderr regardless of machine config.
+#
+# RETURNS the git-CANONICALIZED fixture root (`rev-parse --show-toplevel`),
+# and callers must use the returned path, not $Dest. On macOS the OS temp dir
+# sits behind the /var -> /private/var symlink; the scripts' Resolve-Path-based
+# git detection does not canonicalize that symlink while git does, so a script
+# invoked via the symlinked path misclassifies the fixture as non-git and
+# falls back to the filesystem walk — silently exercising the wrong branch
+# (the trap validate-ps.test.ps1 documented when it avoided temp fixtures).
+# Invoking through git's own canonical path keeps the git-enumeration branch
+# (the production path) live on every platform.
+function New-TrackedGitFixture {
+    param([Parameter(Mandatory)][string]$Dest)
+    Copy-RepoTracked $Dest
+    & git -C $Dest -c init.defaultBranch=main init -q
+    if ($LASTEXITCODE -ne 0) { throw "New-TrackedGitFixture: git init failed in $Dest" }
+    & git -C $Dest add -f -A
+    if ($LASTEXITCODE -ne 0) { throw "New-TrackedGitFixture: git add failed in $Dest" }
+    $canon = (& git -C $Dest rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -ne 0 -or -not $canon) { throw "New-TrackedGitFixture: rev-parse --show-toplevel failed in $Dest" }
+    return $canon
+}
+
 # Write-CodexEnvFixture <env-file> <codex-home> [vault-dir]
 #
 # Mirrors `make_codex_env` in tests/lib.sh. (Not exercised by the

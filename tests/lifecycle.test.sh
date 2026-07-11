@@ -9,11 +9,13 @@
 # 5. ACCEPT the five canonical values: experimental | reviewed | shipped | superseded | sunset.
 # 6. Skip out-of-scope paths (core/*.md, README.md, harness templates, etc).
 #
-# Tests INJECT temp.md files into $REPO_ROOT, git-track them so the scanner
-# (which walks `git ls-files '*.md'` or the in-scope globs) sees them, and clean
-# up inline (no trap EXIT — tests/run.sh sources files, traps would leak across
-# siblings). Sentinel names include $$-${RANDOM:-x} to avoid collisions across
-# parallel runs and obvious.test-t83- prefixes to make stragglers easy to find.
+# Tests INJECT temp.md files into a hermetic tracked-only git fixture
+# ($LC_FIX via make_tracked_git_fixture, <TEAM>-432 — never the live repo
+# index), git-track them there so the scanner (which walks `git ls-files
+# '*.md'` or the in-scope globs) sees them, and clean up inline (no trap EXIT —
+# tests/run.sh sources files, traps would leak across siblings). Sentinel names
+# include $$-${RANDOM:-x} to avoid collisions across parallel runs and
+# obvious.test-t83- prefixes to make stragglers easy to find.
 #
 # Per reference_shell_grep_overlay: use /usr/bin/grep explicitly where POSIX
 # regex semantics matter. Per reference_awk_portability: wrap awk in LC_ALL=C.
@@ -72,60 +74,68 @@ else
   _fail "every in-scope tracked .md has a valid lifecycle: value"
 fi
 
-# Tests 3-11 plant fixtures under docs/plans/. The public template excludes docs/
-# from its ship-set, so on a fresh template clone docs/plans/ holds only the
-# fixture — and a plain `git rm` would then remove the emptied directory, breaking
-# the next test. Create the directory once here, and unstage fixtures with
-# `git rm --cached` (index only — the paired `rm -f` removes the working file) so
-# the directory survives between tests. validate's lifecycle scope is path-pattern
-# based (docs/plans/*.md), so it enforces these even when docs/ is otherwise absent.
-mkdir -p "$REPO_ROOT/docs/plans"
+# Tests 3-11 plant fixtures under docs/plans/ and need the scanner to see them
+# as TRACKED files. They run against a hermetic tracked-only GIT fixture
+# (make_tracked_git_fixture, <TEAM>-432) — planting in $REPO_ROOT and
+# `git add -f`-ing into the LIVE index raced any concurrent `git commit` in the
+# same checkout: a real commit made mid-suite captured the transient
+# docs/plans/README.md fixture and had to be amended out. validate.sh resolves
+# its repo root from its own script location, so the fixture's copy scans the
+# fixture tree with the throwaway index — clean-clone behavior, zero live-index
+# writes. Per-test cleanup (`git rm --cached` + `rm -f`) still runs so each
+# assertion sees only its own fixture. The public template excludes docs/ from
+# its ship-set, so docs/plans/ may be absent from the fixture too; create it
+# once here — validate's lifecycle scope is path-pattern based
+# (docs/plans/*.md), so it enforces these even when docs/ is otherwise absent.
+LC_FIX="$(mktemp -d)"
+make_tracked_git_fixture "$LC_FIX"
+mkdir -p "$LC_FIX/docs/plans"
 
 # --- Test 3: validate rejects in-scope file with missing lifecycle: ---
 # Inject a docs/plans/.test-t83-*.md with frontmatter but no lifecycle key.
 # Validate must exit non-zero.
 LIFECYCLE_MISSING="docs/plans/.test-t83-missing-lifecycle-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LIFECYCLE_MISSING" <<'MD'
+cat > "$LC_FIX/$LIFECYCLE_MISSING" <<'MD'
 ---
 title: test fixture — missing lifecycle key
 ---
 
 # Test fixture body
 MD
-git -C "$REPO_ROOT" add -f "$LIFECYCLE_MISSING"
+git -C "$LC_FIX" add -f "$LIFECYCLE_MISSING"
 assert_exit "validate.sh fails when in-scope file lacks lifecycle:" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_MISSING"
-rm -f "$REPO_ROOT/$LIFECYCLE_MISSING"
+  bash "$LC_FIX/scripts/validate.sh"
+git -C "$LC_FIX" rm -f --cached --quiet "$LIFECYCLE_MISSING"
+rm -f "$LC_FIX/$LIFECYCLE_MISSING"
 
 # --- Test 4: validate rejects in-scope file with invalid lifecycle: value ---
 LIFECYCLE_INVALID="docs/plans/.test-t83-invalid-lifecycle-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LIFECYCLE_INVALID" <<'MD'
+cat > "$LC_FIX/$LIFECYCLE_INVALID" <<'MD'
 ---
 lifecycle: bogus-value
 ---
 
 # Test fixture body
 MD
-git -C "$REPO_ROOT" add -f "$LIFECYCLE_INVALID"
+git -C "$LC_FIX" add -f "$LIFECYCLE_INVALID"
 assert_exit "validate.sh fails when in-scope file has invalid lifecycle: value" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_INVALID"
-rm -f "$REPO_ROOT/$LIFECYCLE_INVALID"
+  bash "$LC_FIX/scripts/validate.sh"
+git -C "$LC_FIX" rm -f --cached --quiet "$LIFECYCLE_INVALID"
+rm -f "$LC_FIX/$LIFECYCLE_INVALID"
 
 # --- Test 5: validate rejects in-scope file with malformed (unterminated) frontmatter ---
 LIFECYCLE_MALFORMED="docs/plans/.test-t83-malformed-lifecycle-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LIFECYCLE_MALFORMED" <<'MD'
+cat > "$LC_FIX/$LIFECYCLE_MALFORMED" <<'MD'
 ---
 lifecycle: shipped
 
 # Test fixture body (missing closing ---)
 MD
-git -C "$REPO_ROOT" add -f "$LIFECYCLE_MALFORMED"
+git -C "$LC_FIX" add -f "$LIFECYCLE_MALFORMED"
 assert_exit "validate.sh fails on malformed (unterminated) frontmatter" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_MALFORMED"
-rm -f "$REPO_ROOT/$LIFECYCLE_MALFORMED"
+  bash "$LC_FIX/scripts/validate.sh"
+git -C "$LC_FIX" rm -f --cached --quiet "$LIFECYCLE_MALFORMED"
+rm -f "$LC_FIX/$LIFECYCLE_MALFORMED"
 
 # --- Test 6: validate accepts all five canonical values ---
 # Inject five separate files, one per value. Each must pass on its own AND
@@ -135,22 +145,22 @@ _test_all_five_values_accepted() {
   local fail=0
   for v in experimental reviewed shipped superseded sunset; do
     local f="docs/plans/.test-t83-value-${v}-$$-${RANDOM:-x}.md"
-    cat > "$REPO_ROOT/$f" <<MD
+    cat > "$LC_FIX/$f" <<MD
 ---
 lifecycle: $v
 ---
 
 # Test fixture body — value=$v
 MD
-    git -C "$REPO_ROOT" add -f "$f" 2>/dev/null
+    git -C "$LC_FIX" add -f "$f" 2>/dev/null
     files+=("$f")
   done
-  if ! bash "$REPO_ROOT/scripts/validate.sh" >/dev/null 2>&1; then
+  if ! bash "$LC_FIX/scripts/validate.sh" >/dev/null 2>&1; then
     fail=1
   fi
   for f in "${files[@]}"; do
-    git -C "$REPO_ROOT" rm -f --cached --quiet "$f" 2>/dev/null
-    rm -f "$REPO_ROOT/$f"
+    git -C "$LC_FIX" rm -f --cached --quiet "$f" 2>/dev/null
+    rm -f "$LC_FIX/$f"
   done
   return $fail
 }
@@ -165,14 +175,14 @@ fi
 # validate.sh must still exit 0 — proving the scope is narrow.
 # core/ is out-of-scope per core/lifecycle.md applicability matrix.
 LIFECYCLE_OOS="core/.test-t83-out-of-scope-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LIFECYCLE_OOS" <<'MD'
+cat > "$LC_FIX/$LIFECYCLE_OOS" <<'MD'
 # Out-of-scope test fixture — no frontmatter, no lifecycle: key
 MD
-git -C "$REPO_ROOT" add -f "$LIFECYCLE_OOS"
+git -C "$LC_FIX" add -f "$LIFECYCLE_OOS"
 assert_exit "validate.sh passes on out-of-scope file without lifecycle:" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_OOS"
-rm -f "$REPO_ROOT/$LIFECYCLE_OOS"
+  bash "$LC_FIX/scripts/validate.sh"
+git -C "$LC_FIX" rm -f --cached --quiet "$LIFECYCLE_OOS"
+rm -f "$LC_FIX/$LIFECYCLE_OOS"
 
 # --- Test 8: capabilities/README.md is excluded from enforcement ---
 # README is the conventional directory README; check_lifecycle skips it per
@@ -243,7 +253,7 @@ fi
 # documented here. If this becomes a real-world problem, the fix is to use
 # a YAML parser (yq/awk-state-machine) instead of regex.
 LIFECYCLE_DUPLICATE="docs/plans/.test-t83-duplicate-lifecycle-$$-${RANDOM:-x}.md"
-cat > "$REPO_ROOT/$LIFECYCLE_DUPLICATE" <<'MD'
+cat > "$LC_FIX/$LIFECYCLE_DUPLICATE" <<'MD'
 ---
 lifecycle: bogus-value
 lifecycle: shipped
@@ -251,14 +261,14 @@ lifecycle: shipped
 
 # Test fixture body
 MD
-git -C "$REPO_ROOT" add -f "$LIFECYCLE_DUPLICATE"
+git -C "$LC_FIX" add -f "$LIFECYCLE_DUPLICATE"
 # Decision documented above: the regex-based check accepts the file IF any
 # line is valid. Pin this behavior so a future "strict YAML parser" change is
 # a conscious decision, not a silent regression.
 assert_exit "validate.sh accepts file with a valid lifecycle: line even if a sibling line is bogus" 0 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_DUPLICATE"
-rm -f "$REPO_ROOT/$LIFECYCLE_DUPLICATE"
+  bash "$LC_FIX/scripts/validate.sh"
+git -C "$LC_FIX" rm -f --cached --quiet "$LIFECYCLE_DUPLICATE"
+rm -f "$LC_FIX/$LIFECYCLE_DUPLICATE"
 
 # --- Test 11: hypothetical directory README.md is excluded from enforcement ---
 # Per Codex review missing-test: confirm the README skip applies to ANY
@@ -268,16 +278,22 @@ LIFECYCLE_README="docs/plans/README.md.test-t83-$$-${RANDOM:-x}"
 # Bypass the existing-README check by using a unique sentinel name, then
 # rename to README.md transiently for the test.
 LIFECYCLE_README_TGT="docs/plans/README.md"
-if [ -f "$REPO_ROOT/$LIFECYCLE_README_TGT" ]; then
+if [ -f "$LC_FIX/$LIFECYCLE_README_TGT" ]; then
   # If a real README.md exists, skip this test — would clobber it.
   _pass "docs/plans/README.md exclusion test SKIPPED — pre-existing README"
 else
-  cat > "$REPO_ROOT/$LIFECYCLE_README_TGT" <<'MD'
+  cat > "$LC_FIX/$LIFECYCLE_README_TGT" <<'MD'
 # Test fixture — directory README, no lifecycle: key
 MD
-  git -C "$REPO_ROOT" add -f "$LIFECYCLE_README_TGT"
+  git -C "$LC_FIX" add -f "$LIFECYCLE_README_TGT"
   assert_exit "validate.sh skips docs/plans/README.md from check_lifecycle" 0 -- \
-    bash "$REPO_ROOT/scripts/validate.sh"
-  git -C "$REPO_ROOT" rm -f --cached --quiet "$LIFECYCLE_README_TGT"
-  rm -f "$REPO_ROOT/$LIFECYCLE_README_TGT"
+    bash "$LC_FIX/scripts/validate.sh"
+  git -C "$LC_FIX" rm -f --cached --quiet "$LIFECYCLE_README_TGT"
+  rm -f "$LC_FIX/$LIFECYCLE_README_TGT"
 fi
+
+# Hermetic fixture teardown (<TEAM>-432): the throwaway clone (and its index)
+# is the only thing the injection tests touched — remove it. No trap EXIT (see
+# header); inline removal is the cleanup contract, same as the per-test rm -f.
+rm -rf "$LC_FIX"
+unset LC_FIX

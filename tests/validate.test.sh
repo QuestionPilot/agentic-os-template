@@ -301,6 +301,24 @@ for ct_dir in "$REPO_ROOT/.codex" "$REPO_ROOT/.agents"; do
   rmdir "$ct_dir" 2>/dev/null || true
 done
 
+# The COMMITTABLE-set tests below (t66 force-add, the t244 root-anchored
+# sibling, q246, q248, the root-README exception) plant tracked / committable
+# fixtures. They run in a hermetic tracked-only GIT fixture
+# (make_tracked_git_fixture, <TEAM>-432), never the live checkout: force-adding
+# into the LIVE index — or leaving an untracked-committable secret sentinel /
+# appending to the live README.md — raced any concurrent `git commit` in the
+# same checkout. validate.sh resolves its repo root from its own script
+# location, so the fixture's copy scans the fixture tree + throwaway index.
+VAL_GIT_FIX="$(mktemp -d)"
+make_tracked_git_fixture "$VAL_GIT_FIX"
+
+# Clean-fixture baseline (panel hardening): most fixture assertions below
+# expect exit 1, so a broken fixture (failed init/add -> fs-mode, or a leaked
+# index entry) could make them pass vacuously. Pin exit 0 on the untouched
+# fixture first.
+assert_exit "validate.sh passes on the clean fixture" 0 -- \
+  bash "$VAL_GIT_FIX/scripts/validate.sh"
+
 # --- secret-pattern scan catches a secret in a non-harness
 # worktrees/ dir — re-premised on COMMITTABILITY ---
 # Pre-fix: validate.sh used --exclude-dir=worktrees, a blanket name-match that
@@ -316,21 +334,21 @@ done
 # assertion stays meaningful — committability, not path, is now the criterion.
 #
 # Sentinel is runtime-constructed (per [[feedback_self_tripping_test_source]])
-# so this test source doesn't self-trip when validate.sh scans tests/. The index
-# is reset in cleanup so the force-added fixture leaves no staged orphan.
+# so this test source doesn't self-trip when validate.sh scans tests/. The
+# FIXTURE index is reset in cleanup so later fixture tests see a clean index.
 VAL_T66_FA_PARENT="tests/fixtures/t66-fa-$$-${RANDOM:-x}"
 VAL_T66_FA_DIR="$VAL_T66_FA_PARENT/worktrees"
-mkdir -p "$REPO_ROOT/$VAL_T66_FA_DIR"
+mkdir -p "$VAL_GIT_FIX/$VAL_T66_FA_DIR"
 val_t66fa_prefix='sk-'
 val_t66fa_body='fakefake1234567890_abcdefghij_test'
 printf '%s%s\n' "$val_t66fa_prefix" "$val_t66fa_body" > \
-  "$REPO_ROOT/$VAL_T66_FA_DIR/secret.txt"
+  "$VAL_GIT_FIX/$VAL_T66_FA_DIR/secret.txt"
 unset val_t66fa_prefix val_t66fa_body
-git -C "$REPO_ROOT" add -f "$VAL_T66_FA_DIR/secret.txt" >/dev/null 2>&1
+git -C "$VAL_GIT_FIX" add -f "$VAL_T66_FA_DIR/secret.txt" >/dev/null 2>&1
 assert_exit "validate.sh catches secrets in a tracked non-harness worktrees/ dir" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" reset -q -- "$VAL_T66_FA_DIR/secret.txt" 2>/dev/null || true
-rm -rf "$REPO_ROOT/$VAL_T66_FA_PARENT"
+  bash "$VAL_GIT_FIX/scripts/validate.sh"
+git -C "$VAL_GIT_FIX" reset -q -- "$VAL_T66_FA_DIR/secret.txt" 2>/dev/null || true
+rm -rf "$VAL_GIT_FIX/$VAL_T66_FA_PARENT"
 
 # --- gitignored runtime-artifact dir cross-model-out/ pruned from the
 # secret-pattern scan ---
@@ -370,15 +388,15 @@ rmdir "$REPO_ROOT/cross-model-out" 2>/dev/null || true
 # The dir lives at repo root because the prefix collision only arises at the
 # excluded root's own level. Sentinel constructed at runtime.
 VAL_T244_SIB="cross-model-out-.test-t244-sib-$$-${RANDOM:-x}"
-mkdir -p "$REPO_ROOT/$VAL_T244_SIB"
+mkdir -p "$VAL_GIT_FIX/$VAL_T244_SIB"
 val_t244sib_prefix='sk-'
 val_t244sib_body='fakefake1234567890_abcdefghij_test'
 printf '%s%s\n' "$val_t244sib_prefix" "$val_t244sib_body" > \
-  "$REPO_ROOT/$VAL_T244_SIB/secret.txt"
+  "$VAL_GIT_FIX/$VAL_T244_SIB/secret.txt"
 unset val_t244sib_prefix val_t244sib_body
 assert_exit "validate.sh still catches secrets in a cross-model-out* sibling dir" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-rm -rf "$REPO_ROOT/$VAL_T244_SIB"
+  bash "$VAL_GIT_FIX/scripts/validate.sh"
+rm -rf "$VAL_GIT_FIX/$VAL_T244_SIB"
 
 # --- a TRACKED file whose NAME matches a gitignore rule is still
 # scanned ---
@@ -392,13 +410,13 @@ rm -rf "$REPO_ROOT/$VAL_T244_SIB"
 for val_q246_name in "fixture-t246-$$-${RANDOM:-x}.log" ".test-t246-$$-${RANDOM:-y}.mcp.json"; do
   val_q246_prefix='sk-'
   val_q246_body='fakefake1234567890_abcdefghij_test'
-  printf '%s%s\n' "$val_q246_prefix" "$val_q246_body" > "$REPO_ROOT/$val_q246_name"
+  printf '%s%s\n' "$val_q246_prefix" "$val_q246_body" > "$VAL_GIT_FIX/$val_q246_name"
   unset val_q246_prefix val_q246_body
-  git -C "$REPO_ROOT" add -f "$val_q246_name" >/dev/null 2>&1
+  git -C "$VAL_GIT_FIX" add -f "$val_q246_name" >/dev/null 2>&1
   assert_exit "validate.sh scans a tracked gitignored-name file ($val_q246_name)" 1 -- \
-    bash "$REPO_ROOT/scripts/validate.sh"
-  git -C "$REPO_ROOT" reset -q -- "$val_q246_name" 2>/dev/null || true
-  rm -f "$REPO_ROOT/$val_q246_name"
+    bash "$VAL_GIT_FIX/scripts/validate.sh"
+  git -C "$VAL_GIT_FIX" reset -q -- "$val_q246_name" 2>/dev/null || true
+  rm -f "$VAL_GIT_FIX/$val_q246_name"
 done
 unset val_q246_name
 
@@ -417,19 +435,16 @@ assert_exit "validate.sh passes clean on the committable set" 0 -- \
 # pins that contract and is the parity sibling of validate-ps.test.ps1's new
 # read-error-flag path (PS previously failed OPEN via -EA SilentlyContinue). A
 # non-.md extension isolates the failure to the secret scan (the link/lifecycle
-# checks ignore it). Index reset in cleanup so no staged orphan survives (per
-# [[feedback_orphan_staged_fixtures]]); runs in CI / isolated worktree.
-VAL_Q248_DEL="$REPO_ROOT/.test-t248-unreadable-$$-${RANDOM:-x}.txt"
-if [ -e "$VAL_Q248_DEL" ]; then
-  _skip "validate.sh fails closed on an unreadable listed file" "fixture collision: $VAL_Q248_DEL"
-else
-  printf 'placeholder\n' > "$VAL_Q248_DEL"
-  git -C "$REPO_ROOT" add -f -- "$VAL_Q248_DEL" >/dev/null 2>&1
-  rm -f "$VAL_Q248_DEL"
-  assert_exit "validate.sh fails closed on an unreadable listed file" 1 -- \
-    bash "$REPO_ROOT/scripts/validate.sh"
-  git -C "$REPO_ROOT" reset -q -- "$VAL_Q248_DEL" >/dev/null 2>&1 || true
-fi
+# checks ignore it). FIXTURE index reset in cleanup so later fixture tests see
+# a clean index (per [[feedback_orphan_staged_fixtures]]); the live index is
+# never touched (<TEAM>-432).
+VAL_Q248_DEL="$VAL_GIT_FIX/.test-t248-unreadable-$$-${RANDOM:-x}.txt"
+printf 'placeholder\n' > "$VAL_Q248_DEL"
+git -C "$VAL_GIT_FIX" add -f -- "$VAL_Q248_DEL" >/dev/null 2>&1
+rm -f "$VAL_Q248_DEL"
+assert_exit "validate.sh fails closed on an unreadable listed file" 1 -- \
+  bash "$VAL_GIT_FIX/scripts/validate.sh"
+git -C "$VAL_GIT_FIX" reset -q -- "$VAL_Q248_DEL" >/dev/null 2>&1 || true
 unset VAL_Q248_DEL
 
 # --- the root README secret exception is ROOT-EXACT, not basename
@@ -437,50 +452,44 @@ unset VAL_Q248_DEL
 # so a nested docs/ or package README.md carrying a real token was a blind spot.
 # A nested README with a secret MUST now be scanned -> FAIL. Sentinel constructed
 # at runtime per [[feedback_self_tripping_test_source]]; fixture force-added
-# (committable) then unstaged + removed. The unstage+remove is ALSO registered on
-# INT/TERM (the bash analog of the PS twin's try/finally) so an interrupted or
-# killed run cannot leave the force-added fixture orphaned in the index + on disk
-# (the orphan-staged-fixture hazard). The trap is INT/TERM only (NOT EXIT — run.sh
-# sources files, so an EXIT trap would persist across siblings per the header
-# note) and is cleared immediately after the inline cleanup.
+# (committable) into the FIXTURE index then unstaged + removed. The old
+# INT/TERM trap protected the LIVE index from an orphaned staged fixture; the
+# fixture index is throwaway (<TEAM>-432), so an interrupted run leaves at most
+# a mktemp dir — no trap needed.
 VAL_Q248_NEST="tests/fixtures/t248-nested-$$-${RANDOM:-x}"
-trap 'git -C "$REPO_ROOT" reset -q -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1 || true; rm -rf "$REPO_ROOT/$VAL_Q248_NEST"' INT TERM
-mkdir -p "$REPO_ROOT/$VAL_Q248_NEST"
+mkdir -p "$VAL_GIT_FIX/$VAL_Q248_NEST"
 val_q248_prefix='sk-'
 val_q248_body='fakefake1234567890_abcdefghij_test'
-printf 'value: %s%s\n' "$val_q248_prefix" "$val_q248_body" > "$REPO_ROOT/$VAL_Q248_NEST/README.md"
+printf 'value: %s%s\n' "$val_q248_prefix" "$val_q248_body" > "$VAL_GIT_FIX/$VAL_Q248_NEST/README.md"
 unset val_q248_prefix val_q248_body
-git -C "$REPO_ROOT" add -f -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1
+git -C "$VAL_GIT_FIX" add -f -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1
 assert_exit "validate.sh scans a nested README.md for secrets" 1 -- \
-  bash "$REPO_ROOT/scripts/validate.sh"
-git -C "$REPO_ROOT" reset -q -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1 || true
-rm -rf "$REPO_ROOT/$VAL_Q248_NEST"
-trap - INT TERM
+  bash "$VAL_GIT_FIX/scripts/validate.sh"
+git -C "$VAL_GIT_FIX" reset -q -- "$VAL_Q248_NEST/README.md" >/dev/null 2>&1 || true
+rm -rf "$VAL_GIT_FIX/$VAL_Q248_NEST"
 unset VAL_Q248_NEST
 
 # --- the ROOT README.md remains excepted (documented example
 # key shapes). Appending a secret-shaped line to the repo-root README must NOT
-# fail the scan. The restore is registered on INT/TERM (the bash analog of the PS
-# twin's try/finally) so an interrupted or killed run cannot leak the
-# secret-shaped sentinel into the tracked README.md — a leak would make this test
-# _skip forever, since the guard below requires a clean README.md. The trap is
-# INT/TERM only (NOT EXIT — run.sh sources files, so an EXIT trap would persist
-# across siblings per the header note) and is cleared immediately after the
-# inline restore. Guarded on the file being clean first so a dirty tree is never
-# clobbered. Sentinel runtime-built.
-if git -C "$REPO_ROOT" diff --quiet -- README.md 2>/dev/null; then
-  trap 'git -C "$REPO_ROOT" checkout -- README.md >/dev/null 2>&1 || true' INT TERM
-  val_q248r_prefix='sk-'
-  val_q248r_body='fakefake1234567890_abcdefghij_test'
-  printf 'value: %s%s\n' "$val_q248r_prefix" "$val_q248r_body" >> "$REPO_ROOT/README.md"
-  unset val_q248r_prefix val_q248r_body
-  assert_exit "validate.sh excepts a secret-shaped line in the ROOT README" 0 -- \
-    bash "$REPO_ROOT/scripts/validate.sh"
-  git -C "$REPO_ROOT" checkout -- README.md >/dev/null 2>&1 || true
-  trap - INT TERM
-else
-  _skip "validate.sh excepts a secret-shaped line in the ROOT README" "README.md not clean"
-fi
+# fail the scan. Runs against the FIXTURE's README.md (<TEAM>-432) — appending
+# to the LIVE tracked README raced a concurrent `git commit -am`, which would
+# have captured the secret-shaped sentinel into history. The fixture README is
+# restored from the fixture index afterwards (checkout works from an unborn
+# HEAD's index) purely so any later fixture assertion sees a clean tree; the
+# old clean-file guard + INT/TERM restore trap protected the live README and
+# are unnecessary on a throwaway copy. Sentinel runtime-built.
+val_q248r_prefix='sk-'
+val_q248r_body='fakefake1234567890_abcdefghij_test'
+printf 'value: %s%s\n' "$val_q248r_prefix" "$val_q248r_body" >> "$VAL_GIT_FIX/README.md"
+unset val_q248r_prefix val_q248r_body
+assert_exit "validate.sh excepts a secret-shaped line in the ROOT README" 0 -- \
+  bash "$VAL_GIT_FIX/scripts/validate.sh"
+git -C "$VAL_GIT_FIX" checkout -- README.md >/dev/null 2>&1 || true
+
+# Hermetic fixture teardown (<TEAM>-432). No trap EXIT — tests/run.sh sources
+# files; inline removal is the cleanup contract.
+rm -rf "$VAL_GIT_FIX"
+unset VAL_GIT_FIX
 
 # --- <TEAM>-319: the .DS_Store + embedded-.git scans honor the CO-LOCATED config
 # dir exemption ---

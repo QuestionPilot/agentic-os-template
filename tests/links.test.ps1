@@ -21,12 +21,15 @@
 # bash treats it (broken link → FAIL). Some `links.test.sh` assertions use
 # upper-case content; the PS twin mirrors bash treatment.
 #
-# Real-worktree-injection pattern (same as bash twin):
-# plant a temp.md inside $env:REPO_ROOT → git-add → run validate.ps1 →
-# assert exit code / output → git-rm + delete the temp file. No inline-trap
-# cleanup (per the bash-twin pattern at tests/links.test.sh:14-15);
-# cleanups inline immediately after each assertion to minimize orphan-
-# fixture risk per [[feedback_orphan_staged_fixtures]].
+# Hermetic-fixture-injection pattern (same as bash twin, <TEAM>-432):
+# plant a temp.md inside a hermetic tracked-only git fixture ($LK_FIX via
+# New-TrackedGitFixture — never the live repo index) → git-add there → run the
+# FIXTURE's validate.ps1 (it resolves repo root from its own script location) →
+# assert exit code / output → git-rm + delete the temp file. Injecting into
+# $env:REPO_ROOT and force-adding into the LIVE index raced any concurrent
+# `git commit` in the same checkout. No inline-trap cleanup (per the bash-twin
+# pattern); cleanups inline immediately after each assertion to minimize
+# orphan-fixture risk per [[feedback_orphan_staged_fixtures]].
 #
 # tests/lib.ps1 dot-sourced by tests/run.ps1; Assert-* + counters in scope.
 
@@ -58,9 +61,9 @@ function _LinkSentinel {
     "${Slug}-$PID-$([guid]::NewGuid().Guid.Substring(0,8))"
 }
 
-# Inject $Content at $RelPath inside $env:REPO_ROOT, git-add, run validate.ps1,
-# Assert-Exit, then git-rm + delete the file. Mirrors the bash twin's
-# Test 2-29 pattern at tests/links.test.sh:25-637.
+# Inject $Content at $RelPath inside the $LK_FIX fixture, git-add THERE, run
+# the fixture's validate.ps1, Assert-Exit, then git-rm + delete the file.
+# Mirrors the bash twin's Test 2+ pattern (<TEAM>-432 hermetic fixture).
 function _LinkFixture {
     param(
         [Parameter(Mandatory)][string]$Label,
@@ -68,17 +71,17 @@ function _LinkFixture {
         [Parameter(Mandatory)][string]$RelPath,
         [Parameter(Mandatory)][string]$Content
     )
-    $abs = Join-Path $env:REPO_ROOT $RelPath
+    $abs = Join-Path $LK_FIX $RelPath
     $dir = Split-Path -Parent $abs
     if ($dir -and -not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
     }
     $utf8 = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($abs, $Content, $utf8)
-    Push-Location $env:REPO_ROOT
+    Push-Location $LK_FIX
     try {
         & git add -f -- $RelPath 2>$null
-        Assert-Exit $Label $Want -- pwsh -NoProfile -File $VALIDATE_PS1
+        Assert-Exit $Label $Want -- pwsh -NoProfile -File $VALIDATE_FIX
     } finally {
         & git rm -f --quiet -- $RelPath 2>$null
         Pop-Location
@@ -96,13 +99,13 @@ function _LinkDiag {
         [Parameter(Mandatory)][string]$Content,
         [Parameter(Mandatory)][string]$ExpectedTarget
     )
-    $abs = Join-Path $env:REPO_ROOT $RelPath
+    $abs = Join-Path $LK_FIX $RelPath
     $utf8 = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($abs, $Content, $utf8)
-    Push-Location $env:REPO_ROOT
+    Push-Location $LK_FIX
     try {
         & git add -f -- $RelPath 2>$null
-        $out  = & pwsh -NoProfile -File $VALIDATE_PS1 2>&1
+        $out  = & pwsh -NoProfile -File $VALIDATE_FIX 2>&1
         $full = ($out -join "`n")
         Assert-Contains $LabelFile   $full $RelPath
         Assert-Contains $LabelTarget $full $ExpectedTarget
@@ -118,8 +121,16 @@ function _LinkDiag {
 # ---------------------------------------------------------------------------
 
 # --- Test 1: validate.ps1 passes on unmodified repo ----
+# Deliberately runs against the LIVE repo — this is the one assertion whose
+# subject is the operator's actual tree, and it is read-only.
 Assert-Exit 'links.test: validate.ps1 passes on unmodified repo' 0 -- `
     pwsh -NoProfile -File $VALIDATE_PS1
+
+# Hermetic injection fixture for every test below (<TEAM>-432). Use the
+# helper's RETURNED (git-canonicalized) path — see the New-TrackedGitFixture
+# doc comment for the macOS /var symlink trap.
+$LK_FIX = New-TrackedGitFixture (Join-Path ([System.IO.Path]::GetTempPath()) ("lk-fix-$PID-" + [Guid]::NewGuid().Guid.Substring(0,8)))
+$VALIDATE_FIX = Join-Path $LK_FIX 'scripts' 'validate.ps1'
 
 # --- Test 2: broken internal link rejected ---------------------------------
 $rel = (_LinkSentinel 't53-links-broken') + '.md'
@@ -137,7 +148,7 @@ _LinkFixture 'links.test: validate.ps1 allows broken links inside vendored/' 0 `
 [Broken upstream ref](../../docs/never-copied.md) — allowlisted.
 '@ + "`n")
 # Cleanup the synthetic vendored dir (the.md was removed by _LinkFixture).
-Remove-Item -LiteralPath (Join-Path $env:REPO_ROOT $vendDir) -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $LK_FIX $vendDir) -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- Test 4: links inside code fences skipped ------------------------------
 _LinkFixture 'links.test: validate.ps1 ignores links inside code fences' 0 `
@@ -398,3 +409,7 @@ _LinkFixture 'links.test: validate.ps1 recognizes singular ../../pull/N and ../.
 - [Bare pull listing fallback](../../pull)
 - [Bare commit listing fallback](../../commit)
 '@ + "`n")
+
+# Hermetic fixture teardown (<TEAM>-432): the throwaway clone (and its index)
+# is the only thing the injection tests touched — remove it.
+Remove-Item -Recurse -Force -LiteralPath $LK_FIX -ErrorAction SilentlyContinue
