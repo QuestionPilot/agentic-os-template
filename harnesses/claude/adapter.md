@@ -6,10 +6,10 @@ none of it. A build script (`scripts/install.sh`, added in M5.2) reads this
 adapter plus the `capabilities/` specs and compiles them into Claude Code's native
 format.
 
-Verified against **Claude Code v2.1.153** — hook wire shapes via the `SessionStart`
-and `PreToolUse` (`Write|Edit|NotebookEdit`) JSON-on-stdin contracts, the
-skill-invocation transcript signature the session-agent gate matches, and a live
-capability run. The build target is the directory named by the `CLAUDE_CONFIG_DIR`
+Verified against **Claude Code v2.1.207** (2026-07-12) — hook wire shapes via the
+`SessionStart` and `PreToolUse` (`Write|Edit|NotebookEdit`) JSON-on-stdin
+contracts, the skill-invocation transcript signature the session-agent gate
+matches, and a live capability run. The build target is the directory named by the `CLAUDE_CONFIG_DIR`
 environment variable.
 
 `harnesses/` is the **only** quarantined harness-specific zone in this repository.

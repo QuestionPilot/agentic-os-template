@@ -11,9 +11,11 @@ repository. Harness tool names, hook event names, and harness paths are
 expected here and nowhere else (`scripts/check-drift.sh` denies the Hermes
 token set in shared dirs).
 
-Verified against **Hermes Agent v0.16.0** (2026-06-10) — hook wire shapes via
-`hermes hooks test`, desktop-entrypoint behavior via a live desktop session +
-source inspection, edit-tool surface via a live CLI session. The build target
+Verified against **Hermes Agent v0.18.2** (2026-07-12) — hook wire shapes via
+`hermes hooks doctor` synthetic-payload checks plus live spine sessions;
+desktop-entrypoint behavior and the bridge plugin were verified on v0.16.0
+(2026-06-10, live desktop session + source inspection) and dated in-body
+citations record that baseline; edit-tool surface via a live CLI session. The build target
 is the directory named by the `HERMES_HOME` environment variable in
 `local.env`. Point it at a **dedicated profile directory** (e.g.
 `~/.hermes/profiles/agentic-os`) for an isolated agentic-os brain, or at

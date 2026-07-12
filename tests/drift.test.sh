@@ -265,8 +265,14 @@ rm -f "$DR_C1_NEG_M"
 # when drift scans tests/.
 # docs/ is excluded from the public template ship-set, so docs/plans/ may not
 # exist on a fresh template clone — create it so the fixture can be planted.
-mkdir -p "$REPO_ROOT/docs/plans"
-H6_INJECT="$REPO_ROOT/docs/plans/test-t52-h6-leak.md"
+H6_DOCS_DIR="$REPO_ROOT/docs"
+H6_PLANS_DIR="$H6_DOCS_DIR/plans"
+H6_CREATED_DOCS=0
+H6_CREATED_PLANS=0
+[ -d "$H6_DOCS_DIR" ] || H6_CREATED_DOCS=1
+[ -d "$H6_PLANS_DIR" ] || H6_CREATED_PLANS=1
+mkdir -p "$H6_PLANS_DIR"
+H6_INJECT="$H6_PLANS_DIR/test-t52-h6-leak.md"
 h6_prefix='/U'
 h6_body='sers/test-t52-h6/sentinel'
 printf '%s%s\n' "$h6_prefix" "$h6_body" > "$H6_INJECT"
@@ -274,6 +280,13 @@ unset h6_prefix h6_body
 assert_exit "check-drift.sh catches concrete-home-prefix path in docs/plans/" 1 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh"
 rm -f "$H6_INJECT"
+if [ "$H6_CREATED_PLANS" -eq 1 ]; then
+  rmdir "$H6_PLANS_DIR" || _fail "drift.test: failed to remove fixture-created docs/plans"
+fi
+if [ "$H6_CREATED_DOCS" -eq 1 ]; then
+  rmdir "$H6_DOCS_DIR" || _fail "drift.test: failed to remove fixture-created docs"
+fi
+unset H6_DOCS_DIR H6_PLANS_DIR H6_CREATED_DOCS H6_CREATED_PLANS H6_INJECT
 
 # --- cross-model-out/ runtime artifacts are pruned from check-drift.sh ---
 # The cross-model-review skill files run outputs under cross-model-out/<run>/

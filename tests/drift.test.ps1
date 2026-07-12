@@ -198,12 +198,29 @@ Remove-Item -LiteralPath $DR_C1_NEG_M -Force -ErrorAction SilentlyContinue
 # --- portability scan catches concrete paths in tracked plans ---
 # docs/ is excluded from the public template ship-set, so docs/plans/ may not
 # exist on a fresh template clone — create it so the fixture can be planted.
-New-Item -ItemType Directory -Force -Path (Join-Path $env:REPO_ROOT 'docs' 'plans') | Out-Null
-$H6_INJECT = Join-Path $env:REPO_ROOT 'docs' 'plans' 'test-t52-h6-leak.md'
+$H6_DOCS_DIR = Join-Path $env:REPO_ROOT 'docs'
+$H6_PLANS_DIR = Join-Path $H6_DOCS_DIR 'plans'
+$H6_CREATED_DOCS = -not (Test-Path -LiteralPath $H6_DOCS_DIR)
+$H6_CREATED_PLANS = -not (Test-Path -LiteralPath $H6_PLANS_DIR)
+New-Item -ItemType Directory -Force -Path $H6_PLANS_DIR | Out-Null
+$H6_INJECT = Join-Path $H6_PLANS_DIR 'test-t52-h6-leak.md'
 $h6_prefix = '/U'; $h6_body = 'sers/test-t52-h6/sentinel'
 Write-LfFile $H6_INJECT ($h6_prefix + $h6_body + "`n")
 Assert-Exit 'drift.test: check-drift.ps1 catches concrete-home-prefix path in docs/plans/' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1
 Remove-Item -LiteralPath $H6_INJECT -Force -ErrorAction SilentlyContinue
+if ($H6_CREATED_PLANS) {
+    Remove-Item -LiteralPath $H6_PLANS_DIR -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $H6_PLANS_DIR) {
+        _Fail 'drift.test: failed to remove fixture-created docs/plans'
+    }
+}
+if ($H6_CREATED_DOCS) {
+    Remove-Item -LiteralPath $H6_DOCS_DIR -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $H6_DOCS_DIR) {
+        _Fail 'drift.test: failed to remove fixture-created docs'
+    }
+}
+Remove-Variable H6_DOCS_DIR, H6_PLANS_DIR, H6_CREATED_DOCS, H6_CREATED_PLANS, H6_INJECT, h6_prefix, h6_body -ErrorAction SilentlyContinue
 
 # --- cross-model-out/ runtime artifacts are pruned ---
 $DR_T87_DIR = Join-Path $env:REPO_ROOT 'cross-model-out' (".test-t87-leak-" + (Get-DrSuffix))
