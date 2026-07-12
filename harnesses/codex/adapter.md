@@ -10,7 +10,11 @@ none of it. The build script (`scripts/install.sh`) reads this adapter plus the
 Harness tool names, hook event names, and harness paths are expected here and
 nowhere else.
 
-Verified against **Codex CLI v0.132.0**. The build target is the directory named
+Verified against **Codex CLI v0.144.1** (2026-07-12 — live spine sessions with
+hooks installed/active/trusted via `/hooks`; the legacy PreToolUse decision wire
+re-confirmed in the binary schema). Dated in-body citations to earlier versions
+record when that specific evidence was gathered and remain valid as written.
+The build target is the directory named
 by the `CODEX_HOME` environment variable. Codex itself defaults `CODEX_HOME` to
 `~/.codex`, but `install.sh` requires it to be set explicitly in `local.env` — the
 build does not assume the default.
@@ -116,7 +120,8 @@ block. Enforcement is **never code-generated** — the scripts are real files.
 stderr) — Codex honors **both** shapes on `PreToolUse`. This is a genuine
 **divergence from Claude Code**, where the legacy top-level `decision` is silently
 ignored on `PreToolUse` (only `hookSpecificOutput.permissionDecision` blocks — a
-documented Codex `PreToolUse` defect). **Verified against Codex CLI v0.132.0** (2026-06-06) from three
+documented Codex `PreToolUse` defect). **Verified against Codex CLI v0.132.0** (2026-06-06; the
+top-level `PreToolUseDecisionWire` schema re-confirmed present in the v0.144.1 binary, 2026-07-12) from three
 independent sources: (1) the bundled Rust binary's embedded
 `pre-tool-use.command.output` JSON schema declares `decision` (enum `approve|block`,
 via `PreToolUseDecisionWire`) and `reason` as first-class **top-level** properties

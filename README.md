@@ -43,9 +43,9 @@ line) is the source of truth; this table summarizes them:
 
 | Harness | Verified against | Minimum enforced |
 | --- | --- | --- |
-| Claude Code | v2.1.153 | presence (default harness; assumed current) |
-| Codex CLI | v0.132.0 | **v0.132.0** — `bootstrap.sh` hard-floors it when `--harness codex` is targeted |
-| Hermes Agent | v0.16.0 | presence |
+| Claude Code | v2.1.207 | presence (default harness; assumed current) |
+| Codex CLI | v0.144.1 | **v0.132.0** — `bootstrap.sh` hard-floors it when `--harness codex` is targeted |
+| Hermes Agent | v0.18.2 | presence |
 
 Only the Codex CLI floor is version-gated (it is a required CLI for that harness —
 see `bootstrap.sh` `cli_min_version`); Claude Code and Hermes are presence-checked
