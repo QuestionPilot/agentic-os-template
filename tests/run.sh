@@ -3,7 +3,15 @@
 #
 # Test files are SOURCED, not executed: a bare `exit` in a *.test.sh file would
 # kill this runner and suppress the summary. Test files must only call assert_*
-# helpers and must never call `exit` directly.
+# helpers and must never call `exit` directly. (Each test file carries a
+# standalone-invocation guard that DOES exit non-zero, but only when the assert_*
+# helpers are absent — i.e. never when sourced here. See any tests/*.test.sh top.)
+#
+# Optional first argument: a targeted-run FILTER — a substring matched against
+# each test file's basename, so `bash tests/run.sh drift` runs only the files
+# whose name contains "drift". This is the supported path for a targeted run (a
+# bare `bash tests/foo.test.sh` bails via that file's guard). With no argument
+# every test file runs, byte-for-byte unchanged.
 #
 # TEST_TIER (env, default 'full'): 'fast' skips slow-marked files (clone/build-
 # heavy) for a quick inner loop; 'full' runs everything. CI and `make verify`
@@ -13,6 +21,10 @@ set -uo pipefail
 tests_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$tests_dir/.." && pwd)"
 export REPO_ROOT="$repo_root"
+
+# Targeted-run filter. Empty = match every file (the *""* pattern
+# below matches all basenames), so the no-argument path is unchanged.
+filter="${1:-}"
 
 # Isolate the harness config-dir env vars for the WHOLE suite. A test that renders
 # a harness (scripts/install.sh) resolves its build target from CLAUDE_CONFIG_DIR /
@@ -33,8 +45,13 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME HERMES_HOME
 
 shopt -s nullglob
 found=0
+matched=0
 for tf in "$tests_dir"/*.test.sh; do
   found=1
+  # Targeted-run filter: skip files whose basename does not contain $filter.
+  # Empty $filter matches every basename, so the no-argument path is unchanged.
+  case "$(basename "$tf")" in *"$filter"*) ;; *) continue ;; esac
+  matched=1
   if ! _tier_should_run "$tf"; then
     printf '\n== %s == — skipped (TEST_TIER=%s)\n' "$(basename "$tf")" "${TEST_TIER:-full}"
     continue
@@ -46,6 +63,14 @@ done
 
 if [ "$found" -eq 0 ]; then
   printf 'FAIL no test files found in %s\n' "$tests_dir" >&2
+  exit 1
+fi
+
+# A non-empty filter that matched nothing is a caller error, not a silent pass
+# (an empty run would print Total: 0 and exit 0 — the very false-green this guard
+# closes). Empty filter can never reach here (it matches every file above).
+if [ -n "$filter" ] && [ "$matched" -eq 0 ]; then
+  printf 'FAIL no test files matched filter: %s\n' "$filter" >&2
   exit 1
 fi
 

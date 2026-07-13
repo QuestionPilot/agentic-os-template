@@ -1,4 +1,8 @@
 #Requires -Version 7
+# standalone-invocation guard: this file is DOT-SOURCED by tests/run.ps1
+# (which defines the Assert-* helpers). Run standalone the helpers are absent,
+# assertions error, yet the file still exits 0 — a false green. Bail loudly instead.
+if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('ERROR: run via tests/run.ps1 (e.g. pwsh tests/run.ps1 <stem>), not standalone'); exit 1 }
 # tests/tiers.test.ps1 — test-tiering mechanism. Mirrors tests/tiers.test.sh.
 #
 # Verifies Get-TestTier / Test-TierShouldRun in tests/lib.ps1, the TEST_TIER

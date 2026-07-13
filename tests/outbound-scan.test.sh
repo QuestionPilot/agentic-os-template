@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# standalone-invocation guard: this file is SOURCED by tests/run.sh (which
+# defines the assert_* helpers). Run standalone the helpers are absent, assertions
+# error, yet the file still exits 0 — a false green. Bail loudly instead.
+declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh (e.g. bash tests/run.sh <stem>), not standalone\n' >&2; exit 1; }
 # tests/outbound-scan.test.sh — core/tool-use.md names the
 # outbound-content-scan principle as a generic framework rule. The actual
 # regex sweep is implemented in operator-local Shape C cross-model-review;
