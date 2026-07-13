@@ -182,6 +182,10 @@ fi
 is_excluded_path() {
   case "$1" in
     scripts/check-clean.sh|scripts/check-clean.ps1|tests/check-clean.test.sh|tests/check-clean.test.ps1) return 0 ;;
+    # Machine-path scanner + its hermetic fixtures quote the home-path shapes they
+    # hunt for, so they self-trip this scan. Excluded by EXACT path (same as the
+    # check-clean self-references above) — a same-named copy elsewhere is still scanned.
+    scripts/check-machine-paths.sh|scripts/check-machine-paths.ps1|tests/machine-paths.test.sh|tests/machine-paths.test.ps1) return 0 ;;
   esac
   if [ "$is_git" -eq 1 ]; then
     case "$1" in
