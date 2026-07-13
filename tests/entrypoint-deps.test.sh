@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# standalone-invocation guard: this file is SOURCED by tests/run.sh (which
+# defines the assert_* helpers). Run standalone the helpers are absent, assertions
+# error, yet the file still exits 0 — a false green. Bail loudly instead.
+declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh (e.g. bash tests/run.sh <stem>), not standalone\n' >&2; exit 1; }
 # tests/entrypoint-deps.test.sh — agentic-os-template's root CLAUDE.md + AGENTS.md
 # carry an Active-Work + Durable-Knowledge layers section plus the First-Time
 # Setup Check, so fresh-clone sessions see Linear/Obsidian + install one-liner

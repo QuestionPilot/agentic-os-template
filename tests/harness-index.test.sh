@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# standalone-invocation guard: this file is SOURCED by tests/run.sh (which
+# defines the assert_* helpers). Run standalone the helpers are absent, assertions
+# error, yet the file still exits 0 — a false green. Bail loudly instead.
+declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh (e.g. bash tests/run.sh <stem>), not standalone\n' >&2; exit 1; }
 # tests/harness-index.test.sh — per-harness generated index views
 # (obsidian/vault-scaffolding/bin/generate-harness-index.js) + the published
 # scaffold audit (memory-vault-audit.js) behavior checks.

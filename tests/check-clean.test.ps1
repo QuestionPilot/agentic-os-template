@@ -1,4 +1,8 @@
 #!/usr/bin/env pwsh
+# standalone-invocation guard: this file is DOT-SOURCED by tests/run.ps1
+# (which defines the Assert-* helpers). Run standalone the helpers are absent,
+# assertions error, yet the file still exits 0 — a false green. Bail loudly instead.
+if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('ERROR: run via tests/run.ps1 (e.g. pwsh tests/run.ps1 <stem>), not standalone'); exit 1 }
 # tests/check-clean.test.ps1 — PowerShell twin of tests/check-clean.test.sh for
 # the public-repo cleanliness guard (scripts/check-clean.ps1).
 #
