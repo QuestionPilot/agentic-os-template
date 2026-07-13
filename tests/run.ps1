@@ -60,16 +60,21 @@ if ($testFiles.Count -eq 0) {
 }
 
 $matched = $false
+$sourcedAny = $false
 foreach ($tf in $testFiles) {
     # Targeted-run filter: skip files whose name does not contain $Filter.
-    # `$Filter -and` short-circuits when empty, so the no-argument path is unchanged.
-    if ($Filter -and ($tf.Name -notlike "*$Filter*")) { continue }
+    # `$Filter -and` short-circuits when empty, so the no-argument path is
+    # unchanged. .Contains() is an ORDINAL, LITERAL, case-sensitive substring
+    # test — byte-parity with the bash twin's `case *"$filter"*` (a wildcard
+    # -like match would interpret `[`/`*` and compare case-insensitively).
+    if ($Filter -and -not $tf.Name.Contains($Filter)) { continue }
     $matched = $true
     if (-not (Test-TierShouldRun -Path $tf.FullName)) {
         $tierName = $env:TEST_TIER; if (-not $tierName) { $tierName = 'full' }
         Write-Host "`n== $($tf.Name) == — skipped (TEST_TIER=$tierName)"
         continue
     }
+    $sourcedAny = $true
     Write-Host "`n== $($tf.Name) ==`n"
     . $tf.FullName
 }
@@ -78,6 +83,15 @@ foreach ($tf in $testFiles) {
 # (an empty run would print Total: 0 and exit 0 — the false-green this guard closes).
 if ($Filter -and -not $matched) {
     [Console]::Error.WriteLine("FAIL no test files matched filter: $Filter")
+    exit 1
+}
+
+# A filter whose every match was tier-skipped is the same false green through a
+# different door: Total: 0 + exit 0 while the requested test never ran. Distinct
+# message from the no-match case so the caller sees WHICH gate tripped.
+if ($Filter -and -not $sourcedAny) {
+    $tierName = $env:TEST_TIER; if (-not $tierName) { $tierName = 'full' }
+    [Console]::Error.WriteLine("FAIL filter matched only tier-skipped files (TEST_TIER=$tierName) — run with TEST_TIER=full")
     exit 1
 }
 

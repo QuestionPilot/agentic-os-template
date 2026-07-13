@@ -46,6 +46,7 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME HERMES_HOME
 shopt -s nullglob
 found=0
 matched=0
+sourced=0
 for tf in "$tests_dir"/*.test.sh; do
   found=1
   # Targeted-run filter: skip files whose basename does not contain $filter.
@@ -56,6 +57,7 @@ for tf in "$tests_dir"/*.test.sh; do
     printf '\n== %s == — skipped (TEST_TIER=%s)\n' "$(basename "$tf")" "${TEST_TIER:-full}"
     continue
   fi
+  sourced=1
   printf '\n== %s ==\n' "$(basename "$tf")"
   # shellcheck disable=SC1090
   . "$tf"
@@ -71,6 +73,14 @@ fi
 # closes). Empty filter can never reach here (it matches every file above).
 if [ -n "$filter" ] && [ "$matched" -eq 0 ]; then
   printf 'FAIL no test files matched filter: %s\n' "$filter" >&2
+  exit 1
+fi
+
+# A filter whose every match was tier-skipped is the same false green through a
+# different door: Total: 0 + exit 0 while the requested test never ran. Distinct
+# message from the no-match case so the caller sees WHICH gate tripped.
+if [ -n "$filter" ] && [ "$sourced" -eq 0 ]; then
+  printf 'FAIL filter matched only tier-skipped files (TEST_TIER=%s) — run with TEST_TIER=full\n' "${TEST_TIER:-full}" >&2
   exit 1
 fi
 
