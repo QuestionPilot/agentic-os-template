@@ -176,6 +176,10 @@ if (-not [string]::IsNullOrEmpty($tokens)) {
 function Test-ExcludedPath([string]$rel) {
     if ($rel -ceq 'scripts/check-clean.sh' -or $rel -ceq 'scripts/check-clean.ps1' -or
         $rel -ceq 'tests/check-clean.test.sh' -or $rel -ceq 'tests/check-clean.test.ps1') { return $true }
+    # Machine-path scanner + its hermetic fixtures quote the home-path shapes they
+    # hunt for, so they self-trip this scan. Excluded by EXACT path.
+    if ($rel -ceq 'scripts/check-machine-paths.sh' -or $rel -ceq 'scripts/check-machine-paths.ps1' -or
+        $rel -ceq 'tests/machine-paths.test.sh' -or $rel -ceq 'tests/machine-paths.test.ps1') { return $true }
     if ($script:isGit -and ($rel -ceq 'local.env' -or $rel -clike '*/local.env' -or
         $rel -ceq '.mcp.json' -or $rel -clike '*/.mcp.json')) { return $true }
     foreach ($seg in ($rel -split '/')) {

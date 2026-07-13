@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# check-machine-paths.sh — pre-drain machine-path scanner for the closeout
+# session-log drain. Fails CLOSED: a draft carrying a machine-specific absolute
+# home path (`/Users/<name>/…`, `/home/<name>/…`, `C:\Users\<name>\…`) is
+# rejected BEFORE the drain writes it to the vault, instead of surfacing on the
+# NEXT vault audit's machine-path rule.
+#
+# WHY THIS EXISTS. The closeout drain composes a session-log body and writes it
+# to `30-Archive/Sessions/`. It runs the vault audit BEFORE writing its own log,
+# so the log's OWN body is not machine-path-scanned until the NEXT audit run —
+# exactly how a drafted log carrying a `/Users/<name>/…` path can land in the
+# cloud-synced vault and sit undetected until a manual audit. This check closes
+# that window: it scans the drafted body at write time, the SAME way the vault
+# audit's machine-path rule does, and blocks the write on any offending line.
+# There is NO raw-evidence exemption — a durable session log must be path-clean,
+# full stop, so the whole file is scanned line-by-line.
+#
+# MATCH RULE — mirrors the vault audit's `checkAgnostic`
+# (`obsidian/vault-scaffolding/bin/memory-vault-audit.js`, its `machinePath`
+# regex) EXACTLY. That resolver lives in the operator's vault scaffolding; this
+# is a pinned mirror kept honest by tests/machine-paths.test.sh. Two refinements
+# over a bare substring match, carried across verbatim:
+#   (1) Require a real username segment after the home root, so a lone "Users" or
+#       "home" token in prose (or a regex) does not trip — the `[^/…]+` /
+#       `[^\\…]+` tail demands at least one path character.
+#   (2) Tell a filesystem path apart from a URL path. In a URL the path segment
+#       is preceded by an alphanumeric host character (or a dot, e.g. `.com`); a
+#       real absolute path instead begins at a boundary — line start, whitespace,
+#       or a delimiter like a quote / paren / equals. So a home path is flagged
+#       only when NOT immediately preceded by a URL host character (alnum or dot).
+# The Windows arm likewise requires a real user-folder segment, not a bare
+# drive-colon-backslash.
+#
+# JS source regex (single line):
+#   /(?:^|[^A-Za-z0-9.])\/(?:Users|home)\/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+/
+# Translated to POSIX ERE (grep -E) below: `(?:…)` → `(…)`, `\s` → `[:space:]`
+# inside the bracket expressions (POSIX has no `\s`), `\/` → `/`.
+#
+# Accepted trade-offs (as in checkAgnostic): matching is case-sensitive, and only
+# a host-bearing URL is distinguished — a root-relative or bracketed link path
+# shares syntax with a genuine parenthesized path and stays conservatively
+# flagged (pre-existing in the reference; not widened here).
+#
+# Usage:
+#   check-machine-paths.sh --draft <path>
+#   check-machine-paths.sh --help
+#
+# Exit codes:
+#   0 — no machine-specific absolute path in the draft
+#   1 — one or more offending lines (FAIL CLOSED — do not write the draft)
+#   2 — usage error (missing/unreadable draft, bad args)
+#
+# The caller (the closeout drain) treats ANY non-zero exit as "do not write" —
+# the same contract as the wikilink check and the injection scan it runs alongside.
+
+set -uo pipefail
+
+usage() {
+  sed -nE 's|^# ?||p' "$0" | awk '/^check-machine-paths\.sh/,/^The caller/' | head -60
+}
+
+draft=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --draft)
+      [ $# -ge 2 ] || { printf 'FAIL --draft requires a value\n' >&2; exit 2; }
+      draft="$2"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) printf 'FAIL unknown arg: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+
+# Draft is required and must be a readable file.
+[ -n "$draft" ] || { printf 'FAIL no --draft given\n' >&2; exit 2; }
+[ -f "$draft" ] || { printf 'FAIL draft file does not exist: %s\n' "$draft" >&2; exit 2; }
+[ -r "$draft" ] || { printf 'FAIL draft file not readable: %s\n' "$draft" >&2; exit 2; }
+
+# The machine-path pattern — the JS `machinePath` regex in POSIX ERE. The Unix
+# arm: a `/Users/` or `/home/` NOT preceded by a URL host char (alnum or dot),
+# with a real username segment `[^/[:space:]]+`. The Windows arm: `<drive>:\Users\`
+# with a real user segment `[^\\[:space:]]+`. The `\\` sequences are literal
+# backslashes (each `\\` collapses to one literal `\` in the ERE), portable across
+# BSD and GNU grep.
+pattern='(^|[^A-Za-z0-9.])/(Users|home)/[^/[:space:]]+|[A-Za-z]:\\Users\\[^\\[:space:]]+'
+
+# Scan every line. Read with a hand-kept counter (not grep -n) so the offender
+# report reads `<file>:<line>` and is space-safe on the draft path. IFS='' + -r
+# preserves each line verbatim; the `|| [ -n "$line" ]` tail emits a final line
+# with no trailing newline.
+offenders=0
+lineno=0
+while IFS='' read -r line || [ -n "$line" ]; do
+  lineno=$((lineno + 1))
+  if printf '%s' "$line" | grep -qE "$pattern"; then
+    printf 'FAIL machine-specific absolute path (keep the session log agnostic): %s:%s\n' \
+      "$draft" "$lineno" >&2
+    offenders=$((offenders + 1))
+  fi
+done < "$draft"
+
+if [ "$offenders" -gt 0 ]; then
+  printf 'FAIL %s offending line(s) with a machine-specific absolute path in %s — replace each with an agnostic reference (a repo-relative, home-relative, or vault-relative path) before the drain writes\n' \
+    "$offenders" "$draft" >&2
+  exit 1
+fi
+
+printf 'PASS no machine-specific absolute paths in %s\n' "$draft"
+exit 0

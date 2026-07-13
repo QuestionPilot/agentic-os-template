@@ -799,7 +799,11 @@ done
 # --exclude-dir=plans because plans may quote a closed project name
 # in historical record. `--exclude=drift.test.sh` mirrors the <TEAM>-51
 # operator-naming pattern — the test file deliberately injects sentinel paths to
-# prove this scan fires.
+# prove this scan fires. `check-machine-paths.{sh,ps1}` + `machine-paths.test.{sh,ps1}`
+# are excluded on the same principle as check-drift/check-clean self-exclude: a
+# machine-path scanner quotes the very home-path shapes it hunts for (in its doc +
+# its fixtures), so scanning it self-trips. The scanner still runs over every other
+# file, and its own hermetic tests prove it fires.
 # <TEAM>-66 C-1: tighten the local-path pattern from a bare substring match
 # (`/Users/`, `/home/`, `[A-Za-z]:\Users`) to a class-shape match that
 # requires a real username segment. Catches the same operator-leak class
@@ -822,6 +826,10 @@ assert_absent 'machine-specific absolute path found in repository content' \
   --exclude=scripts-ps-parity.test.sh \
   --exclude=check-clean.sh \
   --exclude=check-clean.ps1 \
+  --exclude=check-machine-paths.sh \
+  --exclude=check-machine-paths.ps1 \
+  --exclude=machine-paths.test.sh \
+  --exclude=machine-paths.test.ps1 \
   --exclude-dir=.claude --exclude-dir=.codex --exclude-dir=.agents \
   --exclude-dir=cross-model-out \
   -e '/(Users|home)/[^/]+/?|[A-Za-z]:\\Users\\[^\\]+\\?' "$repo_root"

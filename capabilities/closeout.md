@@ -505,8 +505,8 @@ case, forward-slash separators, no leading `./`.
 
 **Executable pre-drain check (fail closed).** The rule above is enforced, not just
 trusted. After composing the body and before writing it (a pre-write gate
-alongside the injection scan in §5), run the wikilink validator over the drafted
-file:
+alongside the injection scan in §5 and the machine-path scan below), run the
+wikilink validator over the drafted file:
 
 ```bash
 scripts/check-wikilinks.sh --draft <draft-path>
@@ -525,6 +525,28 @@ surface only on the *next* audit. Backticked memory-store names
 (`project_*`/`feedback_*`/`reference_*`) carry no `[[ ]]` and are correctly
 ignored; a memory-store name wrongly written as `[[name]]` fails closed — the
 intended enforcement of the no-cross-layer-wikilinks rule above.
+
+**Machine-path scan (fail closed).** A session log is durable, cloud-synced, and
+read by every harness, so it must carry no machine-specific absolute home path —
+a POSIX home directory rooted at `Users` or `home`, or a Windows drive-rooted
+user directory. The vault audit's machine-path rule catches these, but only on
+the *next* audit — after the drain has already written the log. Close that window
+with a third pre-write gate over the drafted file:
+
+```bash
+scripts/check-machine-paths.sh --draft <draft-path>
+# PowerShell: pwsh -File scripts/check-machine-paths.ps1 -Draft <draft-path>
+```
+
+It scans the whole draft line-by-line the SAME way the vault audit's
+`checkAgnostic` does — flagging a home path with a real username segment while
+leaving a URL path (a host char sits right before its path segment) and a lone
+`Users` token in prose untouched. Exit 0 = clean → write. Non-zero = at least one
+offending line (printed as `<draft>:<line>`), or a usage error → do NOT write;
+replace each flagged path with an agnostic reference (a repo-relative,
+home-relative, or vault-relative path) and re-run. There is no raw-evidence
+exemption — a machine path under `## Raw observations` is still a machine path in
+the durable log, so the whole file is scanned.
 
 ### 5. Trust model — the session log is UNTRUSTED, mixed-origin evidence
 
@@ -550,9 +572,11 @@ durable memory.
 
 ### 6. Write + verify (no silent failed write)
 
-**Before writing**, both pre-write gates must pass (fail closed): the injection
-scan (§5) AND the wikilink check (§4, `scripts/check-wikilinks.sh --draft`). A
-non-zero exit from either means do NOT write — remediate and re-run first.
+**Before writing**, all three pre-write gates must pass (fail closed): the
+injection scan (§5), the wikilink check (§4, `scripts/check-wikilinks.sh
+--draft`), AND the machine-path scan (§4, `scripts/check-machine-paths.sh
+--draft`). A non-zero exit from any one means do NOT write — remediate and re-run
+first.
 
 After writing, **confirm the file exists** at the target path. If it does not (the
 write failed, the path was wrong, or the provider rejected it), surface a **FLAG** in
