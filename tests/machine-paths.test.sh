@@ -115,6 +115,42 @@ chmod 644 "$UNREAD" 2>/dev/null
 CLOSEOUT_BODY=$(cat "$REPO_ROOT/capabilities/closeout.md")
 assert_contains "mp: closeout.md wires the pre-drain check invocation" "$CLOSEOUT_BODY" "scripts/check-machine-paths.sh --draft"
 
+# === 14. Offender on the FINAL line with NO trailing newline is still caught —
+# the editor-strips-trailing-newline shape. Guards the single-pass grep scan:
+# grep must match (and number) an unterminated final line.
+D14=$(mktemp 2>/dev/null) || D14="/tmp/mp-draft-$$-$RANDOM"
+printf 'ok line\nbad /Users/dana/x' > "$D14"   # deliberately no trailing newline
+OUT14=$(bash "$CMD_SCRIPT" --draft "$D14" 2>&1); RC14=$?
+assert_eq "mp: offender on final newline-less line exits 1" "1" "$RC14"
+assert_contains "mp: final newline-less offender flagged at line 2" "$OUT14" "$D14:2"
+
+# === 15. Two machine paths on ONE line count as ONE offending line — the report
+# and count are line-based, not match-based.
+D15=$(_draft 'both /Users/one/a and /home/two/b on one line\n')
+OUT15=$(bash "$CMD_SCRIPT" --draft "$D15" 2>&1); RC15=$?
+assert_eq "mp: two paths on one line exit 1" "1" "$RC15"
+assert_contains "mp: two paths on one line count as 1 offending line" "$OUT15" "1 offending line(s)"
+
+# === 16. Lowercase home root is NOT flagged — documents the case-sensitivity
+# trade-off inherited from the reference (checkAgnostic matches case-sensitively).
+D16=$(_draft 'lowercase /users/dana/x stays unflagged\n')
+assert_exit "mp: lowercase /users/<name> passes (case-sensitive by contract) → exit 0" 0 -- \
+  bash "$CMD_SCRIPT" --draft "$D16"
+
+# === 17. Relative draft path resolves against the caller's CWD (parity pin with
+# the PS twin's relative-path case).
+RELDIR=$(mktemp -d 2>/dev/null) || RELDIR="/tmp/mp-rel-$$"
+mkdir -p "$RELDIR"
+printf '%b' 'ok\nbad /Users/dana/y\n' > "$RELDIR/rel-draft.md"
+OUT17=$( (cd "$RELDIR" && bash "$CMD_SCRIPT" --draft "rel-draft.md") 2>&1 ); RC17=$?
+assert_eq "mp: relative draft path from its own dir exits 1" "1" "$RC17"
+assert_contains "mp: relative draft offender flagged at line 2" "$OUT17" "rel-draft.md:2"
+
+# === 18. A directory passed as --draft is a usage error → exit 2.
+DIRDRAFT=$(mktemp -d 2>/dev/null) || { DIRDRAFT="/tmp/mp-dir-$$"; mkdir -p "$DIRDRAFT"; }
+assert_exit "mp: directory as --draft → exit 2" 2 -- \
+  bash "$CMD_SCRIPT" --draft "$DIRDRAFT"
+
 # --- Cleanup.
-rm -rf "$SPACED" \
-  "$D1" "$D2" "$D3" "$D4" "$D5OK" "$D5BAD" "$D6" "$D7" "$D8" "$UNREAD"
+rm -rf "$SPACED" "$RELDIR" "$DIRDRAFT" \
+  "$D1" "$D2" "$D3" "$D4" "$D5OK" "$D5BAD" "$D6" "$D7" "$D8" "$D14" "$D15" "$D16" "$UNREAD"

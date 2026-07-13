@@ -128,8 +128,55 @@ if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod 644 $UNREAD 2>$nu
 $closeoutBody = [System.IO.File]::ReadAllText((Join-Path $env:REPO_ROOT 'capabilities/closeout.md'))
 Assert-Contains 'mp.test: closeout.md wires the pre-drain check invocation' $closeoutBody 'scripts/check-machine-paths.sh --draft'
 
+# === 14. Offender on the FINAL line with NO trailing newline is still caught —
+# the editor-strips-trailing-newline shape (New-Draft writes content verbatim;
+# ReadAllLines still returns the unterminated final line).
+$D14 = New-Draft "ok line`nbad /Users/dana/x"   # deliberately no trailing newline
+$r14 = Invoke-Mp $D14
+Assert-Eq 'mp.test: offender on final newline-less line exits 1' '1' "$($r14.Rc)"
+Assert-Contains 'mp.test: final newline-less offender flagged at line 2' $r14.Out "${D14}:2"
+
+# === 15. Two machine paths on ONE line count as ONE offending line — the report
+# and count are line-based, not match-based.
+$D15 = New-Draft "both /Users/one/a and /home/two/b on one line`n"
+$r15 = Invoke-Mp $D15
+Assert-Eq 'mp.test: two paths on one line exit 1' '1' "$($r15.Rc)"
+Assert-Contains 'mp.test: two paths on one line count as 1 offending line' $r15.Out '1 offending line(s)'
+
+# === 16. Lowercase home root is NOT flagged — documents the case-sensitivity
+# trade-off inherited from the reference (checkAgnostic matches case-sensitively).
+$D16 = New-Draft "lowercase /users/dana/x stays unflagged`n"
+Assert-Exit 'mp.test: lowercase /users/<name> passes (case-sensitive by contract) → exit 0' 0 -- pwsh -NoProfile -File $CMD_SCRIPT --draft $D16
+
+# === 17. Relative -Draft from a PS location that differs from the PROCESS CWD.
+# .NET file APIs resolve relative paths against the process CWD, which
+# Set-Location does not move — without the Resolve-Path canonicalization this
+# false-blocked ("not readable", exit 2) on a perfectly valid relative draft.
+# Reproduce the divergence in a child pwsh: it inherits THIS runner's location as
+# its process CWD, then Set-Location moves only its PS location to the fixture
+# dir before invoking the script in-process with a bare relative filename.
+# In-process invocation uses the native -Draft binding (the POSIX --draft
+# passthrough is exercised by every pwsh -File case above).
+$RELDIR = Join-Path ([IO.Path]::GetTempPath()) ('mp-rel-' + [Guid]::NewGuid().Guid.Substring(0, 8))
+New-Item -ItemType Directory -Path $RELDIR -Force | Out-Null
+Write-LfFile (Join-Path $RELDIR 'rel-draft.md') "ok`nbad /Users/dana/y`n"
+$relCmd = "Set-Location -LiteralPath '$RELDIR'; & '$CMD_SCRIPT' -Draft 'rel-draft.md'; exit `$LASTEXITCODE"
+$rel = & pwsh -NoProfile -Command $relCmd 2>&1
+$relRc = $LASTEXITCODE
+if ($rel -is [array]) { $rel = $rel -join "`n" }
+Assert-Eq 'mp.test: relative -Draft from foreign process CWD exits 1 (not a false exit 2)' '1' "$relRc"
+Assert-Contains 'mp.test: relative -Draft offender flagged at line 2 (path echoed as given)' ([string]$rel) 'rel-draft.md:2'
+Assert-Contains 'mp.test: relative -Draft prints the offender message' ([string]$rel) 'machine-specific absolute path'
+
+# === 18. A directory passed as --draft is a usage error → exit 2.
+$DIRDRAFT = Join-Path ([IO.Path]::GetTempPath()) ('mp-dir-' + [Guid]::NewGuid().Guid.Substring(0, 8))
+New-Item -ItemType Directory -Path $DIRDRAFT -Force | Out-Null
+Assert-Exit 'mp.test: directory as --draft → exit 2' 2 -- pwsh -NoProfile -File $CMD_SCRIPT --draft $DIRDRAFT
+
 # --- Cleanup.
-Remove-Item -LiteralPath $SPACED -Recurse -Force -ErrorAction SilentlyContinue
-foreach ($f in @($D1, $D2, $D3, $D4, $D5OK, $D5BAD, $D6, $D7, $D8, $UNREAD)) {
+foreach ($d in @($SPACED, $RELDIR, $DIRDRAFT)) {
+    Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+}
+foreach ($f in @($D1, $D2, $D3, $D4, $D5OK, $D5BAD, $D6, $D7, $D8, $D14, $D15, $D16, $UNREAD)) {
     Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
 }

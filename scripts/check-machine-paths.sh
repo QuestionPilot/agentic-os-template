@@ -17,9 +17,9 @@
 #
 # MATCH RULE — mirrors the vault audit's `checkAgnostic`
 # (`obsidian/vault-scaffolding/bin/memory-vault-audit.js`, its `machinePath`
-# regex) EXACTLY. That resolver lives in the operator's vault scaffolding; this
-# is a pinned mirror kept honest by tests/machine-paths.test.sh. Two refinements
-# over a bare substring match, carried across verbatim:
+# regex). That resolver lives in the operator's vault scaffolding; this is a
+# pinned mirror kept honest by tests/machine-paths.test.sh. Two refinements
+# over a bare substring match, carried across:
 #   (1) Require a real username segment after the home root, so a lone "Users" or
 #       "home" token in prose (or a regex) does not trip — the `[^/…]+` /
 #       `[^\\…]+` tail demands at least one path character.
@@ -34,12 +34,17 @@
 # JS source regex (single line):
 #   /(?:^|[^A-Za-z0-9.])\/(?:Users|home)\/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+/
 # Translated to POSIX ERE (grep -E) below: `(?:…)` → `(…)`, `\s` → `[:space:]`
-# inside the bracket expressions (POSIX has no `\s`), `\/` → `/`.
+# inside the bracket expressions (POSIX has no `\s`), `\/` → `/`. The whitespace
+# classes are NOT bit-identical across engines: JS `\s`, .NET `\s`, and POSIX
+# `[[:space:]]` disagree on exotic Unicode whitespace (e.g. U+0085 NEL, U+FEFF).
+# The contract here is ASCII-whitespace scope — real home paths are ASCII-shaped,
+# so the divergence is an accepted trade-off, not a parity bug.
 #
-# Accepted trade-offs (as in checkAgnostic): matching is case-sensitive, and only
-# a host-bearing URL is distinguished — a root-relative or bracketed link path
+# Accepted trade-offs (as in checkAgnostic): matching is case-sensitive, only a
+# host-bearing URL is distinguished — a root-relative or bracketed link path
 # shares syntax with a genuine parenthesized path and stays conservatively
-# flagged (pre-existing in the reference; not widened here).
+# flagged (pre-existing in the reference; not widened here) — and the whitespace
+# class is ASCII-scoped as above.
 #
 # Usage:
 #   check-machine-paths.sh --draft <path>
@@ -83,22 +88,31 @@ done
 # BSD and GNU grep.
 pattern='(^|[^A-Za-z0-9.])/(Users|home)/[^/[:space:]]+|[A-Za-z]:\\Users\\[^\\[:space:]]+'
 
-# Scan every line. Read with a hand-kept counter (not grep -n) so the offender
-# report reads `<file>:<line>` and is space-safe on the draft path. IFS='' + -r
-# preserves each line verbatim; the `|| [ -n "$line" ]` tail emits a final line
-# with no trailing newline.
-offenders=0
-lineno=0
-while IFS='' read -r line || [ -n "$line" ]; do
-  lineno=$((lineno + 1))
-  if printf '%s' "$line" | grep -qE "$pattern"; then
-    printf 'FAIL machine-specific absolute path (keep the session log agnostic): %s:%s\n' \
-      "$draft" "$lineno" >&2
-    offenders=$((offenders + 1))
-  fi
-done < "$draft"
+# Single-pass scan: ONE grep -n over the whole file, then parse its `NN:` line
+# numbers into the per-offender report. grep's exit status is tri-state — 0 = at
+# least one offender, 1 = clean, >=2 = runtime error — and each state is handled
+# explicitly, so a scan error is a LOUD exit 2, never a silent pass. (A per-line
+# `printf | grep -q` loop would collapse all three states into matched/not-matched:
+# a grep runtime error or pipeline artifact on an offending line would score it
+# clean — failing OPEN — and it forks two processes per line.) grep -n also
+# matches a final line with no trailing newline, so an editor-truncated draft is
+# still fully scanned (pinned in tests/machine-paths.test.sh).
+hits="$(grep -nE "$pattern" -- "$draft")"
+rc=$?
+if [ "$rc" -ge 2 ]; then
+  printf 'FAIL scan error: grep exited %s scanning %s — cannot verify the draft, do NOT write (fail closed)\n' \
+    "$rc" "$draft" >&2
+  exit 2
+fi
 
-if [ "$offenders" -gt 0 ]; then
+if [ "$rc" -eq 0 ]; then
+  offenders=0
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    printf 'FAIL machine-specific absolute path (keep the session log agnostic): %s:%s\n' \
+      "$draft" "${hit%%:*}" >&2
+    offenders=$((offenders + 1))
+  done <<< "$hits"
   printf 'FAIL %s offending line(s) with a machine-specific absolute path in %s — replace each with an agnostic reference (a repo-relative, home-relative, or vault-relative path) before the drain writes\n' \
     "$offenders" "$draft" >&2
   exit 1

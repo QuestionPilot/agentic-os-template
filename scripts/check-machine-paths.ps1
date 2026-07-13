@@ -16,9 +16,9 @@
     (bin/memory-vault-audit.js) does, and blocks the write on any offending line.
     There is NO raw-evidence exemption — the whole file is scanned line-by-line.
 
-    MATCH RULE — mirrors checkAgnostic's `machinePath` regex EXACTLY (that
-    resolver lives in the operator's vault scaffolding; this is a pinned mirror
-    kept honest by tests/machine-paths.test.ps1). Two refinements over a bare
+    MATCH RULE — mirrors checkAgnostic's `machinePath` regex (that resolver
+    lives in the operator's vault scaffolding; this is a pinned mirror kept
+    honest by tests/machine-paths.test.ps1). Two refinements over a bare
     substring match: (1) require a real username segment after the home root, so
     a lone "Users"/"home" token in prose does not trip; (2) tell a filesystem
     path apart from a URL path — a URL path segment is preceded by an alphanumeric
@@ -26,9 +26,13 @@
     so a home path is flagged only when NOT preceded by a URL host char. The
     Windows arm requires a real user-folder segment, not a bare drive-colon-slash.
 
-    The regex is the JS `machinePath` source used verbatim — .NET's engine
-    supports (?:…) and \s, so no dialect translation is needed on the PS side
-    (unlike the bash twin, which rewrites \s to [:space:] for POSIX ERE).
+    The regex reuses the JS `machinePath` source text — .NET's engine supports
+    (?:…) and \s, so no structural translation is needed on the PS side (the
+    bash twin rewrites \s to [:space:] for POSIX ERE). The engines are NOT
+    bit-identical on whitespace: JS \s, .NET \s, and POSIX [[:space:]] disagree
+    on exotic Unicode whitespace (e.g. U+0085 NEL, U+FEFF). The contract is
+    ASCII-whitespace scope — real home paths are ASCII-shaped, so the divergence
+    is an accepted trade-off, not a parity bug.
 
     Windows-native twin of scripts/check-machine-paths.sh — same flags, same exit
     codes, same output classes after the bash<->pwsh byte-parity normalization.
@@ -104,17 +108,28 @@ if ([string]::IsNullOrEmpty($Draft)) {
 if (-not (Test-Path -LiteralPath $Draft -PathType Leaf)) {
     [Console]::Error.WriteLine("FAIL draft file does not exist: $Draft"); exit 2
 }
+# Canonicalize BEFORE any .NET file API touches the path: .NET (OpenRead /
+# ReadAllLines) resolves a relative path against the PROCESS working directory,
+# which Set-Location does NOT move — so a valid relative -Draft passed from a
+# PowerShell location that differs from the process CWD would false-block as
+# "not readable" (exit 2). Resolve-Path resolves against the PowerShell location,
+# i.e. the same base Test-Path just validated against. The resolved path feeds
+# the .NET calls only; $Draft stays as given for output (byte-parity with the
+# bash twin, which echoes the caller's path). Pinned by the relative-path case
+# in tests/machine-paths.test.ps1.
+$DraftResolved = (Resolve-Path -LiteralPath $Draft).ProviderPath
 # Mirror bash `[ -r ]`: an existing-but-unreadable draft must FAIL with exit 2, not
 # throw under $ErrorActionPreference='Stop'. Probe with a real read.
 try {
-    $probe = [System.IO.File]::OpenRead($Draft); $probe.Close()
+    $probe = [System.IO.File]::OpenRead($DraftResolved); $probe.Close()
 } catch {
     [Console]::Error.WriteLine("FAIL draft file not readable: $Draft"); exit 2
 }
 
-# The machine-path pattern — the JS `machinePath` regex used verbatim. .NET
-# supports (?:…) and \s, so no POSIX rewrite is needed here (the bash twin
-# rewrites \s → [:space:]). Case-sensitive by default, matching checkAgnostic.
+# The machine-path pattern — the JS `machinePath` source text reused. .NET
+# supports (?:…) and \s, so no structural rewrite is needed here (the bash twin
+# rewrites \s → [:space:]); the whitespace class is ASCII-scoped by contract
+# (see .DESCRIPTION). Case-sensitive by default, matching checkAgnostic.
 $rx = [regex]'(?:^|[^A-Za-z0-9.])/(?:Users|home)/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+'
 
 # Scan every line with a hand-kept counter so the offender report reads
@@ -122,7 +137,7 @@ $rx = [regex]'(?:^|[^A-Za-z0-9.])/(?:Users|home)/[^/\s]+|[A-Za-z]:\\Users\\[^\\\
 # still returned, matching the bash `|| [ -n "$line" ]` tail.
 $offenders = 0
 $lineno = 0
-foreach ($line in [System.IO.File]::ReadAllLines($Draft)) {
+foreach ($line in [System.IO.File]::ReadAllLines($DraftResolved)) {
     $lineno++
     if ($rx.IsMatch($line)) {
         [Console]::Error.WriteLine("FAIL machine-specific absolute path (keep the session log agnostic): ${Draft}:${lineno}")
