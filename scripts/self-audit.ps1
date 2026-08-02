@@ -187,7 +187,7 @@ Default inputs:
                ambient env > default)
 
 Output: markdown by default. -Json emits a structured object for tests:
-  {date, total, pillars{...}, injection_surface, gaps[], skipped[]}
+  {date, total, pillars{...}, injection_surface, gaps[], skipped[], codex_registry_bytes}
 '@ | Write-Host
     exit 0
 }
@@ -399,6 +399,16 @@ $injSurface = @{
     warned     = $false
     components = New-Object System.Collections.Generic.List[object]
     skipped    = New-Object System.Collections.Generic.List[string]
+}
+
+# Codex-native registry reporting state (<TEAM>-468), filled by sub-check 2.5.
+# Purely INFORMATIONAL — never scored, never a gap. bytes = -1 means "not
+# measured" (no registry resolved, or it holds no MEMORY.md); the emitters
+# report the byte size only when it is >= 0. Mirrors the bash twin's
+# CODEX_REGISTRY_* state.
+$codexRegistry = @{
+    bytes = [long](-1)
+    path  = ''
 }
 
 # ---------------------------------------------------------------------------
@@ -719,8 +729,24 @@ function Invoke-Pillar1 {
 # ---------------------------------------------------------------------------
 # Pillar 2 — Memory hygiene
 # ---------------------------------------------------------------------------
+# Informational codex-registry measurement (<TEAM>-468). Deliberately OUTSIDE
+# the pillar's scored path: a codex-only install (zero claude stores) hits the
+# UNSCORED early-return below, but the registry's byte size must still be
+# reported — codex_registry_bytes is null ONLY when no registry resolved or it
+# holds no MEMORY.md (the documented contract; panel finding). Sets state only;
+# never deducts, never records a gap. Twin of self-audit.sh measure_codex_registry().
+function Measure-CodexRegistry {
+    if ([string]::IsNullOrEmpty($CodexMemoryDir)) { return }
+    $cxIndex = Join-Path $CodexMemoryDir 'MEMORY.md'
+    if (Test-Path -LiteralPath $cxIndex -PathType Leaf) {
+        $codexRegistry['bytes'] = [long](Get-Item -LiteralPath $cxIndex).Length
+        $codexRegistry['path']  = $cxIndex
+    }
+}
+
 function Invoke-Pillar2 {
     $key = 'memory-hygiene'
+    Measure-CodexRegistry
     if ($MemoryDirs.Count -eq 0) {
         Add-Skip 'memory dir not resolved — memory hygiene checks skipped'
         Set-Unscored $key 'no memory dir'
@@ -795,53 +821,52 @@ function Invoke-Pillar2 {
         }
     }
 
-    # Sub-check 2.5 (<TEAM>-394): the codex-native memory registry — an
-    # AUDIT-COVERED read-only surface, never canonical. $CODEX_HOME/memories is
-    # a registry (MEMORY.md index + summary/raw sidecars + rollout_summaries/),
-    # not a note-per-fact store, so the orphan/index-integrity checks above do
-    # NOT apply — a codex sidecar unnamed by its index is normal, not a gap.
-    # What DOES transfer is what codex sessions actually pay at kickoff: an
-    # index that exists, and the same size/line recall caps as 2.2/2.3.
-    # KNOWN COUPLING (panel C6, accepted): rides the memory pillar — a
-    # codex-ONLY setup with zero claude stores hits the pillar's UNSCORED
-    # early-return before 2.5 runs (sub-check-2.4 precedent).
+    # Sub-check 2.5 (<TEAM>-394, rescoped <TEAM>-468): the codex-native memory
+    # registry — an AUDIT-COVERED read-only surface, never canonical.
+    # $CODEX_HOME/memories is a registry (MEMORY.md index + summary/raw sidecars
+    # + rollout_summaries/), not a note-per-fact store, so the orphan/index-
+    # integrity checks above do NOT apply — a codex sidecar unnamed by its index
+    # is normal, not a gap.
+    #
+    # <TEAM>-468: the 2.2/2.3 recall caps (MEMORY_INDEX_SIZE_CAP_BYTES = 24400,
+    # MEMORY_INDEX_LINE_CAP_CHARS = 300) do NOT transfer here either. Those are
+    # CLAUDE-SIDE recall semantics documented in core/memory-model.md.
+    # Primary-source review of openai/codex at tag rust-v0.144.1 found NO
+    # byte-size cap and NO read-side truncation on memories/MEMORY.md anywhere
+    # in the memories crates (codex-rs/memories/read/, codex-rs/memories/write/,
+    # codex-rs/ext/memories/); the only size limits are write-side consolidation
+    # inputs (rollout contents truncated to 70% of model context in
+    # memories/write/src/prompts.rs; a 4 MB workspace-diff MAX_BYTES in
+    # memories/write/src/lib.rs), and consolidation eligibility is
+    # rate-limit/idle gated (memories/write/src/guard.rs), not size gated. So the
+    # registry format is the consolidator's to own: what remains scored here is
+    # index PRESENCE, and the registry's byte size is reported INFORMATIONALLY —
+    # no deduction, no gap entry.
+    #
+    # KNOWN COUPLING (panel C6, accepted): the empty-registry DEDUCTION rides
+    # the memory pillar — a codex-ONLY setup with zero claude stores hits the
+    # pillar's UNSCORED early-return before it (sub-check-2.4 precedent). The
+    # informational MEASUREMENT does not ride the pillar: Measure-CodexRegistry
+    # runs before the early return (panel <TEAM>-468 finding), so
+    # codex_registry_bytes is populated whenever a registry with a MEMORY.md
+    # resolved — null keeps exactly its two documented meanings.
     # Twin of self-audit.sh sub-check 2.5.
     if (-not [string]::IsNullOrEmpty($CodexMemoryDir)) {
         $cxIndex = Join-Path $CodexMemoryDir 'MEMORY.md'
-        if (-not (Test-Path -LiteralPath $cxIndex -PathType Leaf)) {
+        if ((Test-Path -LiteralPath $CodexMemoryDir -PathType Container) -and
+            -not (Test-Path -LiteralPath $cxIndex -PathType Leaf)) {
             Use-Deduct $key 6
             Add-Gap 2 5 `
                 'Codex memory registry has no MEMORY.md index' `
                 "$CodexMemoryDir exists but holds no MEMORY.md — codex kickoffs run blind on native memory" `
                 'Let codex rebuild its native index, or remove the empty registry dir'
-        } else {
-            $cxSize = (Get-Item -LiteralPath $cxIndex).Length
-            if ($cxSize -gt 24400) {
-                Use-Deduct $key 4
-                Add-Gap 2 5 `
-                    'Codex registry MEMORY.md over recall cap' `
-                    "$CodexMemoryDir/MEMORY.md is $cxSize bytes (over the ~24400 recall cap)" `
-                    'Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)'
-            }
-            $cxLong = 0
-            foreach ($ln in [System.IO.File]::ReadAllLines($cxIndex)) {
-                if ($ln.Length -gt 300) { $cxLong++ }
-            }
-            if ($cxLong -gt 0) {
-                Use-Deduct $key 4
-                Add-Gap 2 5 `
-                    'Codex registry MEMORY.md entries over line-length cap' `
-                    "$cxLong index line(s) in $CodexMemoryDir/MEMORY.md exceed the ~300-char per-entry cap" `
-                    'Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)'
-            }
         }
     }
 
     # Sub-check 2.4 (<TEAM>-364): per-session injection-surface size. These four
     # components are injected into EVERY kickoff orient — the memory index (worst
-    # case: the LARGEST MEMORY.md across the scanned stores, including the codex
-    # registry when it resolved — any one session, of either harness, loads one
-    # index), the rendered harness CLAUDE.md, the vault entrypoint
+    # case: the LARGEST MEMORY.md across the framework's own per-note stores),
+    # the rendered harness CLAUDE.md, the vault entrypoint
     # START.md, and the operator-identity note START.md names — so oversize here
     # is a per-session context tax no other check measures. SOFT threshold only:
     # a design panel explicitly rejected a hard cap (a large surface can be a
@@ -850,11 +875,16 @@ function Invoke-Pillar2 {
     # by name, never an error; the measurement rides the memory surface (the
     # index is the dominant injected component), so when zero stores resolved the
     # pillar returned UNSCORED above and the surface reports not-measured.
+    #
+    # <TEAM>-468: the codex-native registry is EXCLUDED from this scan. It is
+    # consolidator-owned and unactionable by the operator — a soft warn driven
+    # by it is pure alarm fatigue with no fix to offer. Claude-side stores still
+    # compete for largest-store; the registry's size stays visible via the
+    # informational line sub-check 2.5 records.
     # Twin of self-audit.sh sub-check 2.4.
     $injLargestPath = ''
     $injLargestBytes = [long](-1)
     $injScanDirs = @($MemoryDirs)
-    if (-not [string]::IsNullOrEmpty($CodexMemoryDir)) { $injScanDirs += $CodexMemoryDir }
     foreach ($mdDir in $injScanDirs) {
         $injIdx = Join-Path $mdDir 'MEMORY.md'
         if (-not (Test-Path -LiteralPath $injIdx -PathType Leaf)) { continue }
@@ -1396,6 +1426,11 @@ function Get-MarkdownOutput {
         $injVerdict = if ($injSurface['warned']) { 'OVER' } else { 'OK' }
         [void]$sb.AppendLine("Total: $($injSurface['total']) bytes — soft threshold $InjectionWarnKbInt KB ($injVerdict)")
     }
+    # <TEAM>-468: codex registry size, informational only — outside the surface
+    # total, never scored, never a gap (see sub-check 2.5).
+    if ($codexRegistry['bytes'] -ge 0) {
+        [void]$sb.AppendLine("- codex memory registry (informational, not scored): $($codexRegistry['bytes']) bytes ($($codexRegistry['path']))")
+    }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## Top gaps (leverage-weighted)')
     [void]$sb.AppendLine('')
@@ -1462,14 +1497,22 @@ function Get-JsonOutput {
             skipped      = @($injSurface['skipped'])
         }
     }
+    # codex_registry_bytes (<TEAM>-468): ADDITIVE optional field — the
+    # codex-native registry's index size, reported informationally (never
+    # scored, never a gap). null when no registry resolved or it holds no
+    # MEMORY.md. APPENDED LAST so every pre-existing field keeps its name,
+    # shape, AND position (panel finding: inserting mid-object shifted
+    # gaps/skipped for positional consumers).
+    $cxBytes = if ($codexRegistry['bytes'] -ge 0) { $codexRegistry['bytes'] } else { $null }
     $obj = [ordered]@{
-        date              = $dateStr
-        total             = $total
-        unscored_count    = $unscoredCount
-        pillars           = $pillarsObj
-        injection_surface = $injObj
-        gaps              = $sortedGaps
-        skipped           = @($skipped)
+        date                 = $dateStr
+        total                = $total
+        unscored_count       = $unscoredCount
+        pillars              = $pillarsObj
+        injection_surface    = $injObj
+        gaps                 = $sortedGaps
+        skipped              = @($skipped)
+        codex_registry_bytes = $cxBytes
     }
     return ($obj | ConvertTo-Json -Depth 6)
 }

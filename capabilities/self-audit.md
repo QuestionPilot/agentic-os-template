@@ -51,7 +51,7 @@ re-audit to score them. The bands above describe a fully-measured run.
 | Pillar | What it scores |
 | --- | --- |
 | **1. Cross-layer handoffs** | Each Active Linear project (≥1 open issue — closed-out projects with all issues Done/Canceled are skipped) has a project-type memory note (frontmatter `metadata.type: project`) + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
-| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400); the per-session **injection surface** — the largest store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name |
+| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) and each entry under the ~300-char per-line cap — **both caps apply to the framework's own per-note memory stores only**; the per-session **injection surface** — the largest per-note store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name. The codex-native memory registry (`$CODEX_HOME/memories`) is scored for index **presence** only: it is consolidator-owned, no codex-side size or read-truncation limit exists (verified against openai/codex at tag `rust-v0.144.1`), so its size is **reported informationally** — never deducted, never a gap — and it is excluded from the injection-surface largest-store pick |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
 | **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
@@ -253,6 +253,8 @@ Total: <N>/100
 - <component>: <bytes> bytes (<path>)      (one line per resolved component)
 - skipped: <component>, <component>        (only when some components skipped)
 Total: <bytes> bytes — soft threshold <K> KB (OK|OVER)
+- codex memory registry (informational, not scored): <bytes> bytes (<path>)
+                                           (only when a codex registry resolved)
 
 ## Top gaps (leverage-weighted)
 
@@ -269,16 +271,23 @@ Total: <bytes> bytes — soft threshold <K> KB (OK|OVER)
 The `## Injection surface` section lists each resolved component with its byte
 size, names any component that could not resolve on a `skipped:` line, and
 closes with the total against the soft threshold. When no component resolves at
-all it reads `_(not measured — no injection-surface component resolved)_`.
+all it reads `_(not measured — no injection-surface component resolved)_`. The
+codex-native registry is **not** an injection-surface component: when one
+resolves, its size follows as a separate non-scoring informational line that is
+outside the total.
 
 If `--json` is passed, the script emits a structured JSON object with
 `{total, unscored_count, pillars[name].score, pillars[name].unscored,
-pillars[name].notes, injection_surface, gaps[] }` — used by the upstream
-acceptance suite's `tests/self-audit.test.sh` to assert against specific scores.
-An UNSCORED pillar reports `score: 0, unscored: true`; the history helper
-records that 0 truthfully. `injection_surface` is `null` when no component
-resolved, else `{total_bytes, threshold_kb, warned, components[{name, path,
-bytes}], skipped[]}`.
+pillars[name].notes, injection_surface, gaps[], codex_registry_bytes}` — used
+by the upstream acceptance suite's `tests/self-audit.test.sh` to assert against
+specific scores. An UNSCORED pillar reports `score: 0, unscored: true`; the
+history helper records that 0 truthfully. `injection_surface` is `null` when no
+component resolved, else `{total_bytes, threshold_kb, warned, components[{name,
+path, bytes}], skipped[]}`. `codex_registry_bytes` is the codex-native
+registry's index size, reported informationally — appended last so pre-existing
+fields keep their positions; `null` only when no registry resolved or it holds
+no `MEMORY.md`. The measurement runs outside the memory pillar's scored path,
+so a codex-only install (memory pillar UNSCORED) still reports it.
 
 ## Limits
 
