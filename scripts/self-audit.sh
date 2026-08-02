@@ -38,7 +38,7 @@
 # Linear-side checks degrade with a "skipped: lineark not configured" note.
 #
 # Output: markdown by default. `--json` emits a structured object for tests:
-#   {date, total, pillars{...}, injection_surface, gaps[], skipped[]}
+#   {date, total, pillars{...}, injection_surface, gaps[], skipped[], codex_registry_bytes}
 #
 # Tests: tests/self-audit.test.sh exercises every pillar with fixtures.
 #
@@ -337,6 +337,13 @@ INJ_COMP_PATHS=()
 INJ_COMP_BYTES=()
 INJ_SKIPPED=()
 
+# Codex-native registry reporting state (<TEAM>-468), filled by sub-check 2.5.
+# Purely INFORMATIONAL — never scored, never a gap. -1 means "not measured"
+# (no registry resolved, or it holds no MEMORY.md); the emitters report the
+# byte size only when it is >= 0.
+CODEX_REGISTRY_BYTES=-1
+CODEX_REGISTRY_PATH=""
+
 # --- helpers ------------------------------------------------------------------
 record_gap() {
   # record_gap <pillar-num> <leverage> <title> <detail> <fix>
@@ -573,8 +580,25 @@ score_cross_layer_handoffs() {
 }
 
 # --- Pillar 2: Memory hygiene ------------------------------------------------
+# Informational codex-registry measurement (<TEAM>-468). Deliberately OUTSIDE
+# the pillar's scored path: a codex-only install (zero claude stores) hits the
+# UNSCORED early-return below, but the registry's byte size must still be
+# reported — codex_registry_bytes is null ONLY when no registry resolved or it
+# holds no MEMORY.md (the documented contract; panel finding). Sets globals
+# only; never deducts, never records a gap.
+measure_codex_registry() {
+  [ -n "$CODEX_MEMORY_DIR" ] && [ -f "$CODEX_MEMORY_DIR/MEMORY.md" ] || return 0
+  local cx_size
+  cx_size="$(wc -c < "$CODEX_MEMORY_DIR/MEMORY.md" 2>/dev/null | tr -d ' ')"
+  if [ -n "$cx_size" ]; then
+    CODEX_REGISTRY_BYTES="$cx_size"
+    CODEX_REGISTRY_PATH="$CODEX_MEMORY_DIR/MEMORY.md"
+  fi
+}
+
 score_memory_hygiene() {
   local key="memory-hygiene"
+  measure_codex_registry
   if [ "${#MEMORY_DIRS[@]}" -eq 0 ]; then
     skip_surface "memory dir not resolved — memory hygiene checks skipped"
     mark_unscored "$key" "no memory dir"
@@ -664,53 +688,51 @@ score_memory_hygiene() {
     fi
   done
 
-  # Sub-check 2.5 (<TEAM>-394): the codex-native memory registry — an
-  # AUDIT-COVERED read-only surface, never canonical. $CODEX_HOME/memories is a
-  # registry (MEMORY.md index + summary/raw sidecars + rollout_summaries/), not
-  # a note-per-fact store, so the orphan/index-integrity checks above do NOT
-  # apply — a codex sidecar unnamed by its index is normal, not a gap. What DOES
-  # transfer is what codex sessions actually pay at kickoff: an index that
-  # exists, and the same size/line recall caps as 2.2/2.3. Resolution is
-  # flag > local.env CODEX_HOME > ambient env; when none resolve (claude-only
-  # install) the surface is skipped and scoring is unchanged. KNOWN COUPLING
-  # (panel C6, accepted): this rides the memory pillar, so a codex-ONLY setup
-  # with zero claude stores hits the pillar's UNSCORED early-return before
-  # 2.5 runs — audit-covered means "covered wherever the pillar scores",
-  # matching the sub-check-2.4 precedent, not a standalone codex audit.
-  if [ -n "$CODEX_MEMORY_DIR" ]; then
-    if [ ! -f "$CODEX_MEMORY_DIR/MEMORY.md" ]; then
-      deduct "$key" 6
-      record_gap 2 5 \
-        "Codex memory registry has no MEMORY.md index" \
-        "$CODEX_MEMORY_DIR exists but holds no MEMORY.md — codex kickoffs run blind on native memory" \
-        "Let codex rebuild its native index, or remove the empty registry dir"
-    else
-      local cx_size cx_long
-      cx_size="$(wc -c < "$CODEX_MEMORY_DIR/MEMORY.md" 2>/dev/null | tr -d ' ')"
-      if [ -n "$cx_size" ] && [ "$cx_size" -gt 24400 ]; then
-        deduct "$key" 4
-        record_gap 2 5 \
-          "Codex registry MEMORY.md over recall cap" \
-          "$CODEX_MEMORY_DIR/MEMORY.md is ${cx_size} bytes (over the ~24400 recall cap)" \
-          "Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)"
-      fi
-      # Character-count line-length check, identical mechanics to 2.3.
-      cx_long="$(LC_ALL=C awk '{ s=$0; cont=gsub(/[\200-\277]/,"",s); if ((length($0)-cont) > 300) n++ } END { print n+0 }' "$CODEX_MEMORY_DIR/MEMORY.md" 2>/dev/null)"
-      if [ -n "$cx_long" ] && [ "$cx_long" -gt 0 ]; then
-        deduct "$key" 4
-        record_gap 2 5 \
-          "Codex registry MEMORY.md entries over line-length cap" \
-          "$cx_long index line(s) in $CODEX_MEMORY_DIR/MEMORY.md exceed the ~300-char per-entry cap" \
-          "Consolidate the codex native index (its registry tooling owns the rewrite — this surface is read-only)"
-      fi
-    fi
+  # Sub-check 2.5 (<TEAM>-394, rescoped <TEAM>-468): the codex-native memory
+  # registry — an AUDIT-COVERED read-only surface, never canonical.
+  # $CODEX_HOME/memories is a registry (MEMORY.md index + summary/raw sidecars +
+  # rollout_summaries/), not a note-per-fact store, so the orphan/index-integrity
+  # checks above do NOT apply — a codex sidecar unnamed by its index is normal,
+  # not a gap.
+  #
+  # <TEAM>-468: the 2.2/2.3 recall caps (MEMORY_INDEX_SIZE_CAP_BYTES = 24400,
+  # MEMORY_INDEX_LINE_CAP_CHARS = 300) do NOT transfer here either. Those are
+  # CLAUDE-SIDE recall semantics documented in core/memory-model.md. Primary-source
+  # review of openai/codex at tag rust-v0.144.1 found NO byte-size cap and NO
+  # read-side truncation on memories/MEMORY.md anywhere in the memories crates
+  # (codex-rs/memories/read/, codex-rs/memories/write/, codex-rs/ext/memories/);
+  # the only size limits are write-side consolidation inputs (rollout contents
+  # truncated to 70% of model context in memories/write/src/prompts.rs; a 4 MB
+  # workspace-diff MAX_BYTES in memories/write/src/lib.rs), and consolidation
+  # eligibility is rate-limit/idle gated (memories/write/src/guard.rs), not size
+  # gated. Empirically codex's own consolidator rewrites the registry well past
+  # both framework caps. So the registry format is the consolidator's to own:
+  # what remains scored here is index PRESENCE (a codex kickoff with no index
+  # runs blind), and the registry's byte size is reported INFORMATIONALLY —
+  # no deduction, no gap entry.
+  #
+  # Resolution is flag > local.env CODEX_HOME > ambient env; when none resolve
+  # (claude-only install) the surface is skipped and scoring is unchanged. KNOWN
+  # COUPLING (panel C6, accepted): the empty-registry DEDUCTION rides the memory
+  # pillar, so a codex-ONLY setup with zero claude stores hits the pillar's
+  # UNSCORED early-return before it — audit-covered means "covered wherever the
+  # pillar scores", matching the sub-check-2.4 precedent, not a standalone codex
+  # audit. The informational MEASUREMENT does not ride the pillar: it runs in
+  # measure_codex_registry() before the early return (panel <TEAM>-468 finding),
+  # so codex_registry_bytes is populated whenever a registry with a MEMORY.md
+  # resolved — null keeps exactly its two documented meanings.
+  if [ -n "$CODEX_MEMORY_DIR" ] && [ -d "$CODEX_MEMORY_DIR" ] && [ ! -f "$CODEX_MEMORY_DIR/MEMORY.md" ]; then
+    deduct "$key" 6
+    record_gap 2 5 \
+      "Codex memory registry has no MEMORY.md index" \
+      "$CODEX_MEMORY_DIR exists but holds no MEMORY.md — codex kickoffs run blind on native memory" \
+      "Let codex rebuild its native index, or remove the empty registry dir"
   fi
 
   # Sub-check 2.4 (<TEAM>-364): per-session injection-surface size. These four
   # components are injected into EVERY kickoff orient — the memory index (worst
-  # case: the LARGEST MEMORY.md across the scanned stores, including the codex
-  # registry when it resolved — any one session, of either harness, loads one
-  # index), the rendered harness CLAUDE.md, the vault entrypoint
+  # case: the LARGEST MEMORY.md across the framework's own per-note stores),
+  # the rendered harness CLAUDE.md, the vault entrypoint
   # START.md, and the operator-identity note START.md names — so oversize here
   # is a per-session context tax no other check measures. SOFT threshold only:
   # a design panel explicitly rejected a hard cap (a large surface can be a
@@ -719,9 +741,14 @@ score_memory_hygiene() {
   # by name, never an error; the measurement rides the memory surface (the
   # index is the dominant injected component), so when zero stores resolved the
   # pillar returned UNSCORED above and the surface reports not-measured.
+  #
+  # <TEAM>-468: the codex-native registry is EXCLUDED from this scan. It is
+  # consolidator-owned and unactionable by the operator — a soft warn driven by
+  # it is pure alarm fatigue with no fix to offer. Claude-side stores still
+  # compete for largest-store; the registry's size stays visible via the
+  # informational line sub-check 2.5 records.
   local inj_largest_path="" inj_largest_bytes=-1 inj_b
   local inj_scan_dirs=("${MEMORY_DIRS[@]}")
-  [ -n "$CODEX_MEMORY_DIR" ] && inj_scan_dirs+=("$CODEX_MEMORY_DIR")
   for md_dir in "${inj_scan_dirs[@]}"; do
     [ -f "$md_dir/MEMORY.md" ] || continue
     inj_b="$(wc -c < "$md_dir/MEMORY.md" 2>/dev/null | tr -d ' ')"
@@ -1250,6 +1277,12 @@ emit_markdown() {
     printf 'Total: %s bytes — soft threshold %s KB (%s)\n' \
       "$INJ_TOTAL_BYTES" "$INJECTION_WARN_KB" "$verdict"
   fi
+  # <TEAM>-468: codex registry size, informational only — outside the surface
+  # total, never scored, never a gap (see sub-check 2.5).
+  if [ "$CODEX_REGISTRY_BYTES" -ge 0 ]; then
+    printf -- '- codex memory registry (informational, not scored): %s bytes (%s)\n' \
+      "$CODEX_REGISTRY_BYTES" "$CODEX_REGISTRY_PATH"
+  fi
 
   printf '\n## Top gaps (leverage-weighted)\n\n'
   if [ "${#GAPS[@]}" -eq 0 ]; then
@@ -1345,6 +1378,14 @@ emit_json() {
       '{total_bytes: $total, threshold_kb: $tk, warned: $warned, components: $components, skipped: $skipped}')"
   fi
 
+  # codex_registry_bytes (<TEAM>-468): ADDITIVE optional field — the codex-native
+  # registry's index size, reported informationally (never scored, never a gap).
+  # null when no registry resolved or it holds no MEMORY.md. APPENDED LAST so
+  # every pre-existing field keeps its name, shape, AND position (panel finding:
+  # inserting mid-object shifted gaps/skipped for positional consumers).
+  local cx_json='null'
+  [ "$CODEX_REGISTRY_BYTES" -ge 0 ] && cx_json="$CODEX_REGISTRY_BYTES"
+
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
@@ -1353,7 +1394,8 @@ emit_json() {
     --argjson injection_surface "$inj_json" \
     --argjson gaps "$gaps_arr" \
     --argjson skipped "$skipped_arr" \
-    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped}'
+    --argjson codex_registry_bytes "$cx_json" \
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes}'
 }
 
 OUTPUT=""

@@ -1363,8 +1363,13 @@ if ($jqAvail) {
 
 # --- <TEAM>-394: codex-native memory registry — audit-covered, not canonical ---
 # Twin of the bash codex-registry block: the registry gets its own pillar-2
-# surface (sub-check 2.5) — index presence + the MEMORY.md recall caps; its
-# sidecars must never trip the 2.1 orphan check.
+# surface (sub-check 2.5) — index PRESENCE only; its sidecars must never trip
+# the 2.1 orphan check.
+# <TEAM>-468: the 2.2/2.3 recall caps are claude-side recall semantics and do
+# NOT apply to the codex registry (no size cap or read-side truncation exists in
+# openai/codex at rust-v0.144.1). Size is reported informationally instead — no
+# deduction, no gap — and the registry is excluded from the sub-check-2.4
+# injection-surface largest-store scan.
 function New-SaCodexCase {
     param([string]$Root)
     $mem = Join-Path $Root 'mem'
@@ -1386,24 +1391,76 @@ if ($jqAvail) {
     $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
         '--memory-dir', (Join-Path $fixture 'mem'),
         '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
+    $mdOut = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'))
     $score = Get-SaPillarScore $out 'memory-hygiene'
+    # <TEAM>-468: size is reported as an additive optional JSON field, and every
+    # pre-existing top-level field keeps its name and position.
+    $regBytes = (Get-Item -LiteralPath (Join-Path $fixture 'codex-mem' 'MEMORY.md')).Length
+    $cxObj = $out | ConvertFrom-Json
+    $cxBytes = [string]$cxObj.codex_registry_bytes
+    $fields = (($cxObj.PSObject.Properties | ForEach-Object { $_.Name }) -join ',')
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
     Assert-Eq 'self-audit.test: codex registry clean registry + sidecars score 20/20 (no orphan false-trip)' '20' "$score"
     Assert-NotContains 'self-audit.test: codex registry sidecars never trip the orphan check' $out 'Orphan memory file(s)'
+    Assert-Eq 'self-audit.test: codex registry JSON reports the registry byte size informationally' `
+        "$regBytes" "$cxBytes"
+    Assert-Eq 'self-audit.test: codex registry JSON stays backward-compatible (existing fields intact, new field additive)' `
+        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes' "$fields"
+    Assert-Contains 'self-audit.test: codex registry markdown carries the non-scoring informational size line' `
+        $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 
-    # Over-cap index line in the codex registry → line-cap gap + 16/20.
+    # <TEAM>-468: over-cap content in the codex registry deducts NOTHING — no
+    # line-cap gap, no size-cap gap, pillar 2 stays 20/20; the size surfaces only
+    # via the informational field.
     $fixture = New-SaTmp
     New-SaFixtureRepo $fixture
     New-SaCodexCase $fixture
     [System.IO.File]::AppendAllText((Join-Path $fixture 'codex-mem' 'MEMORY.md'), ('- ' + ('x' * 320) + "`n"))
+    $cxPad = '- ' + ('y' * 200) + "`n"
+    $cxSb = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt 200; $i++) { [void]$cxSb.Append($cxPad) }
+    [System.IO.File]::AppendAllText((Join-Path $fixture 'codex-mem' 'MEMORY.md'), $cxSb.ToString())
+    $regBytes = (Get-Item -LiteralPath (Join-Path $fixture 'codex-mem' 'MEMORY.md')).Length
     $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
         '--memory-dir', (Join-Path $fixture 'mem'),
         '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
     $score = Get-SaPillarScore $out 'memory-hygiene'
+    $cxObj = $out | ConvertFrom-Json
+    $cxBytes = [string]$cxObj.codex_registry_bytes
+    $cxGaps = (@($cxObj.gaps | Where-Object { $_.title -like '*Codex registry*' }) | ForEach-Object { $_.title }) -join '|'
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
-    Assert-Contains 'self-audit.test: codex registry over-cap index line records the codex line-cap gap' `
+    Assert-Eq 'self-audit.test: codex registry over-cap size + long lines deduct nothing (pillar 2 stays 20)' '20' "$score"
+    Assert-Eq 'self-audit.test: codex registry over-cap content records no codex cap gap' '' "$cxGaps"
+    Assert-NotContains 'self-audit.test: codex registry no line-cap gap title remains' `
         $out 'Codex registry MEMORY.md entries over line-length cap'
-    Assert-Eq 'self-audit.test: codex registry line-cap deduction lands on pillar 2' '16' "$score"
+    Assert-NotContains 'self-audit.test: codex registry no size-cap gap title remains' `
+        $out 'Codex registry MEMORY.md over recall cap'
+    Assert-Eq 'self-audit.test: codex registry informational byte size reported for the over-cap registry' `
+        "$regBytes" "$cxBytes"
+
+    # <TEAM>-468: a codex registry LARGER than every claude store must not win
+    # the injection-surface largest-store pick — it is excluded from that scan.
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-SaCodexCase $fixture
+    $cxPad = '- ' + ('z' * 200) + "`n"
+    $cxSb = New-Object System.Text.StringBuilder
+    for ($i = 0; $i -lt 300; $i++) { [void]$cxSb.Append($cxPad) }
+    [System.IO.File]::AppendAllText((Join-Path $fixture 'codex-mem' 'MEMORY.md'), $cxSb.ToString())
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'mem'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
+    $cxObj = $out | ConvertFrom-Json
+    $largestPath = [string](@($cxObj.injection_surface.components |
+        Where-Object { $_.name -eq 'MEMORY.md (largest store)' } | ForEach-Object { $_.path }) -join '')
+    # New-SaTmp's RETURNED path is the canonical one (macOS /var symlink), so
+    # compare against it rather than a re-derived temp root.
+    $expectedLargest = Join-Path (Join-Path $fixture 'mem') 'MEMORY.md'
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: codex registry oversized registry never wins the injection-surface largest-store pick' `
+        "$expectedLargest" "$largestPath"
 
     # Missing MEMORY.md in the registry → blind-kickoff gap + 14/20.
     $fixture = New-SaTmp
@@ -1427,13 +1484,40 @@ if ($jqAvail) {
         '--memory-dir', (Join-Path $fixture 'mem'),
         '--codex-memory-dir', (Join-Path $fixture 'does-not-exist'), '--json')
     $score = Get-SaPillarScore $out 'memory-hygiene'
+    $cxBytes = [string](($out | ConvertFrom-Json).codex_registry_bytes)
     Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
     Assert-Eq 'self-audit.test: codex registry non-existent path skips the surface (pillar 2 unaffected)' '20' "$score"
     Assert-NotContains 'self-audit.test: codex registry non-existent path records no codex gap' `
         $out 'Codex memory registry'
+    Assert-Eq 'self-audit.test: codex registry non-existent path reports codex_registry_bytes as null' '' "$cxBytes"
+
+    # Panel finding (<TEAM>-468): a codex-ONLY install (zero claude stores →
+    # pillar 2 UNSCOREDs at its early return) must STILL report the registry
+    # size — Measure-CodexRegistry runs before the early return. Twin of
+    # _test_codex_only_install_still_reports_registry.
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    New-SaCodexCase $fixture
+    $regBytes = [string](Get-Item -LiteralPath (Join-Path (Join-Path $fixture 'codex-mem') 'MEMORY.md')).Length
+    $out = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'no-claude-store'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'), '--json')
+    $mdOut = Invoke-SelfAudit @('--isolated', '--repo-root', $fixture,
+        '--memory-dir', (Join-Path $fixture 'no-claude-store'),
+        '--codex-memory-dir', (Join-Path $fixture 'codex-mem'))
+    $cxObj = $out | ConvertFrom-Json
+    $unscored = [string]$cxObj.pillars.'memory-hygiene'.unscored
+    $cxBytes = [string]$cxObj.codex_registry_bytes
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    Assert-Eq 'self-audit.test: codex-only pillar 2 is UNSCORED with zero claude stores' 'True' "$unscored"
+    Assert-Eq 'self-audit.test: codex-only registry byte size is still reported in JSON' "$regBytes" "$cxBytes"
+    Assert-Contains 'self-audit.test: codex-only markdown still carries the informational size line' `
+        $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 } else {
     _Skip 'self-audit.test: codex-registry clean test' 'jq not installed'
-    _Skip 'self-audit.test: codex-registry line-cap test' 'jq not installed'
+    _Skip 'self-audit.test: codex-registry over-cap informational test' 'jq not installed'
+    _Skip 'self-audit.test: codex-registry injection-surface exclusion test' 'jq not installed'
     _Skip 'self-audit.test: codex-registry missing-index test' 'jq not installed'
     _Skip 'self-audit.test: codex-registry bogus-path test' 'jq not installed'
+    _Skip 'self-audit.test: codex-only registry-report test' 'jq not installed'
 }

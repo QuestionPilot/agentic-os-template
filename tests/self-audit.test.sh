@@ -1521,9 +1521,14 @@ _test_injection_surface_null_when_nothing_resolves() {
 _test_injection_surface_null_when_nothing_resolves
 
 # --- <TEAM>-394: codex-native memory registry — audit-covered, not canonical ---
-# The registry gets its own pillar-2 surface (sub-check 2.5): index presence +
-# the MEMORY.md recall caps. Its sidecars (memory_summary.md, raw_memories.md)
-# are NOT index-addressed notes, so they must never trip the 2.1 orphan check.
+# The registry gets its own pillar-2 surface (sub-check 2.5): index PRESENCE
+# only. Its sidecars (memory_summary.md, raw_memories.md) are NOT index-addressed
+# notes, so they must never trip the 2.1 orphan check.
+# <TEAM>-468: the 2.2/2.3 recall caps are claude-side recall semantics and do NOT
+# apply to the codex registry (no size cap or read-side truncation exists in
+# openai/codex at rust-v0.144.1). Size is reported informationally instead —
+# no deduction, no gap — and the registry is excluded from the sub-check-2.4
+# injection-surface largest-store scan.
 _sa_mk_codex_case() {  # <root> — clean claude store + codex registry skeleton
   mkdir -p "$1/mem" "$1/codex-mem/rollout_summaries"
   printf -- '- [note](note.md) — fixture note\n' > "$1/mem/MEMORY.md"
@@ -1537,32 +1542,87 @@ _test_codex_registry_clean() {
   command -v jq >/dev/null 2>&1 || { _skip "codex-registry clean test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
-  local out score
+  local out score reg_bytes md_out
+  reg_bytes="$(wc -c < "$fixture/codex-mem/MEMORY.md" | tr -d ' ')"
   out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
+  md_out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" 2>/dev/null)"
   score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  # <TEAM>-468: size is reported as an additive optional JSON field, and every
+  # pre-existing top-level field keeps its name and position.
+  local cx_bytes fields
+  cx_bytes="$(printf '%s' "$out" | jq -r '.codex_registry_bytes')"
+  fields="$(printf '%s' "$out" | jq -r 'keys_unsorted | join(",")')"
   rm -rf "$fixture"
   assert_eq "codex registry: clean registry + sidecars score 20/20 (no orphan false-trip)" "20" "$score"
   assert_not_contains "codex registry: sidecars never trip the orphan check" "$out" "Orphan memory file(s)"
+  assert_eq "codex registry: JSON reports the registry byte size informationally" \
+    "$reg_bytes" "$cx_bytes"
+  # Panel finding (<TEAM>-468): the new field is appended LAST so every
+  # pre-existing field keeps its POSITION as well as its name and shape.
+  assert_eq "codex registry: JSON stays backward-compatible (existing fields keep position, new field appended last)" \
+    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes" "$fields"
+  assert_contains "codex registry: markdown carries the non-scoring informational size line" \
+    "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
 }
 _test_codex_registry_clean
 
-_test_codex_registry_line_cap() {
-  command -v jq >/dev/null 2>&1 || { _skip "codex-registry line-cap test" "jq not installed"; return 0; }
+# <TEAM>-468: the line-cap and size-cap deductions are GONE for the codex
+# registry — the consolidator owns the registry format and no codex-side cap
+# exists. Over-cap content must score a clean 20/20 with zero codex gaps, while
+# the size still surfaces informationally.
+_test_codex_registry_over_cap_content_is_informational_only() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-registry over-cap test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
-  # One >300-char index line in the CODEX registry only.
+  # A >300-char index line AND a total well over the 24400-byte claude-side cap,
+  # in the CODEX registry only.
   printf -- '- %s\n' "$(printf 'x%.0s' $(seq 1 320))" >> "$fixture/codex-mem/MEMORY.md"
-  local out score
+  local pad; pad="$(printf 'y%.0s' $(seq 1 200))"
+  local i
+  for i in $(seq 1 200); do printf -- '- %s\n' "$pad" >> "$fixture/codex-mem/MEMORY.md"; done
+  local reg_bytes; reg_bytes="$(wc -c < "$fixture/codex-mem/MEMORY.md" | tr -d ' ')"
+  local out score cx_bytes gap_titles
   out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
   score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  cx_bytes="$(printf '%s' "$out" | jq -r '.codex_registry_bytes')"
+  # Expected-empty jq select: `|| true` keeps an empty result from tripping
+  # pipefail-style failures in the harness.
+  gap_titles="$(printf '%s' "$out" | jq -r '[.gaps[].title | select(contains("Codex registry"))] | join("|")' || true)"
   rm -rf "$fixture"
-  assert_contains "codex registry: over-cap index line records the codex line-cap gap" \
+  assert_eq "codex registry: over-cap size + long lines deduct nothing (pillar 2 stays 20)" "20" "$score"
+  assert_eq "codex registry: over-cap content records no codex cap gap" "" "$gap_titles"
+  assert_not_contains "codex registry: no line-cap gap title remains" \
     "$out" "Codex registry MEMORY.md entries over line-length cap"
-  assert_eq "codex registry: line-cap deduction lands on pillar 2" "16" "$score"
+  assert_not_contains "codex registry: no size-cap gap title remains" \
+    "$out" "Codex registry MEMORY.md over recall cap"
+  assert_eq "codex registry: informational byte size reported for the over-cap registry" \
+    "$reg_bytes" "$cx_bytes"
 }
-_test_codex_registry_line_cap
+_test_codex_registry_over_cap_content_is_informational_only
+
+# <TEAM>-468: a codex registry LARGER than every claude store must not win the
+# injection-surface largest-store pick — the registry is excluded from that scan.
+_test_codex_registry_excluded_from_injection_largest_store() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-registry injection-surface test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
+  # Make the codex registry far larger than the claude store's MEMORY.md.
+  local pad; pad="$(printf 'z%.0s' $(seq 1 200))"
+  local i
+  for i in $(seq 1 300); do printf -- '- %s\n' "$pad" >> "$fixture/codex-mem/MEMORY.md"; done
+  local out largest_path
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
+  largest_path="$(printf '%s' "$out" \
+    | jq -r '.injection_surface.components[] | select(.name == "MEMORY.md (largest store)") | .path')"
+  rm -rf "$fixture"
+  assert_eq "codex registry: oversized registry never wins the injection-surface largest-store pick" \
+    "$fixture/mem/MEMORY.md" "$largest_path"
+}
+_test_codex_registry_excluded_from_injection_largest_store
 
 _test_codex_registry_missing_index() {
   command -v jq >/dev/null 2>&1 || { _skip "codex-registry missing-index test" "jq not installed"; return 0; }
@@ -1588,9 +1648,35 @@ _test_codex_registry_bogus_path_skips() {
   out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/does-not-exist" --json 2>/dev/null)"
   score="$(_sa_pillar_score "$out" "memory-hygiene")"
+  local cx_bytes; cx_bytes="$(printf '%s' "$out" | jq -r '.codex_registry_bytes')"
   rm -rf "$fixture"
   assert_eq "codex registry: non-existent path skips the surface (pillar 2 unaffected)" "20" "$score"
   assert_not_contains "codex registry: non-existent path records no codex gap" \
     "$out" "Codex memory registry"
+  assert_eq "codex registry: non-existent path reports codex_registry_bytes as null" "null" "$cx_bytes"
 }
 _test_codex_registry_bogus_path_skips
+
+# Panel finding (<TEAM>-468): a codex-ONLY install (zero claude stores → pillar
+# 2 UNSCOREDs at its early return) must STILL report the registry size — the
+# measurement runs before the early return, so null keeps exactly its two
+# documented meanings (no registry resolved / registry holds no MEMORY.md).
+_test_codex_only_install_still_reports_registry() {
+  command -v jq >/dev/null 2>&1 || { _skip "codex-only registry-report test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"; _sa_mk_codex_case "$fixture"
+  local reg_bytes; reg_bytes="$(wc -c < "$fixture/codex-mem/MEMORY.md" | tr -d ' ')"
+  local out md_out unscored cx_bytes
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/no-claude-store" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
+  md_out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$fixture/no-claude-store" --codex-memory-dir "$fixture/codex-mem" 2>/dev/null)"
+  unscored="$(printf '%s' "$out" | jq -r '.pillars["memory-hygiene"].unscored')"
+  cx_bytes="$(printf '%s' "$out" | jq -r '.codex_registry_bytes')"
+  rm -rf "$fixture"
+  assert_eq "codex-only: pillar 2 is UNSCORED with zero claude stores" "true" "$unscored"
+  assert_eq "codex-only: registry byte size is still reported in JSON" "$reg_bytes" "$cx_bytes"
+  assert_contains "codex-only: markdown still carries the informational size line" \
+    "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
+}
+_test_codex_only_install_still_reports_registry
