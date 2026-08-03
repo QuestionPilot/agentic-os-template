@@ -457,6 +457,92 @@ unset DR_Q248
 rm -rf "$DR_FIX"
 unset DR_FIX
 
+# --- Windows-lane hashing traps: backslash paths + CRLF-emitting jq ---------
+# Two independent bugs made --manifest report every generated file as
+# hand-edited on a Windows-style target:
+#   (1) GNU coreutils sha256sum switches to escaped-filename mode when the
+#       FILENAME contains a backslash — the output line gains a leading '\',
+#       so `cut -f1` yields '\<hash>' and every compare fails. Fixed by
+#       hashing via stdin.
+#   (2) A Windows-built jq emits \r\n, so every manifest "want" value carries
+#       a trailing \r. Fixed by the jqr() CRLF-stripping wrapper.
+# Both are pinned here portably: the backslash case via a path whose SPELLING
+# contains backslashes (cygpath -w on an msys lane; a literal-backslash
+# symlink elsewhere), the CRLF case via a jq shim that re-emits CRLF output.
+DR_W_DIR="$(mktemp -d)"
+DR_W_OUT="$DR_W_DIR/target"; mkdir -p "$DR_W_OUT"
+DR_W_ENV="$DR_W_DIR/local.env"
+make_local_env "$DR_W_ENV" "$DR_W_OUT"
+AI_CONFIG_LOCAL_ENV="$DR_W_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+
+# (1) backslash-containing target-path spelling.
+DR_W_BS=""
+case "${OSTYPE:-}" in
+  msys*|cygwin*)
+    # Native Windows lane: the real Windows spelling of the same dir.
+    DR_W_BS="$(cygpath -w "$DR_W_OUT" 2>/dev/null || true)" ;;
+  *)
+    # POSIX lane: a symlink whose NAME contains a literal backslash, so the
+    # per-file paths handed to sha256sum contain '\' just as on Windows.
+    ln -s "$DR_W_OUT" "$DR_W_DIR/back\\slash" 2>/dev/null && \
+      DR_W_BS="$DR_W_DIR/back\\slash" ;;
+esac
+# (The pre-fix failure reproduces only where the hasher escapes backslashed
+# filenames — GNU sha256sum, Perl shasum. On a lane whose hasher doesn't
+# escape, this assert still pins the contract, it just never failed there.)
+if [ -n "$DR_W_BS" ]; then
+  assert_exit "drift check passes a clean build behind a backslash-spelled path" 0 -- \
+    bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_W_BS"
+else
+  _skip "drift check passes a clean build behind a backslash-spelled path" \
+    "no backslash path spelling available on this lane"
+fi
+
+# (2) CRLF-emitting jq (shim wraps the real jq, appends \r per line — awk, not
+# sed: BSD sed does not interpret \r in a replacement).
+DR_W_BIN="$DR_W_DIR/bin"; mkdir -p "$DR_W_BIN"
+DR_W_REALJQ="$(command -v jq 2>/dev/null || true)"
+if [ -z "$DR_W_REALJQ" ]; then
+  _skip "drift check tolerates a CRLF-emitting jq (Windows jq builds)" "jq not on PATH"
+  _skip "CRLF-emitting jq still detects a real hand-edit" "jq not on PATH"
+  _skip "freshness check tolerates a CRLF-emitting jq" "jq not on PATH"
+else
+{ printf '#!/usr/bin/env bash\nset -o pipefail\n'
+  printf '"%s" "$@" | awk %s{printf "%%s\\r\\n", $0}%s\n' "$DR_W_REALJQ" "'" "'"
+} > "$DR_W_BIN/jq"
+chmod +x "$DR_W_BIN/jq"
+assert_exit "drift check tolerates a CRLF-emitting jq (Windows jq builds)" 0 -- \
+  env PATH="$DR_W_BIN:$PATH" bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_W_OUT"
+# check-freshness.sh reads the same manifest through its own jqr — the fixture
+# was just rendered from the current repo, so sources match and CRLF must not
+# turn "current" into "all stale" (panel finding: cover all three scripts).
+assert_exit "freshness check tolerates a CRLF-emitting jq" 0 -- \
+  env PATH="$DR_W_BIN:$PATH" bash "$REPO_ROOT/scripts/check-freshness.sh" --manifest "$DR_W_OUT"
+# The CRLF tolerance must not blunt real-drift detection.
+printf '\nHAND EDIT\n' >> "$DR_W_OUT/skills/session-agent/SKILL.md"
+assert_exit "CRLF-emitting jq still detects a real hand-edit" 1 -- \
+  env PATH="$DR_W_BIN:$PATH" bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_W_OUT"
+fi
+
+# (3) twin agreement: bash and pwsh verdicts match on the same target — the
+# .ps1 twin (.NET hashing, \r-stripped capture) silently disagreed with the
+# bash twin on Windows for months. Drifted state first (the fixture already
+# carries the hand-edit), then clean after re-render.
+if command -v pwsh >/dev/null 2>&1; then
+  assert_exit "check-drift.ps1 agrees with bash on a drifted target" 1 -- \
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-drift.ps1" --manifest "$DR_W_OUT"
+  AI_CONFIG_LOCAL_ENV="$DR_W_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+  assert_exit "check-drift.sh passes the re-converged target" 0 -- \
+    bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_W_OUT"
+  assert_exit "check-drift.ps1 agrees with bash on a clean target" 0 -- \
+    pwsh -NoProfile -File "$REPO_ROOT/scripts/check-drift.ps1" --manifest "$DR_W_OUT"
+else
+  _skip "check-drift.ps1 agrees with bash on a drifted target" "pwsh not on PATH"
+  _skip "check-drift.ps1 agrees with bash on a clean target" "pwsh not on PATH"
+fi
+rm -rf "$DR_W_DIR"
+unset DR_W_DIR DR_W_OUT DR_W_ENV DR_W_BS DR_W_BIN DR_W_REALJQ
+
 # --- --auto: multi-home drift gate (<TEAM>-394) -----------------------------
 # `make drift` runs check-drift.sh --auto so the gate covers EVERY rendered
 # harness home, not just $CLAUDE_CONFIG_DIR. Fixture: render a claude home and
