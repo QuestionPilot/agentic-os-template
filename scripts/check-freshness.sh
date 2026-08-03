@@ -84,11 +84,18 @@ command -v jq >/dev/null 2>&1 || skip "jq unavailable; cannot read manifest"
 [ -n "$repo_root" ] && [ -d "$repo_root" ] || skip "source repo not found: ${repo_root:-<unresolved>}"
 jq -e '.sources | type == "object"' "$manifest" >/dev/null 2>&1 || skip "manifest has no sources map"
 
+# jqr — jq -r with CRLF normalization (parity with check-drift.sh): a
+# Windows-built jq emits \r\n, and a trailing \r inside a hash silently fails
+# every comparison below.
+jqr() { jq -r "$@" | tr -d '\r'; }
+
 # sha256 helper — resolve the available tool once (parity with check-drift.sh).
+# Hash via stdin: a backslash-containing filename flips GNU coreutils into
+# escaped-filename mode, corrupting the extracted hash.
 if command -v sha256sum >/dev/null 2>&1; then
-  _sha() { sha256sum "$1" | cut -d' ' -f1; }
+  _sha() { sha256sum < "$1" | cut -d' ' -f1; }
 elif command -v shasum >/dev/null 2>&1; then
-  _sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+  _sha() { shasum -a 256 < "$1" | cut -d' ' -f1; }
 else
   skip "no sha256 tool found (sha256sum / shasum)"
 fi
@@ -116,12 +123,12 @@ while IFS=$'\t' read -r rel want; do
   if [ "$got" != "$want" ]; then
     stale+=("$rel")
   fi
-done < <(jq -r '.sources | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
+done < <(jqr '.sources | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
 
 n=${#stale[@]}
 if [ "$n" -eq 0 ]; then
   if [ "$MODE_LIST" -eq 0 ]; then
-    total="$(jq -r '.sources | length' "$manifest")"
+    total="$(jqr '.sources | length' "$manifest")"
     printf 'PASS install is current (%s source files match)\n' "$total"
   fi
   exit 0
@@ -130,7 +137,7 @@ fi
 if [ "$MODE_LIST" -eq 1 ]; then
   printf '%s\n' "${stale[@]}"
 else
-  total="$(jq -r '.sources | length' "$manifest")"
+  total="$(jqr '.sources | length' "$manifest")"
   printf 'STALE %s of %s source file(s) changed since install — re-run scripts/install.sh:\n' "$n" "$total"
   printf '  %s\n' "${stale[@]}"
 fi
