@@ -171,6 +171,27 @@ if ($LASTEXITCODE -eq 0 -and $gitTop) {
     if ($topResolved -and $topResolved.Path -eq $repoRoot) { $script:IsGitWorkTree = $true }
 }
 
+# The non-git fallback is only legitimate for a plain-copy staging tree, which
+# has no .git. If .git exists at $repoRoot (dir or linked-worktree file) and
+# detection still refused the git path (rev-parse refusal — safe.directory /
+# ownership — or a path-resolution quirk), fail LOUDLY rather than silently
+# widening the scan to gitignored runtime files. (Twin of check-drift.sh; the
+# bash twin additionally rescues MSYS /tmp mount aliasing via -ef, which has
+# no PowerShell equivalent or need — Resolve-Path uses native Windows paths.)
+$script:DotGitPath = Join-Path $repoRoot '.git'
+# Get-Item -Force alongside Test-Path: Test-Path can report $false for a
+# DANGLING .git symlink/junction (it checks the target), which would silently
+# re-enter the fs-walk; Get-Item -Force sees the link entry itself. (Panel
+# finding, GPT + Gemini convergent — mirror of the bash twins' -e || -L.)
+$script:DotGitEntry = (Test-Path -LiteralPath $script:DotGitPath) -or
+    [bool](Get-Item -LiteralPath $script:DotGitPath -Force -ErrorAction SilentlyContinue)
+if (-not $script:IsGitWorkTree -and $script:DotGitEntry) {
+    [Console]::Error.WriteLine("FAIL git worktree detection: $repoRoot\.git exists but git enumeration was not selected")
+    [Console]::Error.WriteLine("     (git rev-parse failed, or toplevel did not match / could not be resolved - check safe.directory/ownership).")
+    [Console]::Error.WriteLine("     Refusing to silently fall back to the filesystem walk over gitignored runtime files.")
+    exit 1
+}
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------

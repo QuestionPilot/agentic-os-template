@@ -549,9 +549,39 @@ if _q213_toplevel="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)"
   _q213_rr_phys="$(cd "$repo_root" 2>/dev/null && pwd -P)" || _q213_rr_phys=""
   if [ -n "$_q213_tl_phys" ] && [ "$_q213_tl_phys" = "$_q213_rr_phys" ]; then
     _IS_GIT_WORKTREE=1
+  elif [ -n "$_q213_tl_phys" ] && [ "$_q213_toplevel" -ef "$repo_root" ]; then
+    # MSYS mount aliasing: under Git Bash a mount-table entry (e.g. /tmp →
+    # the Windows per-user temp dir) gives the SAME directory two physical
+    # spellings — `cd` to git's Windows-style toplevel resolves through the
+    # mount (`pwd -P` → /tmp/…) while the POSIX-spelled repo_root does not
+    # (→ /c/…), so the string compare above fails for the live repo and the
+    # scan silently degraded to the fs-walk, reading gitignored files. `-ef`
+    # (device+inode same-file test) is spelling-independent; a staging tree
+    # nested under an unrelated parent repo is a DIFFERENT directory from
+    # that parent's toplevel, so -ef stays false and the intended fallback
+    # for plain-copy trees is preserved.
+    _IS_GIT_WORKTREE=1
   fi
 fi
 unset _q213_toplevel _q213_tl_phys _q213_rr_phys
+
+# The non-git fallback below is legitimate ONLY for a plain-copy staging/export
+# tree, which by definition has no .git. If .git EXISTS at repo_root (dir or
+# linked-worktree file) and detection still refused the git path, something is
+# wrong (rev-parse refusal — e.g. safe.directory/ownership — or an unhandled
+# path-aliasing quirk). Silently widening the scan to gitignored runtime files
+# produces false FAILs and, worse, hides that the committable-set contract was
+# never applied — fail LOUDLY instead.
+if [ "$_IS_GIT_WORKTREE" -eq 0 ] && { [ -e "$repo_root/.git" ] || [ -L "$repo_root/.git" ]; }; then
+  # -L alongside -e: `test -e` FOLLOWS symlinks, so a dangling .git symlink
+  # (broken target, unmounted volume) would read as "no .git" and silently
+  # re-enter the fs-walk — the -L probe sees the link entry itself. (Panel
+  # finding, GPT + Gemini convergent.)
+  printf 'FAIL git worktree detection: %s/.git exists but git enumeration was not selected\n' "$repo_root" >&2
+  printf '     (git rev-parse failed, or toplevel did not match / could not be resolved — check safe.directory/ownership).\n' >&2
+  printf '     Refusing to silently fall back to the filesystem walk over gitignored runtime files.\n' >&2
+  exit 1
+fi
 
 # <TEAM>-213: the broad content scans enumerate "committable" repository content
 # (`git ls-files --cached --others --exclude-standard`) — tracked files PLUS

@@ -453,9 +453,30 @@ if _secret_tl="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)" && 
   _secret_rr_phys="$(cd "$repo_root" 2>/dev/null && pwd -P)" || _secret_rr_phys=""
   if [ -n "$_secret_tl_phys" ] && [ "$_secret_tl_phys" = "$_secret_rr_phys" ]; then
     _secret_is_git=1
+  elif [ -n "$_secret_tl_phys" ] && [ "$_secret_tl" -ef "$repo_root" ]; then
+    # MSYS mount aliasing (mirror of check-drift.sh): the same directory can
+    # carry two physical spellings under Git Bash (/tmp vs the /c-spelled
+    # per-user temp dir), so the string compare fails for a live repo under
+    # an aliased mount.
+    # `-ef` is spelling-independent; a staging tree nested under an unrelated
+    # parent repo remains a different directory, so the fallback is preserved.
+    _secret_is_git=1
   fi
 fi
 unset _secret_tl _secret_tl_phys _secret_rr_phys
+
+# .git exists yet the git path was refused → rev-parse refusal or unhandled
+# aliasing. The fs-walk fallback is only legitimate for a plain-copy staging
+# tree (no .git); fail loudly instead of silently widening the scan. (Mirror
+# of check-drift.sh.)
+if [ "$_secret_is_git" -eq 0 ] && { [ -e "$repo_root/.git" ] || [ -L "$repo_root/.git" ]; }; then
+  # -L alongside -e: a dangling .git symlink fails `test -e` (it follows the
+  # link) and would silently re-enter the fs-walk; -L sees the link entry.
+  printf 'FAIL secret scan: %s/.git exists but git enumeration was not selected\n' "$repo_root" >&2
+  printf '     (git rev-parse failed, or toplevel did not match / could not be resolved — check safe.directory/ownership).\n' >&2
+  printf '     Refusing to silently fall back to the filesystem walk.\n' >&2
+  exit 1
+fi
 
 secret_hits=""
 secret_status=1

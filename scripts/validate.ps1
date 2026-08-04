@@ -494,6 +494,23 @@ function Test-SecretPattern {
         if ($topResolved -and $repoResolved -and $topResolved.Path -eq $repoResolved.Path) { $isGit = $true }
     }
 
+    # .git exists yet the git path was refused -> rev-parse refusal or a
+    # path-resolution quirk. The fs-walk fallback is only legitimate for a
+    # plain-copy staging tree (no .git); fail loudly instead of silently
+    # widening the scan. (Mirror of check-drift.ps1 / the bash twin.)
+    $dotGitPath = Join-Path $repo '.git'
+    # Get-Item -Force alongside Test-Path: Test-Path can report $false for a
+    # dangling .git symlink/junction; Get-Item -Force sees the link entry
+    # itself. (Mirror of check-drift.ps1 / the bash twins' -e || -L.)
+    $dotGitEntry = (Test-Path -LiteralPath $dotGitPath) -or
+        [bool](Get-Item -LiteralPath $dotGitPath -Force -ErrorAction SilentlyContinue)
+    if (-not $isGit -and $dotGitEntry) {
+        [Console]::Error.WriteLine("FAIL secret scan: $repo\.git exists but git enumeration was not selected")
+        [Console]::Error.WriteLine("     (git rev-parse failed, or toplevel did not match / could not be resolved - check safe.directory/ownership).")
+        [Console]::Error.WriteLine("     Refusing to silently fall back to the filesystem walk.")
+        exit 1
+    }
+
     $hits = @()
     # Listed files we could not read (locked/deleted/permission). The bash twin
     # fails closed (grep exit >1 -> FAIL); a silent -EA SilentlyContinue skip
