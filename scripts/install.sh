@@ -82,9 +82,18 @@ harness_target_env() {
 command -v jq >/dev/null 2>&1 || die "jq is required but not found"
 
 # --- portable sha256 ------------------------------------------------------
+# jqr — jq -r with CRLF normalization. A Windows-built jq emits \r\n line
+# endings; a trailing \r embedded in a hash, key, or filename silently fails
+# string comparisons and file operations downstream. Values never
+# legitimately contain \r here.
+jqr() { jq -r "$@" | tr -d '\r'; }
+
+# Hash via stdin: a filename containing backslashes (Windows-style target
+# dirs) flips GNU coreutils into escaped-filename mode, prefixing the output
+# line with '\' and corrupting the extracted hash.
 sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
-  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
   else die "no sha256 tool (sha256sum / shasum) found"; fi
 }
 
@@ -895,7 +904,7 @@ corender_agents() {
   local -a bases=()
   local b
   while IFS= read -r b; do [ -n "$b" ] && bases+=("$b"); done \
-    < <(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$mani" | LC_ALL=C sort -u)
+    < <(jqr '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$mani" | LC_ALL=C sort -u)
   if [ "${#bases[@]}" -eq 0 ]; then
     warn ".agents co-render: codex build generated no skills — nothing to mirror"
     return 0
@@ -918,7 +927,7 @@ corender_agents() {
   # the framework copy still wins (lockstep with $CODEX_HOME is the contract).
   local old_managed=""
   if [ -f "$adir/.build-manifest.json" ]; then
-    old_managed="$(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$adir/.build-manifest.json" 2>/dev/null | LC_ALL=C sort -u)"
+    old_managed="$(jqr '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$adir/.build-manifest.json" 2>/dev/null | LC_ALL=C sort -u)"
   fi
   for b in "${bases[@]}"; do
     if [ -e "$adir/skills/$b" ] && ! grep -qxF "$b" <<<"$old_managed"; then
@@ -1035,7 +1044,7 @@ swap_in() {
     # per-subdir swap loop reuses it for the N1 collision warning (authorship).
     local orphans="" old_managed="" fs_ci=0
     if [ -f "$TARGET/.build-manifest.json" ] && command -v jq >/dev/null 2>&1; then
-      old_managed="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$TARGET/.build-manifest.json" 2>/dev/null | sort -u)"
+      old_managed="$(jqr --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$TARGET/.build-manifest.json" 2>/dev/null | sort -u)"
       # FS-casing-aware comparison (see fs_case_insensitive). Probed once here —
       # only when prior framework state exists, so a fresh install leaves no
       # probe artifact — and reused for the orphan filter and the N1 check below.
@@ -1048,7 +1057,7 @@ swap_in() {
     fi
     if [ -f "$TARGET/.build-manifest.json" ] && [ -f "$BUILD/.build-manifest.json" ] && command -v jq >/dev/null 2>&1; then
       local new_managed
-      new_managed="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$BUILD/.build-manifest.json" 2>/dev/null | sort -u)"
+      new_managed="$(jqr --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$BUILD/.build-manifest.json" 2>/dev/null | sort -u)"
       orphans="$(comm -23 <(printf '%s\n' "$old_managed") <(printf '%s\n' "$new_managed"))"
       # FS-casing-aware false-orphan guard: on a case-insensitive FS, an OLD
       # <base> that differs from a NEW <base> only by letter case is the SAME
@@ -1153,7 +1162,7 @@ swap_in() {
     # operator content). The temp file lives under $BUILD which is the
     # mktemp-d build dir already cleaned up by the trap in main().
     local manifest_dump="$BUILD/.orphan-manifest.tsv"
-    if ! jq -r '.generated | to_entries[] | "\(.key)\t\(.value)"' \
+    if ! jqr '.generated | to_entries[] | "\(.key)\t\(.value)"' \
         "$TARGET/.build-manifest.json" > "$manifest_dump" 2>/dev/null; then
       printf 'install.sh: manifest enumeration failed; skipping orphan cleanup\n' >&2
       return 0
@@ -1385,14 +1394,13 @@ classify_state() {
       managed=$((managed+1)); continue
     fi
     old_hash=""
-    [ "$have_old" = 1 ] && old_hash="$(jq -r --arg k "$rel" '.generated[$k] // empty' "$old_manifest" 2>/dev/null || true)"
-    old_hash="${old_hash%$'\r'}"   # strip a stray CR if a Windows jq emitted CRLF
+    [ "$have_old" = 1 ] && old_hash="$(jqr --arg k "$rel" '.generated[$k] // empty' "$old_manifest" 2>/dev/null || true)"
     if [ -n "$got" ] && [ -n "$old_hash" ] && [ "$got" = "$old_hash" ]; then
       stale=$((stale+1)); stale_list="${stale_list}    - $rel"$'\n'
     else
       broken=$((broken+1)); broken_list="${broken_list}    - $rel"$'\n'
     fi
-  done < <(jq -r '.generated | to_entries[] | "\(.key)\t\(.value)"' "$new_manifest" 2>/dev/null)
+  done < <(jqr '.generated | to_entries[] | "\(.key)\t\(.value)"' "$new_manifest" 2>/dev/null)
 
   # 2) Operator Shape C: a skills/<base>/ or plugins/<base>/ subdir present in the
   # target but NOT produced by the NEW build is operator-authored — PRESERVED.
@@ -1400,7 +1408,7 @@ classify_state() {
   local name sub base mbase
   for name in $PER_SUBDIR_PATHS; do
     [ -d "$TARGET/$name" ] || continue
-    mbase="$(jq -r --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$new_manifest" 2>/dev/null | sort -u)"
+    mbase="$(jqr --arg p "$name/" '.generated | keys[] | select(startswith($p)) | split("/")[1]' "$new_manifest" 2>/dev/null | sort -u)"
     for sub in "$TARGET/$name"/*/; do
       [ -d "$sub" ] || continue
       base="$(basename "$sub")"

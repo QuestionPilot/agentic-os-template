@@ -3,6 +3,12 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# jqr — jq -r with CRLF normalization. A Windows-built jq emits \r\n line
+# endings; a trailing \r embedded in a hash or key silently fails every
+# string comparison downstream (manifest "want" values, managed-subdir
+# grep -qxF membership tests). Values never legitimately contain \r here.
+jqr() { jq -r "$@" | tr -d '\r'; }
+
 # --- arg parse: --cure-soft-drift is optional + position-insensitive --------
 # The flag opts into soft-drift auto-cure. When set, a drift case
 # limited to settings.json's user-preference keys (theme, effortLevel,
@@ -118,9 +124,12 @@ if [ "${1:-}" = "--manifest" ]; then
     printf 'FAIL jq unavailable; cannot verify build manifest\n' >&2
     exit 1
   fi
+  # Hash via stdin: a filename containing backslashes (Windows-style target
+  # dirs) flips GNU coreutils into escaped-filename mode, prefixing the output
+  # line with '\' and corrupting the extracted hash.
   sha256() {
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
-    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
     else printf 'FAIL no sha256 tool found\n' >&2; exit 1; fi
   }
   # <TEAM>-106 soft-drift detection: track which files drifted (instead of just a
@@ -143,7 +152,7 @@ if [ "${1:-}" = "--manifest" ]; then
       drift=1
       DRIFTED_FILES+=("$rel")
     fi
-  done < <(jq -r '.generated | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
+  done < <(jqr '.generated | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
   # Extra-file detection: a file in the generated tree (hooks/, settings.json)
   # or in a manifest-managed skills/<name>/ or plugins/<name>/ subdir that the
   # manifest does not list is drift. Unmanaged skills/<name>/ and plugins/<name>/
@@ -153,8 +162,8 @@ if [ "${1:-}" = "--manifest" ]; then
   # intentionally not in the manifest. Both skills/ and plugins/ are per-subdir
   # managed trees (install.sh PER_SUBDIR_PATHS), so each gets the same exemption:
   # compute the manifest-managed subdir set per category, then exempt all others.
-  managed_skills="$(jq -r '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$manifest" 2>/dev/null | sort -u)"
-  managed_plugins="$(jq -r '.generated | keys[] | select(startswith("plugins/")) | split("/")[1]' "$manifest" 2>/dev/null | sort -u)"
+  managed_skills="$(jqr '.generated | keys[] | select(startswith("skills/")) | split("/")[1]' "$manifest" 2>/dev/null | sort -u)"
+  managed_plugins="$(jqr '.generated | keys[] | select(startswith("plugins/")) | split("/")[1]' "$manifest" 2>/dev/null | sort -u)"
   # plugins/ is scanned ONLY when the manifest declares it a managed tree (i.e.
   # hermes, whose build produces plugins/agentic-os-hook-bridge/). For claude/
   # codex, plugins/ is NOT framework-managed — Claude Code's app owns ~/.claude/
@@ -300,7 +309,7 @@ if [ "${1:-}" = "--manifest" ]; then
       # Codex dir, leaving stale Codex entrypoints behind extra-file detection
       # doesn't catch.) The shape signal: claude has settings.json + CLAUDE.md;
       # codex has hooks.json + AGENTS.md.
-      harness="$(jq -r '.harness // empty' "$manifest")"
+      harness="$(jqr '.harness // empty' "$manifest")"
       if [ -z "$harness" ]; then
         printf 'NOTE soft-drift envelope matched but cure refused: manifest has no harness field\n' >&2
         exit 1
