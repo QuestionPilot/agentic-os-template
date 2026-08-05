@@ -221,6 +221,16 @@ each other:
   durability is achieved by promoting lessons, decisions, and project memory
   through closeout into the durable vault (Tier 3) — never by treating a
   harness's local store as the long-term record.
+- **A memory write is invisible off-machine the moment it lands.** When a
+  closeout records project state that another machine — or any future
+  cross-machine pickup — will need, the same closeout must land the fact in a
+  shared layer (the tracker's closing comment and/or the vault project note);
+  the local memory note is only that machine's cache of it. Read side: a
+  closing comment's "memory note written" claim is verifiable only on the
+  machine that wrote it — a pickup on any other machine treats the tracker,
+  the vault, and the live artifact as the state of record, and expects local
+  project notes on multi-machine work to stay stale until this machine next
+  reconciles them against those shared layers.
 - **Never sync caches machine-to-machine.** A cache is rebuilt from the vault,
   the active-work tracker, and the repo; syncing one machine's cache to another
   creates a second source of truth and invites split-brain.
