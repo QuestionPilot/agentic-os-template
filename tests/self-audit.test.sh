@@ -1665,7 +1665,7 @@ _test_codex_registry_clean() {
   # Panel finding (<TEAM>-468): the new field is appended LAST so every
   # pre-existing field keeps its POSITION as well as its name and shape.
   assert_eq "codex registry: JSON stays backward-compatible (existing fields keep position, new field appended last)" \
-    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness" "$fields"
+    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface" "$fields"
   assert_contains "codex registry: markdown carries the non-scoring informational size line" \
     "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
 }
@@ -1783,3 +1783,299 @@ _test_codex_only_install_still_reports_registry() {
     "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
 }
 _test_codex_only_install_still_reports_registry
+
+# --- orientation surface (<TEAM>-524) ----------------------------------------
+# The effective Mode 1 kickoff surface = static entrypoint + the compiled spine
+# capability bodies (session-agent + closeout) the kickoff mandates + the vault
+# lesson index read at every orient. Reported in its OWN section and its OWN
+# JSON key; informational only — it must never move `total`, a pillar score, or
+# `gaps`.
+
+# _sa_mk_orient_home <dir> <entrypoint-name> — a rendered harness home fixture:
+# an entrypoint file plus the two compiled spine skill bodies.
+_sa_mk_orient_home() {
+  local home="$1" entry="$2"
+  mkdir -p "$home/skills/session-agent" "$home/skills/closeout"
+  printf 'entrypoint body\nsecond line\n' > "$home/$entry"
+  printf 'session-agent compiled body\n' > "$home/skills/session-agent/SKILL.md"
+  printf 'closeout compiled body\nline two\nline three\n' > "$home/skills/closeout/SKILL.md"
+}
+
+_test_orientation_surface_measures_spine_and_lesson_index() {
+  command -v jq >/dev/null 2>&1 || { _skip "orientation-surface measurement test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config" vault="$fixture/vault"
+  _sa_mk_orient_home "$cfg" "CLAUDE.md"
+  mkdir -p "$vault/04-Lessons"
+  printf '| Trigger | Lesson |\n| --- | --- |\n| before a fetch | use the CLI |\n' > "$vault/04-Lessons/_index.md"
+
+  local ep_b sp_b li_b want_total
+  ep_b="$(LC_ALL=C wc -c < "$cfg/CLAUDE.md" | tr -d ' ')"
+  sp_b=$(( $(LC_ALL=C wc -c < "$cfg/skills/session-agent/SKILL.md" | tr -d ' ') \
+         + $(LC_ALL=C wc -c < "$cfg/skills/closeout/SKILL.md" | tr -d ' ') ))
+  li_b="$(LC_ALL=C wc -c < "$vault/04-Lessons/_index.md" | tr -d ' ')"
+  want_total=$(( ep_b + sp_b + li_b ))
+
+  local out md
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" 2>/dev/null)"
+  rm -rf "$fixture"
+
+  assert_eq "orientation surface: measured against a rendered harness home" \
+    "true" "$(printf '%s' "$out" | jq -r '.orientation_surface.measured')"
+  assert_eq "orientation surface: the claude render gets a per-harness row" \
+    "claude" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].harness')"
+  assert_eq "orientation surface: row names the compiled entrypoint" \
+    "CLAUDE.md" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].entrypoint')"
+  assert_eq "orientation surface: entrypoint_bytes matches the compiled entrypoint" \
+    "$ep_b" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].entrypoint_bytes')"
+  # The whole point of <TEAM>-524: the mandatory capability bodies are counted,
+  # not just the static entrypoint file.
+  assert_eq "orientation surface: spine_bytes covers session-agent + closeout, not the entrypoint alone" \
+    "$sp_b" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].spine_bytes')"
+  assert_eq "orientation surface: the vault lesson index is measured, not silently dropped" \
+    "$li_b" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].lesson_index_bytes')"
+  assert_eq "orientation surface: effective_total_bytes = entrypoint + spine + lesson index" \
+    "$want_total" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].effective_total_bytes')"
+  assert_eq "orientation surface: effective_total_bytes is numeric, not a string" \
+    "number" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].effective_total_bytes | type')"
+  assert_eq "orientation surface: lesson index status is measured" \
+    "measured" "$(printf '%s' "$out" | jq -r '.orientation_surface.lesson_index.status')"
+  assert_eq "orientation surface: aggregate total_bytes sums the harness rows" \
+    "$want_total" "$(printf '%s' "$out" | jq -r '.orientation_surface.total_bytes')"
+  # Unresolved harness homes are NAMED, never silently absent.
+  assert_contains "orientation surface: an unresolved harness home is a named skip" \
+    "$(printf '%s' "$out" | jq -r '.orientation_surface.skipped | join("|")')" "hermes (HERMES_HOME) not set"
+  assert_contains "orientation surface: markdown has its own section" "$md" "## Orientation surface"
+  assert_contains "orientation surface: markdown states the informational boundary" \
+    "$md" "Informational only; never scored."
+}
+_test_orientation_surface_measures_spine_and_lesson_index
+
+# The measurement must never move the score. Same fixture, same config dir, same
+# vault — the ONLY difference is the size of the compiled spine bodies (no pillar
+# reads $CONFIG_DIR/skills/), so a total or gap-count delta could only come from
+# the new section.
+_test_orientation_surface_never_scores() {
+  command -v jq >/dev/null 2>&1 || { _skip "orientation-surface non-scoring test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config" vault="$fixture/vault"
+  _sa_mk_orient_home "$cfg" "CLAUDE.md"
+  mkdir -p "$vault/04-Lessons"
+  printf 'index\n' > "$vault/04-Lessons/_index.md"
+
+  local fat thin fat_total thin_total fat_gaps thin_gaps fat_bytes thin_bytes gap_hits
+  # Run A — a FAT spine.
+  local pad; pad="$(printf 'y%.0s' $(seq 1 400))"
+  local i
+  for i in $(seq 1 50); do printf '%s\n' "$pad" >> "$cfg/skills/session-agent/SKILL.md"; done
+  fat="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  # Run B — the spine bodies removed entirely.
+  rm -rf "$cfg/skills"
+  thin="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  rm -rf "$fixture"
+
+  fat_total="$(printf '%s' "$fat" | jq -r '.total')"
+  thin_total="$(printf '%s' "$thin" | jq -r '.total')"
+  fat_gaps="$(printf '%s' "$fat" | jq -r '.gaps | length')"
+  thin_gaps="$(printf '%s' "$thin" | jq -r '.gaps | length')"
+  fat_bytes="$(printf '%s' "$fat" | jq -r '.orientation_surface.total_bytes')"
+  thin_bytes="$(printf '%s' "$thin" | jq -r '.orientation_surface.total_bytes')"
+  gap_hits="$(printf '%s' "$fat" | jq -r '[.gaps[] | select((.title + .detail + .fix) | ascii_downcase | contains("orientation"))] | length')"
+
+  assert_eq "orientation surface: a fat vs absent spine does NOT change the total score" \
+    "$thin_total" "$fat_total"
+  assert_eq "orientation surface: a fat vs absent spine does NOT change the gap count" \
+    "$thin_gaps" "$fat_gaps"
+  assert_eq "orientation surface: never enters the gap list" "0" "$gap_hits"
+  # Positive control: the two runs really did measure different surfaces, so the
+  # equality above is a non-scoring proof and not a dead measurement.
+  if [ -n "$fat_bytes" ] && [ -n "$thin_bytes" ] && [ "$fat_bytes" -gt "$thin_bytes" ]; then
+    _pass "orientation surface: positive control — the fat run measured a larger surface than the thin run"
+  else
+    _fail "orientation surface: positive control — the fat run measured a larger surface than the thin run" \
+          "expected fat > thin, got fat=[$fat_bytes] thin=[$thin_bytes]"
+  fi
+  # An absent compiled spine body is NAMED, so a broken render is visible.
+  assert_contains "orientation surface: an absent spine body is named, not silently zero" \
+    "$(printf '%s' "$thin" | jq -r '.orientation_surface.harnesses[0].missing | join("|")')" \
+    "skills/session-agent/SKILL.md"
+}
+_test_orientation_surface_never_scores
+
+_test_orientation_surface_lesson_index_unmeasured() {
+  command -v jq >/dev/null 2>&1 || { _skip "orientation-surface lesson-index test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config" vault="$fixture/vault"
+  _sa_mk_orient_home "$cfg" "CLAUDE.md"
+  mkdir -p "$vault/04-Lessons"   # vault exists, index does NOT
+
+  local no_vault with_vault
+  no_vault="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --json 2>/dev/null)"
+  with_vault="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  rm -rf "$fixture"
+
+  assert_eq "orientation surface: no vault → lesson_index_bytes is null (unmeasured, not 0)" \
+    "null" "$(printf '%s' "$no_vault" | jq -r '.orientation_surface.harnesses[0].lesson_index_bytes')"
+  assert_contains "orientation surface: no vault is a NAMED unmeasured state" \
+    "$(printf '%s' "$no_vault" | jq -r '.orientation_surface.lesson_index.status')" \
+    "unmeasured — no vault configured"
+  assert_contains "orientation surface: a vault without the index names the missing path" \
+    "$(printf '%s' "$with_vault" | jq -r '.orientation_surface.lesson_index.status')" \
+    "unmeasured — not found at"
+  assert_eq "orientation surface: a vault without the index still reports null bytes" \
+    "null" "$(printf '%s' "$with_vault" | jq -r '.orientation_surface.lesson_index.bytes')"
+}
+_test_orientation_surface_lesson_index_unmeasured
+
+_test_orientation_surface_no_home_resolves() {
+  command -v jq >/dev/null 2>&1 || { _skip "orientation-surface no-home test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local out md
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" 2>/dev/null)"
+  rm -rf "$fixture"
+
+  assert_eq "orientation surface: no resolvable home → measured false" \
+    "false" "$(printf '%s' "$out" | jq -r '.orientation_surface.measured')"
+  assert_eq "orientation surface: no resolvable home → total_bytes null (distinct from 0)" \
+    "null" "$(printf '%s' "$out" | jq -r '.orientation_surface.total_bytes')"
+  assert_eq "orientation surface: every unresolved home is named in skipped" \
+    "4" "$(printf '%s' "$out" | jq -r '.orientation_surface.skipped | length')"
+  assert_contains "orientation surface: markdown still carries the section when unmeasured" \
+    "$md" "## Orientation surface"
+  assert_contains "orientation surface: markdown names the unmeasured state" \
+    "$md" "_(not measured — no rendered harness home resolved)_"
+}
+_test_orientation_surface_no_home_resolves
+
+# Multi-harness: resolution mirrors check-drift.sh --auto's four harness:env-var
+# pairs, so a codex/hermes/agents render each gets its own row with its own
+# entrypoint (and the .agents co-render, which has no entrypoint of its own,
+# reports null rather than pretending to one).
+_test_orientation_surface_multi_harness() {
+  command -v jq >/dev/null 2>&1 || { _skip "orientation-surface multi-harness test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/claude" cdx="$fixture/codex" hms="$fixture/hermes" agt="$fixture/agents"
+  _sa_mk_orient_home "$cfg" "CLAUDE.md"
+  _sa_mk_orient_home "$cdx" "AGENTS.md"
+  _sa_mk_orient_home "$hms" "SOUL.md"
+  _sa_mk_orient_home "$agt" "unused.md"
+
+  # Non-isolated (so the env fallbacks run) with an empty fixture repo root, and
+  # every operator env var pinned per-invocation — no ambient leak.
+  local out
+  out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
+          CODEX_HOME="$cdx" HERMES_HOME="$hms" AGENTS_DIR="$agt" \
+          bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" \
+          --config-dir "$cfg" --json 2>/dev/null)"
+  rm -rf "$fixture"
+
+  assert_eq "orientation surface: all four render homes get a row" \
+    "claude|codex|hermes|agents" \
+    "$(printf '%s' "$out" | jq -r '[.orientation_surface.harnesses[].harness] | join("|")')"
+  assert_eq "orientation surface: the codex row names AGENTS.md" \
+    "AGENTS.md" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[1].entrypoint')"
+  assert_eq "orientation surface: the hermes row names SOUL.md" \
+    "SOUL.md" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[2].entrypoint')"
+  assert_eq "orientation surface: the .agents co-render reports no entrypoint of its own" \
+    "null" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[3].entrypoint')"
+  assert_eq "orientation surface: the .agents co-render still measures its spine bodies" \
+    "true" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[3].spine_bytes > 0')"
+  assert_eq "orientation surface: nothing is skipped when all four resolve" \
+    "0" "$(printf '%s' "$out" | jq -r '.orientation_surface.skipped | length')"
+}
+_test_orientation_surface_multi_harness
+
+# An orientation component that EXISTS but cannot be READ (mode 000, an I/O
+# error, a revoked ACL) is the one measurement path the `[ -f ]` guard does not
+# cover: wc/awk fail, the helper printed NOTHING, and the empty string landed in
+# `$(( sp_b + $(_ori_bytes …) ))`. An arithmetic-expansion syntax error is FATAL
+# to a non-interactive bash — the whole audit died with no report at all, which
+# is the loudest possible violation of "the orientation surface is informational
+# and never affects the audit". An unreadable component must measure 0 and the
+# audit must finish byte-identically otherwise.
+#
+# _skip where the failure cannot be provoked: as root (permissions bypassed) or
+# on a filesystem that ignores mode 000 — the in-shell probe is the control.
+_test_orientation_surface_unreadable_component() {
+  command -v jq >/dev/null 2>&1 || { _skip "orientation-surface unreadable-component test" "jq not installed"; return 0; }
+  if [ "$(id -u)" = "0" ]; then
+    _skip "orientation-surface unreadable-component test" "running as root — mode 000 does not deny reads"
+    return 0
+  fi
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config" vault="$fixture/vault"
+  _sa_mk_orient_home "$cfg" "CLAUDE.md"
+  mkdir -p "$vault/04-Lessons"
+  printf 'index\n' > "$vault/04-Lessons/_index.md"
+
+  # Control run FIRST, everything readable — the baseline the locked run must
+  # match on every scored field.
+  local ctrl ctrl_rc locked locked_rc
+  ctrl="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+           --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"; ctrl_rc=$?
+
+  chmod 000 "$cfg/CLAUDE.md" "$cfg/skills/session-agent/SKILL.md"
+  # Probe in THIS shell (same user as the self-audit child): does mode 000 really
+  # block the read here? If not, the gap cannot be exercised → skip rather than
+  # bank a green that proves nothing.
+  # Subshell: the redirection itself is what fails, and a bare `wc … 2>&1` would
+  # let the shell's own "Permission denied" reach the transcript.
+  if ( LC_ALL=C wc -c < "$cfg/CLAUDE.md" ) >/dev/null 2>&1; then
+    chmod 644 "$cfg/CLAUDE.md" "$cfg/skills/session-agent/SKILL.md"
+    rm -rf "$fixture"
+    _skip "orientation-surface unreadable-component test" \
+      "mode 000 does not block reads on this filesystem"
+    return 0
+  fi
+
+  locked="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+             --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"; locked_rc=$?
+  chmod 644 "$cfg/CLAUDE.md" "$cfg/skills/session-agent/SKILL.md"
+  rm -rf "$fixture"
+
+  # The audit RAN — an empty document here is the fatal-arithmetic regression.
+  assert_eq "orientation surface: an unreadable component does not kill the audit (exit unchanged)" \
+    "$ctrl_rc" "$locked_rc"
+  assert_eq "orientation surface: an unreadable component still yields a parseable report" \
+    "orientation_surface" "$(printf '%s' "$locked" | jq -r 'if has("orientation_surface") then "orientation_surface" else "MISSING" end' 2>/dev/null || printf 'UNPARSEABLE')"
+  # Informational boundary: the score and gap list are untouched.
+  assert_eq "orientation surface: an unreadable component does not move the total score" \
+    "$(printf '%s' "$ctrl" | jq -r '.total')" "$(printf '%s' "$locked" | jq -r '.total')"
+  assert_eq "orientation surface: an unreadable component does not move the gap count" \
+    "$(printf '%s' "$ctrl" | jq -r '.gaps | length')" "$(printf '%s' "$locked" | jq -r '.gaps | length')"
+  # Measurement semantics: unreadable measures 0. `missing` stays reserved for
+  # components that are genuinely ABSENT — the file is there, it just cannot be
+  # read, and conflating the two would misreport a broken render.
+  assert_eq "orientation surface: an unreadable entrypoint measures 0, not empty" \
+    "0" "$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].entrypoint_bytes')"
+  assert_eq "orientation surface: an unreadable entrypoint byte count is still numeric" \
+    "number" "$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].entrypoint_bytes | type')"
+  assert_eq "orientation surface: an unreadable component is not reported as absent" \
+    "0" "$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].missing | length')"
+  # The READABLE spine body is still counted — one unreadable file must not zero
+  # the whole row.
+  local ctrl_sp locked_sp
+  ctrl_sp="$(printf '%s' "$ctrl" | jq -r '.orientation_surface.harnesses[0].spine_bytes')"
+  locked_sp="$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].spine_bytes')"
+  if [ -n "$locked_sp" ] && [ "$locked_sp" != "null" ] && [ "$locked_sp" -gt 0 ] && [ "$locked_sp" -lt "$ctrl_sp" ]; then
+    _pass "orientation surface: the readable spine body still counts when its sibling is unreadable"
+  else
+    _fail "orientation surface: the readable spine body still counts when its sibling is unreadable" \
+      "expected 0 < locked < control, got locked=[$locked_sp] control=[$ctrl_sp]"
+  fi
+}
+_test_orientation_surface_unreadable_component

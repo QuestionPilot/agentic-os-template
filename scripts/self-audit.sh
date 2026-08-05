@@ -39,13 +39,23 @@
 #
 # Output: markdown by default. `--json` emits a structured object for tests:
 #   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
-#    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]}}
+#    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]},
+#    orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]}}
 #
 # `semantic_currentness` is ADVISORY and lives in its own key + its own markdown
 # section: it comes from scripts/check-state-currentness.sh (tracker-reachable
 # claim reconciliation) and never contributes to `total`, a pillar score, or
 # `gaps`. Mechanical health and semantic currentness are different questions and
 # a consumer must never read one as the other.
+#
+# `orientation_surface` is INFORMATIONAL, in its own key + its own markdown
+# section, and likewise never contributes to `total`, a pillar score, or `gaps`.
+# It measures the EFFECTIVE Mode 1 kickoff surface per rendered harness home —
+# the static entrypoint PLUS the compiled spine capability bodies (session-agent
+# + closeout) the kickoff mandates PLUS the vault lesson index read at every
+# orient. `injection_surface` measures a different thing (the auto-injected
+# component budget); an entrypoint appearing in both is not a double-count,
+# because the two keys answer two different questions.
 #
 # Tests: tests/self-audit.test.sh exercises every pillar with fixtures.
 #
@@ -1341,6 +1351,198 @@ emit_currentness_markdown() {
   esac
 }
 
+# --- orientation surface (informational, NEVER scored) ------------------------
+# The pillars and `injection_surface` both measure STATIC entrypoint files. That
+# undercounts what a Mode 1 kickoff actually reads: the compiled `session-agent`
+# body (the spine capability the SessionStart hook mandates as the first action),
+# the compiled `closeout` body it hands off to, and the vault lesson index read
+# at every orient. A slimmed CLAUDE.md can therefore look like a shrinking
+# kickoff surface while the effective read grew. This section measures the
+# EFFECTIVE surface per rendered harness home and reports it — nothing here
+# moves `total`, a pillar score, or `gaps`.
+#
+# Home resolution mirrors scripts/check-drift.sh --auto: the same four
+# harness:env-var pairs, the same local.env-as-DATA read (via _sa_localenv_get,
+# byte-parity with check-drift's _cd_localenv_get), and the same LOUD named skip
+# for an unresolved home. One documented divergence: precedence here is this
+# script's house order (explicit flag > local.env > ambient env), not
+# check-drift's env-first order, so the orientation rows agree with the config
+# dir the rest of this audit already resolved. `agents` is the codex pass's
+# .agents co-render — skills only, no entrypoint of its own.
+ORI_MEASURED=0
+ORI_H_NAMES=(); ORI_H_HOMES=(); ORI_H_EP_NAMES=()
+ORI_H_EP_BYTES=(); ORI_H_EP_LINES=()
+ORI_H_SPINE_BYTES=(); ORI_H_SPINE_LINES=()
+ORI_H_MISSING=()
+ORI_H_TOT_BYTES=(); ORI_H_TOT_LINES=()
+ORI_H_SRCS=()
+ORI_SKIPPED=()
+ORI_TOTAL_BYTES=0
+ORI_TOTAL_LINES=0
+ORI_LI_PATH=""
+ORI_LI_BYTES=-1          # -1 = unmeasured (a distinct state from a 0-byte file)
+ORI_LI_STATUS=""
+
+# The vault-relative lesson index every orient reads (core/self-improvement.md
+# Promotion Rule → the ONE cross-store recall surface).
+ORI_LESSON_INDEX_REL="04-Lessons/_index.md"
+
+# Both helpers ALWAYS print a decimal integer, on every path. The `[ -f ]` guard
+# alone is not enough: a file that EXISTS but cannot be read (mode 000, an I/O
+# error) makes wc/awk fail, and the old bodies then printed nothing. That empty
+# string lands in `$(( sp_b + $(_ori_bytes …) ))`, and an arithmetic-expansion
+# syntax error is FATAL to a non-interactive bash — the whole audit dies, which
+# is the loudest possible way to violate "orientation surface is informational
+# and never affects the audit". An unreadable file now measures 0 and the audit
+# continues. (The non-numeric guard also covers a locale or wc build that
+# decorates its output.) Return status still marks the failure for any caller
+# that wants it; the printed value is what the arithmetic consumes.
+_ori_num_or_zero() {
+  case "$1" in
+    ''|*[!0-9]*) printf '0'; return 1 ;;
+    *) printf '%s' "$1"; return 0 ;;
+  esac
+}
+_ori_bytes() {
+  [ -f "$1" ] || { printf '0'; return 1; }
+  _ori_num_or_zero "$(LC_ALL=C wc -c < "$1" 2>/dev/null | tr -d ' \r')"
+}
+# awk NR (not `wc -l`) so a final line without a trailing newline still counts.
+_ori_lines() {
+  [ -f "$1" ] || { printf '0'; return 1; }
+  _ori_num_or_zero "$(LC_ALL=C awk 'END{print NR+0}' "$1" 2>/dev/null | tr -d ' \r')"
+}
+
+measure_orientation_surface() {
+  # Lesson index — measured once; every harness reads the same file, so each row
+  # carries it and the aggregate counts it once per harness (that is the honest
+  # per-kickoff read, and the markdown says so).
+  if [ -z "$VAULT_DIR" ]; then
+    ORI_LI_STATUS="unmeasured — no vault configured (OBSIDIAN_VAULT_PATH unset)"
+  elif [ ! -f "$VAULT_DIR/$ORI_LESSON_INDEX_REL" ]; then
+    ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_INDEX_REL"
+    ORI_LI_STATUS="unmeasured — not found at $ORI_LI_PATH"
+  else
+    ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_INDEX_REL"
+    ORI_LI_BYTES="$(_ori_bytes "$ORI_LI_PATH")"
+    ORI_LI_STATUS="measured"
+  fi
+
+  local pair name var entry home src ep_b ep_l sp_b sp_l missing cap cap_f li_add tot_b tot_l
+  for pair in "claude:CLAUDE_CONFIG_DIR:CLAUDE.md" \
+              "codex:CODEX_HOME:AGENTS.md" \
+              "hermes:HERMES_HOME:SOUL.md" \
+              "agents:AGENTS_DIR:"; do
+    name="${pair%%:*}"; entry="${pair##*:}"
+    var="${pair#*:}"; var="${var%%:*}"
+
+    home=""; src=""
+    if [ "$name" = "claude" ] && [ -n "$CONFIG_DIR" ]; then
+      # The audit already resolved this one (flag > local.env > ambient).
+      home="$CONFIG_DIR"; src="resolved config dir"
+    elif [ "$ISOLATED" -eq 0 ]; then
+      if [ -f "$REPO_ROOT/local.env" ]; then
+        home="$(_sa_localenv_get "$REPO_ROOT/local.env" "$var")"
+        [ -n "$home" ] && src="local.env"
+      fi
+      if [ -z "$home" ]; then
+        eval "home=\${$var:-}"
+        [ -n "$home" ] && src="env"
+      fi
+    fi
+
+    if [ -z "$home" ]; then
+      ORI_SKIPPED[${#ORI_SKIPPED[@]}]="$name ($var) not set"
+      continue
+    fi
+    if [ ! -d "$home" ]; then
+      ORI_SKIPPED[${#ORI_SKIPPED[@]}]="$name home does not exist: $home"
+      continue
+    fi
+
+    missing=""
+    ep_b=0; ep_l=0
+    if [ -n "$entry" ]; then
+      if [ -f "$home/$entry" ]; then
+        ep_b="$(_ori_bytes "$home/$entry")"; ep_l="$(_ori_lines "$home/$entry")"
+      else
+        missing="$missing${missing:+,}$entry"
+      fi
+    fi
+
+    sp_b=0; sp_l=0
+    for cap in session-agent closeout; do
+      cap_f="$home/skills/$cap/SKILL.md"
+      if [ -f "$cap_f" ]; then
+        sp_b=$(( sp_b + $(_ori_bytes "$cap_f") ))
+        sp_l=$(( sp_l + $(_ori_lines "$cap_f") ))
+      else
+        missing="$missing${missing:+,}skills/$cap/SKILL.md"
+      fi
+    done
+
+    li_add=0
+    [ "$ORI_LI_BYTES" -ge 0 ] && li_add="$ORI_LI_BYTES"
+    tot_b=$(( ep_b + sp_b + li_add ))
+    tot_l=$(( ep_l + sp_l ))
+    if [ "$ORI_LI_BYTES" -ge 0 ]; then
+      tot_l=$(( tot_l + $(_ori_lines "$ORI_LI_PATH") ))
+    fi
+
+    ORI_H_NAMES[${#ORI_H_NAMES[@]}]="$name"
+    ORI_H_HOMES[${#ORI_H_HOMES[@]}]="$home"
+    ORI_H_EP_NAMES[${#ORI_H_EP_NAMES[@]}]="$entry"
+    ORI_H_EP_BYTES[${#ORI_H_EP_BYTES[@]}]="$ep_b"
+    ORI_H_EP_LINES[${#ORI_H_EP_LINES[@]}]="$ep_l"
+    ORI_H_SPINE_BYTES[${#ORI_H_SPINE_BYTES[@]}]="$sp_b"
+    ORI_H_SPINE_LINES[${#ORI_H_SPINE_LINES[@]}]="$sp_l"
+    ORI_H_MISSING[${#ORI_H_MISSING[@]}]="$missing"
+    ORI_H_TOT_BYTES[${#ORI_H_TOT_BYTES[@]}]="$tot_b"
+    ORI_H_TOT_LINES[${#ORI_H_TOT_LINES[@]}]="$tot_l"
+    ORI_TOTAL_BYTES=$(( ORI_TOTAL_BYTES + tot_b ))
+    ORI_TOTAL_LINES=$(( ORI_TOTAL_LINES + tot_l ))
+    ORI_MEASURED=1
+    # `src` is resolution provenance, kept for the markdown row.
+    ORI_H_SRCS[${#ORI_H_SRCS[@]}]="$src"
+  done
+}
+measure_orientation_surface
+
+# emit_orientation_markdown — the `## Orientation surface` body (no heading).
+emit_orientation_markdown() {
+  local i skip_line s
+  if [ "$ORI_MEASURED" -eq 0 ]; then
+    printf '_(not measured — no rendered harness home resolved)_\n'
+  else
+    for i in "${!ORI_H_NAMES[@]}"; do
+      printf -- '- %s (%s via %s): entrypoint %s=%s bytes, spine (session-agent+closeout)=%s bytes, lesson index=%s — effective %s bytes / %s lines\n' \
+        "${ORI_H_NAMES[$i]}" "${ORI_H_HOMES[$i]}" "${ORI_H_SRCS[$i]}" \
+        "${ORI_H_EP_NAMES[$i]:-none}" "${ORI_H_EP_BYTES[$i]}" \
+        "${ORI_H_SPINE_BYTES[$i]}" \
+        "$( [ "$ORI_LI_BYTES" -ge 0 ] && printf '%s bytes' "$ORI_LI_BYTES" || printf 'unmeasured' )" \
+        "${ORI_H_TOT_BYTES[$i]}" "${ORI_H_TOT_LINES[$i]}"
+      if [ -n "${ORI_H_MISSING[$i]}" ]; then
+        printf -- '  - absent components: %s\n' "${ORI_H_MISSING[$i]}"
+      fi
+    done
+  fi
+  printf -- '- lesson index: %s\n' "$ORI_LI_STATUS"
+  if [ "${#ORI_SKIPPED[@]}" -gt 0 ]; then
+    skip_line=""
+    for s in "${ORI_SKIPPED[@]}"; do
+      [ -n "$skip_line" ] && skip_line="$skip_line, "
+      skip_line="$skip_line$s"
+    done
+    printf -- '- skipped: %s\n' "$skip_line"
+  fi
+  if [ "$ORI_MEASURED" -eq 1 ]; then
+    printf 'Effective kickoff surface: %s bytes / %s lines across %s harness render(s) — the lesson index is counted once per harness because each kickoff reads it. Informational only; never scored.\n' \
+      "$ORI_TOTAL_BYTES" "$ORI_TOTAL_LINES" "${#ORI_H_NAMES[@]}"
+  else
+    printf 'Informational only; never scored.\n'
+  fi
+}
+
 # --- output -------------------------------------------------------------------
 emit_markdown() {
   printf '# /self-audit scorecard — %s\n\n' "$DATE"
@@ -1421,6 +1623,11 @@ emit_markdown() {
   # reads this scorecard by offset.
   printf '\n## Semantic currentness\n\n'
   emit_currentness_markdown
+
+  # Appended after Semantic currentness for the same positional-stability
+  # reason: every pre-existing section keeps its offset.
+  printf '\n## Orientation surface\n\n'
+  emit_orientation_markdown
 }
 
 emit_json() {
@@ -1525,6 +1732,68 @@ emit_json() {
     --argjson projects "$sc_projects" \
     '{status: $status, reason: $reason, claims: $claims, projects: $projects}')"
 
+  # orientation_surface — ADDITIVE optional field, its OWN key so a consumer can
+  # never read an informational size measurement as a mechanical pillar result.
+  # `measured` is false when no rendered harness home resolved; the named skips
+  # are still emitted so an unmeasured surface is NAMED, never silently absent.
+  # APPENDED LAST for the same positional-stability reason as the two fields
+  # before it.
+  local ori_rows='[]' ori_i ori_missing ori_m ori_li_row
+  if [ "$ORI_MEASURED" -eq 1 ]; then
+    for ori_i in "${!ORI_H_NAMES[@]}"; do
+      ori_missing='[]'
+      if [ -n "${ORI_H_MISSING[$ori_i]}" ]; then
+        # LC_ALL=C: the split is byte-oriented on a comma-joined ASCII list.
+        while IFS= read -r ori_m; do
+          [ -n "$ori_m" ] || continue
+          ori_missing="$(printf '%s' "$ori_missing" | jq --arg m "$ori_m" '. += [$m]')"
+        done <<< "$(printf '%s' "${ORI_H_MISSING[$ori_i]}" | LC_ALL=C tr ',' '\n')"
+      fi
+      ori_li_row='null'
+      [ "$ORI_LI_BYTES" -ge 0 ] && ori_li_row="$ORI_LI_BYTES"
+      ori_rows="$(printf '%s' "$ori_rows" | jq \
+        --arg harness "${ORI_H_NAMES[$ori_i]}" \
+        --arg home "${ORI_H_HOMES[$ori_i]}" \
+        --arg entrypoint "${ORI_H_EP_NAMES[$ori_i]}" \
+        --argjson entrypoint_bytes "${ORI_H_EP_BYTES[$ori_i]}" \
+        --argjson entrypoint_lines "${ORI_H_EP_LINES[$ori_i]}" \
+        --argjson spine_bytes "${ORI_H_SPINE_BYTES[$ori_i]}" \
+        --argjson spine_lines "${ORI_H_SPINE_LINES[$ori_i]}" \
+        --argjson lesson_index_bytes "$ori_li_row" \
+        --argjson effective_total_bytes "${ORI_H_TOT_BYTES[$ori_i]}" \
+        --argjson effective_total_lines "${ORI_H_TOT_LINES[$ori_i]}" \
+        --argjson missing "$ori_missing" \
+        '. += [{harness: $harness, home: $home, entrypoint: (if $entrypoint == "" then null else $entrypoint end), entrypoint_bytes: $entrypoint_bytes, entrypoint_lines: $entrypoint_lines, spine_bytes: $spine_bytes, spine_lines: $spine_lines, lesson_index_bytes: $lesson_index_bytes, effective_total_bytes: $effective_total_bytes, effective_total_lines: $effective_total_lines, missing: $missing}]')"
+    done
+  fi
+  local ori_skipped='[]' ori_s
+  if [ "${#ORI_SKIPPED[@]}" -gt 0 ]; then
+    for ori_s in "${ORI_SKIPPED[@]}"; do
+      ori_skipped="$(printf '%s' "$ori_skipped" | jq --arg s "$ori_s" '. += [$s]')"
+    done
+  fi
+  local ori_li_bytes='null'
+  [ "$ORI_LI_BYTES" -ge 0 ] && ori_li_bytes="$ORI_LI_BYTES"
+  local ori_li_json
+  ori_li_json="$(jq -n \
+    --arg path "$ORI_LI_PATH" \
+    --argjson bytes "$ori_li_bytes" \
+    --arg status "$ORI_LI_STATUS" \
+    '{path: (if $path == "" then null else $path end), bytes: $bytes, status: $status}')"
+  local ori_measured=false ori_tb='null' ori_tl='null'
+  if [ "$ORI_MEASURED" -eq 1 ]; then
+    ori_measured=true; ori_tb="$ORI_TOTAL_BYTES"; ori_tl="$ORI_TOTAL_LINES"
+  fi
+  local ori_json
+  ori_json="$(jq -n \
+    --argjson measured "$ori_measured" \
+    --argjson lesson_index "$ori_li_json" \
+    --argjson harnesses "$ori_rows" \
+    --argjson total_bytes "$ori_tb" \
+    --argjson total_lines "$ori_tl" \
+    --argjson skipped "$ori_skipped" \
+    '{measured: $measured, lesson_index: $lesson_index, harnesses: $harnesses, total_bytes: $total_bytes, total_lines: $total_lines, skipped: $skipped}')"
+
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
@@ -1535,7 +1804,8 @@ emit_json() {
     --argjson skipped "$skipped_arr" \
     --argjson codex_registry_bytes "$cx_json" \
     --argjson semantic_currentness "$sc_json" \
-    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness}'
+    --argjson orientation_surface "$ori_json" \
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness, orientation_surface: $orientation_surface}'
 }
 
 OUTPUT=""

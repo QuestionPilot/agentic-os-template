@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# closeout-gate.sh — ONE fail-closed wrapper for the deterministic pre-write
+# checks a closeout composes by hand before it writes a drafted durable artifact
+# (a session log, a distilled lesson note) into the vault.
+#
+# WHY THIS EXISTS. capabilities/closeout.md §6 states the contract in prose:
+# "all three pre-write gates must pass (fail closed)" — the injection scan (§5),
+# the wikilink check (§4), and the machine-path scan (§4). Composing three
+# commands by hand at write time is exactly where one silently gets dropped: a
+# skipped gate looks identical to a passed one in a transcript, and the miss only
+# surfaces on the NEXT vault audit — after the artifact already landed. This
+# wrapper makes the SET the unit: one invocation, one verdict, and a MISSING
+# gate script is a FAILURE, not a skip.
+#
+# The checks it runs, in the order closeout.md §6 lists them:
+#
+#   injection-scan  scripts/check-memory-drift.sh --injection-scan <draft>
+#                   Bare line-leading prompt-injection directives copied verbatim
+#                   from untrusted tool/web output into a trusted section.
+#   wikilinks       scripts/check-wikilinks.sh --draft <draft> [--vault <vault>]
+#                   Every [[wikilink]] resolves the way the vault audit resolves
+#                   it. Needs a vault: with NONE CONFIGURED at all this is a
+#                   NAMED SKIP (an inapplicable surface, not a missing gate). A
+#                   vault that IS configured but whose directory does not exist
+#                   is a FAILURE — see the contract below.
+#   machine-paths   scripts/check-machine-paths.sh --draft <draft>
+#                   No machine-specific absolute home path in the durable file.
+#
+# FAIL-CLOSED CONTRACT, stated precisely because the two non-pass outcomes are
+# easy to conflate:
+#   - A check that RUNS and reports a finding  -> FAIL (exit 1).
+#   - A check whose SCRIPT IS ABSENT           -> FAIL (exit 1). A gate that
+#     cannot run has proven nothing; treating it as a skip is the fail-open hole
+#     this wrapper exists to close.
+#   - A check whose TARGET SURFACE IS ABSENT   -> SKIP, named, exit unaffected.
+#     Only the wikilink check has such a surface (the vault), and the skip is
+#     narrow: NO vault configured at all (no --vault AND $OBSIDIAN_VAULT_PATH
+#     unset/empty). That is a real, benign configuration, not a broken gate.
+#   - A check whose surface IS CONFIGURED but BROKEN -> FAIL (exit 1), naming
+#     the path. A configured vault directory that does not exist is a misspelled
+#     or unsynced destination, not "no vault": the durable write it gates would
+#     land somewhere the operator never inspected, so it must block.
+#
+# PRECEDENCE, and it is load-bearing, in this order:
+#   1. SCRIPT EXISTENCE. Evaluating anything else first would let the one check
+#      that HAS an inapplicable surface (wikilinks) report SKIP while its gate
+#      script is missing — an unrunnable gate laundered into a benign skip, and
+#      the gate could then PASS. Missing script wins over surface state, always.
+#   2. SURFACE BROKEN (configured vault that does not exist) -> FAIL.
+#   3. SURFACE ABSENT (nothing configured) -> SKIP.
+#
+# Usage:
+#   closeout-gate.sh --draft <path> [--vault <path>]
+#   closeout-gate.sh --list [--vault <path>]     (show what would run; runs nothing)
+#   closeout-gate.sh --help
+#
+# --vault defaults to $OBSIDIAN_VAULT_PATH. Nothing else is configurable: the
+# check set IS the contract, so it is not caller-selectable.
+#
+# Exit codes:
+#   0 — every applicable check passed (skips do not fail the gate)
+#   1 — at least one check failed, or a configured check's script is missing
+#   2 — usage error (missing/unreadable draft, bad args)
+#
+# Test override: $CLOSEOUT_GATE_SCRIPTS_DIR points the wrapper at a fixture
+# scripts/ dir (same convention as $SELF_AUDIT_CURRENTNESS_BIN in self-audit.sh),
+# so tests can exercise the failing-check and missing-script paths hermetically.
+#
+# Tests: tests/closeout-gate.test.sh (+ the .ps1 twin).
+
+set -uo pipefail
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="${CLOSEOUT_GATE_SCRIPTS_DIR:-$SELF_DIR}"
+
+usage() {
+  sed -nE 's|^# ?||p' "$0" | awk '/^closeout-gate\.sh/,/^Tests:/'
+}
+
+draft=""
+vault="${OBSIDIAN_VAULT_PATH:-}"
+list_only=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --draft)
+      [ $# -ge 2 ] || { printf 'FAIL --draft requires a value\n' >&2; exit 2; }
+      draft="$2"; shift 2 ;;
+    --vault)
+      [ $# -ge 2 ] || { printf 'FAIL --vault requires a value\n' >&2; exit 2; }
+      vault="$2"; shift 2 ;;
+    --list) list_only=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'FAIL unknown arg: %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+
+# The check set, in closeout.md §6 order. One record per line:
+#   <name>|<script-basename>|<mode-flag>
+# The draft path is always the mode flag's value; the wikilink check appends
+# --vault when one resolved. Keeping this as ONE declaration means --list and the
+# runner can never disagree about what the gate is.
+CHECKS='injection-scan|check-memory-drift.sh|--injection-scan
+wikilinks|check-wikilinks.sh|--draft
+machine-paths|check-machine-paths.sh|--draft'
+
+# _gate_skip_reason <name> — echo a named reason when the check's TARGET SURFACE
+# is absent (an inapplicable check), else empty. Absence of the SCRIPT, and a
+# CONFIGURED-but-broken surface, are different, failing cases.
+_gate_skip_reason() {
+  case "$1" in
+    wikilinks)
+      if [ -z "$vault" ]; then
+        printf 'no vault configured (--vault / $OBSIDIAN_VAULT_PATH unset) — no wikilink target surface to resolve against'
+      fi
+      ;;
+  esac
+}
+
+# _gate_surface_fail_reason <name> — echo a named reason when the check's TARGET
+# SURFACE is CONFIGURED but broken. This is a FAILURE, not a skip: a misspelled
+# or unsynced vault path must block the durable write, not wave it through.
+_gate_surface_fail_reason() {
+  case "$1" in
+    wikilinks)
+      if [ -n "$vault" ] && [ ! -d "$vault" ]; then
+        printf 'configured vault does not exist: %s' "$vault"
+      fi
+      ;;
+  esac
+}
+
+if [ "$list_only" -eq 1 ]; then
+  printf 'closeout-gate: pre-write checks (fail closed; a missing gate script FAILS, an inapplicable surface SKIPs)\n'
+  while IFS='|' read -r name script mode; do
+    [ -n "$name" ] || continue
+    # Script existence FIRST, broken surface SECOND, absent surface THIRD — see
+    # the PRECEDENCE note in the header.
+    reason="$(_gate_skip_reason "$name")"
+    bad_surface="$(_gate_surface_fail_reason "$name")"
+    if [ ! -f "$SCRIPTS_DIR/$script" ]; then
+      printf -- '- %-14s FAIL  gate script missing: %s\n' "$name" "$SCRIPTS_DIR/$script"
+    elif [ -n "$bad_surface" ]; then
+      printf -- '- %-14s FAIL  %s\n' "$name" "$bad_surface"
+    elif [ -n "$reason" ]; then
+      printf -- '- %-14s SKIP  %s %s <draft> — %s\n' "$name" "$script" "$mode" "$reason"
+    else
+      printf -- '- %-14s RUN   %s %s <draft>\n' "$name" "$script" "$mode"
+    fi
+  done <<EOF
+$CHECKS
+EOF
+  exit 0
+fi
+
+[ -n "$draft" ] || { printf 'FAIL no --draft given (use --list to see the check set)\n' >&2; exit 2; }
+[ -f "$draft" ] || { printf 'FAIL draft not found or not a regular file: %s\n' "$draft" >&2; exit 2; }
+[ -r "$draft" ] || { printf 'FAIL draft is not readable: %s\n' "$draft" >&2; exit 2; }
+
+passed=0
+skipped=0
+failed=0
+failed_names=""
+
+while IFS='|' read -r name script mode; do
+  [ -n "$name" ] || continue
+
+  # SCRIPT EXISTENCE FIRST, surface applicability second (header PRECEDENCE
+  # note). Reversing these lets a missing wikilink gate hide behind "no vault
+  # configured" and the whole gate still PASS — fail-open.
+  path="$SCRIPTS_DIR/$script"
+  if [ ! -f "$path" ]; then
+    # FAIL CLOSED: an absent gate has proven nothing.
+    printf 'FAIL %-14s gate script missing: %s\n' "$name" "$path"
+    failed=$(( failed + 1 ))
+    failed_names="$failed_names${failed_names:+, }$name"
+    continue
+  fi
+
+  # A CONFIGURED but broken surface fails: the durable write this gates would
+  # land at a path the operator never inspected.
+  bad_surface="$(_gate_surface_fail_reason "$name")"
+  if [ -n "$bad_surface" ]; then
+    printf 'FAIL %-14s %s\n' "$name" "$bad_surface"
+    failed=$(( failed + 1 ))
+    failed_names="$failed_names${failed_names:+, }$name"
+    continue
+  fi
+
+  reason="$(_gate_skip_reason "$name")"
+  if [ -n "$reason" ]; then
+    printf 'SKIP %-14s %s\n' "$name" "$reason"
+    skipped=$(( skipped + 1 ))
+    continue
+  fi
+
+  set -- "$path" "$mode" "$draft"
+  [ "$name" = "wikilinks" ] && set -- "$@" --vault "$vault"
+  out="$(bash "$@" 2>&1)"; rc=$?
+
+  if [ "$rc" -eq 0 ]; then
+    printf 'PASS %-14s %s %s\n' "$name" "$script" "$mode"
+    passed=$(( passed + 1 ))
+  else
+    printf 'FAIL %-14s %s %s exited %s\n' "$name" "$script" "$mode" "$rc"
+    # Echo the check's own output indented, so the operator can act without
+    # re-running the underlying command by hand — the manual composition this
+    # wrapper replaces.
+    printf '%s\n' "$out" | sed 's/^/     | /'
+    failed=$(( failed + 1 ))
+    failed_names="$failed_names${failed_names:+, }$name"
+  fi
+done <<EOF
+$CHECKS
+EOF
+
+if [ "$failed" -gt 0 ]; then
+  printf 'GATE FAIL — %s check(s) failed (%s); %s passed, %s skipped. Do NOT write %s — remediate and re-run.\n' \
+    "$failed" "$failed_names" "$passed" "$skipped" "$draft"
+  exit 1
+fi
+
+printf 'GATE PASS — %s check(s) passed, %s skipped. Safe to write %s.\n' \
+  "$passed" "$skipped" "$draft"
+exit 0

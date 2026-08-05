@@ -1,0 +1,33 @@
+{
+  "captured": "2026-08-05",
+  "note": "Pre-slim baseline for the two native spine capabilities. `per_render` records the COMPILED SKILL.md (capability body + harness realization, as scripts/install.sh compile_native emits it) for each rendered harness home, plus the repo-side `source` bodies under capabilities/. tests/spine-size.test.sh gates a freshly compiled claude render against the claude row. The `agents` row is the .agents co-render, which install.sh mirrors byte-identically from the codex render.",
+  "per_render": {
+    "claude": {
+      "session_agent": { "bytes": 24561, "lines": 427 },
+      "closeout": { "bytes": 40344, "lines": 647 }
+    },
+    "codex": {
+      "session_agent": { "bytes": 24551, "lines": 427 },
+      "closeout": { "bytes": 40234, "lines": 648 }
+    },
+    "agents": {
+      "session_agent": { "bytes": 24551, "lines": 427 },
+      "closeout": { "bytes": 40234, "lines": 648 }
+    },
+    "hermes": {
+      "session_agent": { "bytes": 25923, "lines": 445 },
+      "closeout": { "bytes": 40092, "lines": 646 }
+    },
+    "source": {
+      "session_agent": { "bytes": 21988, "lines": 388 },
+      "closeout": { "bytes": 38591, "lines": 622 }
+    }
+  },
+  "live_mode1_sample": {
+    "harness": "claude",
+    "tool_calls": 9,
+    "fixed_reads": 6,
+    "lineark_calls": 3,
+    "wall_time": "unmeasured — interactive session"
+  }
+}

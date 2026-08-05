@@ -1,0 +1,3 @@
+[
+  {"identifier": "ABC-1", "title": "Alpha one", "priority": "High", "state": "In Progress", "assignee": "Sample Assignee", "team": "ABC", "url": "https://tracker.example/ABC-1", "completedAt": null}
+]

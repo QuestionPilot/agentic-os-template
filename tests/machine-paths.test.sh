@@ -114,10 +114,15 @@ else
 fi
 chmod 644 "$UNREAD" 2>/dev/null
 
-# === 13. Wiring is pinned: capabilities/closeout.md invokes the check so a future
-# refactor that drops the pre-drain gate is caught here.
+# === 13. Wiring is pinned so a future refactor that drops the pre-drain gate is
+# caught here. The three hand-composed pre-write commands were replaced by the
+# single fail-closed wrapper scripts/closeout-gate.sh, so the wiring is a two-link
+# chain: the capability body invokes the wrapper, and the wrapper's check set names
+# this check. Both links are asserted.
 CLOSEOUT_BODY=$(cat "$REPO_ROOT/capabilities/closeout.md")
-assert_contains "mp: closeout.md wires the pre-drain check invocation" "$CLOSEOUT_BODY" "scripts/check-machine-paths.sh --draft"
+assert_contains "mp: closeout.md wires the pre-drain gate wrapper" "$CLOSEOUT_BODY" "scripts/closeout-gate.sh --draft"
+CLOSEOUT_GATE_BODY=$(cat "$REPO_ROOT/scripts/closeout-gate.sh")
+assert_contains "mp: closeout-gate.sh runs check-machine-paths.sh in its check set" "$CLOSEOUT_GATE_BODY" "check-machine-paths.sh"
 
 # === 14. Offender on the FINAL line with NO trailing newline is still caught —
 # the editor-strips-trailing-newline shape. Guards the single-pass grep scan:

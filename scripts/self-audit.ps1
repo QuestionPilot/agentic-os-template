@@ -188,13 +188,24 @@ Default inputs:
 
 Output: markdown by default. -Json emits a structured object for tests:
   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
-   codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]}}
+   codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]},
+   orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]}}
 
     `semantic_currentness` is ADVISORY and lives in its own key + its own
     markdown section: it comes from scripts/check-state-currentness.ps1
     (tracker-reachable claim reconciliation) and never contributes to `total`,
     a pillar score, or `gaps`. Mechanical health and semantic currentness are
     different questions and a consumer must never read one as the other.
+
+    `orientation_surface` is INFORMATIONAL, in its own key + its own markdown
+    section, and likewise never contributes to `total`, a pillar score, or
+    `gaps`. It measures the EFFECTIVE Mode 1 kickoff surface per rendered
+    harness home — the static entrypoint PLUS the compiled spine capability
+    bodies (session-agent + closeout) the kickoff mandates PLUS the vault
+    lesson index read at every orient. `injection_surface` measures a
+    different thing (the auto-injected component budget); an entrypoint
+    appearing in both is not a double-count, because the two keys answer two
+    different questions.
 '@ | Write-Host
     exit 0
 }
@@ -1496,6 +1507,189 @@ function Get-CurrentnessMarkdown {
 }
 
 # ---------------------------------------------------------------------------
+# Orientation surface (informational, NEVER scored)
+# ---------------------------------------------------------------------------
+# The pillars and `injection_surface` both measure STATIC entrypoint files. That
+# undercounts what a Mode 1 kickoff actually reads: the compiled `session-agent`
+# body (the spine capability the SessionStart hook mandates as the first action),
+# the compiled `closeout` body it hands off to, and the vault lesson index read
+# at every orient. A slimmed CLAUDE.md can therefore look like a shrinking
+# kickoff surface while the effective read grew. This section measures the
+# EFFECTIVE surface per rendered harness home and reports it — nothing here
+# moves $total, a pillar score, or $gaps.
+#
+# Home resolution mirrors scripts/check-drift.ps1 --auto / check-drift.sh --auto:
+# the same four harness:env-var pairs, the same local.env-as-DATA read (via
+# Get-SaLocalEnvValue), and the same LOUD named skip for an unresolved home. One
+# documented divergence: precedence here is this script's house order (explicit
+# flag > local.env > ambient env), so the orientation rows agree with the config
+# dir the rest of this audit already resolved. `agents` is the codex pass's
+# .agents co-render — skills only, no entrypoint of its own.
+
+# The vault-relative lesson index every orient reads (core/self-improvement.md
+# Promotion Rule -> the ONE cross-store recall surface).
+$oriLessonIndexRel = '04-Lessons/_index.md'
+
+$oriMeasured = $false
+$oriRows = @()
+$oriSkipped = @()
+$oriTotalBytes = 0
+$oriTotalLines = 0
+$oriLiPath = ''
+$oriLiBytes = -1        # -1 = unmeasured (a distinct state from a 0-byte file)
+$oriLiLines = 0
+$oriLiStatus = ''
+
+function Get-OriBytes {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+    try { return [int]([System.IO.FileInfo]::new($Path).Length) } catch { return 0 }
+}
+function Get-OriLines {
+    # Line count that includes a final line without a trailing newline (bash twin
+    # uses awk NR, not `wc -l`, for exactly this).
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 0 }
+    try {
+        $text = [System.IO.File]::ReadAllText($Path)
+    } catch { return 0 }
+    if ($text -eq '') { return 0 }
+    $normalized = $text -replace "`r`n", "`n"
+    $n = ([regex]::Matches($normalized, "`n")).Count
+    if (-not $normalized.EndsWith("`n")) { $n++ }
+    return $n
+}
+
+function Measure-OrientationSurface {
+    if ([string]::IsNullOrEmpty($VaultDir)) {
+        $script:oriLiStatus = 'unmeasured — no vault configured (OBSIDIAN_VAULT_PATH unset)'
+    } else {
+        $liPath = Join-Path $VaultDir '04-Lessons' '_index.md'
+        # Report the path exactly as the bash twin does ("$VaultDir/$rel"), so the
+        # two emit the same string under the parity test's `\` -> `/` normalization.
+        $liReport = "$VaultDir/$($script:oriLessonIndexRel)"
+        if (-not (Test-Path -LiteralPath $liPath -PathType Leaf)) {
+            $script:oriLiPath = $liReport
+            $script:oriLiStatus = "unmeasured — not found at $liReport"
+        } else {
+            $script:oriLiPath = $liReport
+            $script:oriLiBytes = Get-OriBytes $liPath
+            $script:oriLiLines = Get-OriLines $liPath
+            $script:oriLiStatus = 'measured'
+        }
+    }
+
+    $pairs = @(
+        @{ name = 'claude'; var = 'CLAUDE_CONFIG_DIR'; entry = 'CLAUDE.md' },
+        @{ name = 'codex';  var = 'CODEX_HOME';        entry = 'AGENTS.md' },
+        @{ name = 'hermes'; var = 'HERMES_HOME';       entry = 'SOUL.md'   },
+        @{ name = 'agents'; var = 'AGENTS_DIR';        entry = ''          }
+    )
+    $localEnvPath = Join-Path $RepoRoot 'local.env'
+    foreach ($p in $pairs) {
+        $home_ = ''
+        $src = ''
+        if ($p.name -eq 'claude' -and -not [string]::IsNullOrEmpty($ConfigDir)) {
+            $home_ = $ConfigDir; $src = 'resolved config dir'
+        } elseif (-not $Isolated.IsPresent) {
+            if (Test-Path -LiteralPath $localEnvPath -PathType Leaf) {
+                $v = Get-SaLocalEnvValue -Path $localEnvPath -Key $p.var
+                if (-not [string]::IsNullOrEmpty($v)) { $home_ = $v; $src = 'local.env' }
+            }
+            if ([string]::IsNullOrEmpty($home_)) {
+                $v = [Environment]::GetEnvironmentVariable($p.var)
+                if (-not [string]::IsNullOrEmpty($v)) { $home_ = $v; $src = 'env' }
+            }
+        }
+
+        if ([string]::IsNullOrEmpty($home_)) {
+            $script:oriSkipped += "$($p.name) ($($p.var)) not set"
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $home_ -PathType Container)) {
+            $script:oriSkipped += "$($p.name) home does not exist: $home_"
+            continue
+        }
+
+        $missing = @()
+        $epBytes = 0; $epLines = 0
+        if ($p.entry -ne '') {
+            $epPath = Join-Path $home_ $p.entry
+            if (Test-Path -LiteralPath $epPath -PathType Leaf) {
+                $epBytes = Get-OriBytes $epPath
+                $epLines = Get-OriLines $epPath
+            } else {
+                $missing += $p.entry
+            }
+        }
+
+        $spBytes = 0; $spLines = 0
+        foreach ($cap in @('session-agent', 'closeout')) {
+            $capPath = Join-Path $home_ 'skills' $cap 'SKILL.md'
+            if (Test-Path -LiteralPath $capPath -PathType Leaf) {
+                $spBytes += Get-OriBytes $capPath
+                $spLines += Get-OriLines $capPath
+            } else {
+                $missing += "skills/$cap/SKILL.md"
+            }
+        }
+
+        $liAddBytes = 0; $liAddLines = 0
+        if ($script:oriLiBytes -ge 0) { $liAddBytes = $script:oriLiBytes; $liAddLines = $script:oriLiLines }
+        $totB = $epBytes + $spBytes + $liAddBytes
+        $totL = $epLines + $spLines + $liAddLines
+
+        $script:oriRows += [ordered]@{
+            harness               = $p.name
+            home                  = $home_
+            src                   = $src
+            entrypoint            = $(if ($p.entry -eq '') { $null } else { $p.entry })
+            entrypoint_bytes      = $epBytes
+            entrypoint_lines      = $epLines
+            spine_bytes           = $spBytes
+            spine_lines           = $spLines
+            lesson_index_bytes    = $(if ($script:oriLiBytes -ge 0) { $script:oriLiBytes } else { $null })
+            effective_total_bytes = $totB
+            effective_total_lines = $totL
+            missing               = $missing
+        }
+        $script:oriTotalBytes += $totB
+        $script:oriTotalLines += $totL
+        $script:oriMeasured = $true
+    }
+}
+Measure-OrientationSurface
+
+# Get-OrientationMarkdown — the `## Orientation surface` body (no heading).
+function Get-OrientationMarkdown {
+    $lines = New-Object System.Collections.Generic.List[string]
+    $liCell = if ($oriLiBytes -ge 0) { "$oriLiBytes bytes" } else { 'unmeasured' }
+    if (-not $oriMeasured) {
+        $lines.Add('_(not measured — no rendered harness home resolved)_')
+    } else {
+        foreach ($r in $oriRows) {
+            $epName = if ($null -eq $r.entrypoint) { 'none' } else { $r.entrypoint }
+            $lines.Add(('- {0} ({1} via {2}): entrypoint {3}={4} bytes, spine (session-agent+closeout)={5} bytes, lesson index={6} — effective {7} bytes / {8} lines' -f `
+                $r.harness, $r.home, $r.src, $epName, $r.entrypoint_bytes, $r.spine_bytes, $liCell, $r.effective_total_bytes, $r.effective_total_lines))
+            if (@($r.missing).Count -gt 0) {
+                $lines.Add('  - absent components: ' + (@($r.missing) -join ','))
+            }
+        }
+    }
+    $lines.Add("- lesson index: $oriLiStatus")
+    if (@($oriSkipped).Count -gt 0) {
+        $lines.Add('- skipped: ' + (@($oriSkipped) -join ', '))
+    }
+    if ($oriMeasured) {
+        $lines.Add(('Effective kickoff surface: {0} bytes / {1} lines across {2} harness render(s) — the lesson index is counted once per harness because each kickoff reads it. Informational only; never scored.' -f `
+            $oriTotalBytes, $oriTotalLines, @($oriRows).Count))
+    } else {
+        $lines.Add('Informational only; never scored.')
+    }
+    return $lines
+}
+
+# ---------------------------------------------------------------------------
 # Output emitters
 # ---------------------------------------------------------------------------
 function Get-MarkdownOutput {
@@ -1569,6 +1763,12 @@ function Get-MarkdownOutput {
     [void]$sb.AppendLine('## Semantic currentness')
     [void]$sb.AppendLine('')
     foreach ($l in (Get-CurrentnessMarkdown)) { [void]$sb.AppendLine($l) }
+    # Appended after Semantic currentness for the same positional-stability
+    # reason: every pre-existing section keeps its offset.
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Orientation surface')
+    [void]$sb.AppendLine('')
+    foreach ($l in (Get-OrientationMarkdown)) { [void]$sb.AppendLine($l) }
     # Bash twin emits via `printf '%s\n' "$OUTPUT"` so output ends with one
     # trailing newline. AppendLine already added per-line newlines; the
     # final state has a trailing `\n` from the last AppendLine. Match bash.
@@ -1649,6 +1849,41 @@ function Get-JsonOutput {
         claims   = $scClaims
         projects = $scProjects
     }
+    # orientation_surface — ADDITIVE optional field, its OWN key so a consumer
+    # can never read an informational size measurement as a mechanical pillar
+    # result. `measured` is false when no rendered harness home resolved; the
+    # named skips are still emitted so an unmeasured surface is NAMED, never
+    # silently absent. APPENDED LAST for the same positional-stability reason as
+    # the two fields before it.
+    # Plain arrays, not List[object] — see the scClaims note above.
+    $oriHarnesses = @()
+    foreach ($r in $oriRows) {
+        $oriHarnesses += [ordered]@{
+            harness               = $r.harness
+            home                  = $r.home
+            entrypoint            = $r.entrypoint
+            entrypoint_bytes      = $r.entrypoint_bytes
+            entrypoint_lines      = $r.entrypoint_lines
+            spine_bytes           = $r.spine_bytes
+            spine_lines           = $r.spine_lines
+            lesson_index_bytes    = $r.lesson_index_bytes
+            effective_total_bytes = $r.effective_total_bytes
+            effective_total_lines = $r.effective_total_lines
+            missing               = @($r.missing)
+        }
+    }
+    $oriObj = [ordered]@{
+        measured     = $oriMeasured
+        lesson_index = [ordered]@{
+            path   = $(if ($oriLiPath -eq '') { $null } else { $oriLiPath })
+            bytes  = $(if ($oriLiBytes -ge 0) { $oriLiBytes } else { $null })
+            status = $oriLiStatus
+        }
+        harnesses    = $oriHarnesses
+        total_bytes  = $(if ($oriMeasured) { $oriTotalBytes } else { $null })
+        total_lines  = $(if ($oriMeasured) { $oriTotalLines } else { $null })
+        skipped      = @($oriSkipped)
+    }
     $obj = [ordered]@{
         date                 = $dateStr
         total                = $total
@@ -1659,8 +1894,9 @@ function Get-JsonOutput {
         skipped              = @($skipped)
         codex_registry_bytes = $cxBytes
         semantic_currentness = $scObj
+        orientation_surface  = $oriObj
     }
-    return ($obj | ConvertTo-Json -Depth 6)
+    return ($obj | ConvertTo-Json -Depth 7)
 }
 
 if ($Json.IsPresent) {

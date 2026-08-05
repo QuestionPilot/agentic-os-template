@@ -40,12 +40,23 @@ Assert-Eq 'spine-only: skills/recommended/ is not shipped' '0' "$n"
 # Ordinal sort (byte order) to match the bash side's `LC_ALL=C sort` — PowerShell's
 # default Sort-Object is case-insensitive culture order (would put closeout before
 # README), which diverges from bash byte order.
-$capNames = [string[]]@(& git -C $soRoot ls-files -- 'capabilities/*.md' |
+# `:(glob)` pathspec magic (twin of the .sh side): git's default wildmatch lets
+# `*` cross `/`, which would fold the capabilities/reference/ companions into this
+# top-level capability-spec census.
+$capNames = [string[]]@(& git -C $soRoot ls-files -- ':(glob)capabilities/*.md' |
     ForEach-Object { $_ -replace '^capabilities/', '' })
 [System.Array]::Sort($capNames, [System.StringComparer]::Ordinal)
 $caps = ($capNames -join ',') + ','
 Assert-Eq 'spine-only: capabilities/ = README + 3 spine capabilities only' `
     'README.md,closeout.md,self-audit.md,session-agent.md,' $caps
+
+# capabilities/reference/ carries exactly one companion per NATIVE spine capability.
+$refNames = [string[]]@(& git -C $soRoot ls-files -- ':(glob)capabilities/reference/*.md' |
+    ForEach-Object { $_ -replace '^capabilities/reference/', '' })
+[System.Array]::Sort($refNames, [System.StringComparer]::Ordinal)
+$refs = ($refNames -join ',') + ','
+Assert-Eq 'spine-only: capabilities/reference/ = one companion per native spine capability' `
+    'closeout.md,session-agent.md,' $refs
 
 # --- structural: shipped settings.base.json enables zero plugins ----------
 $raw = (Get-Content -Raw -LiteralPath (Join-Path $soRoot 'harnesses/claude/settings.base.json')) -replace '[ \t\r\n]', ''

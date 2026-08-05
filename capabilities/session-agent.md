@@ -11,178 +11,125 @@ lifecycle: shipped
 
 # Session Agent — Session Kickoff Orient + Routing
 
-The session-agent capability is the spine of every non-trivial task. **It auto-fires
-at session start** (the framework session-start hook emits a directive in additional
-context instructing its invocation as the first action). It then re-invokes on every
-non-trivial prompt to route the request to the smallest useful capability chain.
+The spine of every non-trivial task. **It auto-fires at session start** (the
+framework session-start hook emits a directive instructing its invocation as the
+first action), then re-invokes on every non-trivial prompt to route the request to
+the smallest useful capability chain.
 
-**Two modes, one capability.** The body teaches both — which one to use is
-determined by whether session-agent has already run this session.
+Conditional depth — why each rule exists, per-surface alternatives, the full
+orchestration walk, case studies — lives in
+`$AI_CONFIG_DIR/capabilities/reference/session-agent.md`. Read it on demand; every
+must-fire rule is inline below.
+
+**Two modes, one capability.**
 
 | Mode | When | Job |
 | --- | --- | --- |
-| **Mode 1 — Kickoff orient** | First invocation per session (no prior `session-agent` invocation in transcript) | Orient: memory + Linear + vault + reconcile session-start contradictions. Then route the user's first request (steps R1–R5 below). |
-| **Mode 2 — Route only** | Every subsequent invocation in the same session | Just route (steps R1–R5). Skip the orient — Mode 1's findings are still live in context. |
+| **Mode 1 — Kickoff orient** | First invocation per session (no prior `session-agent` invocation in transcript) | Orient (O1–O5), then route the first request (R1–R5). |
+| **Mode 2 — Route only** | Every subsequent invocation in the same session | Route only (R1–R5). Mode 1's findings are still live in context. |
 
-**Determining which mode:** if you have not invoked `session-agent` earlier in
-this session, run Mode 1. Otherwise run Mode 2. Each harness's realization
-documents how its enforcement hook detects prior invocation — see
-`harnesses/<h>/capabilities/session-agent.md`. Mode 1 is one-shot per session;
-re-running it mid-session re-pays the orient token cost without value.
+**Selection rule:** if you have not invoked `session-agent` earlier in this
+session, run Mode 1. Otherwise run Mode 2. Each harness realization
+(`harnesses/<h>/capabilities/session-agent.md`) documents how its hook detects
+prior invocation. Mode 1 is one-shot per session.
 
 ---
 
 ## Mode 1 — Kickoff orient
 
-Run these five sub-steps in order. Each names the specific tool calls to make.
-Skipping a sub-step is a Mode 1 failure — re-run the missed sub-step before routing.
+Run all five sub-steps. Skipping one is a Mode 1 failure — re-run the missed
+sub-step before routing.
+
+**Step 0 — run the orient helper once.** It does the deterministic collection
+(tracker + memory) that O1 and O3 consume:
+
+```bash
+scripts/orient.sh --memory-dir <this harness's memory store>
+# PowerShell: pwsh -File scripts/orient.ps1 -MemoryDir <path>
+```
+
+It emits ONE `orient/v1` JSON document — a **projects-first** cut with per-project
+open issues, `projectless_open_issues` (the reconciliation net), `mine_in_progress`,
+`anomalies`, `memory_pointers`, `surfaces`, and `degraded`. It **degrades, never
+fails**: an absent or erroring surface still yields a valid document on exit 0, with
+the surface named in `degraded`. Read the script header for the emitted contract.
+Non-zero exit means the script itself could not run — then collect by hand per
+`$AI_CONFIG_DIR/capabilities/reference/session-agent.md`.
 
 ### O1. Read project memory bodies for active-work projects
 
 The harness autoloads `MEMORY.md` — a one-line index of headlines. **Headlines are
-not the source of truth.** For any project-type memory note (`metadata.type: project`)
-referenced there whose headline names active or recently-active work, read the file body before acting on the
-headline. Cross-issue Linear claims embedded in those bodies (e.g. "`<PREFIX>`-X is
-Done", where `<PREFIX>` is your workspace's tracker issue prefix) are particularly
-stale-prone — Mode 1's O5 step re-checks them against Linear.
-
-**Tool calls:**
-- For each project-type memory note (`metadata.type: project`) referenced in `MEMORY.md` whose headline names active work: `Read` the absolute path under the harness config dir's `projects/<project-slug>/memory/` directory. Detect the kind by frontmatter `metadata.type`, not a `project_*.md` filename glob — the auto-memory store is kebab-named.
-- Do NOT re-read `reference_*.md` / `feedback_*.md` bodies at kickoff — those are headline-stable.
+not the source of truth.** For each entry in the orient document's
+`memory_pointers` (project-type notes, `metadata.type: project`) whose description
+names active or recently-active work, `Read` the note body before acting on the
+headline. Do NOT re-read `reference_*` / `feedback_*` bodies at kickoff — those are
+headline-stable. Cross-issue tracker claims inside those bodies are stale-prone; O5
+re-checks them.
 
 ### O2. Reconcile session-start hints against memory headlines
 
-The framework session-start hook surfaces the last 7–10 days of `agentic-os-template` commits
-in `additionalContext`. Scan those commits for tracker issue identifiers — the
+The session-start hook surfaces the last 7–10 days of framework commits in
+`additionalContext`. Scan them for tracker issue identifiers — the
 `<PREFIX>-<number>` shape, where **`<PREFIX>` is your workspace's issue prefix**
-(your Linear team key; recorded as `TRACKER_ISSUE_PREFIX` in `local.env`). `TEAM`
-is only the framework documentation placeholder — a literal `TEAM-\d+` match finds
-nothing in a real workspace, which silently disables this whole reconciliation
-step. For any such identifier whose parent project's memory headline says
-`COMPLETE` / `CLOSED` / `DONE`, that's a contradiction — flag it in the first turn
-and dig before trusting the memory headline. Memory captures what was true when
-written; the session-start window captures what is true now.
+(recorded as `TRACKER_ISSUE_PREFIX` in `local.env`). `TEAM` is only the
+documentation placeholder; a literal `TEAM-\d+` match finds nothing in a real
+workspace and silently disables this whole step. For any identifier whose parent
+project's memory headline says `COMPLETE` / `CLOSED` / `DONE`, that is a
+contradiction — flag it in the first turn and dig before trusting the headline.
+Memory captures what was true when written; the session-start window captures what
+is true now. This step is model judgment over context already in the first turn —
+no tool calls.
 
-**Tool calls:** none specific — this step reads the session-start-injected context
-that is already in the model's first turn and compares against the memory bodies
-read in O1.
+### O3. Read the tracker cut from the orient document
 
-### O3. Kickoff Linear query — projects-first ordered cut
+From the emitted JSON: `projects[]` (with each project's open issues),
+`projectless_open_issues`, and `mine_in_progress` are the active-work picture. Also:
 
-Use whichever Linear surface the operator installed per `$AI_CONFIG_DIR/linear/linear-setup.md` —
-`lineark` CLI or Linear MCP. Both are first-class; the framework prefers `lineark`
-for token cost but does not require it.
+- **`anomalies[]` — flag every one in the orient summary.** They are the cuts
+  disagreeing with each other (`open-issue-count-mismatch`) or a project nobody is
+  on (`all-issues-backlog-no-assignee`), not noise.
+- **`degraded[]` / `surfaces` — apply the one-line-warning rule.** A degraded
+  surface gets exactly one named warning line in the orient summary and the orient
+  continues; it is never silently reported as "no active work".
 
-**Query order (surface-agnostic):**
+**When `surfaces.linear` is absent or errored, tracker collection is still
+MANDATORY:** perform the same projects-first cut BY HAND via the installed surface
+(MCP surface, or direct `lineark` calls) per `$AI_CONFIG_DIR/linear/linear-setup.md`
+§4. A degraded surface downgrades the METHOD of collection, never the requirement —
+"the helper reported the surface down" is not a licence to skip O3.
 
-1. **List all Linear projects.** Surface-dependent: the `lineark` CLI returns the
-   full project set with **no per-project state field and no state filter** (only
-   `--led-by-me`) — do not try to pre-filter projects by state against it. The
-   Linear MCP returns richer project objects — *if* its tool exposes project state,
-   you may filter to Active + Planned state TYPES (`started`, `planned`; state
-   NAMES vary per workspace, so filter on type). Either way, step 2 is what
-   actually surfaces active work.
-2. **For each project, list its issues.** A fresh-spawned project may have all
-   issues in Backlog and no assignee; the per-project sweep catches them.
-   `lineark issues list` already **hides Done/Canceled by default** (`--show-done`
-   to include), so its output IS the open-work cut. A Linear-MCP `list_issues` may
-   *not* hide them — filter out Done/Canceled client-side if so.
-3. **As a tertiary check, list personally-assigned issues** that are In Progress
-   (continuation of work in flight) — e.g. `lineark issues list --mine`, filtering
-   on state: `.state == "In Progress"` for lineark (where `.state` is a bare
-   string) or `.state.name == "In Progress"` for the MCP's nested object (§4.3).
-4. **Global open-issues sweep — the projectless-issue net.** List ALL open
-   issues team-wide with no project, assignee, or state filter — e.g. a bare
-   `lineark issues list` (Done/Canceled hidden by default, so the output IS the
-   team-wide open cut) or the Linear MCP's `list_issues` with no project filter
-   (drop Done/Canceled client-side). A standalone issue that belongs to no
-   project is invisible to sweep 2, and unless it happens to be assigned + In
-   Progress it is invisible to cut 3 as well — a Backlog, Blocked, or unassigned
-   standalone issue surfaces ONLY here. Cheap (one list call); never skip it.
-   If the surface paginates or truncates (a bounded first page), page through
-   to exhaustion — a projectless issue on page two is exactly the one this
-   sweep exists to catch.
-
-**Always run the project sweep first.** The assignee+In-Progress cut alone misses
-fresh-spawned projects entirely — a just-created project's issues sit in Backlog
-with no assignee, so only the per-project sweep surfaces them (a lesson learned
-live when a kickoff orient reported "no active work" over a freshly-spawned
-project).
-
-**`.state` shape varies by call (lineark).** `projects list` has no `state` field;
-`issues list` returns `.state` as a bare **string**; only `issues read` returns a
-`{id, name}` **object**. Query `.state` directly on a list, `.state.name` only on a
-read — a `.state.name` filter over a list throws `Cannot index string with string
-"name"`. See `$AI_CONFIG_DIR/linear/linear-setup.md` §4.3.
-
-**Per-surface commands:** see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the actual command
-shapes (lineark CLI flags or Linear MCP tool names + arguments). The same query
-order applies to both surfaces.
-
-**Surface-absent fallback:** if neither `lineark` nor a Linear MCP connector is
-installed, the framework gracefully degrades — orient continues with memory + vault
-only; a one-line warning surfaces the missing surface. Document the install in the
-next session per `$AI_CONFIG_DIR/linear/linear-setup.md`.
-
-**MCP edge case:** if the Linear MCP reports ✓ Connected but `list_projects`
-returns an empty array, treat it as the silent-empty-MCP-tools failure pattern
-(a stale connection returns empty results instead of erroring) — restart the
-harness's MCP connection (or fall back to `lineark` if installed) before
-accepting "no active work" as the answer.
+Per-surface command shapes (and the MCP alternative when `lineark` is not the
+installed surface) are in `$AI_CONFIG_DIR/linear/linear-setup.md` §4.
 
 ### O4. Vault orient — entrypoint, operator-identity master, AND lesson index
 
-Ground the session in the vault. Read **three** notes explicitly — load only the
-relevant slice, never the whole vault:
+Read **three** notes explicitly — load only the relevant slice, never the whole
+vault:
 
-1. **`START.md`** — the vault's working rules.
-2. **The operator-identity master note** — the `harness: all`-scoped identity note
-   ("Operator Soul" or equivalent) holding who the operator is and how they want to
-   be worked with. The vault entrypoint names it; the path is vault-specific (e.g.
-   under an `Areas/` folder). Read that named note as its **own mandatory
-   sub-step** rather than treating START.md's prose pointer ("load the Operator
-   Soul first") as optional — a prose pointer is an instruction *chain* agents
-   skip, so naming the read here is the fix: the identity master must land every
-   session, not only when the chain is followed.
-3. **The lesson index — `04-Lessons/_index.md`.** The durable-lessons table whose
-   **Trigger column** ("Before installing any external skill", "Before fanning out
-   parallel subagents", …) is the retrieval hook the R1a recall step matches
-   against. This read exists because lessons were previously write-only in
-   practice: sessions distilled lessons INTO the vault at closeout, but no orient
-   or routing step ever read one back OUT, so operators re-taught rules that were
-   already recorded. The **canonical** index is read (not the generated per-harness
-   view) because only it carries the Trigger column; the harness-scope filter is
-   applied at body-read time instead — before reading a matched lesson's body,
-   check its frontmatter `harness:` key and skip notes scoped to another harness.
+- `Read` `$OBSIDIAN_VAULT_PATH/START.md` — the vault's working rules.
+- `Read` the **operator-identity master note** the vault entrypoint designates (the
+  `harness: all`-scoped identity note; path is vault-specific). This is its own
+  mandatory sub-step, not an optional follow of START.md's prose pointer.
+- `Read` `$OBSIDIAN_VAULT_PATH/04-Lessons/_index.md` — the canonical lesson index,
+  whose **Trigger column** is what R1a matches against. Keep it in context for the
+  session; Mode 2 re-scans it without re-reading. Apply harness scope at body-read
+  time from each note's frontmatter `harness:` key.
 
-**Tool calls:**
-- `Read` `$OBSIDIAN_VAULT_PATH/START.md`.
-- `Read` the operator-identity note START.md designates (vault-specific path).
-- `Read` `$OBSIDIAN_VAULT_PATH/04-Lessons/_index.md` (or the vault's equivalent
-  lessons index if the vault names a different layout). Keep the index in context
-  for the session — Mode 2 routing re-scans it without re-reading the file.
-- **Degrade gracefully — never fail the orient.** If the vault is unreachable
-  (Drive/VPN down) *or* reachable but no identity note is configured/named, read
-  what you can (or skip) and continue with a one-line note. If the harness keeps a
-  per-machine identity cache (a lean projection of the master), use it as the
-  offline fallback; otherwise continue without identity context. An unreachable
-  lesson index degrades the same way: note it in the orient summary, declare
-  `Lessons: index unreachable` at R5, and fall back to the autoloaded memory-index
-  feedback headlines as the only recall surface.
+**Degrade gracefully — never fail the orient.** If the vault is unreachable, or no
+identity note is configured, read what you can and continue with a one-line note
+(use the harness's per-machine identity cache as the offline fallback if it keeps
+one). An unreachable lesson index degrades the same way: note it, declare
+`Lessons: index unreachable` at R5, and fall back to the autoloaded memory-index
+feedback headlines as the only recall surface.
 
-### O5. Cross-issue Linear state verification
+### O5. Cross-issue tracker state verification
 
-For any cross-issue Linear claims surfaced in O1's memory bodies (claims about
-*other* issues' states — "`<PREFIX>`-X is Done", "`<PREFIX>`-Y is gating", etc.,
-in your workspace's issue prefix — `TEAM` is only the docs placeholder), verify
-against Linear at kickoff regardless. Cross-issue claims aren't self-correcting
-at the body-read step.
-
-**Tool calls:**
-- For each cross-issue claim with a concrete `<PREFIX>-<number>` identifier: query the
-  Linear surface for the issue and compare the `state` field against the memory
-  body's claim (see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for the per-surface read command).
-  Flag mismatches in the orient summary.
+For any cross-issue claims in O1's memory bodies (claims about *other* issues'
+states — "`<PREFIX>`-X is Done", "`<PREFIX>`-Y is gating"), verify against the
+tracker at kickoff regardless; cross-issue claims are not self-correcting at the
+body-read step. Query each concrete `<PREFIX>-<number>` and compare its `state`
+against the memory body's claim (read command per
+`$AI_CONFIG_DIR/linear/linear-setup.md` §4). Flag mismatches in the orient summary.
 
 ### Mode 1 output
 
@@ -192,26 +139,28 @@ End the orient pass with a structured summary the user sees:
 Orient:
 - Active Linear project(s): <list with issue IDs + state>
 - Open issues in active project(s): <count + headline list>
+- Projectless open issues: <count + list, or "none">
+- Anomalies: <one line per anomaly, or "none">
 - Memory contradictions vs session-start commits: <one line per contradiction, or "none">
 - Vault: <one line of context from START.md>
 - Lesson index: <N lessons / triggers loaded | unreachable — recall degraded to memory-index headlines>
 - Cross-issue Linear claim verification: <pass / mismatches found>
+- Degraded surfaces: <one line per named degraded surface, or "none">
 - Safety posture: <default "safe"; name any active tightening from a session-guardrail skill or unattended-governance flag>
 ```
 
-Then proceed immediately to the routing steps (R1–R5 below) for the user's request.
-The orient summary + routing declaration both land in the same first response.
+Then proceed immediately to R1–R5 for the user's request — the orient summary and
+the routing declaration land in the same first response.
 
-The **Safety posture** line makes the run's posture visible at start; it defaults
-to `safe` and reports any active tightening, never a loosening — the contract is
+The **Safety posture** line makes the run's posture visible at start; it defaults to
+`safe` and reports any active tightening, never a loosening — contract in
 `core/operating-system.md` → Per-Run Safety Posture.
 
 ---
 
 ## Mode 2 — Route only
 
-Skip O1–O5. Run only R1–R5 below. The Mode 1 orient outputs are still live in the
-session context.
+Skip O1–O5. Run only R1–R5. The Mode 1 orient outputs are still live in context.
 
 ---
 
@@ -219,65 +168,58 @@ session context.
 
 ### R1. Classify the task surface — one sentence
 
-Bug fix, new feature, refactor, UI, security-sensitive change, data analysis,
-infra, docs, audit, ops, review-only, planning, implementation, publish/live.
+Bug fix, new feature, refactor, UI, security-sensitive change, data analysis, infra,
+docs, audit, ops, review-only, planning, implementation, publish/live.
 
 ### R1a. Recall applicable lessons — match triggers, read the few that fire
 
-Durable lessons only compound if they re-enter context at task time; this step
-is the read side of the self-improvement loop (closeout is the write side).
 Match the just-classified surface + the concrete task against **two recall
 surfaces**:
 
-1. **The lesson index Trigger column** read at O4. Mode 2: it is normally
-   already in context from Mode 1 — re-scan it without re-reading the file.
-   But if the index is NO LONGER in context (a compaction summarized it away),
-   re-read the file before declaring — never declare `none match` from a
-   remembered index (panel finding: a post-compaction scan over nothing
-   silently becomes a false `none match`).
-2. **The autoloaded memory-index headlines** — the feedback/decision one-liners
-   the harness injected at session start. These are rules too; a match here
-   counts the same as an index-trigger match.
+1. **The lesson index Trigger column** read at O4. In Mode 2 it is normally already
+   in context — re-scan without re-reading. But if it is NO LONGER in context (a
+   compaction summarized it away), re-read the file before declaring; never declare
+   `none match` from a remembered index.
+2. **The autoloaded memory-index headlines.** A match here counts the same as an
+   index-trigger match.
 
-For each match, `Read` the lesson/feedback note **body** before executing —
-the headline names the rule, the body carries the how and the edge cases.
-Bounds, so this stays a slice and not a vault load:
+For each match, `Read` the note **body** before executing. Bounds:
 
-- **Respect harness scope:** if the index carries an explicit scope/harness
-  column, filter on it before reading; otherwise check a matched note's
-  frontmatter `harness:` key first and skip notes scoped to another harness.
-- **Cap the APPLICABLE body-reads at ~3**, most-specific-first. Scope-skipped
-  notes do not consume the cap (panel finding: foreign-scope matches must not
-  starve the recall of applicable lessons), but bound the total probes at ~6 —
-  needing more than that means the triggers are too broad; read the most
-  specific 3 and name the rest in the declaration without reading them.
-- **Zero matches is a normal outcome** — declare `Lessons: none match` and
-  proceed. Do not force-fit a lesson to satisfy the declaration.
-- **Vault unreachable** (index never loaded at O4): match against the
-  autoloaded headlines only and declare `Lessons: index unreachable`.
-- **Recall out of scope by policy:** a contained task may legitimately forbid
-  vault or extra-file reads (a sandboxed run, an isolation worktree with no
-  vault mount). Declare `Lessons: skipped — <reason>` honestly rather than
-  faking `none match` (which claims a scan) or `index unreachable` (which
-  claims a failure).
+- **Respect harness scope** — filter on the index's scope column if present,
+  otherwise check a matched note's frontmatter `harness:` key and skip foreign
+  scopes.
+- **Cap APPLICABLE body-reads at ~3**, most-specific-first. Scope-skipped notes do
+  not consume the cap; bound total probes at ~6, and name the rest in the
+  declaration without reading them.
+- **Zero matches is a normal outcome** — declare `Lessons: none match`. Do not
+  force-fit a lesson to satisfy the declaration.
+- **Vault unreachable** (index never loaded at O4): match against the autoloaded
+  headlines only and declare `Lessons: index unreachable`.
+- **Recall out of scope by policy** (a sandboxed run, a worktree with no vault
+  mount): declare `Lessons: skipped — <reason>` honestly rather than faking
+  `none match` (which claims a scan) or `index unreachable` (which claims a
+  failure).
 
-The result feeds the `Lessons:` line of the R5 declaration. If, later in the
-session, the operator corrects you with a rule that WAS in a recall surface
-this step should have matched, that is a **recall failure** — record it at
-closeout per `core/self-improvement.md` (which surface failed: not-loaded vs
-loaded-but-ignored), so the miss tunes the triggers instead of re-writing the
-rule as a duplicate.
+The result feeds the `Lessons:` line at R5. If the operator later corrects you with
+a rule that WAS in a recall surface this step should have matched, that is a
+**recall failure** — record it at closeout per `core/self-improvement.md`, naming
+which surface failed, so the miss tunes the triggers instead of duplicating the rule.
 
 ### R2. Pick the primary capability
 
-Consult the **harness's installed capability catalog**:
-- Claude Code: `$CLAUDE_CONFIG_DIR/SKILLS.md` (the build-generated catalog) + the
-  quick-reference table in `$CLAUDE_CONFIG_DIR/CLAUDE.md`.
-- Codex: `$CODEX_HOME/AGENTS.md` capability catalog + the catalog file.
+Consult the **harness's installed capability catalog**: Claude Code —
+`$CLAUDE_CONFIG_DIR/SKILLS.md` plus the quick-reference table in
+`$CLAUDE_CONFIG_DIR/CLAUDE.md`; Codex — the `$CODEX_HOME/AGENTS.md` catalog.
 
 If several capabilities could apply, the task spans surfaces, the quick-reference
-does not resolve a clean primary, or risk is high (auth/billing/secrets/migrations/
-public surfaces), run the **orchestration sub-routine** (CO1–CO5 below).
+does not resolve a clean primary, the user asks which capability to use, or risk is
+high (auth/billing/secrets/migrations/public surfaces), run the **orchestration
+sub-routine**: classify the surface, name risk/output/evidence constraints, consult
+the catalog, compose the chain, and confirm with the user only when routing is
+non-obvious or risk is high. **Pick the smallest useful chain — one primary,
+secondaries only for evidence, risk, or output format; don't load whole families.**
+Full CO1–CO5 detail and the composition rules:
+`$AI_CONFIG_DIR/capabilities/reference/session-agent.md`.
 
 If genuinely no capability fits, declare `ad-hoc — no specific capability`.
 
@@ -289,18 +231,16 @@ Choose the matching gate from `$AI_CONFIG_DIR/verification/` — e.g. `code-chan
 
 ### R4. Apply the Linear gate
 
-If the task is multi-step or spans more than one session, a Linear issue or
-project must exist **before execution**. Create it to the canonical standard in
+If the task is multi-step or spans more than one session, a Linear issue or project
+must exist **before execution**. Create it to the canonical standard in
 `$AI_CONFIG_DIR/linear/issue-template.md` — BOTH halves, at create time: the
-required-metadata checklist (team; project, or an explicit
-deliberately-projectless reason in the body; a deliberate priority — never the
-default "No priority"; at least one label; an assignee, or the standard's
-stated deliberately-unassigned reason; parent/relations when
-the issue is spawned by other tracked work) AND the structured body (outcome,
-scope, acceptance criteria, verification, links). A title + prose-blob issue
-is nonconforming even when the prose is good. Create it via the operator's
-installed Linear surface (see `$AI_CONFIG_DIR/linear/linear-setup.md` §4 for
-the per-surface create command).
+required-metadata checklist (team; project, or an explicit deliberately-projectless
+reason in the body; a deliberate priority — never the default "No priority"; at
+least one label; an assignee, or the standard's deliberately-unassigned reason;
+parent/relations when the issue is spawned by other tracked work) AND the structured
+body (outcome, scope, acceptance criteria, verification, links). A title +
+prose-blob issue is nonconforming even when the prose is good. Create it via the
+operator's installed Linear surface (`$AI_CONFIG_DIR/linear/linear-setup.md` §4).
 
 Single-file fixes, trivial edits, and questions stay as session todos. If no
 write-capable Linear access exists, produce a Linear-ready markdown draft.
@@ -330,59 +270,18 @@ After emitting, proceed with the work.
 
 ---
 
-## Orchestration sub-routine (R2 fallback)
-
-Fires when several capabilities could apply, the task spans surfaces, the
-quick-reference does not resolve a clean primary, the user explicitly asks
-"which capability should I use", or risk is high.
-
-- **CO1. Classify** the task surface in one sentence: review-only, planning,
-  implementation, publish/live, operations, or memory.
-- **CO2. Identify constraints:** risk level (auth/billing/secrets/migrations/
-  customer-data/public surfaces); output format (code/doc/artifact/dashboard/
-  message); evidence needed (tests/browser-render/screenshot/sign-off).
-- **CO3. Consult** the installed capability catalog and find the row matching
-  the primary surface.
-- **CO4. Compose** the chain: one primary; secondaries only for evidence, risk,
-  or output format; a verification recipe from `$AI_CONFIG_DIR/verification/`.
-- **CO5. Confirm** with the user only if routing is non-obvious or risk is high.
-  Otherwise state the chain and proceed.
-
-Orchestration rules:
-- Pick the smallest useful chain. Don't load whole families.
-- When surfaces tie, pick the one that **gates** the others — design before
-  implementation; debug before refactor; verification last.
-- For cross-functional work, route the **starting** surface and surface the next
-  chains as follow-ups rather than mashing them into one route.
-- High-risk surfaces always get an explicit verification recipe named in the output.
-- If no capability fits cleanly, recommend adding one via a skill-creation
-  capability — don't force-fit.
-
----
-
 ## Notes
 
-- **Mode 1 fires once per session.** Re-invoking session-agent mid-session for a
-  pivot uses Mode 2 (the orient is already in context). Forcing a re-orient is
-  rare and explicit; the operator can request it by saying "re-orient" — which
-  is a Mode 1 re-run.
-- **The protocol's value is in the model thinking through the steps** — not in
-  any single line of the declaration. The pre-edit-gate enforcement class checks
-  only that session-agent ran and that the `Linear gate:` and `Lessons:` lines
-  were declared; it does not police the judgment.
+- **Mode 1 fires once per session.** A mid-session pivot uses Mode 2. The operator
+  can force a re-orient by saying "re-orient" — that is a Mode 1 re-run.
 - **Be honest on the Linear gate.** Splitting genuine multi-session work into
   "single-step" to skip the gate defeats the protocol.
-- **Be honest on the Lessons line.** `none match` after an actual trigger scan
-  is a valid answer; `none match` as a reflex to satisfy the gate defeats the
-  recall step — the whole line exists because rules that were already recorded
-  kept getting skipped.
-- **The gate enforces the first complete declaration per session.** Once both
-  lines have been declared, later Mode 2 routes re-declare by protocol but the
-  hook does not re-police them per task — it is a discipline net with a kill
-  switch, not a security boundary. The recall habit on subsequent prompts is
-  carried by the protocol, same as every other R-step.
-- **Token cost.** Mode 1 is expensive (multiple Linear queries + memory body
-  reads + vault reads, including the lesson index). Mode 2 is cheap (no tool
-  calls beyond consulting the catalog and re-scanning the in-context lesson
-  index; R1a body-reads only fire on a trigger match). Don't re-orient on
-  every prompt.
+- **Be honest on the Lessons line.** `none match` after an actual trigger scan is a
+  valid answer; `none match` as a reflex to satisfy the gate defeats the recall step
+  — the line exists because rules that were already recorded kept getting skipped.
+  `index unreachable` claims a failure and `skipped — <reason>` claims a policy
+  bound; use whichever is true.
+- **The gate enforces the first complete declaration per session.** Later Mode 2
+  routes re-declare by protocol, but the hook does not re-police them per task — it
+  is a discipline net with a kill switch, not a security boundary.
+- **Mode 1 is expensive, Mode 2 is cheap.** Don't re-orient on every prompt.
