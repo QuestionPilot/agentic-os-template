@@ -189,7 +189,8 @@ Default inputs:
 Output: markdown by default. -Json emits a structured object for tests:
   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]},
-   orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]}}
+   orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]},
+   recall_failures{status,reason,scored,window,files_considered,meaningful_total,scanned,not_loaded,loaded_but_ignored,unclassified,records[]}}
 
     `semantic_currentness` is ADVISORY and lives in its own key + its own
     markdown section: it comes from scripts/check-state-currentness.ps1
@@ -206,6 +207,17 @@ Output: markdown by default. -Json emits a structured object for tests:
     different thing (the auto-injected component budget); an entrypoint
     appearing in both is not a double-count, because the two keys answer two
     different questions.
+
+    `recall_failures` is INFORMATIONAL, in its own key + its own markdown
+    section, and likewise never contributes to `total`, a pillar score, or
+    `gaps` (the key carries a literal `scored: false` so a consumer cannot
+    mistake it). It comes from scripts/recall-report.ps1: a rolling COUNT of
+    the Q1a recall-failure records already written into the durable session
+    logs. The pillars measure whether the recall machinery EXISTS; this
+    measures whether recall WORKED. It is deliberately never scored — grading
+    a self-reported miss count makes the honest act (recording the miss) the
+    costly one, and the records stop appearing. An unmeasured window is a
+    NAMED reason, never a zero.
 '@ | Write-Host
     exit 0
 }
@@ -1690,6 +1702,132 @@ function Get-OrientationMarkdown {
 }
 
 # ---------------------------------------------------------------------------
+# Recall failures (informational, NEVER scored)
+# ---------------------------------------------------------------------------
+# The five pillars measure whether the recall MACHINERY is present and wired: an
+# index exists, a note resolves, a spine body is rendered. None of them can say
+# whether recall actually WORKED — whether a rule that was loaded at orient
+# fired when it mattered. capabilities/closeout.md's Q1a already records that as
+# prose in every session log; scripts/recall-report.ps1 counts those records
+# over a rolling window.
+#
+# It is reported here for the same reason codex_registry_bytes and
+# semantic_currentness are: an operator reading one scorecard should see the
+# observation next to the structure. It is INFORMATIONAL and it is NOT SCORED,
+# deliberately and permanently. Turning a self-reported miss count into a score
+# would make the honest thing (recording the miss) the costly thing, and the
+# records would quietly stop appearing. Nothing in this block touches $total, a
+# pillar score, or the gap list.
+$rfStatus = 'skipped'      # reported | skipped
+$rfReason = ''
+$rfCounts = $null          # ordered hashtable of the counts record, or $null
+$rfRecords = @()           # verbatim `record` TSV payloads (class<TAB>location)
+
+# Override for the hermetic tests: point at a stub that serves fixture records
+# (same convention as $env:SELF_AUDIT_CURRENTNESS_BIN above).
+$recallBin = if ($env:SELF_AUDIT_RECALL_BIN) { $env:SELF_AUDIT_RECALL_BIN }
+             else { Join-Path $RepoRoot 'scripts' 'recall-report.ps1' }
+
+function Invoke-RecallReport {
+    # An -Isolated run has no operator surfaces by construction; tests that DO
+    # want this section exercised inject a stub via $env:SELF_AUDIT_RECALL_BIN.
+    if ($Isolated.IsPresent -and -not $env:SELF_AUDIT_RECALL_BIN) {
+        $script:rfReason = 'isolated run — recall failures not measured'
+        return
+    }
+    if (-not (Test-Path -LiteralPath $recallBin -PathType Leaf)) {
+        $script:rfReason = "reporter not found at $recallBin"
+        return
+    }
+
+    # Hand the reporter THIS audit's resolved vault, so the two agree on where
+    # the durable session logs are instead of each resolving local.env
+    # independently.
+    $rfArgs = @('--list')
+    if (-not [string]::IsNullOrEmpty($VaultDir)) {
+        $rfArgs += @('--sessions-dir', (Join-Path ($VaultDir.TrimEnd('/', '\')) '30-Archive/Sessions'))
+    }
+    if ($Isolated.IsPresent) { $rfArgs += '--isolated' }
+
+    $errFile = [IO.Path]::GetTempFileName()
+    try {
+        $raw = (& pwsh -NoProfile -File $recallBin @rfArgs 2> $errFile | Out-String)
+        $rc = $LASTEXITCODE
+    } catch {
+        $raw = ''; $rc = 2
+    }
+
+    $errText = ''
+    try { $errText = (Get-Content -LiteralPath $errFile -TotalCount 1 -ErrorAction SilentlyContinue) } catch { $errText = '' }
+    if ($null -eq $errText) { $errText = '' }
+    $errText = ("$errText").Trim()
+    $errText = [System.Text.RegularExpressions.Regex]::Replace($errText, '^(SKIP |recall-report: )', '')
+    Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+
+    if ($rc -ne 0) {
+        # exit 2 is a usage or SCAN error — a degraded, NAMED entry, never a
+        # score change and never a silent zero.
+        $script:rfReason = if ($errText -ne '') { $errText } else { "reporter returned an indeterminate result (exit $rc)" }
+        return
+    }
+
+    foreach ($line in ($raw -split "`r?`n")) {
+        if ($line -eq '') { continue }
+        $f = $line -split "`t"
+        if ($f[0] -eq 'counts' -and $f.Count -ge 8) {
+            # A counts record whose fields are not all plain nonnegative
+            # integers is a reporter CONTRACT BREAK — a named skip, never
+            # report-shaped partial data (panel finding: `reported` with null
+            # counts would defeat the named-skip contract).
+            $bad = $false
+            foreach ($v in $f[1..7]) { if ($v -notmatch '^[0-9]+$') { $bad = $true } }
+            if ($bad) {
+                $script:rfReason = 'reporter emitted a malformed counts record'
+            } else {
+                $script:rfCounts = [ordered]@{
+                    window            = $f[1]
+                    files_considered  = $f[2]
+                    meaningful_total  = $f[3]
+                    scanned           = $f[4]
+                    not_loaded        = $f[5]
+                    loaded_but_ignored = $f[6]
+                    unclassified      = $f[7]
+                }
+                $script:rfStatus = 'reported'
+            }
+        } elseif ($f[0] -eq 'record' -and $f.Count -ge 3) {
+            $script:rfRecords += ($f[1] + "`t" + ($f[2..($f.Count - 1)] -join "`t"))
+        }
+    }
+
+    # exit 0 with NO counts record is the reporter's documented NAMED-SKIP shape
+    # (an unconfigured surface, or zero meaningful logs). Preserve its reason
+    # rather than rendering an empty, zero-looking section. A reason already set
+    # above (the malformed-counts contract break) wins over the stderr line.
+    if ($script:rfStatus -ne 'reported' -and [string]::IsNullOrEmpty($script:rfReason)) {
+        $script:rfReason = if ($errText -ne '') { $errText } else { 'reporter produced no counts record' }
+    }
+}
+Invoke-RecallReport
+
+# Get-RecallMarkdown — the `## Recall failures` body (no heading).
+function Get-RecallMarkdown {
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($rfStatus -ne 'reported') {
+        $lines.Add("_(not measured — $rfReason)_")
+        $lines.Add('Informational only; never scored — an unmeasured window is NOT a clean zero.')
+        return $lines
+    }
+    $lines.Add(('- window: {0} newest meaningful session log(s); {1} scanned of {2} meaningful ({3} file(s) considered)' -f `
+        $rfCounts['window'], $rfCounts['scanned'], $rfCounts['meaningful_total'], $rfCounts['files_considered']))
+    $lines.Add("- not-loaded: $($rfCounts['not_loaded'])")
+    $lines.Add("- loaded-but-ignored: $($rfCounts['loaded_but_ignored'])")
+    $lines.Add("- unclassified recall-failure mentions: $($rfCounts['unclassified'])")
+    $lines.Add('Informational only; never scored. A rolling count, not a grade — there is no target number, and the extractor under-reports by design.')
+    return $lines
+}
+
+# ---------------------------------------------------------------------------
 # Output emitters
 # ---------------------------------------------------------------------------
 function Get-MarkdownOutput {
@@ -1769,6 +1907,12 @@ function Get-MarkdownOutput {
     [void]$sb.AppendLine('## Orientation surface')
     [void]$sb.AppendLine('')
     foreach ($l in (Get-OrientationMarkdown)) { [void]$sb.AppendLine($l) }
+    # Appended after Orientation surface for the same positional-stability
+    # reason: every pre-existing section keeps its offset.
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Recall failures')
+    [void]$sb.AppendLine('')
+    foreach ($l in (Get-RecallMarkdown)) { [void]$sb.AppendLine($l) }
     # Bash twin emits via `printf '%s\n' "$OUTPUT"` so output ends with one
     # trailing newline. AppendLine already added per-line newlines; the
     # final state has a trailing `\n` from the last AppendLine. Match bash.
@@ -1884,6 +2028,43 @@ function Get-JsonOutput {
         total_lines  = $(if ($oriMeasured) { $oriTotalLines } else { $null })
         skipped      = @($oriSkipped)
     }
+    # recall_failures — ADDITIVE optional field, its OWN key so a consumer can
+    # never read a self-reported miss COUNT as a mechanical pillar result.
+    # Counts are $null when the window could not be measured; `reason` is
+    # populated only then, and an unmeasured window is explicitly NOT a zero.
+    # APPENDED LAST for the same positional-stability reason as the three fields
+    # before it. Plain arrays, not List[object] — see the scClaims note above.
+    $rfRecordObjs = @()
+    if ($rfStatus -eq 'reported') {
+        foreach ($rec in $rfRecords) {
+            $f = $rec -split "`t"
+            if ($f.Count -ge 2) {
+                $rfRecordObjs += [ordered]@{ class = $f[0]; location = $f[1] }
+            }
+        }
+    }
+    # Get-RfNum — a counts field as an int, or $null when unmeasured. Mirrors
+    # the bash twin's `tonumber? // null`.
+    function Get-RfNum {
+        param([string]$Key)
+        if ($null -eq $rfCounts) { return $null }
+        $v = $rfCounts[$Key]
+        if ($v -match '^\d+$') { return [int]$v }
+        return $null
+    }
+    $rfObj = [ordered]@{
+        status             = $rfStatus
+        reason             = $rfReason
+        scored             = $false
+        window             = (Get-RfNum 'window')
+        files_considered   = (Get-RfNum 'files_considered')
+        meaningful_total   = (Get-RfNum 'meaningful_total')
+        scanned            = (Get-RfNum 'scanned')
+        not_loaded         = (Get-RfNum 'not_loaded')
+        loaded_but_ignored = (Get-RfNum 'loaded_but_ignored')
+        unclassified       = (Get-RfNum 'unclassified')
+        records            = $rfRecordObjs
+    }
     $obj = [ordered]@{
         date                 = $dateStr
         total                = $total
@@ -1895,6 +2076,7 @@ function Get-JsonOutput {
         codex_registry_bytes = $cxBytes
         semantic_currentness = $scObj
         orientation_surface  = $oriObj
+        recall_failures      = $rfObj
     }
     return ($obj | ConvertTo-Json -Depth 7)
 }
