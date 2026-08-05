@@ -36,9 +36,18 @@ That is a valid, complete outcome.
    not assume an integration did it.
 3. Note any verification or tests that were run, or skipped.
 4. **Enumerate State Deltas.** Linear projects created/closed/status-changed
-   this session; Linear issues created (not just closed — new backlog issues
-   count); new durable on-disk artifact directories (e.g. a fresh
-   `cross-model-out/<YYYY-MM-DD>-<slug>/` run dir, a new `docs/plans/<name>.md`).
+   this session — reactivation counts, and its trigger is operational, not a
+   tracker status transition: this session filed or picked up an issue under a
+   project that has no live project-type memory note (whether the note was
+   retired at a past close, lost, or never written), so the project is active
+   again with no note — recreate the note at THIS closeout (a noteless active
+   project is invisible to the next orient's body-read step and otherwise
+   surfaces only as a later audit gap). One event may satisfy several of these
+   triggers — an issue that reactivates a project is one delta, not two; write
+   one consolidated state-delta lesson per event. Also: Linear issues created
+   (not just closed — new backlog issues count); new durable on-disk artifact
+   directories (e.g. a fresh `cross-model-out/<YYYY-MM-DD>-<slug>/` run dir, a
+   new `docs/plans/<name>.md`).
    If any exist, each becomes a mandatory `state-delta` lesson with a memory
    write performed BEFORE session exit — never deferred to a future session.
    See `$AI_CONFIG_DIR/core/self-improvement.md` for the canonical taxonomy.
@@ -144,7 +153,16 @@ classification machinery for work that should never have shipped is wasted.
    class a whole-system review flagged across five project notes at once —
    each one passed the structural audit while misdirecting the next agent that
    loaded it. The mechanical audit cannot catch prose tense; this edit is the
-   only gate.
+   only gate. The reverse transition carries the mirror duty: when this session
+   left a project active with no live project-type memory note (the
+   reactivation trigger in the State-Deltas item of "Inputs to gather first"),
+   the recreated note is part of this closeout, never deferred — and if the
+   vault project note was flipped to a terminal state at the earlier close,
+   flip it back to active in the same pass: the newly filed issue is already
+   the tracker-side record, and the vault flip is what makes the reactivation
+   visible beyond this machine (a recreated memory note alone is
+   machine-local). A project reactivated and then completed within the same
+   session nets out through the Q4a terminal edit alone — no note recreation.
 5. Does the durable knowledge base (Obsidian is the canonical example) need a
    note?
 6. Did the work reveal a missing data path (an unprepared silver platter), an
@@ -224,7 +242,7 @@ For each lesson, pick exactly one class and route it. The classes are defined in
 | `data-readiness` | `playbooks/data-readiness-map.md`, verification, or Obsidian | Use when repeated work needs better source plumbing or summaries. |
 | `goal-run` | `playbooks/goal-run.md` | Use when autonomous or recurring work needs clearer bounds. |
 | `no-action` | Transcript only | Note it and move on. |
-| `state-delta` | a project-type memory note (`metadata.type: project`, or `runtime_*.md`) + `MEMORY.md` index update | Mandatory when a Linear project or new durable on-disk artifact dir came into existence this session. Write the memory pointer during closeout itself — never deferred. |
+| `state-delta` | a project-type memory note (`metadata.type: project`, or `runtime_*.md`) + `MEMORY.md` index update | Mandatory when a Linear project or new durable on-disk artifact dir came into existence this session — or an existing project became active again while its project-type memory note is missing (the reactivation trigger under "Inputs to gather first"; the tracker's project status need not have changed). Write the memory pointer during closeout itself — never deferred. |
 
 ## Memory-hygiene (on any memory write)
 

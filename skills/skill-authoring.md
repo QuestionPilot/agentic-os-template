@@ -240,6 +240,45 @@ EAD-gate's "should have eliminated this" failure inverted), or when an existing 
 
 ---
 
+## 12. Escape hatches: rules-bearing skills state when to break the rules
+
+A skill that imposes standing *default* rules on output or behavior — an output style, a
+review discipline, a mode — must state explicit override conditions: the cases where a
+rule fights the task and the task wins while the shape stays (e.g. "when asked to
+explain, explain fully — still no preamble"). Without them, rule-following deletes
+answers: the model obeys the letter of a brevity rule and drops the option list that WAS
+the answer. Overrides run in both directions — some loosen a rule (explain fully), some
+tighten one (a no-questions rule still stops and confirms before a destructive action) —
+name both kinds. The list is small and concrete — name the situations, not a vague "use
+judgment" — and short: §5's multiplicative body-size cost applies to this section like
+any other.
+
+**Defaults are overridable; invariants are not.** Safety, authorization, and
+irreversible-action gates are hard invariants — a skill that carries both classifies
+which is which, and no escape hatch ever loosens an invariant in service of task
+completion. Precedence when rules collide: hard invariants, then explicit user
+direction, then task completeness, then stylistic defaults.
+
+Mode-like skills (rules that persist across turns) additionally state their persistence
+contract: when the rules apply, when they lapse, and a canonical off-switch phrase —
+discoverable and documented, while unambiguous semantic equivalents ("go back to
+normal") also deactivate; exact-string matching alone is brittle. A mode without a
+stated off-switch either dies silently after a few turns or outlives the user's intent;
+both are trust failures. Wire it to §4: a rules-bearing skill's contract test asserts
+the override section exists, and for mode skills that the off-switch is stated.
+
+**Apply when:** authoring or reviewing any skill whose body is standing rules the model
+keeps following across turns or outputs. **Not when:** the skill is a one-shot
+procedure that ends on its own — a script-first pipeline (§1), a git-workflow state
+machine (§10), a single-run generator. The boundary is the rules' lifetime, not the
+skill's architecture: a procedural skill that ALSO imposes standing output rules needs
+the section for those rules.
+
+(Pattern source: the MIT-licensed `i-have-adhd` skill's "When to break the rules" +
+"Persistence" sections — adopted 2026-08-02, hardened by a three-family panel review.)
+
+---
+
 ## Related
 
 - [`README.md`](README.md) / [`skill-template.md`](skill-template.md) — the skills catalog and entry shape.
