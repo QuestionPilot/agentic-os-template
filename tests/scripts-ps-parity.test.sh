@@ -940,6 +940,61 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 3d2: symlink-aliased repo root (macOS /tmp -> /private/tmp regression)
+#
+# When the SCRIPT's own repo is reached through a symlinked path (a clone in
+# /tmp on macOS, or any symlink-aliased checkout), `git rev-parse
+# --show-toplevel` reports the PHYSICAL path while pwsh's Resolve-Path keeps
+# the logical spelling — the startup worktree-detection guard's toplevel
+# equality failed, tripping the loud "git enumeration was not selected" FAIL
+# on a perfectly healthy live repo and exiting 1 before any scan (every mode,
+# including --manifest). The bash twin rescues this with pwd -P + -ef; the PS
+# ports now rescue via an empty `--show-prefix`. Invoke both twins THROUGH a
+# symlink alias of the repo root to pin the rescue.
+# ---------------------------------------------------------------------------
+
+if [ -d "$PARITY_TMP/cd-fix-skills-hooks" ] && [ "$_have_pwsh" -eq 1 ] \
+   && [ -f "$REPO_ROOT/scripts/check-drift.ps1" ] \
+   && ln -s "$REPO_ROOT" "$PARITY_TMP/repo-alias" 2>/dev/null; then
+  ps_alias_out="$PARITY_TMP/cd-ps-alias.out"
+  pwsh -NoProfile -File "$PARITY_TMP/repo-alias/scripts/check-drift.ps1" \
+    -Manifest "$PARITY_TMP/cd-fix-skills-hooks" > "$ps_alias_out" 2>&1
+  ps_alias_rc=$?
+  assert_eq "check-drift ps exits 0 via symlink-aliased repo root (macOS /tmp regression)" 0 "$ps_alias_rc"
+
+  bash_alias_out="$PARITY_TMP/cd-bash-alias.out"
+  bash "$PARITY_TMP/repo-alias/scripts/check-drift.sh" \
+    --manifest "$PARITY_TMP/cd-fix-skills-hooks" > "$bash_alias_out" 2>&1
+  bash_alias_rc=$?
+  assert_eq "check-drift bash exits 0 via symlink-aliased repo root" 0 "$bash_alias_rc"
+
+  assert_eq "check-drift parity: STRICT byte-identical (symlink-aliased repo root)" \
+    "$(_normalize "$bash_alias_out")" "$(_normalize "$ps_alias_out")"
+
+  # validate.ps1 carries the same startup guard in its secret scan — one
+  # aliased invocation of BOTH twins pins its rescue too. Exit-code PARITY,
+  # not a hard 0: a dev tree can legitimately fail validate for unrelated
+  # reasons (e.g. a runtime .claude/skills/ render in a worktree), and then
+  # both twins must fail alike; pre-fix the ps side alone exited 1 on a
+  # healthy /tmp clone, which this comparison catches.
+  v_alias_bash_out="$PARITY_TMP/v-bash-alias.out"
+  bash "$PARITY_TMP/repo-alias/scripts/validate.sh" \
+    > "$v_alias_bash_out" 2>&1
+  v_alias_bash_rc=$?
+  v_alias_ps_out="$PARITY_TMP/v-ps-alias.out"
+  pwsh -NoProfile -File "$PARITY_TMP/repo-alias/scripts/validate.ps1" \
+    > "$v_alias_ps_out" 2>&1
+  v_alias_ps_rc=$?
+  assert_eq "validate parity: exit codes match via symlink-aliased repo root" \
+    "$v_alias_bash_rc" "$v_alias_ps_rc"
+else
+  _skip "check-drift ps exits 0 via symlink-aliased repo root (macOS /tmp regression)" "Test 3c prereqs missing or symlinks unavailable"
+  _skip "check-drift bash exits 0 via symlink-aliased repo root" "Test 3c prereqs missing or symlinks unavailable"
+  _skip "check-drift parity: STRICT byte-identical (symlink-aliased repo root)" "Test 3c prereqs missing or symlinks unavailable"
+  _skip "validate parity: exit codes match via symlink-aliased repo root" "Test 3c prereqs missing or symlinks unavailable"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 3e: check-memory-drift parity — MULTI-DRIFT byte-identity
 # (Codex F-3 regression guard: bash uses drift=1 boolean → prints "1 drift(s)"
 # even when N drift files exist. PS port now mirrors that quirk for byte-parity.

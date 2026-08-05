@@ -8,7 +8,7 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 #
 # Bash↔pwsh byte-parity for script ports.
 #
-# **All 50 assertions are SKIPped on the Windows lane** because the parity
+# **All assertions are SKIPped on the Windows lane** because the parity
 # comparison requires BOTH `bash` AND `pwsh` to be present, and the Windows
 # lane intentionally has no bash. The bash twin already runs this exact
 # comparison on the macOS/Linux lane — running it again from the PS side
@@ -72,6 +72,10 @@ _Skip 'scripts-ps-parity.test: check-drift parity: STRICT byte-identical (skills
 _Skip 'scripts-ps-parity.test: check-drift ps --manifest exits 0 on RELATIVE path (F-1 regression)' $reason
 _Skip 'scripts-ps-parity.test: check-drift bash --manifest exits 0 on RELATIVE path (F-1 regression)' $reason
 _Skip 'scripts-ps-parity.test: check-drift parity: STRICT byte-identical (RELATIVE path)' $reason
+_Skip 'scripts-ps-parity.test: check-drift ps exits 0 via symlink-aliased repo root (macOS /tmp regression)' $reason
+_Skip 'scripts-ps-parity.test: check-drift bash exits 0 via symlink-aliased repo root' $reason
+_Skip 'scripts-ps-parity.test: check-drift parity: STRICT byte-identical (symlink-aliased repo root)' $reason
+_Skip 'scripts-ps-parity.test: validate parity: exit codes match via symlink-aliased repo root' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift bash exits 1 on 2-drift fixture' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift ps exits 1 on 2-drift fixture' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift parity: sorted byte-identical (2-drift fixture; iteration-order divergent)' $reason

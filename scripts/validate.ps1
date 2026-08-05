@@ -492,6 +492,21 @@ function Test-SecretPattern {
         $topResolved = Resolve-Path -LiteralPath $gitTop -ErrorAction SilentlyContinue
         $repoResolved = Resolve-Path -LiteralPath $repo -ErrorAction SilentlyContinue
         if ($topResolved -and $repoResolved -and $topResolved.Path -eq $repoResolved.Path) { $isGit = $true }
+        else {
+            # Symlink/mount aliasing rescue (twin of the bash scripts' pwd -P +
+            # -ef): git reports the PHYSICAL toplevel while Resolve-Path keeps
+            # the logical spelling (it does not resolve symlinks), so a live repo
+            # reached through a symlinked path — e.g. macOS /tmp -> /private/tmp
+            # — fails the string compare above. An EMPTY --show-prefix proves
+            # $repo IS the toplevel under any spelling; a staging tree nested
+            # under an unrelated parent repo yields a NON-empty prefix and still
+            # takes the intended fallback. Full-array capture (no early-stop
+            # pipeline) so $LASTEXITCODE is reliably set under StrictMode.
+            $gitPrefixOut = @(& git -C $repo rev-parse --show-prefix 2>$null)
+            if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrEmpty(($gitPrefixOut | Select-Object -First 1))) {
+                $isGit = $true
+            }
+        }
     }
 
     # .git exists yet the git path was refused -> rev-parse refusal or a

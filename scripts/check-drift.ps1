@@ -169,6 +169,20 @@ $gitTop = (& git -C $repoRoot rev-parse --show-toplevel 2>$null | Select-Object 
 if ($LASTEXITCODE -eq 0 -and $gitTop) {
     $topResolved = Resolve-Path -LiteralPath $gitTop -ErrorAction SilentlyContinue
     if ($topResolved -and $topResolved.Path -eq $repoRoot) { $script:IsGitWorkTree = $true }
+    else {
+        # Symlink/mount aliasing rescue (twin of the bash scripts' pwd -P + -ef):
+        # git reports the PHYSICAL toplevel while Resolve-Path keeps the logical
+        # spelling (it does not resolve symlinks), so for a live repo reached
+        # through a symlinked path — e.g. macOS /tmp -> /private/tmp — the string
+        # compare above fails. git computes --show-prefix relative to the toplevel
+        # after chdir, so an EMPTY prefix proves $repoRoot IS the toplevel under
+        # any spelling; a staging tree nested under an unrelated parent repo
+        # yields a NON-empty prefix and still takes the intended fallback (F1).
+        $gitPrefixOut = @(& git -C $repoRoot rev-parse --show-prefix 2>$null)
+        if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrEmpty(($gitPrefixOut | Select-Object -First 1))) {
+            $script:IsGitWorkTree = $true
+        }
+    }
 }
 
 # The non-git fallback is only legitimate for a plain-copy staging tree, which
@@ -176,8 +190,8 @@ if ($LASTEXITCODE -eq 0 -and $gitTop) {
 # detection still refused the git path (rev-parse refusal — safe.directory /
 # ownership — or a path-resolution quirk), fail LOUDLY rather than silently
 # widening the scan to gitignored runtime files. (Twin of check-drift.sh; the
-# bash twin additionally rescues MSYS /tmp mount aliasing via -ef, which has
-# no PowerShell equivalent or need — Resolve-Path uses native Windows paths.)
+# bash twin rescues /tmp mount/symlink aliasing via -ef, mirrored above by the
+# empty --show-prefix rescue — Resolve-Path never resolves symlinks.)
 $script:DotGitPath = Join-Path $repoRoot '.git'
 # Get-Item -Force alongside Test-Path: Test-Path can report $false for a
 # DANGLING .git symlink/junction (it checks the target), which would silently
