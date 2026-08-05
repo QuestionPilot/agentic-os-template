@@ -1502,7 +1502,7 @@ if ($jqAvail) {
     Assert-Eq 'self-audit.test: codex registry JSON reports the registry byte size informationally' `
         "$regBytes" "$cxBytes"
     Assert-Eq 'self-audit.test: codex registry JSON stays backward-compatible (existing fields intact, new field additive)' `
-        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface' "$fields"
+        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures' "$fields"
     Assert-Contains 'self-audit.test: codex registry markdown carries the non-scoring informational size line' `
         $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 

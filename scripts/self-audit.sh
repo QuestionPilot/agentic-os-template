@@ -40,7 +40,8 @@
 # Output: markdown by default. `--json` emits a structured object for tests:
 #   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
 #    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]},
-#    orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]}}
+#    orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]},
+#    recall_failures{status,reason,scored,window,files_considered,meaningful_total,scanned,not_loaded,loaded_but_ignored,unclassified,records[]}}
 #
 # `semantic_currentness` is ADVISORY and lives in its own key + its own markdown
 # section: it comes from scripts/check-state-currentness.sh (tracker-reachable
@@ -56,6 +57,16 @@
 # orient. `injection_surface` measures a different thing (the auto-injected
 # component budget); an entrypoint appearing in both is not a double-count,
 # because the two keys answer two different questions.
+#
+# `recall_failures` is INFORMATIONAL, in its own key + its own markdown section,
+# and likewise never contributes to `total`, a pillar score, or `gaps` (the key
+# carries a literal `scored: false` so a consumer cannot mistake it). It comes
+# from scripts/recall-report.sh: a rolling COUNT of the Q1a recall-failure
+# records already written into the durable session logs. The pillars measure
+# whether the recall machinery EXISTS; this measures whether recall WORKED. It
+# is deliberately never scored — grading a self-reported miss count makes the
+# honest act (recording the miss) the costly one, and the records stop
+# appearing. An unmeasured window is a NAMED reason, never a zero.
 #
 # Tests: tests/self-audit.test.sh exercises every pillar with fixtures.
 #
@@ -1543,6 +1554,121 @@ emit_orientation_markdown() {
   fi
 }
 
+# --- recall failures (informational, NEVER scored) ----------------------------
+# The five pillars measure whether the recall MACHINERY is present and wired: an
+# index exists, a note resolves, a spine body is rendered. None of them can say
+# whether recall actually WORKED — whether a rule that was loaded at orient
+# fired when it mattered. capabilities/closeout.md's Q1a already records that as
+# prose in every session log; scripts/recall-report.sh counts those records over
+# a rolling window.
+#
+# It is reported here for the same reason codex_registry_bytes and
+# semantic_currentness are: an operator reading one scorecard should see the
+# observation next to the structure. It is INFORMATIONAL and it is NOT SCORED,
+# deliberately and permanently. Turning a self-reported miss count into a score
+# would make the honest thing (recording the miss) the costly thing, and the
+# records would quietly stop appearing. Nothing in this block touches TOTAL, a
+# pillar score, or GAPS.
+RF_STATUS="skipped"      # reported | skipped
+RF_REASON=""
+RF_WINDOW=""
+RF_CONSIDERED=""
+RF_MEANINGFUL_TOTAL=""
+RF_SCANNED=""
+RF_NOT_LOADED=""
+RF_IGNORED=""
+RF_UNCLASSIFIED=""
+RF_RECORDS=()            # verbatim `record` TSV payloads (class<TAB>location)
+
+# Override for the hermetic tests: point at a stub that serves fixture records
+# (same convention as $SELF_AUDIT_CURRENTNESS_BIN above).
+RECALL_BIN="${SELF_AUDIT_RECALL_BIN:-$REPO_ROOT/scripts/recall-report.sh}"
+
+run_recall_report() {
+  # An --isolated run has no operator surfaces by construction; tests that DO
+  # want this section exercised inject a stub via $SELF_AUDIT_RECALL_BIN.
+  if [ "$ISOLATED" -eq 1 ] && [ -z "${SELF_AUDIT_RECALL_BIN:-}" ]; then
+    RF_REASON="isolated run — recall failures not measured"
+    return
+  fi
+  if [ ! -f "$RECALL_BIN" ]; then
+    RF_REASON="reporter not found at $RECALL_BIN"
+    return
+  fi
+
+  # Hand the reporter THIS audit's resolved vault, so the two agree on where the
+  # durable session logs are instead of each resolving local.env independently.
+  local rf_args=()
+  if [ -n "$VAULT_DIR" ]; then
+    rf_args[${#rf_args[@]}]="--sessions-dir"
+    rf_args[${#rf_args[@]}]="${VAULT_DIR%/}/30-Archive/Sessions"
+  fi
+  [ "$ISOLATED" -eq 1 ] && rf_args[${#rf_args[@]}]="--isolated"
+
+  local _errf _out _rc _line _kind
+  _errf="$(mktemp)"
+  _out="$(bash "$RECALL_BIN" --list ${rf_args[@]+"${rf_args[@]}"} 2>"$_errf")"
+  _rc=$?
+
+  if [ "$_rc" -ne 0 ]; then
+    # exit 2 is a usage or SCAN error — a degraded, NAMED entry, never a score
+    # change and never a silent zero.
+    RF_REASON="$(head -n 1 "$_errf" 2>/dev/null | sed -E 's/^(SKIP |recall-report: )//')"
+    [ -n "$RF_REASON" ] || RF_REASON="reporter returned an indeterminate result (exit $_rc)"
+    rm -f "$_errf"
+    return
+  fi
+
+  while IFS= read -r _line; do
+    [ -n "$_line" ] || continue
+    _kind="${_line%%	*}"
+    case "$_kind" in
+      counts)
+        IFS=$'\t' read -r _ RF_WINDOW RF_CONSIDERED RF_MEANINGFUL_TOTAL RF_SCANNED \
+          RF_NOT_LOADED RF_IGNORED RF_UNCLASSIFIED <<< "$_line"
+        # A counts record whose fields are not all plain nonnegative integers is
+        # a reporter CONTRACT BREAK — a named skip, never report-shaped partial
+        # data (panel finding: `reported` with null counts would defeat the
+        # named-skip contract).
+        case "${RF_WINDOW:-x}${RF_CONSIDERED:-x}${RF_MEANINGFUL_TOTAL:-x}${RF_SCANNED:-x}${RF_NOT_LOADED:-x}${RF_IGNORED:-x}${RF_UNCLASSIFIED:-x}" in
+          *[!0-9]*)
+            RF_REASON="reporter emitted a malformed counts record"
+            RF_WINDOW=""; RF_CONSIDERED=""; RF_MEANINGFUL_TOTAL=""; RF_SCANNED=""
+            RF_NOT_LOADED=""; RF_IGNORED=""; RF_UNCLASSIFIED="" ;;
+          *) RF_STATUS="reported" ;;
+        esac ;;
+      record)
+        RF_RECORDS[${#RF_RECORDS[@]}]="${_line#record	}" ;;
+    esac
+  done <<< "$_out"
+
+  # exit 0 with NO counts record is the reporter's documented NAMED-SKIP shape
+  # (an unconfigured surface, or zero meaningful logs). Preserve its reason
+  # rather than rendering an empty, zero-looking section. A reason already set
+  # above (the malformed-counts contract break) wins over the stderr line.
+  if [ "$RF_STATUS" != "reported" ] && [ -z "$RF_REASON" ]; then
+    RF_REASON="$(head -n 1 "$_errf" 2>/dev/null | sed -E 's/^SKIP //')"
+    [ -n "$RF_REASON" ] || RF_REASON="reporter produced no counts record"
+  fi
+  rm -f "$_errf"
+}
+run_recall_report
+
+# emit_recall_markdown — the `## Recall failures` body (no heading).
+emit_recall_markdown() {
+  if [ "$RF_STATUS" != "reported" ]; then
+    printf '_(not measured — %s)_\n' "$RF_REASON"
+    printf 'Informational only; never scored — an unmeasured window is NOT a clean zero.\n'
+    return
+  fi
+  printf -- '- window: %s newest meaningful session log(s); %s scanned of %s meaningful (%s file(s) considered)\n' \
+    "$RF_WINDOW" "$RF_SCANNED" "$RF_MEANINGFUL_TOTAL" "$RF_CONSIDERED"
+  printf -- '- not-loaded: %s\n' "$RF_NOT_LOADED"
+  printf -- '- loaded-but-ignored: %s\n' "$RF_IGNORED"
+  printf -- '- unclassified recall-failure mentions: %s\n' "$RF_UNCLASSIFIED"
+  printf 'Informational only; never scored. A rolling count, not a grade — there is no target number, and the extractor under-reports by design.\n'
+}
+
 # --- output -------------------------------------------------------------------
 emit_markdown() {
   printf '# /self-audit scorecard — %s\n\n' "$DATE"
@@ -1628,6 +1754,11 @@ emit_markdown() {
   # reason: every pre-existing section keeps its offset.
   printf '\n## Orientation surface\n\n'
   emit_orientation_markdown
+
+  # Appended after Orientation surface for the same positional-stability
+  # reason: every pre-existing section keeps its offset.
+  printf '\n## Recall failures\n\n'
+  emit_recall_markdown
 }
 
 emit_json() {
@@ -1794,6 +1925,43 @@ emit_json() {
     --argjson skipped "$ori_skipped" \
     '{measured: $measured, lesson_index: $lesson_index, harnesses: $harnesses, total_bytes: $total_bytes, total_lines: $total_lines, skipped: $skipped}')"
 
+  # recall_failures — ADDITIVE optional field, its OWN key so a consumer can
+  # never read a self-reported miss COUNT as a mechanical pillar result. Counts
+  # are null when the window could not be measured; `reason` is populated only
+  # then, and an unmeasured window is explicitly NOT a zero. APPENDED LAST for
+  # the same positional-stability reason as the three fields before it.
+  local rf_records='[]' rf_rec rf_cls rf_loc
+  for rf_rec in ${RF_RECORDS[@]+"${RF_RECORDS[@]}"}; do
+    IFS=$'\t' read -r rf_cls rf_loc <<< "$rf_rec"
+    rf_records="$(printf '%s' "$rf_records" | jq \
+      --arg class "$rf_cls" --arg location "$rf_loc" \
+      '. += [{class: $class, location: $location}]')"
+  done
+  local rf_reported=false
+  [ "$RF_STATUS" = "reported" ] && rf_reported=true
+  local rf_json
+  rf_json="$(jq -n \
+    --arg status "$RF_STATUS" \
+    --arg reason "$RF_REASON" \
+    --argjson reported "$rf_reported" \
+    --arg window "$RF_WINDOW" \
+    --arg files_considered "$RF_CONSIDERED" \
+    --arg meaningful_total "$RF_MEANINGFUL_TOTAL" \
+    --arg scanned "$RF_SCANNED" \
+    --arg not_loaded "$RF_NOT_LOADED" \
+    --arg loaded_but_ignored "$RF_IGNORED" \
+    --arg unclassified "$RF_UNCLASSIFIED" \
+    --argjson records "$rf_records" \
+    '{status: $status, reason: $reason, scored: false,
+      window: ($window | tonumber? // null),
+      files_considered: ($files_considered | tonumber? // null),
+      meaningful_total: ($meaningful_total | tonumber? // null),
+      scanned: ($scanned | tonumber? // null),
+      not_loaded: ($not_loaded | tonumber? // null),
+      loaded_but_ignored: ($loaded_but_ignored | tonumber? // null),
+      unclassified: ($unclassified | tonumber? // null),
+      records: (if $reported then $records else [] end)}')"
+
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
@@ -1805,7 +1973,8 @@ emit_json() {
     --argjson codex_registry_bytes "$cx_json" \
     --argjson semantic_currentness "$sc_json" \
     --argjson orientation_surface "$ori_json" \
-    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness, orientation_surface: $orientation_surface}'
+    --argjson recall_failures "$rf_json" \
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness, orientation_surface: $orientation_surface, recall_failures: $recall_failures}'
 }
 
 OUTPUT=""

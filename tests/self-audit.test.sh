@@ -1665,7 +1665,7 @@ _test_codex_registry_clean() {
   # Panel finding (<TEAM>-468): the new field is appended LAST so every
   # pre-existing field keeps its POSITION as well as its name and shape.
   assert_eq "codex registry: JSON stays backward-compatible (existing fields keep position, new field appended last)" \
-    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface" "$fields"
+    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures" "$fields"
   assert_contains "codex registry: markdown carries the non-scoring informational size line" \
     "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
 }
