@@ -254,19 +254,34 @@ STATE_MAP="$(printf '%s' "$bulk_json" | jq -r '
     | if type == "object" then (.name // tostring) else tostring end);
   .[] | select((.identifier // "") != "") | [ s(.identifier), s(.state) ] | @tsv')"
 
-reads=0
+# The read budget is FILE-BACKED, not a shell variable. live_state is invoked as
+# `live="$(live_state "$id")"` — a command substitution, i.e. a SUBSHELL — so a
+# plain `reads=$((reads+1))` inside it is discarded when the subshell exits and
+# the cap silently stops applying (measured: 5 reads under --max-reads 1, while
+# the PowerShell twin correctly made 1). A file survives the subshell, keeps the
+# twins' call counts identical, and keeps the cap meaningful.
+READS_FILE="$(mktemp)"
+printf '0' > "$READS_FILE"
+trap 'rm -f "$READS_FILE"' EXIT
+reads_get() { cat "$READS_FILE" 2>/dev/null || printf '0'; }
+reads_inc() { printf '%s' "$(( $(reads_get) + 1 ))" > "$READS_FILE"; }
+
 # live_state <ident> — echo the live state name, or "" when unknown.
 live_state() {
   local ident="$1" hit=""
-  hit="$(printf '%s\n' "$STATE_MAP" | grep -F "$(printf '%s\t' "$ident")" | head -n 1)"
+  # Field-exact match, NOT a substring grep: `grep -F "ABC-1<TAB>"` also matches
+  # a row for `XABC-1`, so an overlapping team prefix would compare a claim
+  # against the wrong issue — while the PS twin's hashtable lookup requires an
+  # exact key. awk `$1==id` is the exact-key equivalent.
+  hit="$(printf '%s\n' "$STATE_MAP" | awk -F'\t' -v id="$ident" '$1 == id { print $2; exit }')"
   if [ -n "$hit" ]; then
-    printf '%s' "${hit#*$'\t'}"
+    printf '%s' "$hit"
     return 0
   fi
   # Not in the bulk payload. If the payload may have been truncated, spend a
   # read; otherwise the identifier genuinely does not exist in the workspace.
-  if [ "$possibly_truncated" -eq 1 ] && [ "$reads" -lt "$MAX_READS" ]; then
-    reads=$((reads + 1))
+  if [ "$possibly_truncated" -eq 1 ] && [ "$(reads_get)" -lt "$MAX_READS" ]; then
+    reads_inc
     local rj
     if rj="$("$LINEARK_BIN" issues read "$ident" --format json 2>/dev/null)" \
        && printf '%s' "$rj" | jq -e 'type == "object"' >/dev/null 2>&1; then
@@ -322,7 +337,22 @@ scan_claims() {
       LEAD_MAX = 34      # max length of a distributing "State:" label
       fence = 0; section = ""; secdate = ""
       # A light connector: what may sit between an identifier and its state word.
-      LIGHT = "^[[:space:]*_`:;,.=—–>-]*((is|was|are|were|remains|remain|stays|stay|now|moved|set)[[:space:]]+(to[[:space:]]+)?)?[[:space:]*_`:;,.=—–>-]*$"
+      # The optional ADVERB slot after the copula is load-bearing — without it
+      # "ABC-1 is now Done" and "ABC-1 is currently Done" (both ordinary
+      # phrasings) resolve to NO claim, which is a silent miss, not restraint.
+      # The perfect auxiliary ("has been closed") is a separate alternative from
+      # the plain copula ("is closed") — both are ordinary ways to assert state.
+      LIGHT = "^[[:space:]*_`:;,.=—–>-]*((((has|have|had)[[:space:]]+been)|(is|was|are|were|remains|remain|stays|stay|now|moved|set))[[:space:]]+((now|currently|still|already|again)[[:space:]]+)?((moved|set|changed|switched|flipped)[[:space:]]+)?(to[[:space:]]+)?)?[[:space:]*_`:;,.=—–>-]*$"
+      # A state word FOLLOWED BY one of these is not a state assertion but the
+      # head of a longer phrase: a deadline ("Done by Friday"), a condition
+      # ("Done when the memo lands"), or a noun compound ("open questions",
+      # "done criteria"). Without this, Rule A fires on any identifier trailed
+      # by a bare state word in ordinary prose.
+      STATEALT = "(in[ _-]progress|in[ _-]review|backlog|to[ _-]?do|cancell?ed|completed|complete|closed|done|still[[:space:]]+open|remains[[:space:]]+open|outstanding|unresolved|blocked|open)"
+      NOTSTATE = "^" STATEALT "[[:space:]]+(by|until|till|when|after|before|once|unless|if|for|to|as|about|regarding|criteria|questions?|items?|tasks?|work|list|state|status|column|label|issues?)([^a-z]|$)"
+      # Same token set with the separators already stripped — Rule B compares
+      # against this AFTER collapsing punctuation out of the label.
+      STATEBARE = "^(inprogress|inreview|backlog|todo|cancell?ed|completed|complete|closed|done|stillopen|remainsopen|outstanding|unresolved|blocked|open)$"
     }
     # canonical state named at the START of a window, else ""
     function state_at(w,   t) {
@@ -352,8 +382,11 @@ scan_claims() {
         st = state_at(substr(w, k))
         if (st == "") continue
         pre = substr(w, 1, k - 1)
-        if (pre ~ LIGHT) return st
-        return ""      # a state word exists but prose separates it — not a claim
+        if (pre !~ LIGHT) return ""   # a state word exists but prose separates it
+        # The state word is adjacent — but is it the CLAIM, or the head of a
+        # longer phrase? "Done by Friday" / "open questions" are not states.
+        if (lc(substr(w, k)) ~ NOTSTATE) return ""
+        return st
       }
       return ""
     }
@@ -365,10 +398,13 @@ scan_claims() {
       if (t !~ /:[[:space:]*_]*$/) return ""
       st = state_at(t)
       if (st == "") return ""
-      # Require the label to be essentially just the state word + colon.
+      # The label must be the state word and NOTHING else. A length budget is
+      # not enough: "Done except:" strips to "Doneexcept" (10 chars) and used to
+      # distribute a Done claim across every identifier on the line — the exact
+      # inversion of what the label means. Compare against the canonical token
+      # set instead of counting characters.
       gsub(/[[:space:]*_`:-]/, "", t)
-      if (length(t) > 12) return ""
-      return st
+      return (lc(t) ~ STATEBARE) ? st : ""
     }
     function is_conjunction(w,   t) {
       t = lc(w); gsub(/[[:space:],;\/&*_`()-]|and|plus|through|thru|then/, "", t)
@@ -392,6 +428,18 @@ scan_claims() {
       if (section ~ /state[ -]delta/ || section ~ /audit log/ || section ~ /changelog/ || section ~ /^#+[[:space:]]*history/) next
 
       line = $0
+      # NBSP -> space. The awk [[:space:]] class is ASCII-only under the C
+      # locale while the PS twin \s matches U+00A0, so an editor-inserted
+      # non-breaking space made the twins disagree. Normalizing on BOTH sides
+      # fixes the divergence in the direction that keeps the claim visible.
+      # (No apostrophes in this awk program — it is single-quoted in bash.)
+      gsub(/\xc2\xa0/, " ", line)
+
+      # A DATE-LED line is a log entry, not a present-tense assertion — the
+      # `- 2026-08-04 (…): TEAM-1 was In Progress` shape that closeout writes.
+      # Section-level history detection only covers it when the writer used a
+      # recognized heading; this covers the bullet wherever it lands.
+      if (line ~ /^[[:space:]*_>#-]*20[0-9][0-9]-[01][0-9]-[0-3][0-9]/) next
       n = 0; rest = line; base = 0
       while (match(rest, idre)) {
         n++
@@ -486,25 +534,33 @@ if [ "$DO_PROJECTS" -eq 1 ]; then
   if printf '%s' "$pj" | jq -e 'type == "array"' >/dev/null 2>&1; then
     while IFS=$'\t' read -r pid pname; do
       [ -n "${pid:-}" ] || continue
-      if [ "$reads" -ge "$MAX_READS" ]; then
+      if [ "$(reads_get)" -ge "$MAX_READS" ]; then
         projects_skipped="$projects_skipped $pname;"
         continue
       fi
-      reads=$((reads + 1))
+      reads_inc
       prj="$("$LINEARK_BIN" projects read "$pid" --format json 2>/dev/null || true)"
       printf '%s' "$prj" | jq -e 'type == "object"' >/dev/null 2>&1 || { projects_skipped="$projects_skipped $pname;"; continue; }
       pstatus="$(printf '%s' "$prj" | jq -r '(.status // "") | if type == "object" then (.name // "") else tostring end')"
       [ -n "$pstatus" ] || { projects_skipped="$projects_skipped $pname;"; continue; }
 
-      if [ "$reads" -ge "$MAX_READS" ]; then
+      if [ "$(reads_get)" -ge "$MAX_READS" ]; then
         projects_skipped="$projects_skipped $pname;"
         continue
       fi
-      reads=$((reads + 1))
+      reads_inc
       # Default list scope hides Done/Canceled, so this IS the open-issue cut.
       pij="$("$LINEARK_BIN" issues list --project "$pid" --limit "$LIMIT" --format json 2>/dev/null || true)"
       printf '%s' "$pij" | jq -e 'type == "array"' >/dev/null 2>&1 || { projects_skipped="$projects_skipped $pname;"; continue; }
       open_n="$(printf '%s' "$pij" | jq 'length')"
+      # A child list returned AT the ceiling may be truncated, and every class
+      # below is a statement about the WHOLE child set — an active child on page
+      # two would silently produce "PASS ... projects agree". Unknown evidence is
+      # a skip, never a pass.
+      if [ "$LIMIT" -gt 0 ] && [ "$open_n" -ge "$LIMIT" ]; then
+        projects_skipped="$projects_skipped $pname (child list may be truncated at --limit=$LIMIT);"
+        continue
+      fi
       active_n="$(printf '%s' "$pij" | jq '[ .[] | ((.state // "") | if type == "object" then (.name // "") else tostring end) | select(. == "In Progress" or . == "In Review") ] | length')"
       projects_checked=$((projects_checked + 1))
 

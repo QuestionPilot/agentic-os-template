@@ -50,6 +50,9 @@ function New-CscStub([string]$d) {
     @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList = @())
 $d = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Call log — the read-budget assertion counts `issues read` invocations, which is
+# the only way to prove the cap actually held (the exit code cannot show it).
+Add-Content -LiteralPath (Join-Path $d 'calls.log') -Value ("CALL " + ($ArgList -join ' '))
 $proj = ''
 for ($i = 0; $i -lt $ArgList.Count - 1; $i++) {
     if ($ArgList[$i] -eq '--project') { $proj = $ArgList[$i + 1] }
@@ -280,6 +283,109 @@ name: accurate
 $r = Invoke-Csc $stub7 $M7 @('--no-projects')
 Assert-Eq       'check-state-currentness: accurate note passes (exit 0)' 0 $r.Rc
 Assert-Contains 'check-state-currentness: PASS names the compared-claim count' $r.Out 'PASS'
+
+# --- panel-derived restraint + recall anchors --------------------------------
+# Every shape below came out of the pre-PR cross-model panel and was reproduced
+# with a fixture before being fixed. They are pinned on BOTH twins: the extractor
+# is a heuristic, so its boundary IS the spec, and a boundary that only one twin
+# enforces is twin divergence by another name.
+#
+# The `ABC-3 is In Progress.` tail on each fixture is load-bearing, not padding:
+# it supplies the one comparable claim that makes the run reach a verdict. Without
+# it a suppressed line yields "no comparable evidence" (exit 2) and the
+# Assert-NotContains below would pass against empty output — a vacuous green.
+$DA = New-CscTmp; $MA = Join-Path $DA 'mem'; New-Item -ItemType Directory -Path $MA -Force | Out-Null
+$stubA = New-CscStub $DA; Set-CscStates $DA
+
+function Test-CscCase([string]$Line, [string]$Expect, [string]$Label) {
+    Set-Content -LiteralPath (Join-Path $MA 'case.md') -Value ($Line + "`nABC-3 is In Progress.")
+    $r = Invoke-Csc $stubA $MA @('--no-projects')
+    if ($Expect -eq 'quiet') {
+        Assert-Eq          "check-state-currentness: $Label yields no finding (exit 0)" 0 $r.Rc
+        Assert-NotContains "check-state-currentness: $Label is not a state claim" $r.Out 'ABC-1'
+    } else {
+        Assert-Eq       "check-state-currentness: $Label IS a state claim (exit 1)" 1 $r.Rc
+        Assert-Contains "check-state-currentness: $Label names ABC-1" $r.Out 'ABC-1'
+    }
+}
+
+# RESTRAINT — a state word adjacent to an identifier is not automatically a claim.
+Test-CscCase 'Done except: ABC-1'                 'quiet' 'a negative label ("Done except:")'
+Test-CscCase 'ABC-1 done by Friday.'              'quiet' 'a deadline phrase ("done by Friday")'
+Test-CscCase 'ABC-1 open questions remain.'       'quiet' 'a noun compound ("open questions")'
+Test-CscCase 'ABC-1 is open for discussion.'      'quiet' 'an adjectival phrase ("open for discussion")'
+Test-CscCase '- 2026-07-01: ABC-1 was Done then.' 'quiet' 'a date-led log bullet outside a history section'
+
+# RECALL — ordinary present-tense phrasings must NOT be silently missed.
+Test-CscCase 'ABC-1 is now Backlog.'              'claim' 'an adverb after the copula ("is now")'
+Test-CscCase 'ABC-1 is currently Backlog.'        'claim' 'an adverb after the copula ("is currently")'
+# "blocked" maps to OPEN, which contradicts the fixture's live Done — a state
+# word that AGREED would exit 0 and prove nothing about extraction.
+Test-CscCase 'ABC-1 has been blocked.'            'claim' 'a perfect auxiliary ("has been blocked")'
+Test-CscCase 'ABC-1 was set to Backlog.'          'claim' 'an auxiliary + transition verb ("was set to")'
+
+# TWIN PARITY — a non-breaking space must not make one twin see a claim the other
+# misses; .NET \s matches U+00A0 where awk [[:space:]] is ASCII-only.
+$nbsp = [char]0x00A0
+Set-Content -LiteralPath (Join-Path $MA 'case.md') -Value ("ABC-1${nbsp}is${nbsp}Backlog.`nABC-3 is In Progress.")
+$r = Invoke-Csc $stubA $MA @('--no-projects')
+Assert-Eq       'check-state-currentness: NBSP-separated claim still extracts (exit 1)' 1 $r.Rc
+Assert-Contains 'check-state-currentness: NBSP-separated claim names ABC-1' $r.Out 'ABC-1'
+
+Remove-Item -LiteralPath $DA -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- read budget holds across the per-issue fallback ---------------------------
+# The bash twin lost this counter to a command substitution; assert the cap here
+# too so the twins cannot drift apart on how many tracker calls a run costs.
+$DB = New-CscTmp; $MB = Join-Path $DB 'mem'; New-Item -ItemType Directory -Path $MB -Force | Out-Null
+$stubB = New-CscStub $DB
+# Bulk payload returns exactly --limit rows => treated as possibly truncated,
+# so every unmatched identifier is a per-issue read candidate.
+'[{"identifier":"ABC-90","state":"Done"},{"identifier":"ABC-91","state":"Done"}]' | Set-Content -LiteralPath (Join-Path $DB 'list.json')
+foreach ($n in 1..5) {
+    ('{"identifier":"ABC-' + $n + '","state":"Done"}') | Set-Content -LiteralPath (Join-Path $DB ("read-ABC-$n.json"))
+}
+(1..5 | ForEach-Object { "ABC-$_ is Backlog." }) -join "`n" | Set-Content -LiteralPath (Join-Path $MB 'many.md')
+$null = Invoke-Csc $stubB $MB @('--no-projects', '--limit', '2', '--max-reads', '1')
+$calls = @(Get-Content -LiteralPath (Join-Path $DB 'calls.log') -ErrorAction SilentlyContinue | Where-Object { $_ -match 'issues read' })
+Assert-Eq 'check-state-currentness: --max-reads caps per-issue reads' 1 $calls.Count
+Remove-Item -LiteralPath $DB -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- state lookup is key-exact, not a substring --------------------------------
+# The bash twin used a fixed-string grep that also matched an XABC-1 row; this
+# hashtable lookup must stay exact so the twins resolve identifiers identically.
+$DC = New-CscTmp; $MC = Join-Path $DC 'mem'; New-Item -ItemType Directory -Path $MC -Force | Out-Null
+$stubC = New-CscStub $DC
+'[{"identifier":"XABC-1","state":"Done"},{"identifier":"ABC-3","state":"In Progress"}]' | Set-Content -LiteralPath (Join-Path $DC 'list.json')
+"ABC-1 is Backlog.`nABC-3 is In Progress." | Set-Content -LiteralPath (Join-Path $MC 'x.md')
+$r = Invoke-Csc $stubC $MC @('--no-projects')
+Assert-Eq       'check-state-currentness: XABC-1 row does not resolve an ABC-1 claim (exit 0)' 0 $r.Rc
+Assert-Contains 'check-state-currentness: unresolved ABC-1 is NOTEd, not compared' $r.Out 'absent from the tracker payload'
+Remove-Item -LiteralPath $DC -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- a truncated project child list is a skip, never a PASS --------------------
+$DD = New-CscTmp; $MD = Join-Path $DD 'mem'; New-Item -ItemType Directory -Path $MD -Force | Out-Null
+$stubD = New-CscStub $DD; Set-CscStates $DD
+'ABC-3 is In Progress.' | Set-Content -LiteralPath (Join-Path $MD 'q.md')
+'[{"id": "p-big", "name": "Big Thing"}]' | Set-Content -LiteralPath (Join-Path $DD 'projects.json')
+'{"id":"p-big","name":"Big Thing","status":{"name":"Backlog"}}' | Set-Content -LiteralPath (Join-Path $DD 'proj-p-big.json')
+# Exactly --limit children, none of them active on this page.
+'[{"identifier":"ABC-4","state":"Backlog"},{"identifier":"ABC-5","state":"Backlog"}]' | Set-Content -LiteralPath (Join-Path $DD 'projissues-p-big.json')
+$r = Invoke-Csc $stubD $MD @('--limit', '2')
+Assert-Contains    'check-state-currentness: at-limit child list is named as not evaluated' $r.Out 'child list may be truncated'
+Assert-NotContains 'check-state-currentness: a truncated project is not counted as agreeing' $r.Out '1 project(s) agree'
+Remove-Item -LiteralPath $DD -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- a lineark that cannot EXECUTE still fails soft ----------------------------
+# $ErrorActionPreference is 'Stop', so an exec failure would otherwise throw and
+# exit with PowerShell's own code — which self-audit would read as "findings".
+$DE = New-CscTmp; $ME = Join-Path $DE 'mem'; New-Item -ItemType Directory -Path $ME -Force | Out-Null
+'ABC-1 is Backlog.' | Set-Content -LiteralPath (Join-Path $ME 'n.md')
+$broken = Join-Path $DE 'broken.ps1'
+'this is not valid powershell {{{' | Set-Content -LiteralPath $broken
+$r = Invoke-Csc $broken $ME @('--no-projects')
+Assert-Eq 'check-state-currentness: an unrunnable lineark still exits 2 (fail-soft)' 2 $r.Rc
+Remove-Item -LiteralPath $DE -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- vault scope: only `status: active` project notes are scanned -------------
 # PS-only coverage the bash twin does not carry: the vault half of the source

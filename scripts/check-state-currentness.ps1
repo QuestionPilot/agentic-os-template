@@ -378,10 +378,26 @@ function Get-Field($obj, [string]$name) {
     return "$v"
 }
 
-$bulkRaw = (& $lineark issues list --show-done --limit $IssueLimit --format json 2>$null | Out-String)
-if ($LASTEXITCODE -ne 0) {
+# Invoke-Lineark — run the tracker CLI and return @{ Ok; Raw }. $ErrorActionPreference
+# is 'Stop', so a binary that fails to EXECUTE (wrong arch, not executable, missing
+# loader) throws a terminating error rather than setting $LASTEXITCODE — which would
+# crash out with PowerShell's own exit code and be read by self-audit as "findings"
+# instead of a skip. Every call site goes through here so the fail-soft contract
+# holds for exec failures too, not just non-zero exits.
+function Invoke-Lineark([string[]]$LinearkArgs) {
+    try {
+        $raw = (& $lineark @LinearkArgs 2>$null | Out-String)
+        return @{ Ok = ($LASTEXITCODE -eq 0); Raw = $raw }
+    } catch {
+        return @{ Ok = $false; Raw = '' }
+    }
+}
+
+$bulk = Invoke-Lineark @('issues', 'list', '--show-done', '--limit', "$IssueLimit", '--format', 'json')
+if (-not $bulk.Ok) {
     Skip-Currentness 'lineark issues list failed — tracker unreachable or unauthenticated'
 }
+$bulkRaw = $bulk.Raw
 if (-not $bulkRaw.TrimStart().StartsWith('[')) {
     Skip-Currentness 'unexpected issues-list payload (not a JSON array)'
 }
@@ -410,10 +426,10 @@ function Get-LiveState([string]$ident) {
     # read; otherwise the identifier genuinely does not exist in the workspace.
     if ($possiblyTruncated -and $script:Reads -lt $MaxReads) {
         $script:Reads++
-        $rraw = (& $lineark issues read $ident --format json 2>$null | Out-String)
-        if ($LASTEXITCODE -eq 0) {
+        $r = Invoke-Lineark @('issues', 'read', $ident, '--format', 'json')
+        if ($r.Ok) {
             $robj = $null
-            try { $robj = $rraw | ConvertFrom-Json } catch { $robj = $null }
+            try { $robj = $r.Raw | ConvertFrom-Json } catch { $robj = $null }
             if ($null -ne $robj -and $robj -is [PSCustomObject]) { return (Get-Field $robj 'state') }
         }
     }
@@ -450,10 +466,19 @@ function Get-LiveState([string]$ident) {
 # Anything unresolved yields NO claim. Under-reporting is the deliberate bias.
 $AdjMax = 44        # chars after an identifier that can still carry its state
 $LeadMax = 34       # max length of a distributing "State:" label
-# A light connector: what may sit between an identifier and its state word.
-# — / – are the em/en dashes, spelled as escapes so the pattern stays
-# ASCII-safe in transit (parity with the bash twin's literal dash class).
-$LightPat = '^[\s*_`:;,.=—–>\-]*((is|was|are|were|remains|remain|stays|stay|now|moved|set)\s+(to\s+)?)?[\s*_`:;,.=—–>\-]*$'
+# A light connector: what may sit between an identifier and its state word. The
+# optional ADVERB slot after the copula is load-bearing — without it
+# "ABC-1 is now Done" and "ABC-1 is currently Done" (both ordinary phrasings)
+# resolve to NO claim, which is a silent miss, not restraint.
+$LightPat = '^[\s*_`:;,.=—–>\-]*((((has|have|had)\s+been)|(is|was|are|were|remains|remain|stays|stay|now|moved|set))\s+((now|currently|still|already|again)\s+)?((moved|set|changed|switched|flipped)\s+)?(to\s+)?)?[\s*_`:;,.=—–>\-]*$'
+# A state word FOLLOWED BY one of these is not a state assertion but the head of
+# a longer phrase: a deadline ("Done by Friday"), a condition ("Done when the
+# memo lands"), or a noun compound ("open questions", "done criteria").
+$StateAlt = '(in[ _-]progress|in[ _-]review|backlog|to[ _-]?do|cancell?ed|completed|complete|closed|done|still\s+open|remains\s+open|outstanding|unresolved|blocked|open)'
+$NotStatePat = '^' + $StateAlt + '\s+(by|until|till|when|after|before|once|unless|if|for|to|as|about|regarding|criteria|questions?|items?|tasks?|work|list|state|status|column|label|issues?)([^a-z]|$)'
+# Same token set with the separators already stripped — Rule B compares against
+# this AFTER collapsing punctuation out of the label.
+$StateBarePat = '^(inprogress|inreview|backlog|todo|cancell?ed|completed|complete|closed|done|stillopen|remainsopen|outstanding|unresolved|blocked|open)$'
 
 # Get-StateAt — canonical state named at the START of a window, else ''.
 function Get-StateAt([string]$w) {
@@ -471,11 +496,15 @@ function Get-StateAt([string]$w) {
 # Rule A, inner: scan the window for a state word reachable through light text.
 function Get-AdjacentStateRaw([string]$w) {
     for ($k = 0; $k -lt $w.Length; $k++) {
-        $st = Get-StateAt $w.Substring($k)
+        $rest = $w.Substring($k)
+        $st = Get-StateAt $rest
         if ($st -eq '') { continue }
         $pre = $w.Substring(0, $k)
-        if ($pre -cmatch $LightPat) { return $st }
-        return ''   # a state word exists but prose separates it — not a claim
+        if ($pre -cnotmatch $LightPat) { return '' }   # prose separates it
+        # The state word is adjacent — but is it the CLAIM, or the head of a
+        # longer phrase? "Done by Friday" / "open questions" are not states.
+        if ($rest.ToLowerInvariant() -cmatch $NotStatePat) { return '' }
+        return $st
     }
     return ''
 }
@@ -499,9 +528,13 @@ function Get-LabelState([string]$lead) {
     if ($t -cnotmatch ':[\s*_]*$') { return '' }
     $st = Get-StateAt $t
     if ($st -eq '') { return '' }
-    # Require the label to be essentially just the state word + colon.
+    # The label must be the state word and NOTHING else. A length budget is not
+    # enough: "Done except:" strips to "Doneexcept" (10 chars) and used to
+    # distribute a Done claim across every identifier on the line — the exact
+    # inversion of what the label means. Compare against the canonical token set
+    # instead of counting characters.
     $bare = [regex]::Replace($t, '[\s*_`:\-]', '')
-    if ($bare.Length -gt 12) { return '' }
+    if ($bare.ToLowerInvariant() -cnotmatch $StateBarePat) { return '' }
     return $st
 }
 
@@ -526,7 +559,11 @@ function Get-Claims([string]$path, [string]$idPattern) {
     $section = ''
     $secdate = ''
     for ($ln = 0; $ln -lt $lines.Count; $ln++) {
-        $line = $lines[$ln]
+        # NBSP -> space. The awk [[:space:]] class is ASCII-only under the C
+        # locale while .NET \s matches U+00A0, so an editor-inserted non-breaking
+        # space made the twins disagree. Normalizing on BOTH sides fixes the
+        # divergence in the direction that keeps the claim visible.
+        $line = $lines[$ln].Replace([char]0x00A0, ' ')
         # Fenced code is documentation of syntax, never a state claim.
         if ($line -cmatch '^\s*(```|~~~)') { $fence = -not $fence; continue }
         if ($fence) { continue }
@@ -539,6 +576,12 @@ function Get-Claims([string]$path, [string]$idPattern) {
         # History LOGS record what was true then; they are not present claims.
         if ($section -cmatch 'state[ \-]delta' -or $section -cmatch 'audit log' -or
             $section -cmatch 'changelog' -or $section -cmatch '^#+\s*history') { continue }
+
+        # A DATE-LED line is a log entry, not a present-tense assertion — the
+        # `- 2026-08-04 (…): TEAM-1 was In Progress` shape that closeout writes.
+        # Section-level history detection only covers it when the writer used a
+        # recognized heading; this covers the bullet wherever it lands.
+        if ($line -cmatch '^[\s*_>#\-]*20[0-9][0-9]-[01][0-9]-[0-3][0-9]') { continue }
 
         $ms = @([regex]::Matches($line, $idPattern))
         if ($ms.Count -eq 0) { continue }
@@ -628,10 +671,10 @@ foreach ($sf in $scanFiles) {
 $projectsChecked = 0
 $projectsSkipped = ''
 if (-not $NoProjects) {
-    $praw = (& $lineark projects list --format json 2>$null | Out-String)
+    $pl = Invoke-Lineark @('projects', 'list', '--format', 'json')
     $projects = $null
-    if ($LASTEXITCODE -eq 0 -and $praw.TrimStart().StartsWith('[')) {
-        try { $projects = @($praw | ConvertFrom-Json) } catch { $projects = $null }
+    if ($pl.Ok -and $pl.Raw.TrimStart().StartsWith('[')) {
+        try { $projects = @($pl.Raw | ConvertFrom-Json) } catch { $projects = $null }
     }
     if ($null -eq $projects) {
         $projectsSkipped = ' (projects list failed);'
@@ -644,9 +687,9 @@ if (-not $NoProjects) {
 
             if ($script:Reads -ge $MaxReads) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
             $script:Reads++
-            $prraw = (& $lineark projects read $projId --format json 2>$null | Out-String)
+            $pr = Invoke-Lineark @('projects', 'read', $projId, '--format', 'json')
             $pobj = $null
-            if ($LASTEXITCODE -eq 0) { try { $pobj = $prraw | ConvertFrom-Json } catch { $pobj = $null } }
+            if ($pr.Ok) { try { $pobj = $pr.Raw | ConvertFrom-Json } catch { $pobj = $null } }
             if ($null -eq $pobj -or -not ($pobj -is [PSCustomObject])) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
             $pstatus = Get-Field $pobj 'status'
             if ($pstatus -eq '') { $projectsSkipped = "$projectsSkipped $pname;"; continue }
@@ -654,13 +697,21 @@ if (-not $NoProjects) {
             if ($script:Reads -ge $MaxReads) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
             $script:Reads++
             # Default list scope hides Done/Canceled, so this IS the open-issue cut.
-            $piraw = (& $lineark issues list --project $projId --limit $IssueLimit --format json 2>$null | Out-String)
+            $pi = Invoke-Lineark @('issues', 'list', '--project', $projId, '--limit', "$IssueLimit", '--format', 'json')
             $pissues = $null
-            if ($LASTEXITCODE -eq 0 -and $piraw.TrimStart().StartsWith('[')) {
-                try { $pissues = @($piraw | ConvertFrom-Json) } catch { $pissues = $null }
+            if ($pi.Ok -and $pi.Raw.TrimStart().StartsWith('[')) {
+                try { $pissues = @($pi.Raw | ConvertFrom-Json) } catch { $pissues = $null }
             }
             if ($null -eq $pissues) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
             $openN = $pissues.Count
+            # A child list returned AT the ceiling may be truncated, and every
+            # class below is a statement about the WHOLE child set — an active
+            # child on page two would silently produce "PASS ... projects agree".
+            # Unknown evidence is a skip, never a pass.
+            if ($IssueLimit -gt 0 -and $openN -ge $IssueLimit) {
+                $projectsSkipped = "$projectsSkipped $pname (child list may be truncated at --limit=$IssueLimit);"
+                continue
+            }
             $activeN = @($pissues | Where-Object {
                 $s = Get-Field $_ 'state'
                 $s -ceq 'In Progress' -or $s -ceq 'In Review'

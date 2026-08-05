@@ -39,6 +39,9 @@ csc_stub() {
   cat > "$d/stub" <<'STUB'
 #!/usr/bin/env bash
 d="$(cd "$(dirname "$0")" && pwd)"
+# Call log — the read-budget assertion counts `issues read` invocations, which is
+# the only way to prove the cap actually held (the exit code cannot show it).
+printf 'CALL %s\n' "$*" >> "$d/calls.log"
 proj=""
 prev=""
 for a in "$@"; do
@@ -242,6 +245,98 @@ EOF
 o="$(run_csc "$D7" "$M7" --no-projects)"; rc=$?
 assert_eq "check-state-currentness: accurate note passes (exit 0)" 0 "$rc"
 assert_contains "check-state-currentness: PASS names the compared-claim count" "$o" "PASS"
+
+# --- panel-derived restraint + recall anchors --------------------------------
+# Every shape below came out of the pre-PR cross-model panel and was reproduced
+# with a fixture before being fixed. They are pinned on BOTH twins: the extractor
+# is a heuristic, so its boundary IS the spec, and a boundary that only one twin
+# enforces is twin divergence by another name.
+#
+# The `ABC-3 is In Progress.` tail on each fixture is load-bearing, not padding:
+# it supplies the one comparable claim that makes the run reach a verdict. Without
+# it a suppressed line yields "no comparable evidence" (exit 2) and the
+# assert_not_contains below would pass against empty output — a vacuous green.
+DA="$(mktemp -d)"; MA="$DA/mem"; mkdir -p "$MA"; csc_stub "$DA"; csc_states "$DA"
+
+_csc_case() { # _csc_case <line> <expect: quiet|claim> <label>
+  printf '%s\nABC-3 is In Progress.\n' "$1" > "$MA/case.md"
+  local o rc
+  o="$(run_csc "$DA" "$MA" --no-projects)"; rc=$?
+  if [ "$2" = "quiet" ]; then
+    assert_eq       "check-state-currentness: $3 yields no finding (exit 0)" 0 "$rc"
+    assert_not_contains "check-state-currentness: $3 is not a state claim" "$o" "ABC-1"
+  else
+    assert_eq       "check-state-currentness: $3 IS a state claim (exit 1)" 1 "$rc"
+    assert_contains "check-state-currentness: $3 names ABC-1" "$o" "ABC-1"
+  fi
+}
+
+# RESTRAINT — a state word adjacent to an identifier is not automatically a claim.
+_csc_case 'Done except: ABC-1'                  quiet 'a negative label ("Done except:")'
+_csc_case 'ABC-1 done by Friday.'               quiet 'a deadline phrase ("done by Friday")'
+_csc_case 'ABC-1 open questions remain.'        quiet 'a noun compound ("open questions")'
+_csc_case 'ABC-1 is open for discussion.'       quiet 'an adjectival phrase ("open for discussion")'
+_csc_case '- 2026-07-01: ABC-1 was Done then.'  quiet 'a date-led log bullet outside a history section'
+
+# RECALL — ordinary present-tense phrasings must NOT be silently missed.
+_csc_case 'ABC-1 is now Backlog.'               claim 'an adverb after the copula ("is now")'
+_csc_case 'ABC-1 is currently Backlog.'         claim 'an adverb after the copula ("is currently")'
+# "blocked" maps to OPEN, which contradicts the fixture's live Done — a state
+# word that AGREED would exit 0 and prove nothing about extraction.
+_csc_case 'ABC-1 has been blocked.'             claim 'a perfect auxiliary ("has been blocked")'
+_csc_case 'ABC-1 was set to Backlog.'           claim 'an auxiliary + transition verb ("was set to")'
+
+# TWIN PARITY — a non-breaking space must not make one twin see a claim the other
+# misses; awk [[:space:]] is ASCII-only where .NET \s matches U+00A0.
+printf 'ABC-1\xc2\xa0is\xc2\xa0Backlog.\nABC-3 is In Progress.\n' > "$MA/case.md"
+o="$(run_csc "$DA" "$MA" --no-projects)"; rc=$?
+assert_eq       "check-state-currentness: NBSP-separated claim still extracts (exit 1)" 1 "$rc"
+assert_contains "check-state-currentness: NBSP-separated claim names ABC-1" "$o" "ABC-1"
+
+rm -rf "$DA"
+
+# --- read budget survives the subshell ----------------------------------------
+# live_state runs inside a command substitution; a plain shell counter is lost
+# when that subshell exits, so --max-reads silently stopped applying (measured:
+# 5 reads under a cap of 1, while the PS twin correctly made 1).
+DB="$(mktemp -d)"; MB="$DB/mem"; mkdir -p "$MB"; csc_stub "$DB"
+# Bulk payload returns exactly --limit rows => treated as possibly truncated,
+# so every unmatched identifier is a per-issue read candidate.
+printf '[{"identifier":"ABC-90","state":"Done"},{"identifier":"ABC-91","state":"Done"}]\n' > "$DB/list.json"
+for _i in 1 2 3 4 5; do printf '{"identifier":"ABC-%s","state":"Done"}\n' "$_i" > "$DB/read-ABC-$_i.json"; done
+{ for _i in 1 2 3 4 5; do printf 'ABC-%s is Backlog.\n' "$_i"; done; } > "$MB/many.md"
+run_csc "$DB" "$MB" --no-projects --limit 2 --max-reads 1 >/dev/null 2>&1
+assert_eq "check-state-currentness: --max-reads caps per-issue reads across the subshell" \
+  1 "$(grep -c 'issues read' "$DB/calls.log" 2>/dev/null || echo 0)"
+rm -rf "$DB"
+
+# --- state lookup is field-exact, not a substring ------------------------------
+# `grep -F "ABC-1<TAB>"` also matches a row for XABC-1, so an overlapping prefix
+# could compare a claim against a different issue — while the PS twin's hashtable
+# requires an exact key.
+DC="$(mktemp -d)"; MC="$DC/mem"; mkdir -p "$MC"; csc_stub "$DC"
+printf '[{"identifier":"XABC-1","state":"Done"},{"identifier":"ABC-3","state":"In Progress"}]\n' > "$DC/list.json"
+printf 'ABC-1 is Backlog.\nABC-3 is In Progress.\n' > "$MC/x.md"
+o="$(run_csc "$DC" "$MC" --no-projects)"; rc=$?
+assert_eq       "check-state-currentness: XABC-1 row does not resolve an ABC-1 claim (exit 0)" 0 "$rc"
+assert_contains "check-state-currentness: unresolved ABC-1 is NOTEd, not compared" "$o" "absent from the tracker payload"
+rm -rf "$DC"
+
+# --- a truncated project child list is a skip, never a PASS --------------------
+# Every project class is a statement about the WHOLE child set; an active child
+# on page two would otherwise produce "PASS ... project(s) agree".
+DD="$(mktemp -d)"; MD="$DD/mem"; mkdir -p "$MD"; csc_stub "$DD"; csc_states "$DD"
+printf 'ABC-3 is In Progress.\n' > "$MD/q.md"
+printf '[{"id": "p-big", "name": "Big Thing"}]\n' > "$DD/projects.json"
+printf '{"id":"p-big","name":"Big Thing","status":{"name":"Backlog"}}\n' > "$DD/proj-p-big.json"
+# Exactly --limit children, none of them active on this page.
+printf '[{"identifier":"ABC-4","state":"Backlog"},{"identifier":"ABC-5","state":"Backlog"}]\n' > "$DD/projissues-p-big.json"
+o="$(run_csc "$DD" "$MD" --limit 2)"; rc=$?
+assert_contains "check-state-currentness: at-limit child list is named as not evaluated" \
+  "$o" "child list may be truncated"
+assert_not_contains "check-state-currentness: a truncated project is not counted as agreeing" \
+  "$o" "1 project(s) agree"
+rm -rf "$DD"
 
 # --- vault scope: only `status: active` project notes are scanned -------------
 # The vault half of the source set. A completed project note is a historical
