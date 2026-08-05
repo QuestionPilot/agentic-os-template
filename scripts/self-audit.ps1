@@ -187,7 +187,14 @@ Default inputs:
                ambient env > default)
 
 Output: markdown by default. -Json emits a structured object for tests:
-  {date, total, pillars{...}, injection_surface, gaps[], skipped[], codex_registry_bytes}
+  {date, total, pillars{...}, injection_surface, gaps[], skipped[],
+   codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]}}
+
+    `semantic_currentness` is ADVISORY and lives in its own key + its own
+    markdown section: it comes from scripts/check-state-currentness.ps1
+    (tracker-reachable claim reconciliation) and never contributes to `total`,
+    a pillar score, or `gaps`. Mechanical health and semantic currentness are
+    different questions and a consumer must never read one as the other.
 '@ | Write-Host
     exit 0
 }
@@ -1390,6 +1397,105 @@ foreach ($k in $pillarScores.Keys) {
 $dateStr = [DateTime]::UtcNow.ToString('yyyy-MM-dd')
 
 # ---------------------------------------------------------------------------
+# Semantic currentness (advisory, NEVER scored)
+# ---------------------------------------------------------------------------
+# The five pillars above are MECHANICAL: each proves a structural property of the
+# filesystem — an index resolves, a manifest is fresh, a heading exists. Every one
+# of them can pass while a memory note or an active vault project note confidently
+# asserts a tracker state that changed hours ago, which is exactly how a
+# semantically stale system used to present as an unqualified 100/100.
+#
+# scripts/check-state-currentness.ps1 answers that separate question. Its findings
+# are reported in their OWN section and their OWN JSON key and never touch a
+# pillar score or the gap list: a semantic finding must not move the number, and
+# a clean number must not imply semantic currentness. The checker fails SOFT
+# (exit 2 + a named reason on stderr) whenever the tracker is unreachable, so an
+# operator without a tracker surface keeps the existing filesystem score.
+$scStatus = 'skipped'      # clean | findings | skipped
+$scReason = ''
+$scFindings = @()          # verbatim --list TSV records
+
+# Override for the hermetic tests: point at a stub that serves fixture records.
+$currentnessBin = if ($env:SELF_AUDIT_CURRENTNESS_BIN) { $env:SELF_AUDIT_CURRENTNESS_BIN }
+                  else { Join-Path $RepoRoot 'scripts' 'check-state-currentness.ps1' }
+
+function Invoke-StateCurrentness {
+    # An -Isolated run has no operator surfaces by construction; tests that DO
+    # want this section exercised inject a stub via $env:SELF_AUDIT_CURRENTNESS_BIN.
+    if ($Isolated.IsPresent -and -not $env:SELF_AUDIT_CURRENTNESS_BIN) {
+        $script:scReason = 'isolated run — semantic currentness not evaluated'
+        return
+    }
+    if (-not (Test-Path -LiteralPath $currentnessBin -PathType Leaf)) {
+        $script:scReason = "checker not found at $currentnessBin"
+        return
+    }
+
+    # Hand the checker THIS audit's resolved scope, so the two agree on what the
+    # durable layers are instead of each resolving local.env independently.
+    $scArgs = @('--list')
+    foreach ($d in $MemoryDirs) { $scArgs += @('--memory-dir', $d) }
+    if (-not [string]::IsNullOrEmpty($VaultDir)) { $scArgs += @('--vault-dir', $VaultDir) }
+    if ($Isolated.IsPresent) { $scArgs += '--isolated' }
+
+    $errFile = [IO.Path]::GetTempFileName()
+    try {
+        $raw = (& pwsh -NoProfile -File $currentnessBin @scArgs 2> $errFile | Out-String)
+        $rc = $LASTEXITCODE
+    } catch {
+        $raw = ''; $rc = 2
+    }
+    $records = @($raw -split "`r?`n" | Where-Object { $_ -ne '' })
+
+    if ($rc -eq 0) {
+        $script:scStatus = 'clean'
+    } elseif ($rc -eq 1 -and $records.Count -gt 0) {
+        $script:scStatus = 'findings'
+        $script:scFindings = $records
+    } elseif ($rc -eq 1) {
+        # An exit-1 with no parseable record is a contract break, not a clean
+        # run — say so rather than rendering an empty findings section.
+        $script:scStatus = 'skipped'
+        $script:scReason = 'checker reported findings but emitted no parseable records'
+    } else {
+        $script:scStatus = 'skipped'
+        # The checker names its skip on stderr in BOTH modes precisely so this
+        # stays a NAMED skip ("lineark not found") and not a bare exit 2.
+        $errText = ''
+        try { $errText = (Get-Content -LiteralPath $errFile -TotalCount 1 -ErrorAction SilentlyContinue) } catch { $errText = '' }
+        if ($null -eq $errText) { $errText = '' }
+        $errText = ("$errText").Trim()
+        if ($errText -match '^SKIP\s+(.*)$') { $errText = $matches[1] }
+        $script:scReason = if ($errText -ne '') { $errText } else { "checker returned an indeterminate result (exit $rc)" }
+    }
+    Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
+}
+Invoke-StateCurrentness
+
+# Get-CurrentnessMarkdown — the `## Semantic currentness` body (no heading).
+function Get-CurrentnessMarkdown {
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($scStatus -eq 'clean') {
+        $lines.Add('_(clean — every checked claim and project agrees with live tracker state)_')
+    } elseif ($scStatus -eq 'skipped') {
+        $lines.Add("_(skipped — $scReason)_")
+    } else {
+        foreach ($rec in $scFindings) {
+            $f = $rec -split "`t"
+            if ($f[0] -eq 'claim' -and $f.Count -ge 7) {
+                $lines.Add(('- {0} {1}: note says "{2}", tracker says "{3}" (as-of {4}) — {5}' -f $f[1], $f[2], $f[3], $f[4], $f[5], $f[6]))
+            } elseif ($f[0] -eq 'project' -and $f.Count -ge 6) {
+                $lines.Add(('- {0} "{1}": status "{2}" with {3} open child issue(s), {4} active' -f $f[1], $f[2], $f[3], $f[4], $f[5]))
+            } else {
+                $lines.Add("- $rec")
+            }
+        }
+        $lines.Add('Advisory — these findings never change the pillar scores above. Reconcile the note or the tracker.')
+    }
+    return $lines
+}
+
+# ---------------------------------------------------------------------------
 # Output emitters
 # ---------------------------------------------------------------------------
 function Get-MarkdownOutput {
@@ -1456,6 +1562,13 @@ function Get-MarkdownOutput {
             [void]$sb.AppendLine("- $s")
         }
     }
+    # APPENDED LAST, for the same reason codex_registry_bytes is appended last in
+    # the JSON: every pre-existing section keeps its position for anything that
+    # reads this scorecard by offset.
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Semantic currentness')
+    [void]$sb.AppendLine('')
+    foreach ($l in (Get-CurrentnessMarkdown)) { [void]$sb.AppendLine($l) }
     # Bash twin emits via `printf '%s\n' "$OUTPUT"` so output ends with one
     # trailing newline. AppendLine already added per-line newlines; the
     # final state has a trailing `\n` from the last AppendLine. Match bash.
@@ -1504,6 +1617,38 @@ function Get-JsonOutput {
     # shape, AND position (panel finding: inserting mid-object shifted
     # gaps/skipped for positional consumers).
     $cxBytes = if ($codexRegistry['bytes'] -ge 0) { $codexRegistry['bytes'] } else { $null }
+    # semantic_currentness — ADDITIVE optional field, its OWN key so a consumer
+    # can never confuse an advisory semantic finding with a mechanical pillar
+    # score. `status` is always one of clean|findings|skipped; `reason` is
+    # populated only on skipped. APPENDED LAST for the same positional-stability
+    # reason as codex_registry_bytes.
+    # Plain arrays, not List[object]: `@($aList)` inside a hashtable literal
+    # throws "Argument types do not match" under Set-StrictMode, and the empty
+    # case throws too — so the failure would only appear on a clean run.
+    $scClaims = @()
+    $scProjects = @()
+    foreach ($rec in $scFindings) {
+        $f = $rec -split "`t"
+        if ($f[0] -eq 'claim' -and $f.Count -ge 7) {
+            $scClaims += [ordered]@{
+                class = $f[1]; identifier = $f[2]; stored = $f[3]
+                live = $f[4]; observed_at = $f[5]; location = $f[6]
+            }
+        } elseif ($f[0] -eq 'project' -and $f.Count -ge 6) {
+            $openN = if ($f[4] -match '^\d+$') { [int]$f[4] } else { 0 }
+            $activeN = if ($f[5] -match '^\d+$') { [int]$f[5] } else { 0 }
+            $scProjects += [ordered]@{
+                class = $f[1]; name = $f[2]; status = $f[3]
+                open_children = $openN; active_children = $activeN
+            }
+        }
+    }
+    $scObj = [ordered]@{
+        status   = $scStatus
+        reason   = $scReason
+        claims   = $scClaims
+        projects = $scProjects
+    }
     $obj = [ordered]@{
         date                 = $dateStr
         total                = $total
@@ -1513,6 +1658,7 @@ function Get-JsonOutput {
         gaps                 = $sortedGaps
         skipped              = @($skipped)
         codex_registry_bytes = $cxBytes
+        semantic_currentness = $scObj
     }
     return ($obj | ConvertTo-Json -Depth 6)
 }

@@ -91,6 +91,109 @@ _sa_pillar_score() {
   printf '%s' "$1" | jq -r ".pillars[\"$2\"].score"
 }
 
+# --- semantic currentness (<TEAM>-522) ---------------------------------------
+# The advisory semantic check is wired in via $SELF_AUDIT_CURRENTNESS_BIN so the
+# assertions are hermetic: a stub stands in for check-state-currentness.sh and
+# replays a chosen exit code + --list payload. What is under test is the WIRING
+# contract, not the extractor (that lives in check-state-currentness.test.sh):
+# its own section, its own JSON key, and — the load-bearing part — that a
+# semantic finding NEVER moves total, a pillar score, or gaps. A checker that
+# could depress the score would make operators disable it.
+_sa_currentness_stub() { # _sa_currentness_stub <path> <exit> [stdout...]
+  local p="$1" rc="$2"; shift 2
+  {
+    printf '#!/usr/bin/env bash\n'
+    local l
+    for l in "$@"; do printf 'printf %s\n' "'%s\\n' \"$l\""; done
+    printf 'printf %s >&2\n' "'SKIP stub reason\\n'"
+    printf 'exit %s\n' "$rc"
+  } > "$p"
+  chmod +x "$p"
+}
+
+_test_currentness_wiring() {
+  command -v jq >/dev/null 2>&1 || { _skip "semantic currentness wiring" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local stub="$fixture/stub.sh"
+
+  # 1. findings — rendered, keyed, and score-neutral.
+  local claim proj out base_total base_gaps
+  claim="$(printf 'claim\tstale-claim\tABC-1\tIn Progress\tDone\t-\tnotes.md:7')"
+  proj="$(printf 'project\tproject-closed-with-open-children\tShipped Thing\tCompleted\t2\t0')"
+  _sa_currentness_stub "$stub" 1 "$claim" "$proj"
+
+  # Baseline WITHOUT the checker, so score-neutrality is proved by comparison
+  # rather than asserted against a hard-coded number.
+  base_total="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null | jq -r '.total')"
+  base_gaps="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null | jq -r '.gaps | length')"
+
+  out="$(SELF_AUDIT_CURRENTNESS_BIN="$stub" bash "$REPO_ROOT/scripts/self-audit.sh" \
+        --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  assert_eq "semantic currentness: status is findings" \
+    "findings" "$(printf '%s' "$out" | jq -r '.semantic_currentness.status')"
+  assert_eq "semantic currentness: claim record lands in the claims array" \
+    "ABC-1" "$(printf '%s' "$out" | jq -r '.semantic_currentness.claims[0].identifier')"
+  assert_eq "semantic currentness: claim carries its live-vs-stored pair" \
+    "In Progress|Done" "$(printf '%s' "$out" | jq -r '.semantic_currentness.claims[0] | "\(.stored)|\(.live)"')"
+  assert_eq "semantic currentness: project record lands in the projects array" \
+    "project-closed-with-open-children" "$(printf '%s' "$out" | jq -r '.semantic_currentness.projects[0].class')"
+  assert_eq "semantic currentness: open_children is numeric, not a string" \
+    "number" "$(printf '%s' "$out" | jq -r '.semantic_currentness.projects[0].open_children | type')"
+  # The whole point: advisory means advisory.
+  assert_eq "semantic currentness: findings do NOT change the total score" \
+    "$base_total" "$(printf '%s' "$out" | jq -r '.total')"
+  assert_eq "semantic currentness: findings do NOT enter the gap list" \
+    "$base_gaps" "$(printf '%s' "$out" | jq -r '.gaps | length')"
+
+  local md
+  md="$(SELF_AUDIT_CURRENTNESS_BIN="$stub" bash "$REPO_ROOT/scripts/self-audit.sh" \
+       --isolated --repo-root "$fixture" 2>/dev/null)"
+  assert_contains "semantic currentness: markdown has its own section" "$md" "## Semantic currentness"
+  assert_contains "semantic currentness: markdown renders the claim finding" \
+    "$md" 'stale-claim ABC-1: note says "In Progress", tracker says "Done" (as-of -) — notes.md:7'
+  assert_contains "semantic currentness: markdown renders the project finding" \
+    "$md" 'project-closed-with-open-children "Shipped Thing": status "Completed" with 2 open child issue(s), 0 active'
+  assert_contains "semantic currentness: markdown states the advisory boundary" \
+    "$md" "never change the pillar scores"
+
+  # 2. clean — exit 0, no findings.
+  _sa_currentness_stub "$stub" 0
+  out="$(SELF_AUDIT_CURRENTNESS_BIN="$stub" bash "$REPO_ROOT/scripts/self-audit.sh" \
+        --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  assert_eq "semantic currentness: exit 0 reports clean" \
+    "clean" "$(printf '%s' "$out" | jq -r '.semantic_currentness.status')"
+  assert_eq "semantic currentness: clean run has an empty claims array" \
+    "0" "$(printf '%s' "$out" | jq -r '.semantic_currentness.claims | length')"
+
+  # 3. skip — exit 2 fails SOFT and the reason is NAMED, never anonymous.
+  _sa_currentness_stub "$stub" 2
+  out="$(SELF_AUDIT_CURRENTNESS_BIN="$stub" bash "$REPO_ROOT/scripts/self-audit.sh" \
+        --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  assert_eq "semantic currentness: exit 2 reports skipped" \
+    "skipped" "$(printf '%s' "$out" | jq -r '.semantic_currentness.status')"
+  assert_eq "semantic currentness: skip reason is named, not anonymous" \
+    "stub reason" "$(printf '%s' "$out" | jq -r '.semantic_currentness.reason')"
+  assert_eq "semantic currentness: a skip preserves the filesystem score" \
+    "$base_total" "$(printf '%s' "$out" | jq -r '.total')"
+
+  # 4. exit 1 with no parseable record is a contract break, not a clean run.
+  _sa_currentness_stub "$stub" 1
+  out="$(SELF_AUDIT_CURRENTNESS_BIN="$stub" bash "$REPO_ROOT/scripts/self-audit.sh" \
+        --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  assert_eq "semantic currentness: exit 1 with no records degrades to skipped" \
+    "skipped" "$(printf '%s' "$out" | jq -r '.semantic_currentness.status')"
+
+  # 5. plain --isolated (no stub): the section still exists and names the skip.
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
+  assert_eq "semantic currentness: isolated run without a checker is a named skip" \
+    "isolated run — semantic currentness not evaluated" \
+    "$(printf '%s' "$out" | jq -r '.semantic_currentness.reason')"
+
+  rm -rf "$fixture"
+}
+_test_currentness_wiring
+
 # --- Pillar 5 (closeout / spine discipline) — negative case: missing realization
 # Fixture: a native capability without the Codex realization should ding pillar 5.
 _test_pillar5_missing_codex_realization() {
@@ -1562,7 +1665,7 @@ _test_codex_registry_clean() {
   # Panel finding (<TEAM>-468): the new field is appended LAST so every
   # pre-existing field keeps its POSITION as well as its name and shape.
   assert_eq "codex registry: JSON stays backward-compatible (existing fields keep position, new field appended last)" \
-    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes" "$fields"
+    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness" "$fields"
   assert_contains "codex registry: markdown carries the non-scoring informational size line" \
     "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
 }

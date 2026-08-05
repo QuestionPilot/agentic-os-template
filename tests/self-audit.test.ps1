@@ -115,6 +115,101 @@ function New-SaTmp {
     return $p
 }
 
+# --- semantic currentness (<TEAM>-522) ---------------------------------------
+# The advisory semantic check is wired in via $env:SELF_AUDIT_CURRENTNESS_BIN so
+# the assertions are hermetic: a stub .ps1 stands in for
+# check-state-currentness.ps1 and replays a chosen exit code + --list payload.
+# What is under test is the WIRING contract, not the extractor (that lives in
+# check-state-currentness.test.ps1): its own section, its own JSON key, and —
+# the load-bearing part — that a semantic finding NEVER moves total, a pillar
+# score, or gaps. A checker that could depress the score would get disabled.
+function New-SaCurrentnessStub {
+    param([string]$Path, [int]$ExitCode, [string[]]$Records = @())
+    $body = New-Object System.Text.StringBuilder
+    [void]$body.AppendLine('param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList = @())')
+    foreach ($r in $Records) {
+        [void]$body.AppendLine("Write-Output `"$($r.Replace('"', '`"'))`"")
+    }
+    [void]$body.AppendLine('[Console]::Error.WriteLine("SKIP stub reason")')
+    [void]$body.AppendLine("exit $ExitCode")
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($Path, ($body.ToString() -replace "`r`n", "`n"), $utf8NoBom)
+}
+
+function Invoke-SaWithCurrentness {
+    param([string]$Stub, [string[]]$Argv)
+    $env:SELF_AUDIT_CURRENTNESS_BIN = $Stub
+    try { return (Invoke-SelfAudit $Argv) }
+    finally { Remove-Item Env:SELF_AUDIT_CURRENTNESS_BIN -ErrorAction SilentlyContinue }
+}
+
+$scFixture = New-SaTmp
+New-SaFixtureRepo $scFixture
+$scStub = Join-Path $scFixture 'stub.ps1'
+$TAB = "`t"
+
+# Baseline WITHOUT the checker, so score-neutrality is proved by comparison
+# rather than asserted against a hard-coded number.
+$scBaseJson = Invoke-SelfAudit @('--isolated', '--repo-root', $scFixture, '--json')
+$scBase = $scBaseJson | ConvertFrom-Json
+
+# 1. findings — rendered, keyed, and score-neutral.
+New-SaCurrentnessStub $scStub 1 @(
+    "claim${TAB}stale-claim${TAB}ABC-1${TAB}In Progress${TAB}Done${TAB}-${TAB}notes.md:7",
+    "project${TAB}project-closed-with-open-children${TAB}Shipped Thing${TAB}Completed${TAB}2${TAB}0"
+)
+$scRaw = Invoke-SaWithCurrentness $scStub @('--isolated', '--repo-root', $scFixture, '--json')
+$scJson = $scRaw | ConvertFrom-Json
+Assert-Eq 'self-audit.test: semantic currentness status is findings' 'findings' $scJson.semantic_currentness.status
+Assert-Eq 'self-audit.test: semantic currentness claim record lands in the claims array' 'ABC-1' $scJson.semantic_currentness.claims[0].identifier
+Assert-Eq 'self-audit.test: semantic currentness claim carries its live-vs-stored pair' 'In Progress|Done' `
+    ("{0}|{1}" -f $scJson.semantic_currentness.claims[0].stored, $scJson.semantic_currentness.claims[0].live)
+Assert-Eq 'self-audit.test: semantic currentness project record lands in the projects array' `
+    'project-closed-with-open-children' $scJson.semantic_currentness.projects[0].class
+# Asserted against the SERIALIZED form, not the deserialized .NET type: the bash
+# twin's jq check is `type == "number"`, and ConvertFrom-Json's integer width
+# (Int32 vs Int64) is an implementation detail that would make the twins disagree
+# for no behavioral reason.
+Assert-Eq         'self-audit.test: semantic currentness open_children value round-trips' 2 $scJson.semantic_currentness.projects[0].open_children
+Assert-NotContains 'self-audit.test: semantic currentness open_children is numeric, not a string' $scRaw '"open_children": "2"'
+# The whole point: advisory means advisory.
+Assert-Eq 'self-audit.test: semantic currentness findings do NOT change the total score' $scBase.total $scJson.total
+Assert-Eq 'self-audit.test: semantic currentness findings do NOT enter the gap list' `
+    @($scBase.gaps).Count @($scJson.gaps).Count
+
+$scMd = Invoke-SaWithCurrentness $scStub @('--isolated', '--repo-root', $scFixture)
+Assert-Contains 'self-audit.test: semantic currentness markdown has its own section' $scMd '## Semantic currentness'
+Assert-Contains 'self-audit.test: semantic currentness markdown renders the claim finding' `
+    $scMd 'stale-claim ABC-1: note says "In Progress", tracker says "Done" (as-of -) — notes.md:7'
+Assert-Contains 'self-audit.test: semantic currentness markdown renders the project finding' `
+    $scMd 'project-closed-with-open-children "Shipped Thing": status "Completed" with 2 open child issue(s), 0 active'
+Assert-Contains 'self-audit.test: semantic currentness markdown states the advisory boundary' `
+    $scMd 'never change the pillar scores'
+
+# 2. clean — exit 0, no findings.
+New-SaCurrentnessStub $scStub 0
+$scJson = (Invoke-SaWithCurrentness $scStub @('--isolated', '--repo-root', $scFixture, '--json')) | ConvertFrom-Json
+Assert-Eq 'self-audit.test: semantic currentness exit 0 reports clean' 'clean' $scJson.semantic_currentness.status
+Assert-Eq 'self-audit.test: semantic currentness clean run has an empty claims array' 0 @($scJson.semantic_currentness.claims).Count
+
+# 3. skip — exit 2 fails SOFT and the reason is NAMED, never anonymous.
+New-SaCurrentnessStub $scStub 2
+$scJson = (Invoke-SaWithCurrentness $scStub @('--isolated', '--repo-root', $scFixture, '--json')) | ConvertFrom-Json
+Assert-Eq 'self-audit.test: semantic currentness exit 2 reports skipped' 'skipped' $scJson.semantic_currentness.status
+Assert-Eq 'self-audit.test: semantic currentness skip reason is named, not anonymous' 'stub reason' $scJson.semantic_currentness.reason
+Assert-Eq 'self-audit.test: semantic currentness a skip preserves the filesystem score' $scBase.total $scJson.total
+
+# 4. exit 1 with no parseable record is a contract break, not a clean run.
+New-SaCurrentnessStub $scStub 1
+$scJson = (Invoke-SaWithCurrentness $scStub @('--isolated', '--repo-root', $scFixture, '--json')) | ConvertFrom-Json
+Assert-Eq 'self-audit.test: semantic currentness exit 1 with no records degrades to skipped' 'skipped' $scJson.semantic_currentness.status
+
+# 5. plain --isolated (no stub): the section still exists and names the skip.
+Assert-Eq 'self-audit.test: semantic currentness isolated run without a checker is a named skip' `
+    'isolated run — semantic currentness not evaluated' $scBase.semantic_currentness.reason
+
+Remove-Item -LiteralPath $scFixture -Recurse -Force -ErrorAction SilentlyContinue
+
 # Test 0 — smoke: scorecard against the real repo.
 $SMOKE_OUT = Invoke-SelfAudit @('--repo-root', $env:REPO_ROOT)
 Assert-Contains 'self-audit.test: smoke scorecard heading present' $SMOKE_OUT '/self-audit scorecard'
@@ -1407,7 +1502,7 @@ if ($jqAvail) {
     Assert-Eq 'self-audit.test: codex registry JSON reports the registry byte size informationally' `
         "$regBytes" "$cxBytes"
     Assert-Eq 'self-audit.test: codex registry JSON stays backward-compatible (existing fields intact, new field additive)' `
-        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes' "$fields"
+        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness' "$fields"
     Assert-Contains 'self-audit.test: codex registry markdown carries the non-scoring informational size line' `
         $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 
