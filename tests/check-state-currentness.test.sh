@@ -293,6 +293,41 @@ o="$(run_csc "$DA" "$MA" --no-projects)"; rc=$?
 assert_eq       "check-state-currentness: NBSP-separated claim still extracts (exit 1)" 1 "$rc"
 assert_contains "check-state-currentness: NBSP-separated claim names ABC-1" "$o" "ABC-1"
 
+# LOCALE INDEPENDENCE — the scanner is byte-oriented (NBSP normalized by its
+# UTF-8 bytes; em/en dashes sitting literally inside bracket expressions). BSD
+# awk honors the CALLER's locale, so under a UTF-8 locale those bracket classes
+# switch to character semantics and every claim separated from its state word by
+# a multibyte character silently stops extracting — the scanner then reports "no
+# comparable evidence" (exit 2) instead of the finding. A false clean, on exactly
+# the notes this gate polices.
+#
+# This shipped green because the whole suite only ever ran in one locale: the
+# authoring shell and the Linux/Windows lanes never exported a UTF-8 locale, and
+# the macOS lane does. Same awk build (20200816) on both sides — the variable was
+# never the binary. So the fixtures below are re-run with the locale forced, and
+# a UTF-8 locale must be named explicitly rather than inherited, or this guard
+# silently re-tests the C-locale path it exists to distinguish from.
+utf8_locale="$(locale -a 2>/dev/null | grep -iE '\.(utf-?8)$' | head -n1)"
+if [ -z "$utf8_locale" ]; then
+  _skip "check-state-currentness: multibyte claims extract under a UTF-8 locale" \
+        "no UTF-8 locale available (locale -a)"
+  _skip "check-state-currentness: em-dash claims extract under a UTF-8 locale" \
+        "no UTF-8 locale available (locale -a)"
+else
+  o="$(LANG="$utf8_locale" LC_ALL="$utf8_locale" run_csc "$DA" "$MA" --no-projects)"; rc=$?
+  assert_eq "check-state-currentness: multibyte claims extract under a UTF-8 locale" 1 "$rc"
+
+  # An em dash between the identifier and its state word is the same trap in the
+  # shape real notes actually use ("ABC-1 — Done:"). Accurate claims, so the run
+  # must reach a verdict (exit 0) rather than skip for want of evidence.
+  cat > "$MA/case.md" <<'EOF'
+- **ABC-1 — Done:** shipped.
+- **ABC-3 — In Progress (High):** the active lane.
+EOF
+  o="$(LANG="$utf8_locale" LC_ALL="$utf8_locale" run_csc "$DA" "$MA" --no-projects)"; rc=$?
+  assert_eq "check-state-currentness: em-dash claims extract under a UTF-8 locale" 0 "$rc"
+fi
+
 rm -rf "$DA"
 
 # --- read budget survives the subshell ----------------------------------------

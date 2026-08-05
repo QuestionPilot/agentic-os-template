@@ -225,7 +225,7 @@ if [ -n "$VAULT_DIR" ] && [ -d "$VAULT_DIR/01-Projects" ]; then
     [ -n "$_f" ] || continue
     # `status: active` must appear in the frontmatter block, not anywhere in the
     # body — check only the leading block.
-    if awk '/^---[[:space:]]*$/{n++; if(n==2) exit} n==1 && tolower($0) ~ /^status:[[:space:]]*active[[:space:]]*$/{found=1} END{exit !found}' "$_f" 2>/dev/null; then
+    if LC_ALL=C awk '/^---[[:space:]]*$/{n++; if(n==2) exit} n==1 && tolower($0) ~ /^status:[[:space:]]*active[[:space:]]*$/{found=1} END{exit !found}' "$_f" 2>/dev/null; then
       SCAN_FILES[${#SCAN_FILES[@]}]="$_f"
     fi
   done < <(find "$VAULT_DIR/01-Projects" -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort)
@@ -273,7 +273,7 @@ live_state() {
   # a row for `XABC-1`, so an overlapping team prefix would compare a claim
   # against the wrong issue — while the PS twin's hashtable lookup requires an
   # exact key. awk `$1==id` is the exact-key equivalent.
-  hit="$(printf '%s\n' "$STATE_MAP" | awk -F'\t' -v id="$ident" '$1 == id { print $2; exit }')"
+  hit="$(printf '%s\n' "$STATE_MAP" | LC_ALL=C awk -F'\t' -v id="$ident" '$1 == id { print $2; exit }')"
   if [ -n "$hit" ]; then
     printf '%s' "$hit"
     return 0
@@ -328,8 +328,20 @@ live_state() {
 #      neighbor's rule-A state.
 #
 # Anything unresolved yields NO claim. Under-reporting is the deliberate bias.
+#
+# LC_ALL=C is load-bearing, not decoration. This program is deliberately BYTE-
+# oriented: it normalizes NBSP by its UTF-8 bytes and its LIGHT/HEAVY connector
+# classes carry literal em/en dashes inside bracket expressions. Under a UTF-8
+# locale BSD awk switches those bracket expressions to character semantics, the
+# dashes and the NBSP stop matching, and every claim whose identifier is
+# separated from its state word by a multibyte character silently vanishes —
+# the scanner reports "no comparable evidence" instead of a finding. That is a
+# false-clean on the exact notes this gate exists to police, and it reproduces
+# only when the CALLER exports a UTF-8 locale, so a C-locale test run is green
+# either way. Pinning the locale at the call site makes the byte assumption
+# true everywhere instead of true by accident.
 scan_claims() {
-  awk -v prefix="$PREFIX" '
+  LC_ALL=C awk -v prefix="$PREFIX" '
     function lc(s) { return tolower(s) }
     BEGIN {
       idre = prefix "-[0-9]+"
