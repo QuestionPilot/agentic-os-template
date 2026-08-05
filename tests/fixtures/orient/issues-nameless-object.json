@@ -1,0 +1,3 @@
+[
+  {"identifier": "ABC-8", "title": "Nameless-object fields", "priority": "High", "state": {"id": "st-1", "name": "Todo"}, "assignee": {"id": "usr_123"}, "url": "https://tracker.example/ABC-8"}
+]

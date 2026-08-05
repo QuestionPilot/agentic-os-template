@@ -170,10 +170,16 @@ OUT19b=$(bash "$CMD_SCRIPT" --draft "$D19b" --vault "$VEMPTY" 2>&1); RC19b=$?
 assert_eq "wl: malformed [[ ]] still fails even when (empty).md exists" "1" "$RC19b"
 assert_contains "wl: malformed empty target rendered as (empty)" "$OUT19b" "-> (empty)"
 
-# === 20. Wiring is pinned: capabilities/closeout.md invokes the check so a future
-# refactor that drops the pre-drain gate is caught here.
+# === 20. Wiring is pinned so a future refactor that drops the pre-drain gate is
+# caught here. The three hand-composed pre-write commands were replaced by the
+# single fail-closed wrapper scripts/closeout-gate.sh, so the wiring is now a
+# two-link chain: the capability body invokes the wrapper, and the wrapper's check
+# set names this check. Both links are asserted — a wrapper that quietly stopped
+# running check-wikilinks.sh would otherwise pass.
 CLOSEOUT_BODY=$(cat "$REPO_ROOT/capabilities/closeout.md")
-assert_contains "wl: closeout.md wires the pre-drain check invocation" "$CLOSEOUT_BODY" "scripts/check-wikilinks.sh --draft"
+assert_contains "wl: closeout.md wires the pre-drain gate wrapper" "$CLOSEOUT_BODY" "scripts/closeout-gate.sh --draft"
+CLOSEOUT_GATE_BODY=$(cat "$REPO_ROOT/scripts/closeout-gate.sh")
+assert_contains "wl: closeout-gate.sh runs check-wikilinks.sh in its check set" "$CLOSEOUT_GATE_BODY" "check-wikilinks.sh"
 
 # === 21. Unreadable (but existing) draft → exit 2 (mirrors bash `[ -r ]`).
 # Guarded: a root-run CI can read 000 files, so skip rather than false-fail.

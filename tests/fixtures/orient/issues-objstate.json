@@ -1,0 +1,3 @@
+[
+  {"identifier": "ABC-7", "title": "Object-state issue", "priority": "High", "state": {"id": "st-1", "name": "In Progress"}, "assignee": "Sample Assignee", "url": "https://tracker.example/ABC-7"}
+]

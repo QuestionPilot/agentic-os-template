@@ -128,9 +128,12 @@ if ($canTest) {
 }
 if (Get-Command chmod -ErrorAction SilentlyContinue) { & chmod 644 $UNREAD 2>$null }
 
-# === 13. Wiring is pinned: capabilities/closeout.md invokes the check.
+# === 13. Wiring is pinned (twin of the .sh side): the capability body invokes the
+# fail-closed wrapper, and the wrapper's check set names this check.
 $closeoutBody = [System.IO.File]::ReadAllText((Join-Path $env:REPO_ROOT 'capabilities/closeout.md'))
-Assert-Contains 'mp.test: closeout.md wires the pre-drain check invocation' $closeoutBody 'scripts/check-machine-paths.sh --draft'
+Assert-Contains 'mp.test: closeout.md wires the pre-drain gate wrapper' $closeoutBody 'scripts/closeout-gate.sh --draft'
+$closeoutGateBody = [System.IO.File]::ReadAllText((Join-Path $env:REPO_ROOT 'scripts/closeout-gate.sh'))
+Assert-Contains 'mp.test: closeout-gate.sh runs check-machine-paths.sh in its check set' $closeoutGateBody 'check-machine-paths.sh'
 
 # === 14. Offender on the FINAL line with NO trailing newline is still caught —
 # the editor-strips-trailing-newline shape (New-Draft writes content verbatim;

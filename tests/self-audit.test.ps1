@@ -1502,7 +1502,7 @@ if ($jqAvail) {
     Assert-Eq 'self-audit.test: codex registry JSON reports the registry byte size informationally' `
         "$regBytes" "$cxBytes"
     Assert-Eq 'self-audit.test: codex registry JSON stays backward-compatible (existing fields intact, new field additive)' `
-        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness' "$fields"
+        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface' "$fields"
     Assert-Contains 'self-audit.test: codex registry markdown carries the non-scoring informational size line' `
         $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 
@@ -1616,3 +1616,191 @@ if ($jqAvail) {
     _Skip 'self-audit.test: codex-registry bogus-path test' 'jq not installed'
     _Skip 'self-audit.test: codex-only registry-report test' 'jq not installed'
 }
+
+# --- orientation surface (<TEAM>-524) ----------------------------------------
+# Windows-native twin of the tests/self-audit.test.sh orientation-surface block.
+# The effective Mode 1 kickoff surface = static entrypoint + the compiled spine
+# capability bodies (session-agent + closeout) the kickoff mandates + the vault
+# lesson index read at every orient. Its OWN section, its OWN JSON key, and —
+# the load-bearing part — it NEVER moves total, a pillar score, or gaps.
+
+# New-SaOrientHome — a rendered harness home fixture: an entrypoint file plus the
+# two compiled spine skill bodies.
+function New-SaOrientHome {
+    param([string]$Home_, [string]$Entry)
+    Write-LfFile (Join-Path $Home_ $Entry) "entrypoint body`nsecond line`n"
+    Write-LfFile (Join-Path $Home_ 'skills' 'session-agent' 'SKILL.md') "session-agent compiled body`n"
+    Write-LfFile (Join-Path $Home_ 'skills' 'closeout' 'SKILL.md') "closeout compiled body`nline two`nline three`n"
+}
+function Get-SaFileBytes {
+    param([string]$Path)
+    return [int]([System.IO.FileInfo]::new($Path).Length)
+}
+
+$oriFixture = New-SaTmp
+New-SaFixtureRepo $oriFixture
+$oriCfg = Join-Path $oriFixture 'config'
+$oriVault = Join-Path $oriFixture 'vault'
+New-SaOrientHome $oriCfg 'CLAUDE.md'
+Write-LfFile (Join-Path $oriVault '04-Lessons' '_index.md') "| Trigger | Lesson |`n| --- | --- |`n| before a fetch | use the CLI |`n"
+
+$oriEpB = Get-SaFileBytes (Join-Path $oriCfg 'CLAUDE.md')
+$oriSpB = (Get-SaFileBytes (Join-Path $oriCfg 'skills' 'session-agent' 'SKILL.md')) +
+          (Get-SaFileBytes (Join-Path $oriCfg 'skills' 'closeout' 'SKILL.md'))
+$oriLiB = Get-SaFileBytes (Join-Path $oriVault '04-Lessons' '_index.md')
+$oriWant = $oriEpB + $oriSpB + $oriLiB
+
+$oriJson = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture,
+    '--config-dir', $oriCfg, '--vault-dir', $oriVault, '--json')) | ConvertFrom-Json
+$oriMd = Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture,
+    '--config-dir', $oriCfg, '--vault-dir', $oriVault)
+
+Assert-Eq 'self-audit.test: orientation surface measured against a rendered harness home' `
+    'True' ([string]$oriJson.orientation_surface.measured)
+Assert-Eq 'self-audit.test: orientation surface the claude render gets a per-harness row' `
+    'claude' $oriJson.orientation_surface.harnesses[0].harness
+Assert-Eq 'self-audit.test: orientation surface row names the compiled entrypoint' `
+    'CLAUDE.md' $oriJson.orientation_surface.harnesses[0].entrypoint
+Assert-Eq 'self-audit.test: orientation surface entrypoint_bytes matches the compiled entrypoint' `
+    "$oriEpB" ([string]$oriJson.orientation_surface.harnesses[0].entrypoint_bytes)
+# The whole point of <TEAM>-524: the mandatory capability bodies are counted,
+# not just the static entrypoint file.
+Assert-Eq 'self-audit.test: orientation surface spine_bytes covers session-agent + closeout, not the entrypoint alone' `
+    "$oriSpB" ([string]$oriJson.orientation_surface.harnesses[0].spine_bytes)
+Assert-Eq 'self-audit.test: orientation surface the vault lesson index is measured, not silently dropped' `
+    "$oriLiB" ([string]$oriJson.orientation_surface.harnesses[0].lesson_index_bytes)
+Assert-Eq 'self-audit.test: orientation surface effective_total_bytes = entrypoint + spine + lesson index' `
+    "$oriWant" ([string]$oriJson.orientation_surface.harnesses[0].effective_total_bytes)
+Assert-Eq 'self-audit.test: orientation surface lesson index status is measured' `
+    'measured' $oriJson.orientation_surface.lesson_index.status
+Assert-Eq 'self-audit.test: orientation surface aggregate total_bytes sums the harness rows' `
+    "$oriWant" ([string]$oriJson.orientation_surface.total_bytes)
+Assert-Contains 'self-audit.test: orientation surface an unresolved harness home is a named skip' `
+    (@($oriJson.orientation_surface.skipped) -join '|') 'hermes (HERMES_HOME) not set'
+Assert-Contains 'self-audit.test: orientation surface markdown has its own section' $oriMd '## Orientation surface'
+Assert-Contains 'self-audit.test: orientation surface markdown states the informational boundary' `
+    $oriMd 'Informational only; never scored.'
+
+# Non-scoring proof. Same fixture, same config dir, same vault — the ONLY
+# difference is the size of the compiled spine bodies (no pillar reads
+# <config-dir>/skills/), so a total or gap-count delta could only come from the
+# new section.
+$oriPad = ('y' * 400)
+$oriFatBody = (1..50 | ForEach-Object { $oriPad }) -join "`n"
+Write-LfFile (Join-Path $oriCfg 'skills' 'session-agent' 'SKILL.md') ("session-agent compiled body`n" + $oriFatBody + "`n")
+$oriFat = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture,
+    '--config-dir', $oriCfg, '--vault-dir', $oriVault, '--json')) | ConvertFrom-Json
+Remove-Item -LiteralPath (Join-Path $oriCfg 'skills') -Recurse -Force -ErrorAction SilentlyContinue
+$oriThin = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture,
+    '--config-dir', $oriCfg, '--vault-dir', $oriVault, '--json')) | ConvertFrom-Json
+
+Assert-Eq 'self-audit.test: orientation surface a fat vs absent spine does NOT change the total score' `
+    ([string]$oriThin.total) ([string]$oriFat.total)
+Assert-Eq 'self-audit.test: orientation surface a fat vs absent spine does NOT change the gap count' `
+    @($oriThin.gaps).Count @($oriFat.gaps).Count
+Assert-Eq 'self-audit.test: orientation surface never enters the gap list' `
+    0 @($oriFat.gaps | Where-Object { ("$($_.title)$($_.detail)$($_.fix)").ToLower().Contains('orientation') }).Count
+# Positive control: the two runs really did measure different surfaces, so the
+# equality above is a non-scoring proof and not a dead measurement.
+if ([int]$oriFat.orientation_surface.total_bytes -gt [int]$oriThin.orientation_surface.total_bytes) {
+    _Pass 'self-audit.test: orientation surface positive control — the fat run measured a larger surface than the thin run'
+} else {
+    _Fail 'self-audit.test: orientation surface positive control — the fat run measured a larger surface than the thin run' `
+        ("expected fat > thin, got fat=[{0}] thin=[{1}]" -f $oriFat.orientation_surface.total_bytes, $oriThin.orientation_surface.total_bytes)
+}
+Assert-Contains 'self-audit.test: orientation surface an absent spine body is named, not silently zero' `
+    ((@($oriThin.orientation_surface.harnesses[0].missing)) -join '|') 'skills/session-agent/SKILL.md'
+
+Remove-Item -LiteralPath $oriFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# Lesson index: an unmeasured index is NAMED, never a silent 0.
+$oriFixture2 = New-SaTmp
+New-SaFixtureRepo $oriFixture2
+$oriCfg2 = Join-Path $oriFixture2 'config'
+$oriVault2 = Join-Path $oriFixture2 'vault'
+New-SaOrientHome $oriCfg2 'CLAUDE.md'
+New-Item -ItemType Directory -Path (Join-Path $oriVault2 '04-Lessons') -Force | Out-Null  # index absent
+
+$oriNoVaultRaw = Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture2, '--config-dir', $oriCfg2, '--json')
+$oriNoVault = $oriNoVaultRaw | ConvertFrom-Json
+$oriWithVault = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture2,
+    '--config-dir', $oriCfg2, '--vault-dir', $oriVault2, '--json')) | ConvertFrom-Json
+
+Assert-Contains 'self-audit.test: orientation surface no vault → lesson_index_bytes is null (unmeasured, not 0)' `
+    $oriNoVaultRaw '"lesson_index_bytes": null'
+Assert-Contains 'self-audit.test: orientation surface no vault is a NAMED unmeasured state' `
+    $oriNoVault.orientation_surface.lesson_index.status 'unmeasured — no vault configured'
+Assert-Contains 'self-audit.test: orientation surface a vault without the index names the missing path' `
+    $oriWithVault.orientation_surface.lesson_index.status 'unmeasured — not found at'
+Assert-Eq 'self-audit.test: orientation surface a vault without the index still reports null bytes' `
+    'True' ([string]($null -eq $oriWithVault.orientation_surface.lesson_index.bytes))
+
+Remove-Item -LiteralPath $oriFixture2 -Recurse -Force -ErrorAction SilentlyContinue
+
+# No resolvable render home at all: measured false, total null (distinct from 0),
+# every unresolved home named.
+$oriFixture3 = New-SaTmp
+New-SaFixtureRepo $oriFixture3
+$oriNoneRaw = Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture3, '--json')
+$oriNone = $oriNoneRaw | ConvertFrom-Json
+$oriNoneMd = Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture3)
+Assert-Eq 'self-audit.test: orientation surface no resolvable home → measured false' `
+    'False' ([string]$oriNone.orientation_surface.measured)
+Assert-Contains 'self-audit.test: orientation surface no resolvable home → total_bytes null (distinct from 0)' `
+    $oriNoneRaw '"total_bytes": null'
+Assert-Eq 'self-audit.test: orientation surface every unresolved home is named in skipped' `
+    4 @($oriNone.orientation_surface.skipped).Count
+Assert-Contains 'self-audit.test: orientation surface markdown still carries the section when unmeasured' `
+    $oriNoneMd '## Orientation surface'
+Assert-Contains 'self-audit.test: orientation surface markdown names the unmeasured state' `
+    $oriNoneMd '_(not measured — no rendered harness home resolved)_'
+Remove-Item -LiteralPath $oriFixture3 -Recurse -Force -ErrorAction SilentlyContinue
+
+# Multi-harness: resolution mirrors check-drift --auto's four harness:env-var
+# pairs, so a codex/hermes/agents render each gets its own row with its own
+# entrypoint (and the .agents co-render, which has no entrypoint of its own,
+# reports null rather than pretending to one).
+$oriFixture4 = New-SaTmp
+New-SaFixtureRepo $oriFixture4
+$oriC = Join-Path $oriFixture4 'claude'
+$oriX = Join-Path $oriFixture4 'codex'
+$oriH = Join-Path $oriFixture4 'hermes'
+$oriA = Join-Path $oriFixture4 'agents'
+New-SaOrientHome $oriC 'CLAUDE.md'
+New-SaOrientHome $oriX 'AGENTS.md'
+New-SaOrientHome $oriH 'SOUL.md'
+New-SaOrientHome $oriA 'unused.md'
+
+# Non-isolated (so the env fallbacks run) with an empty fixture repo root, and
+# every operator env var pinned per-invocation — no ambient leak.
+$oriSaved = @{}
+foreach ($k in @('CODEX_HOME', 'HERMES_HOME', 'AGENTS_DIR', 'OBSIDIAN_VAULT_PATH', 'CLAUDE_PRIMARY_MEMORY_DIR')) {
+    $oriSaved[$k] = [Environment]::GetEnvironmentVariable($k)
+}
+try {
+    $env:CODEX_HOME = $oriX
+    $env:HERMES_HOME = $oriH
+    $env:AGENTS_DIR = $oriA
+    Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
+    $oriMultiRaw = Invoke-SelfAudit @('--repo-root', $oriFixture4, '--config-dir', $oriC, '--json')
+    $oriMulti = $oriMultiRaw | ConvertFrom-Json
+} finally {
+    foreach ($k in $oriSaved.Keys) {
+        if ($null -eq $oriSaved[$k]) { Remove-Item ("Env:" + $k) -ErrorAction SilentlyContinue }
+        else { Set-Item ("Env:" + $k) $oriSaved[$k] }
+    }
+}
+Assert-Eq 'self-audit.test: orientation surface all four render homes get a row' `
+    'claude|codex|hermes|agents' ((@($oriMulti.orientation_surface.harnesses | ForEach-Object { $_.harness })) -join '|')
+Assert-Eq 'self-audit.test: orientation surface the codex row names AGENTS.md' `
+    'AGENTS.md' $oriMulti.orientation_surface.harnesses[1].entrypoint
+Assert-Eq 'self-audit.test: orientation surface the hermes row names SOUL.md' `
+    'SOUL.md' $oriMulti.orientation_surface.harnesses[2].entrypoint
+Assert-Eq 'self-audit.test: orientation surface the .agents co-render reports no entrypoint of its own' `
+    'True' ([string]($null -eq $oriMulti.orientation_surface.harnesses[3].entrypoint))
+Assert-Eq 'self-audit.test: orientation surface the .agents co-render still measures its spine bodies' `
+    'True' ([string]([int]$oriMulti.orientation_surface.harnesses[3].spine_bytes -gt 0))
+Assert-Eq 'self-audit.test: orientation surface nothing is skipped when all four resolve' `
+    0 @($oriMulti.orientation_surface.skipped).Count
+Remove-Item -LiteralPath $oriFixture4 -Recurse -Force -ErrorAction SilentlyContinue

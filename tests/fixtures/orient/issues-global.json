@@ -1,0 +1,7 @@
+[
+  {"identifier": "ABC-9", "title": "Loose end", "priority": "Urgent", "state": "Todo", "assignee": "Sample Assignee", "team": "ABC", "url": "https://tracker.example/ABC-9", "completedAt": null},
+  {"identifier": "ABC-4", "title": "Beta two", "priority": null, "state": "Backlog", "assignee": "", "team": "ABC", "url": "https://tracker.example/ABC-4", "completedAt": null},
+  {"identifier": "ABC-3", "title": "Beta one", "priority": "Low", "state": "Backlog", "assignee": "", "team": "ABC", "url": "https://tracker.example/ABC-3", "completedAt": null},
+  {"identifier": "ABC-2", "title": "Alpha two", "priority": "Medium", "state": "Backlog", "assignee": "", "team": "ABC", "url": "https://tracker.example/ABC-2", "completedAt": null},
+  {"identifier": "ABC-1", "title": "Alpha one", "priority": "High", "state": "In Progress", "assignee": "Sample Assignee", "team": "ABC", "url": "https://tracker.example/ABC-1", "completedAt": null}
+]

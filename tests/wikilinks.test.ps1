@@ -204,10 +204,13 @@ $r19b = Invoke-Wl $D19b $VEMPTY
 Assert-Eq 'wl.test: malformed [[ ]] still fails even when (empty).md exists' '1' "$($r19b.Rc)"
 Assert-Contains 'wl.test: malformed empty target rendered as (empty)' $r19b.Out '-> (empty)'
 
-# === 20. Wiring is pinned: capabilities/closeout.md invokes the check so a future
-# refactor that drops the pre-drain gate is caught here.
+# === 20. Wiring is pinned (twin of the .sh side). The three hand-composed
+# pre-write commands were replaced by the single fail-closed wrapper
+# scripts/closeout-gate.sh, so both links of the chain are asserted.
 $closeoutBody = [System.IO.File]::ReadAllText((Join-Path $env:REPO_ROOT 'capabilities/closeout.md'))
-Assert-Contains 'wl.test: closeout.md wires the pre-drain check invocation' $closeoutBody 'scripts/check-wikilinks.sh --draft'
+Assert-Contains 'wl.test: closeout.md wires the pre-drain gate wrapper' $closeoutBody 'scripts/closeout-gate.sh --draft'
+$closeoutGateBody = [System.IO.File]::ReadAllText((Join-Path $env:REPO_ROOT 'scripts/closeout-gate.sh'))
+Assert-Contains 'wl.test: closeout-gate.sh runs check-wikilinks.sh in its check set' $closeoutGateBody 'check-wikilinks.sh'
 
 # === 21. Unreadable (but existing) draft → exit 2. Guarded: requires chmod (Unix)
 # and a non-root user; otherwise skip rather than false-fail.

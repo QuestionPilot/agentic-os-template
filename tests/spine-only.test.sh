@@ -49,10 +49,21 @@ assert_eq "spine-only: skills/recommended/ is not shipped" "0" "$_so_n"
 # --- structural: capabilities/ ships exactly the 3 spine capabilities ------
 # LC_ALL=C sort → byte order (uppercase before lowercase), matched on the PS side
 # by an Ordinal StringComparer so both twins produce an identical joined string.
-_so_caps="$(cd "$_so_root" && git ls-files -- 'capabilities/*.md' \
+# `:(glob)` pathspec magic: git's default wildmatch lets `*` cross `/`, which would
+# fold the capabilities/reference/ companions (the conditional-depth files the
+# native bodies point at) into this top-level capability-spec census. `:(glob)`
+# restricts `*` to a single path segment, so this stays a spec census.
+_so_caps="$(cd "$_so_root" && git ls-files -- ':(glob)capabilities/*.md' \
   | sed 's#capabilities/##' | LC_ALL=C sort | tr '\n' ',')"
 assert_eq "spine-only: capabilities/ = README + 3 spine capabilities only" \
   "README.md,closeout.md,self-audit.md,session-agent.md," "$_so_caps"
+
+# capabilities/reference/ carries exactly one companion per NATIVE spine capability
+# — it is a reference home for the native bodies, not a second capability surface.
+_so_ref="$(cd "$_so_root" && git ls-files -- ':(glob)capabilities/reference/*.md' \
+  | sed 's#capabilities/reference/##' | LC_ALL=C sort | tr '\n' ',')"
+assert_eq "spine-only: capabilities/reference/ = one companion per native spine capability" \
+  "closeout.md,session-agent.md," "$_so_ref"
 
 # --- structural: shipped settings.base.json enables zero plugins ----------
 _so_plugins="$(cd "$_so_root" && tr -d ' \n\t' < harnesses/claude/settings.base.json \
