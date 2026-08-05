@@ -56,7 +56,37 @@ re-audit to score them. The bands above describe a fully-measured run.
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
 | **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
 
-**Out of scope for v1 (deferred to future PRs, when Linear is reachable from the audit run):** state-delta memory writes matched against Linear comments; project memory headline reconciled against Linear state; "recent Linear activity" cross-referenced with "recent file mtime". These are non-trivial to score deterministically and the cost outweighs the v1 benefit; the rubric checks only what the local filesystem can prove today.
+**Semantic currentness — reported, never scored.** Every pillar above is
+**mechanical**: it proves a structural property of the local filesystem. All five
+can score 20/20 while a memory note or an active vault project note confidently
+asserts a tracker state that changed hours ago — a system can be perfectly tidy
+and materially wrong, and until this check existed it presented as an unqualified
+100/100. `scripts/check-state-currentness.sh` (PowerShell twin:
+`check-state-currentness.ps1`) closes that: it reconciles tracker-state CLAIMS in
+the scanned memory stores and in `status: active` vault project notes against
+live tracker state, and flags project-status/child contradictions
+(`project-closed-with-open-children`, `project-idle-with-active-children`,
+`project-active-with-no-open-children`).
+
+Its findings land in their **own** `## Semantic currentness` markdown section and
+their **own** `semantic_currentness` JSON key — never in `total`, a pillar score,
+or `gaps`. That separation is the point: an advisory heuristic must not move the
+number, and the number must not imply currentness. Undated present-tense
+assertions are `stale-claim`; claims under an explicitly dated heading are
+`stale-snapshot` (a refresh backlog, not a lie); `## State Deltas` and other
+history logs are skipped outright, because a dated record of what was true then
+stays correct forever. When the tracker is unreachable, unauthenticated, or no
+issue prefix is configured, the check fails **soft** — the section reads
+`_(skipped — <named reason>)_` and the filesystem score is untouched.
+
+The extractor is a deliberately restrained heuristic: it fires only on a
+`<PREFIX>-<N>` token that owns a state word by tight adjacency, a short
+distributing `**State:**` label, or conjunction inheritance. Under-reporting is
+the chosen bias — a missed stale claim costs one audit cycle, a false accusation
+costs trust in the whole signal. Both twins' tests pin the known false positives
+as regression anchors; loosening one twin without the other is twin divergence.
+
+**Still out of scope (deferred to future PRs):** state-delta memory writes matched against Linear closeout comments; "recent Linear activity" cross-referenced with "recent file mtime". These are non-trivial to score deterministically and the cost outweighs the benefit today.
 
 **Companion qualitative check — vault-promotion lag (Pillar 2).** Beyond the scored index hygiene, when running `/self-audit` also judge whether durable lessons are *reaching the durable-knowledge vault* or only accumulating in local auto-memory. Compare the newest durable-class memory write against the newest vault Lesson/Decision note: a multi-day gap means the closeout `obsidian` promotion step has lapsed and durable knowledge is stranded in the disposable cache. This stays qualitative (not part of the 0–100 score) because most auto-memory is correctly local — only the operator-durable subset should ever be promoted, so a raw count would be noise. If the operator ships a promotion-sweep helper, run it; otherwise eyeball the newest memory mtimes against the vault index dates. Flag a stale lag as a Pillar-2 gap and name the un-promoted candidates.
 

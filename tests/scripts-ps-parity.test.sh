@@ -513,6 +513,20 @@ if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-au
         ps_p="$(jq -r ".pillars[\"$pkey\"].score" < "$ps_sa_out" 2>/dev/null)"
         assert_eq "self-audit parity: pillar $pkey score" "$bash_p" "$ps_p"
       done
+
+      # Semantic currentness (<TEAM>-522) is an ADVISORY section wired into both
+      # twins; the twins must agree on its verdict AND on the shape of the key,
+      # or one platform's operator reads a different scorecard from the other's.
+      # On this isolated fixture both must report the same named skip.
+      bash_sc="$(jq -r '[.semantic_currentness.status, .semantic_currentness.reason,
+                         (.semantic_currentness.claims | length | tostring),
+                         (.semantic_currentness.projects | length | tostring)] | join("|")' \
+                  < "$bash_sa_out" 2>/dev/null)"
+      ps_sc="$(jq -r '[.semantic_currentness.status, .semantic_currentness.reason,
+                       (.semantic_currentness.claims | length | tostring),
+                       (.semantic_currentness.projects | length | tostring)] | join("|")' \
+                < "$ps_sa_out" 2>/dev/null)"
+      assert_eq "self-audit parity: semantic_currentness verdict + shape match" "$bash_sc" "$ps_sc"
     else
       _skip "self-audit parity: total scores match" "jq not installed"
       _skip "self-audit parity: pillar cross-layer-handoffs score" "jq not installed"
@@ -520,6 +534,7 @@ if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-au
       _skip "self-audit parity: pillar folder-hygiene score" "jq not installed"
       _skip "self-audit parity: pillar verification-coverage score" "jq not installed"
       _skip "self-audit parity: pillar closeout-spine-discipline score" "jq not installed"
+      _skip "self-audit parity: semantic_currentness verdict + shape match" "jq not installed"
     fi
   else
     _skip "self-audit ps exits 0 on isolated fixture" "pwsh not installed"
@@ -528,6 +543,7 @@ if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-au
                 verification-coverage closeout-spine-discipline; do
       _skip "self-audit parity: pillar $pkey score" "pwsh not installed"
     done
+    _skip "self-audit parity: semantic_currentness verdict + shape match" "pwsh not installed"
   fi
 else
   _skip "self-audit bash exits 0 on isolated fixture" "scripts not present"

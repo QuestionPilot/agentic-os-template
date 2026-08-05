@@ -38,7 +38,14 @@
 # Linear-side checks degrade with a "skipped: lineark not configured" note.
 #
 # Output: markdown by default. `--json` emits a structured object for tests:
-#   {date, total, pillars{...}, injection_surface, gaps[], skipped[], codex_registry_bytes}
+#   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
+#    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]}}
+#
+# `semantic_currentness` is ADVISORY and lives in its own key + its own markdown
+# section: it comes from scripts/check-state-currentness.sh (tracker-reachable
+# claim reconciliation) and never contributes to `total`, a pillar score, or
+# `gaps`. Mechanical health and semantic currentness are different questions and
+# a consumer must never read one as the other.
 #
 # Tests: tests/self-audit.test.sh exercises every pillar with fixtures.
 #
@@ -1237,6 +1244,103 @@ done
 
 DATE="$(date -u +%Y-%m-%d)"
 
+# --- semantic currentness (advisory, NEVER scored) ----------------------------
+# The five pillars above are MECHANICAL: each proves a structural property of the
+# filesystem — an index resolves, a manifest is fresh, a heading exists. Every one
+# of them can pass while a memory note or an active vault project note confidently
+# asserts a tracker state that changed hours ago, which is exactly how a
+# semantically stale system used to present as an unqualified 100/100.
+#
+# scripts/check-state-currentness.sh answers that separate question. Its findings
+# are reported in their OWN section and their OWN JSON key and never touch a
+# pillar score or the gap list: a semantic finding must not move the number, and
+# a clean number must not imply semantic currentness. The checker fails SOFT
+# (exit 2 + a named reason on stderr) whenever the tracker is unreachable, so an
+# operator without a tracker surface keeps the existing filesystem score.
+SC_STATUS="skipped"      # clean | findings | skipped
+SC_REASON=""
+SC_FINDINGS=()           # verbatim --list TSV records
+
+# Override for the hermetic tests: point at a stub that serves fixture records.
+CURRENTNESS_BIN="${SELF_AUDIT_CURRENTNESS_BIN:-$REPO_ROOT/scripts/check-state-currentness.sh}"
+
+run_state_currentness() {
+  # An --isolated run has no operator surfaces by construction; tests that DO
+  # want this section exercised inject a stub via $SELF_AUDIT_CURRENTNESS_BIN.
+  if [ "$ISOLATED" -eq 1 ] && [ -z "${SELF_AUDIT_CURRENTNESS_BIN:-}" ]; then
+    SC_REASON="isolated run — semantic currentness not evaluated"
+    return
+  fi
+  if [ ! -f "$CURRENTNESS_BIN" ]; then
+    SC_REASON="checker not found at $CURRENTNESS_BIN"
+    return
+  fi
+
+  # Hand the checker THIS audit's resolved scope, so the two agree on what the
+  # durable layers are instead of each resolving local.env independently.
+  local sc_args=() _d
+  for _d in ${MEMORY_DIRS[@]+"${MEMORY_DIRS[@]}"}; do
+    sc_args[${#sc_args[@]}]="--memory-dir"; sc_args[${#sc_args[@]}]="$_d"
+  done
+  if [ -n "$VAULT_DIR" ]; then
+    sc_args[${#sc_args[@]}]="--vault-dir"; sc_args[${#sc_args[@]}]="$VAULT_DIR"
+  fi
+  [ "$ISOLATED" -eq 1 ] && sc_args[${#sc_args[@]}]="--isolated"
+
+  local _errf _out _rc _line
+  _errf="$(mktemp)"
+  _out="$(bash "$CURRENTNESS_BIN" --list ${sc_args[@]+"${sc_args[@]}"} 2>"$_errf")"
+  _rc=$?
+  case "$_rc" in
+    0) SC_STATUS="clean" ;;
+    1) SC_STATUS="findings"
+       while IFS= read -r _line; do
+         [ -n "$_line" ] || continue
+         SC_FINDINGS[${#SC_FINDINGS[@]}]="$_line"
+       done <<< "$_out"
+       # An exit-1 with no parseable record is a contract break, not a clean
+       # run — say so rather than rendering an empty findings section.
+       if [ "${#SC_FINDINGS[@]}" -eq 0 ]; then
+         SC_STATUS="skipped"
+         SC_REASON="checker reported findings but emitted no parseable records"
+       fi
+       ;;
+    *) SC_STATUS="skipped"
+       # The checker names its skip on stderr in BOTH modes precisely so this
+       # stays a NAMED skip ("lineark not found") and not a bare exit 2.
+       SC_REASON="$(head -n 1 "$_errf" 2>/dev/null | sed 's/^SKIP //')"
+       [ -n "$SC_REASON" ] || SC_REASON="checker returned an indeterminate result (exit $_rc)"
+       ;;
+  esac
+  rm -f "$_errf"
+}
+run_state_currentness
+
+# emit_currentness_markdown — the `## Semantic currentness` body (no heading).
+emit_currentness_markdown() {
+  case "$SC_STATUS" in
+    clean)
+      printf '_(clean — every checked claim and project agrees with live tracker state)_\n' ;;
+    skipped)
+      printf '_(skipped — %s)_\n' "$SC_REASON" ;;
+    findings)
+      local rec kind f2 f3 f4 f5 f6 f7
+      for rec in "${SC_FINDINGS[@]}"; do
+        IFS=$'\t' read -r kind f2 f3 f4 f5 f6 f7 <<< "$rec"
+        case "$kind" in
+          claim)
+            printf -- '- %s %s: note says "%s", tracker says "%s" (as-of %s) — %s\n' \
+              "$f2" "$f3" "$f4" "$f5" "$f6" "$f7" ;;
+          project)
+            printf -- '- %s "%s": status "%s" with %s open child issue(s), %s active\n' \
+              "$f2" "$f3" "$f4" "$f5" "$f6" ;;
+          *) printf -- '- %s\n' "$rec" ;;
+        esac
+      done
+      printf 'Advisory — these findings never change the pillar scores above. Reconcile the note or the tracker.\n' ;;
+  esac
+}
+
 # --- output -------------------------------------------------------------------
 emit_markdown() {
   printf '# /self-audit scorecard — %s\n\n' "$DATE"
@@ -1311,6 +1415,12 @@ emit_markdown() {
       printf -- '- %s\n' "$s"
     done
   fi
+
+  # APPENDED LAST, for the same reason codex_registry_bytes is appended last in
+  # the JSON: every pre-existing section keeps its position for anything that
+  # reads this scorecard by offset.
+  printf '\n## Semantic currentness\n\n'
+  emit_currentness_markdown
 }
 
 emit_json() {
@@ -1386,6 +1496,35 @@ emit_json() {
   local cx_json='null'
   [ "$CODEX_REGISTRY_BYTES" -ge 0 ] && cx_json="$CODEX_REGISTRY_BYTES"
 
+  # semantic_currentness — ADDITIVE optional field, its OWN key so a consumer can
+  # never confuse an advisory semantic finding with a mechanical pillar score.
+  # `status` is always one of clean|findings|skipped; `reason` is populated only
+  # on skipped. APPENDED LAST for the same positional-stability reason as
+  # codex_registry_bytes.
+  local sc_claims='[]' sc_projects='[]' sc_rec sc_kind s2 s3 s4 s5 s6 s7
+  for sc_rec in ${SC_FINDINGS[@]+"${SC_FINDINGS[@]}"}; do
+    IFS=$'\t' read -r sc_kind s2 s3 s4 s5 s6 s7 <<< "$sc_rec"
+    case "$sc_kind" in
+      claim)
+        sc_claims="$(printf '%s' "$sc_claims" | jq \
+          --arg class "$s2" --arg identifier "$s3" --arg stored "$s4" \
+          --arg live "$s5" --arg observed_at "$s6" --arg location "$s7" \
+          '. += [{class: $class, identifier: $identifier, stored: $stored, live: $live, observed_at: $observed_at, location: $location}]')" ;;
+      project)
+        sc_projects="$(printf '%s' "$sc_projects" | jq \
+          --arg class "$s2" --arg name "$s3" --arg status "$s4" \
+          --arg open_children "$s5" --arg active_children "$s6" \
+          '. += [{class: $class, name: $name, status: $status, open_children: ($open_children | tonumber? // 0), active_children: ($active_children | tonumber? // 0)}]')" ;;
+    esac
+  done
+  local sc_json
+  sc_json="$(jq -n \
+    --arg status "$SC_STATUS" \
+    --arg reason "$SC_REASON" \
+    --argjson claims "$sc_claims" \
+    --argjson projects "$sc_projects" \
+    '{status: $status, reason: $reason, claims: $claims, projects: $projects}')"
+
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
@@ -1395,7 +1534,8 @@ emit_json() {
     --argjson gaps "$gaps_arr" \
     --argjson skipped "$skipped_arr" \
     --argjson codex_registry_bytes "$cx_json" \
-    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes}'
+    --argjson semantic_currentness "$sc_json" \
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness}'
 }
 
 OUTPUT=""

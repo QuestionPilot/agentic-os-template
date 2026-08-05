@@ -54,6 +54,7 @@ _Skip 'scripts-ps-parity.test: self-audit parity: pillar memory-hygiene score' $
 _Skip 'scripts-ps-parity.test: self-audit parity: pillar folder-hygiene score' $reason
 _Skip 'scripts-ps-parity.test: self-audit parity: pillar verification-coverage score' $reason
 _Skip 'scripts-ps-parity.test: self-audit parity: pillar closeout-spine-discipline score' $reason
+_Skip 'scripts-ps-parity.test: self-audit parity: semantic_currentness verdict + shape match' $reason
 _Skip 'scripts-ps-parity.test: self-audit bash: 6.5d counted / 7.5d excluded — one State-Deltas penalty (epoch cutoff)' $reasonGate
 _Skip 'scripts-ps-parity.test: self-audit parity: 6.5-day (inside) pillar score matches (epoch freshness)' $reasonGate
 _Skip 'scripts-ps-parity.test: self-audit parity: 7.5-day (outside) pillar score matches (epoch freshness)' $reasonGate
