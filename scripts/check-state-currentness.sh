@@ -192,7 +192,7 @@ if [ "$ISOLATED" -eq 0 ]; then
       # store with no notes is harmless — the scanner just finds no claims.
       while IFS= read -r _d; do
         [ -n "$_d" ] && MEMORY_DIRS[${#MEMORY_DIRS[@]}]="$_d"
-      done < <(find "$_cfg/projects" -mindepth 2 -maxdepth 2 -type d -name memory 2>/dev/null | sort)
+      done < <(find "$_cfg/projects" -mindepth 2 -maxdepth 2 -type d -name memory 2>/dev/null | LC_ALL=C sort)
     fi
   fi
 fi
@@ -218,7 +218,7 @@ for _md in ${MEMORY_DIRS[@]+"${MEMORY_DIRS[@]}"}; do
   [ -d "$_md" ] || continue
   while IFS= read -r _f; do
     [ -n "$_f" ] && SCAN_FILES[${#SCAN_FILES[@]}]="$_f"
-  done < <(find "$_md" -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort)
+  done < <(find "$_md" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
 done
 if [ -n "$VAULT_DIR" ] && [ -d "$VAULT_DIR/01-Projects" ]; then
   while IFS= read -r _f; do
@@ -228,7 +228,7 @@ if [ -n "$VAULT_DIR" ] && [ -d "$VAULT_DIR/01-Projects" ]; then
     if LC_ALL=C awk '/^---[[:space:]]*$/{n++; if(n==2) exit} n==1 && tolower($0) ~ /^status:[[:space:]]*active[[:space:]]*$/{found=1} END{exit !found}' "$_f" 2>/dev/null; then
       SCAN_FILES[${#SCAN_FILES[@]}]="$_f"
     fi
-  done < <(find "$VAULT_DIR/01-Projects" -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort)
+  done < <(find "$VAULT_DIR/01-Projects" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
 fi
 
 [ "${#SCAN_FILES[@]}" -gt 0 ] || skip "no memory or vault sources to scan (--memory-dir / --vault-dir)"

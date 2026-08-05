@@ -307,25 +307,44 @@ assert_contains "check-state-currentness: NBSP-separated claim names ABC-1" "$o"
 # never the binary. So the fixtures below are re-run with the locale forced, and
 # a UTF-8 locale must be named explicitly rather than inherited, or this guard
 # silently re-tests the C-locale path it exists to distinguish from.
-utf8_locale="$(locale -a 2>/dev/null | grep -iE '\.(utf-?8)$' | head -n1)"
+utf8_locale=""
+for _cand in $(locale -a 2>/dev/null | grep -iE '\.(utf-?8)$'); do
+  # A NAME from `locale -a` is not proof the locale LOADS. An unsupported name
+  # makes libc warn on stderr and fall back to C — under which these assertions
+  # pass whether or not the fix is present, i.e. the guard silently re-tests the
+  # C path it exists to distinguish from. Demand the charmap back as evidence.
+  if [ "$(LC_ALL="$_cand" locale charmap 2>/dev/null | tr -d '[:space:]' | tr 'a-z' 'A-Z')" = "UTF-8" ]; then
+    utf8_locale="$_cand"; break
+  fi
+done
 if [ -z "$utf8_locale" ]; then
+  # Named, not silent: a lane with no loadable UTF-8 locale leaves the false-clean
+  # regression untested, and that has to be visible in the run output.
   _skip "check-state-currentness: multibyte claims extract under a UTF-8 locale" \
-        "no UTF-8 locale available (locale -a)"
+        "no loadable UTF-8 locale (locale -a / locale charmap)"
   _skip "check-state-currentness: em-dash claims extract under a UTF-8 locale" \
-        "no UTF-8 locale available (locale -a)"
+        "no loadable UTF-8 locale (locale -a / locale charmap)"
 else
-  o="$(LANG="$utf8_locale" LC_ALL="$utf8_locale" run_csc "$DA" "$MA" --no-projects)"; rc=$?
-  assert_eq "check-state-currentness: multibyte claims extract under a UTF-8 locale" 1 "$rc"
+  # ISOLATED fixtures, and assert the IDENTIFIER — not just the exit code. Exit 1
+  # only proves that *something* mismatched: were another claim left in the
+  # fixture, both assertions could hold while the multibyte claim vanished, and
+  # the guard would go hollow without anyone noticing.
+  DU="$(mktemp -d)"; MU="$DU/mem"; mkdir -p "$MU"; csc_stub "$DU"; csc_states "$DU"
 
-  # An em dash between the identifier and its state word is the same trap in the
-  # shape real notes actually use ("ABC-1 — Done:"). Accurate claims, so the run
-  # must reach a verdict (exit 0) rather than skip for want of evidence.
-  cat > "$MA/case.md" <<'EOF'
-- **ABC-1 — Done:** shipped.
-- **ABC-3 — In Progress (High):** the active lane.
-EOF
-  o="$(LANG="$utf8_locale" LC_ALL="$utf8_locale" run_csc "$DA" "$MA" --no-projects)"; rc=$?
-  assert_eq "check-state-currentness: em-dash claims extract under a UTF-8 locale" 0 "$rc"
+  printf 'ABC-1\xc2\xa0is\xc2\xa0Backlog.\n' > "$MU/case.md"
+  o="$(LANG="$utf8_locale" LC_ALL="$utf8_locale" run_csc "$DU" "$MU" --no-projects)"; rc=$?
+  assert_eq       "check-state-currentness: multibyte claims extract under a UTF-8 locale" 1 "$rc"
+  assert_contains "check-state-currentness: UTF-8-locale NBSP claim names ABC-1" "$o" "ABC-1"
+
+  # An em dash between identifier and state word is the same trap in the shape
+  # real notes actually use ("ABC-1 — Backlog"). Stale, so the finding names the
+  # identifier — a stronger signal than the exit code alone.
+  printf -- '- **ABC-1 — Backlog (High):** the stale lane.\n' > "$MU/case.md"
+  o="$(LANG="$utf8_locale" LC_ALL="$utf8_locale" run_csc "$DU" "$MU" --no-projects)"; rc=$?
+  assert_eq       "check-state-currentness: em-dash claims extract under a UTF-8 locale" 1 "$rc"
+  assert_contains "check-state-currentness: UTF-8-locale em-dash claim names ABC-1" "$o" "ABC-1"
+
+  rm -rf "$DU"
 fi
 
 rm -rf "$DA"
