@@ -50,18 +50,64 @@ Both surfaces give the same Linear access semantics; the framework's capability 
 
 ### 3.2 Option A — install `lineark` CLI
 
-`lineark` is a single-binary Linear CLI maintained at [github.com/flipbit03/lineark](https://github.com/flipbit03/lineark). Install with the curl-to-shell pattern the upstream README documents:
+`lineark` is a single-binary Linear CLI maintained at [github.com/flipbit03/lineark](https://github.com/flipbit03/lineark). Upstream documents a curl-to-shell install; the framework does not use it. Install with the framework's pinned installer instead, from the cloned repo root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/flipbit03/lineark/main/install.sh | sh
+bash scripts/install-lineark.sh
 ```
 
-The script drops the binary into `~/.local/bin/lineark`. Confirm it is on PATH and reports a 3.x version:
+PowerShell form (macOS and Linux; see the Windows note below):
+
+```powershell
+pwsh -NoProfile -File scripts/install-lineark.ps1
+```
+
+**What it does.** It installs one pinned release tag, verifies the downloaded asset's sha256 against [`scripts/lineark-checksums.sha256`](../scripts/lineark-checksums.sha256) *before* the file is made executable or moved onto PATH, re-verifies it in place after the move and before it is ever executed, drops the binary into `~/.local/bin/lineark`, then runs `lineark --version` and requires it to report **exactly** the pinned version. A tag with no entry in the checksum file is an **unvetted release**: the installer refuses it outright rather than downloading on trust. Two entries for the same tag and asset with differing hashes are also a refusal — the pin file would no longer say which artifact is vetted. On any checksum or version mismatch nothing is left installed.
+
+Upstream publishes tagged releases with raw binaries and no checksum manifest, which is why the pin file is maintained here and reviewed by the operator.
+
+**Environment overrides** (all optional):
+
+| Variable | Default | Use |
+| --- | --- | --- |
+| `LINEARK_VERSION` | the pinned tag | Install a different vetted tag — also the rollback lever. Must match `^v?[A-Za-z0-9._-]+$` |
+| `LINEARK_CHECKSUM_FILE` | `scripts/lineark-checksums.sha256` | Point at a different reviewed pin file |
+| `LINEARK_BASE_URL` | upstream GitHub releases base | Install from a mirror. Only `https://` and `file://` are accepted |
+| `LINEARK_INSTALL_DIR` | `~/.local/bin` | Install somewhere else |
+
+Setting `LINEARK_CHECKSUM_FILE` or `LINEARK_BASE_URL` moves the trust root off the repo's reviewed defaults, so each prints a `WARNING non-default trust root:` line before anything is downloaded. Installing any tag other than the current default prints a `note: installing non-default tag …` line, so a downgrade onto an older release is never silent.
+
+Exit codes: `0` installed and verified, `1` refused or failed (unvetted tag, conflicting pin entries, checksum mismatch, download failure, smoke mismatch), `2` usage or configuration error (unknown argument, malformed `LINEARK_VERSION`, disallowed `LINEARK_BASE_URL` scheme), `3` unsupported platform. Upstream ships binaries for Linux x86_64, Linux aarch64, and macOS aarch64 only — on anything else (including Windows and Intel macOS) the installer exits 3 and names the two alternatives: build from source with `cargo install lineark`, or use the Linear MCP surface (§3.3) instead.
+
+Confirm the result:
 
 ```bash
 lineark --version
 # expect: lineark 3.x.y
 ```
+
+If `~/.local/bin` is not on your PATH, the installer prints the line to add.
+
+#### Updating / re-vetting a new release
+
+New upstream releases are adopted deliberately, never automatically. The sequence is vet → pin → checksum → smoke:
+
+1. **Review** the upstream release: read the release notes and the diff since the currently pinned tag. An unreviewed release is not a candidate.
+2. **Download** each published asset for the new tag from the official release page.
+3. **Compute** each asset's sha256 locally — `sha256sum <asset>` on Linux, `shasum -a 256 <asset>` on macOS, `Get-FileHash -Algorithm SHA256 <asset>` in PowerShell.
+4. **Append** one `<sha256>  <tag>/<asset>` line per asset to `scripts/lineark-checksums.sha256`. Keep the existing entries: old tags are what make rollback work.
+5. **Bump** the default pin (`LINEARK_DEFAULT_VERSION` in `scripts/install-lineark.sh`, `$LinearkDefaultVersion` in the `.ps1` twin) to the new tag.
+6. **Re-run** `bash scripts/install-lineark.sh` and confirm `lineark --version` reports the new tag.
+
+**Rollback.** Old entries are *kept* in the checksum file on purpose, so reinstalling a previous tag is one command — no edit required:
+
+```bash
+LINEARK_VERSION=<previously-vetted-tag> bash scripts/install-lineark.sh
+```
+
+A tag installs only if it is already listed in the checksum file; if it is not, vet and pin it first with the same procedure.
+
+**Revocation.** Removing an entry from `scripts/lineark-checksums.sha256` is the revocation mechanism, and the only one. When a release is withdrawn upstream or found vulnerable, delete its lines: the installer then refuses that tag as an unvetted release, so nobody can roll back onto it by accident. Deleting an entry is a deliberate security action rather than tidying — record the reason in the commit message.
 
 **Provide the API token.** `lineark` reads `~/.linear_api_token` by default. Create the token in Linear (Settings → API → Personal API keys) and write it to the file:
 
@@ -106,7 +152,8 @@ When swapping Linear access surfaces — or removing one outright — clean up t
 **Removing the `lineark` CLI.**
 
 ```bash
-# Remove the binary (curl-installer puts it in ~/.local/bin)
+# Remove the binary (the installer's default destination is ~/.local/bin;
+# adjust if you set LINEARK_INSTALL_DIR)
 rm -f ~/.local/bin/lineark
 # Remove the API token if you don't plan to reinstall
 rm -f ~/.linear_api_token
