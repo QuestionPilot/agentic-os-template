@@ -100,13 +100,35 @@ capability-declared enforcement class today.)
 The build copies the named hook script into place and merges its `settings.json`
 block. Enforcement is **never code-generated** — the scripts are real files.
 
-**Non-capability hook.** One hook is a standalone harness feature, not tied to any
-capability: `hooks/framework-surface.sh` runs on `SessionStart`
-(`matcher: "startup|clear|compact"`) and surfaces three context blocks as
-`additionalContext`: (a) recent `agentic-os-template` framework commits, (b) the
-MCP-health probe, and (c) the session-agent invocation directive
-(the auto-fire mechanism for the spine capability — see
-`capabilities/session-agent.md` Mode 1). The build wires it unconditionally.
+**Non-capability hooks.** Two hooks are standalone harness features, not tied to
+any capability:
+
+- `hooks/framework-surface.sh` runs on `SessionStart`
+  (`matcher: "startup|clear|compact"`) and surfaces three context blocks as
+  `additionalContext`: (a) recent `agentic-os-template` framework commits, (b) the
+  MCP-health probe, and (c) the session-agent invocation directive
+  (the auto-fire mechanism for the spine capability — see
+  `capabilities/session-agent.md` Mode 1). The build wires it unconditionally.
+- `hooks/stuck-detector.sh` is ONE script wired on TWO events, both
+  `matcher: "Bash"`: `PostToolUseFailure` (count a failure) and `PostToolUse`
+  (reset that command's streak on success). Claude Code routes a non-zero-exit
+  Bash call to `PostToolUseFailure` — verified live on v2.1.209: its `.error`
+  carries `"Exit code N\n<stderr>"` and `tool_response` is null, while a
+  succeeding call fires `PostToolUse` with `{stdout, stderr, interrupted,
+  isImage, noOutputExpected}` and no exit code anywhere, so the *event* is the
+  failure signal. The 3rd qualifying failure of the same normalized command
+  with no intervening success injects one `additionalContext` reminder naming
+  the operator's cross-model rescue lane (`additionalContext` injection from
+  `PostToolUseFailure` also verified live) — exactly once per command hash per
+  session. Its declaring rule lives in the operator-local rescue/review skill
+  (Shape C), so neither a `capabilities/` header nor this framework file can
+  name it: the reminder's `@@RESCUE_INVOCATION@@` token is substituted at
+  render time from `local.env`'s optional `RESCUE_SKILL_NAME` (generic
+  phrasing when unset). The build wires it for the claude harness only (the
+  Codex equivalent is a noted follow-up).
+  Kill switch: `CLAUDE_SKIP_STUCK_DETECTOR=1`. State:
+  `<config>/agentic-os/stuck-<session_id>`, reaped at +7 days like the gate
+  markers.
 
 **Kickoff reconciliation contract.** The hook's commit window is the freshness
 signal at session start; memory captures what was true when written, the
@@ -123,9 +145,9 @@ in the capability body, not a new hook behavior.
 **`jq` runtime contract.** Every hook script needs `jq` on the hook PATH. The
 behavior when `jq` is absent is split by hook role: the **gate** hook
 (`session-agent.sh`) fails **closed** — it emits a block decision,
-so a broken environment cannot silently disable enforcement; the **surfacing** hook
-(`framework-surface.sh`) fails **open** — it exits silently, since missing
-injected context is not a safety risk. The per-gate kill switches still bypass
+so a broken environment cannot silently disable enforcement; the **surfacing** hooks
+(`framework-surface.sh`, `stuck-detector.sh`) fail **open** — they exit silently,
+since missing injected context is not a safety risk. The per-gate kill switches still bypass
 the gate before the `jq` check is reached.
 
 **Soft-enforcement note.** Hooks are *hard* enforcement — they synchronously block

@@ -467,13 +467,31 @@ function Add-Hook {
         # Literal substitution — Replace, NOT regex Replace, so '$' etc. in
         # $env:AI_CONFIG_DIR don't get pattern-interpreted.
         $resolved = $content.Replace('@@AI_CONFIG_DIR@@', $env:AI_CONFIG_DIR)
+        # @@RESCUE_INVOCATION@@ (stuck-detector): the rescue capability is
+        # operator-local (Shape C) — generic phrasing unless local.env names
+        # the skill via RESCUE_SKILL_NAME (mirrors install.sh install_hook).
+        # Gated on a strict skill-name allowlist: the value lands in GENERATED
+        # HOOK SOURCE, so anything but a plain name gets a warning and the
+        # generic phrasing, never raw interpolation (panel finding).
+        $rescueInvocation = 'invoke your cross-model rescue capability'
+        if ($env:RESCUE_SKILL_NAME) {
+            if ($env:RESCUE_SKILL_NAME -match '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+                $rescueInvocation = 'invoke the `' + $env:RESCUE_SKILL_NAME + '` skill'
+            } else {
+                Warn 'RESCUE_SKILL_NAME is not a plain skill name (allowed: letters/digits/._-, no leading punctuation) - using generic rescue phrasing'
+            }
+        }
+        $resolved = $resolved.Replace('@@RESCUE_INVOCATION@@', $rescueInvocation)
         Write-LfFile -Path $dst -Content $resolved
     }
 
-    # Dedupe by script name (matches install.sh's case-substring check).
+    # Dedupe on the FULL event+matcher+script record (matches install.sh): one
+    # script may be deliberately wired on two events (stuck-detector counts on
+    # PostToolUseFailure and resets on PostToolUse), while re-registering an
+    # identical triple stays a no-op.
     $already = $false
     foreach ($rec in $Script:HookBlocks) {
-        if ($rec.script -eq $Script) { $already = $true; break }
+        if ($rec.script -eq $Script -and $rec.event -eq $Event -and $rec.matcher -eq $Matcher) { $already = $true; break }
     }
     if (-not $already) {
         $Script:HookBlocks.Add([pscustomobject]@{
@@ -1869,6 +1887,15 @@ try {
         default {
             Add-Hook -Script 'framework-surface.ps1' -Event 'SessionStart' -Matcher 'startup|clear|compact'
         }
+    }
+
+    # stuck-detector is a non-capability hook (its declaring capability,
+    # cross-model-review, is operator-local Shape C). Claude-only for now; ONE
+    # script on TWO events — failure counts the streak, success resets it
+    # (mirrors install.sh).
+    if ($Harness -eq 'claude') {
+        Add-Hook -Script 'stuck-detector.ps1' -Event 'PostToolUseFailure' -Matcher 'Bash'
+        Add-Hook -Script 'stuck-detector.ps1' -Event 'PostToolUse'        -Matcher 'Bash'
     }
 
     # Generate harness entrypoints from templates + capability catalog.

@@ -534,12 +534,34 @@ install_hook() {
     # path may contain any character (#, &, \ are all safe here).
     local content
     content="$(cat "$src")"
-    printf '%s\n' "${content//@@AI_CONFIG_DIR@@/$AI_CONFIG_DIR}" > "$BUILD/hooks/$script"
+    content="${content//@@AI_CONFIG_DIR@@/$AI_CONFIG_DIR}"
+    # @@RESCUE_INVOCATION@@ (stuck-detector): the rescue capability is
+    # operator-local (Shape C), so the framework hook text is generic and the
+    # operator's local.env optionally names the skill via RESCUE_SKILL_NAME.
+    # The value is interpolated into GENERATED HOOK SOURCE, so it is gated on
+    # a strict skill-name allowlist — any other value (shell metacharacters,
+    # quotes, spaces) gets a warning and the generic phrasing, never raw
+    # interpolation (panel finding: config data must not inject into source).
+    local rescue_invocation="invoke your cross-model rescue capability"
+    if [ -n "${RESCUE_SKILL_NAME:-}" ]; then
+      if printf '%s' "$RESCUE_SKILL_NAME" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+        rescue_invocation="invoke the \`${RESCUE_SKILL_NAME}\` skill"
+      else
+        warn "RESCUE_SKILL_NAME is not a plain skill name (allowed: letters/digits/._-, no leading punctuation) — using generic rescue phrasing"
+      fi
+    fi
+    content="${content//@@RESCUE_INVOCATION@@/$rescue_invocation}"
+    printf '%s\n' "$content" > "$BUILD/hooks/$script"
     chmod +x "$BUILD/hooks/$script"
   fi
+  # Dedupe on the FULL event+matcher+script record, not the script name alone:
+  # one script may be deliberately wired on two events (stuck-detector counts on
+  # PostToolUseFailure and resets on PostToolUse), while re-registering an
+  # identical triple stays a no-op.
+  local rec="${event}${HOOK_REC_SEP}${matcher}${HOOK_REC_SEP}${script}"$'\n'
   case "$HOOK_BLOCKS" in
-    *"$HOOK_REC_SEP$script"$'\n'*) ;;   # already registered
-    *) HOOK_BLOCKS="${HOOK_BLOCKS}${event}${HOOK_REC_SEP}${matcher}${HOOK_REC_SEP}${script}"$'\n' ;;
+    *"$rec"*) ;;   # already registered
+    *) HOOK_BLOCKS="${HOOK_BLOCKS}${rec}" ;;
   esac
 }
 
@@ -1484,6 +1506,17 @@ main() {
       ;;
     *)      install_hook "framework-surface.sh" "SessionStart" "startup|clear|compact" ;;
   esac
+
+  # stuck-detector is a non-capability hook (its declaring capability,
+  # cross-model-review, is operator-local Shape C — nothing in capabilities/
+  # can name it). Claude-only for now: the Codex-hook equivalent is a noted
+  # follow-up once the mechanism proves out. ONE script on TWO events — the
+  # failure event counts the streak, the success event resets it (Claude Code
+  # routes non-zero-exit Bash to PostToolUseFailure; see the hook header).
+  if [ "$HARNESS" = "claude" ]; then
+    install_hook "stuck-detector.sh" "PostToolUseFailure" "Bash"
+    install_hook "stuck-detector.sh" "PostToolUse" "Bash"
+  fi
 
   # Generate the harness entrypoint files from their templates plus the
   # capability-derived catalog. ENTRYPOINTS is per-harness.
