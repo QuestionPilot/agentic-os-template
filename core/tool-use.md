@@ -15,6 +15,7 @@ Choose the most efficient path to the most effective outcome. If a tool, script,
 - Prefer current official documentation or documentation tools for library, SDK, API, CLI, and cloud-service behavior.
 - Prefer narrow evidence packets over broad transcript or repository dumps.
 - When choosing or building a CLI for agent use, apply the agent-CLI rubric in `../skills/skill-authoring.md` (principle 9) — it operationalizes this CLI-over-MCP preference into seven concrete checks.
+- Prefer batching cache-busting configuration changes (connecting or disconnecting tool servers, switching models or reasoning settings, harness upgrades) at session boundaries rather than mid-flight in a large-context session, where the harness caches conversation history. After idling past the cache lifetime, prefer a fresh session over resuming a heavy one — once the context needed to continue is captured in the durable layers. Cache efficiency is subordinate to the golden rule: never keep degraded context, skip a needed tool, or avoid a necessary model or configuration change just to preserve a cache. Cache lifetimes and reset triggers are harness- and plan-specific — verify them in current harness documentation, not here.
 
 ## Guardrails
 
