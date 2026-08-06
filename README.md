@@ -234,7 +234,7 @@ Framework scripts run with your shell's permissions. They read `local.env` (whic
 
 **Adjacent install instructions are out of band:**
 
-- The framework's bootstrap scripts do NOT use `curl | sh`. However some adjacent setup docs (e.g. `linear/linear-setup.md` for the optional `lineark` CLI) reproduce the upstream installer's `curl -fsSL ... | sh` pattern. Audit any such instruction before running it, exactly as you would audit any third-party installer.
+- The framework's bootstrap scripts do NOT use `curl | sh`, and neither do its setup docs. The one third-party CLI the framework documents installing — the optional `lineark` (`linear/linear-setup.md` §3.2) — is installed by `scripts/install-lineark.sh` (or the `.ps1` twin): a pinned release tag, verified against the operator-reviewed sha256 pins in `scripts/lineark-checksums.sha256` before the artifact is made executable or moved onto PATH, followed by a version smoke. An unpinned tag is refused, not downloaded on trust. Any *other* installer you reach for from adjacent documentation is out of band — audit it before running it, exactly as you would audit any third-party installer.
 
 **Persistent machine mutation:**
 
