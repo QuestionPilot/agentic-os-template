@@ -995,6 +995,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 3d3: CO-LOCATED config dir recognized through a symlink-aliased root
+#
+# Follow-up to 3d2's class: the startup guard was rescued, but validate.ps1's
+# co-location REGISTRATION still compared Resolve-Path spellings — and
+# Resolve-Path never resolves symlinks, so through an aliased repo root the
+# repo-root .claude spelled logically while the configured CLAUDE_CONFIG_DIR
+# resolved physically. Registration failed, the leak-guard fired "skills at
+# repo root" on a healthy co-located living home, and validate.ps1 exited 1
+# where validate.sh (pwd -P on both sides) exited 0. Hermetic fixture: a
+# tracked-copy repo with a co-located .claude/skills/ + local.env, both twins
+# invoked THROUGH a symlink alias of the fixture root with the config-dir env
+# unset so local.env decides. Both must exit 0 and print the co-located PASS.
+# ---------------------------------------------------------------------------
+
+if [ "$_have_pwsh" -eq 1 ] && command -v git >/dev/null 2>&1 \
+   && ln -s "$PARITY_TMP" "$PARITY_TMP/colo-selfcheck" 2>/dev/null; then
+  rm -f "$PARITY_TMP/colo-selfcheck"
+  COLO_FIX="$PARITY_TMP/colo-fix"
+  make_tracked_git_fixture "$COLO_FIX"
+  COLO_FIX_PHYS="$(cd "$COLO_FIX" && pwd -P)"
+  mkdir -p "$COLO_FIX/.claude/skills/parity-demo"
+  printf -- '---\nname: parity-demo\n---\nco-location fixture skill\n' \
+    > "$COLO_FIX/.claude/skills/parity-demo/SKILL.md"
+  # A junk file INSIDE the co-located dir: pruned only when the REGISTRATION
+  # block recognizes the dir (Test-UnderColocatedCfg feeds the .DS_Store scan)
+  # — pins the registration site independently of the forbidden-artifacts
+  # site's PASS line, which alone would mask a one-site regression.
+  touch "$COLO_FIX/.claude/.DS_Store"
+  # .claude config points at the PHYSICAL spelling while the invocation runs
+  # through the alias (logical spelling); .codex config points at the ALIAS
+  # spelling (INVERSE direction — the configured value itself traverses the
+  # symlink) — Get-ConfiguredConfigDirPhys must physicalize both.
+  mkdir -p "$COLO_FIX/.codex"
+  printf 'CLAUDE_CONFIG_DIR=%s/.claude\nCODEX_HOME=%s/colo-alias/.codex\n' \
+    "$COLO_FIX_PHYS" "$PARITY_TMP" > "$COLO_FIX/local.env"
+  ln -s "$COLO_FIX" "$PARITY_TMP/colo-alias"
+  # Second-hop alias: the stored link target of colo-hop2 is ITSELF a symlink
+  # path, so resolving it requires the restart-after-substitution walk — the
+  # multi-hop convergence the resolver exists for.
+  ln -s "$PARITY_TMP/colo-alias" "$PARITY_TMP/colo-hop2"
+
+  colo_bash_out="$PARITY_TMP/colo-bash.out"
+  env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+    bash "$PARITY_TMP/colo-alias/scripts/validate.sh" > "$colo_bash_out" 2>&1
+  colo_bash_rc=$?
+  assert_eq "validate bash recognizes co-located cfg via symlink-aliased root" 0 "$colo_bash_rc"
+
+  colo_ps_out="$PARITY_TMP/colo-ps.out"
+  env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+    pwsh -NoProfile -File "$PARITY_TMP/colo-alias/scripts/validate.ps1" > "$colo_ps_out" 2>&1
+  colo_ps_rc=$?
+  assert_eq "validate ps recognizes co-located cfg via symlink-aliased root" 0 "$colo_ps_rc"
+
+  # Path-anchored (not just the generic phrase): both harness dirs must be
+  # individually recognized in the aliased spelling.
+  if grep -q "co-located harness config dir recognized (out of leak-guard scope): .*/\.claude$" "$colo_ps_out" \
+     && grep -q "co-located harness config dir recognized (out of leak-guard scope): .*/\.codex$" "$colo_ps_out"; then
+    colo_ps_line=recognized
+  else
+    colo_ps_line="missing (tail: $(tail -2 "$colo_ps_out" | tr '\n' ' '))"
+  fi
+  assert_eq "validate ps prints the co-located PASS lines (.claude + .codex) via aliased root" \
+    "recognized" "$colo_ps_line"
+
+  # Multi-hop: invoke through the alias-of-an-alias — a resolver that stops
+  # after one substitution leaves the /var- or alias-spelled prefix unresolved
+  # and the co-location equality fails again.
+  colo_hop2_out="$PARITY_TMP/colo-hop2.out"
+  env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME \
+    pwsh -NoProfile -File "$PARITY_TMP/colo-hop2/scripts/validate.ps1" > "$colo_hop2_out" 2>&1
+  colo_hop2_rc=$?
+  assert_eq "validate ps recognizes co-located cfg via TWO-hop alias chain" 0 "$colo_hop2_rc"
+else
+  _skip "validate bash recognizes co-located cfg via symlink-aliased root" "pwsh/git/symlink prereqs missing"
+  _skip "validate ps recognizes co-located cfg via symlink-aliased root" "pwsh/git/symlink prereqs missing"
+  _skip "validate ps prints the co-located PASS line via aliased root" "pwsh/git/symlink prereqs missing"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 3e: check-memory-drift parity — MULTI-DRIFT byte-identity
 # (Codex F-3 regression guard: bash uses drift=1 boolean → prints "1 drift(s)"
 # even when N drift files exist. PS port now mirrors that quirk for byte-parity.

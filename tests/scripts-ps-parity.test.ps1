@@ -76,6 +76,10 @@ _Skip 'scripts-ps-parity.test: check-drift ps exits 0 via symlink-aliased repo r
 _Skip 'scripts-ps-parity.test: check-drift bash exits 0 via symlink-aliased repo root' $reason
 _Skip 'scripts-ps-parity.test: check-drift parity: STRICT byte-identical (symlink-aliased repo root)' $reason
 _Skip 'scripts-ps-parity.test: validate parity: exit codes match via symlink-aliased repo root' $reason
+_Skip 'scripts-ps-parity.test: validate bash recognizes co-located cfg via symlink-aliased root' $reason
+_Skip 'scripts-ps-parity.test: validate ps recognizes co-located cfg via symlink-aliased root' $reason
+_Skip 'scripts-ps-parity.test: validate ps prints the co-located PASS lines (.claude + .codex) via aliased root' $reason
+_Skip 'scripts-ps-parity.test: validate ps recognizes co-located cfg via TWO-hop alias chain' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift bash exits 1 on 2-drift fixture' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift ps exits 1 on 2-drift fixture' $reason
 _Skip 'scripts-ps-parity.test: check-memory-drift parity: sorted byte-identical (2-drift fixture; iteration-order divergent)' $reason
