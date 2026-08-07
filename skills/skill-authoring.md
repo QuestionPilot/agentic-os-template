@@ -279,6 +279,74 @@ the section for those rules.
 
 ---
 
+## 13. Context pointers: the wording decides when material is reached
+
+**Rule.** Any reference an agent holds in context that names out-of-context material — a skill
+description, an index row's trigger column, a "see X when Y" line in an entrypoint doc — is a
+**context pointer**, and its *wording* — far more than the quality of its target — decides whether
+the material is ever reached. A must-have target behind a weakly worded pointer is a variance bug:
+some runs reach it, some don't. For material that legitimately lives behind a pointer, **sharpen the
+wording first; inline only if sharpening fails** (inlining pays §5's multiplicative cost forever).
+This never overrides principle 3: a load-bearing, must-fire rule belongs inline from the start —
+pointer tuning is for the reference depth around it, not the gate itself. A pointer does two jobs: say what the material is, and name the
+distinct trigger cases — front-load the words that do the triggering work, collapse synonyms that
+rename one case, and cut identifying description the target's own body already carries, because an always-loaded
+pointer costs tokens on every turn whether or not it fires.
+
+**Apply when:** writing or tuning any skill description, index trigger row, or entrypoint pointer —
+and *before* concluding that under-triggering material must move inline. Measure a re-phrase with
+principle 7's N≥3 harness, not a single anecdotal fire.
+
+## 14. Completion criteria carry the quality bar
+
+**Rule.** Every step in a procedural skill ends on a **completion criterion** — the condition that
+tells the agent the step is done — and that criterion, more than the step's imperative, sets how much
+work actually happens. Two properties make it load-bearing: **clarity** (can the agent tell done from
+not-done? a fuzzy bound like "understanding reached" invites ending early, with attention pulled
+forward by the visible later steps) and **demand** (how much the bound requires: "every modified file
+accounted for" forces digging that "produce a change list" never will). Prefer criteria that are both
+checkable and exhaustive; when a step keeps finishing prematurely, sharpen its bound before
+restructuring the skill. Demand also binds flat reference bodies ("every rule evaluated — applied or
+explicitly inapplicable"), so even a no-steps skill carries an exhaustiveness bar.
+
+**Apply when:** writing or reviewing any skill step, checklist item, or gate — especially after
+observing a skill rush past a step in live runs. §4's structural tests assert a criterion *exists*
+and states a checkable bound; whether it actually induces the work is behavioral — measure that with
+principle 7's harness, not a lint.
+
+## 15. Leading words, stated positives, and no-op pruning
+
+**Rule.** Three prompt-layer levers that decide whether a body line earns its multiplicative cost
+(§5):
+
+- **Leading words.** A compact concept the model already holds (*tight*, *red*, *frontier*,
+  *fixture*) anchors a whole region of behavior in a single term — repeated verbatim, never
+  re-explained, with the surrounding text pinning which sense is meant.
+  Prefer an existing word over coining one (a made-up term pays in definition tokens what a
+  pretrained word carries for almost nothing), and hunt for multi-sentence restatements that collapse into one
+  ("fast, deterministic, low-overhead loop" → "a *tight* loop").
+- **State the positive.** Steering by prohibition drags the forbidden behavior into context and makes
+  it *more* available ("don't think of an elephant"). Phrase the target behavior instead ("write
+  one-line comments" beats "don't write long comments"); keep a prohibition only as a hard guardrail
+  you cannot phrase positively, and pair it with its positive target.
+- **No-op pruning.** An instruction the model already obeys by default pays cost to say nothing. The
+  test — does the line change behavior versus the default? — is settled by running the skill
+  (principle 7), not by debate; delete failing sentences whole. Exception: a rare-path or safety
+  guardrail whose trigger your trials never exercised is not a proven no-op — absence of effect on
+  the happy path is not evidence (§12's invariants stay). Two adjacent prunes: don't restate
+  what the environment already answers cheaply (`--help` output, config files, directory layout —
+  a doc that caches a cheap lookup goes stale; point at the authoritative lookup and cache only the
+  unwritten convention or the gotcha), and watch for **sediment** — stale layers surviving because adding feels safe and removing feels
+  risky.
+
+**Apply when:** writing or reviewing any skill body, capability body, or agent-consumed doc — and in
+any review that flags a body as over-budget (§5): apply these levers before cutting substance.
+
+(Pattern source for §§13–15: the MIT-licensed `mattpocock/skills` repo's `writing-for-agents`
+reference — concepts adopted and adapted 2026-08-07; wording ours.)
+
+---
+
 ## Related
 
 - [`README.md`](README.md) / [`skill-template.md`](skill-template.md) — the skills catalog and entry shape.
