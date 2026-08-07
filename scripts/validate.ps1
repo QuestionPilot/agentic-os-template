@@ -156,6 +156,64 @@ function Get-LocalEnvMap {
     return $map
 }
 
+# Resolve an existing directory to its PHYSICAL path — every symlink component
+# resolved — mirroring bash `cd dir && pwd -P`. Resolve-Path alone keeps the
+# LOGICAL spelling (it never resolves symlinks — the same trap the startup
+# worktree guard hit on /tmp -> /private/tmp aliases), so through a
+# symlink-aliased repo root the co-location equality below compared a logical
+# spelling against a physical one and failed on a healthy living home. Walks
+# each component and chases Get-Item's LinkTarget (chain-bounded); a relative
+# target resolves against the link's parent, per symlink semantics.
+function Get-PhysicalDirPath {
+    param([string]$Path)
+    try { $full = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path } catch { return '' }
+    $seps = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    # realpath semantics: a link target may itself be spelled through OTHER
+    # symlinks (a /tmp alias whose stored target starts with /var/...), so a
+    # single forward walk leaves the substituted prefix unresolved. On every
+    # substitution, rebuild the full path and RESTART the walk; a pass with no
+    # substitutions is fully physical. Pass count bounds link chains/cycles.
+    for ($pass = 0; $pass -lt 40; $pass++) {
+        $root = [IO.Path]::GetPathRoot($full)
+        $cur = $root
+        $comps = $full.Substring($root.Length).Split($seps, [StringSplitOptions]::RemoveEmptyEntries)
+        $substituted = $false
+        for ($i = 0; $i -lt $comps.Length; $i++) {
+            $cur = Join-Path $cur $comps[$i]
+            $item = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
+            if (-not $item -or -not $item.PSObject.Properties['LinkTarget'] -or [string]::IsNullOrEmpty($item.LinkTarget)) { continue }
+            $t = $item.LinkTarget
+            # IsPathFullyQualified, not IsPathRooted: a Windows ROOT-RELATIVE
+            # target (\config on drive D:) passes IsPathRooted, and GetFullPath
+            # would bind it to the PROCESS's current drive — resolve it against
+            # the LINK's own path root instead (panel: GPT).
+            if (-not [IO.Path]::IsPathFullyQualified($t)) {
+                if ([IO.Path]::IsPathRooted($t)) {
+                    $t = Join-Path ([IO.Path]::GetPathRoot($cur)) ($t.TrimStart('\', '/'))
+                } else {
+                    # Split-Path '/var' -Parent yields '' (not '/') on Unix pwsh
+                    # — a FIRST-LEVEL symlink (macOS /var, /tmp, /etc) would
+                    # bind an empty -Path to Join-Path. Fall back to the root.
+                    $parent = Split-Path -Path $cur -Parent
+                    if ([string]::IsNullOrEmpty($parent)) { $parent = $root }
+                    $t = Join-Path $parent $t
+                }
+            }
+            $full = [IO.Path]::GetFullPath($t)
+            for ($j = $i + 1; $j -lt $comps.Length; $j++) { $full = Join-Path $full $comps[$j] }
+            $substituted = $true
+            break
+        }
+        if (-not $substituted) { return $cur }
+    }
+    # Bound exhausted (cycle or a 40+ link chain): the path still contains an
+    # unresolved symlink component. Returning it would leak a non-physical
+    # spelling from a function whose contract is physical — fail closed with
+    # the same '' the not-found path returns; callers then simply never match
+    # (panel: GPT + GLM converged).
+    return ''
+}
+
 # Resolve a harness config-dir variable (CLAUDE_CONFIG_DIR / CODEX_HOME /
 # HERMES_HOME) to a physical path — environment first, then the resolved
 # local.env map (Get-LocalEnvMap, which mirrors bash sourcing incl. variable
@@ -170,7 +228,7 @@ function Get-ConfiguredConfigDirPhys {
         if ($map.Contains($EnvName)) { $val = [string]$map[$EnvName] }
     }
     if ([string]::IsNullOrEmpty($val)) { return '' }
-    try { return (Resolve-Path -LiteralPath $val -ErrorAction Stop).Path } catch { return '' }
+    return Get-PhysicalDirPath -Path $val
 }
 
 # Repo-root harness dirs that resolve to a configured config dir. Computed once.
@@ -195,7 +253,7 @@ foreach ($pair in @(
     if ([string]::IsNullOrEmpty($cfgPhys)) { continue }
     $hd = Join-Path $repo $pair.Name
     if (-not (Test-Path -LiteralPath $hd -PathType Container)) { continue }
-    $hdPhys = (Resolve-Path -LiteralPath $hd -ErrorAction SilentlyContinue).Path
+    $hdPhys = Get-PhysicalDirPath -Path $hd
     if ($hdPhys -and ($hdPhys -eq $cfgPhys)) {
         $script:ColocatedCfgDirs += $hd
     }
@@ -402,7 +460,7 @@ function Test-ForbiddenArtifacts {
         # elsewhere still falls through to the rejects below. Mirrors validate.sh.
         $cfgPhys = $cfgDirs[$hname]
         if (-not [string]::IsNullOrEmpty($cfgPhys)) {
-            $hdirPhys = (Resolve-Path -LiteralPath $hdir -ErrorAction SilentlyContinue).Path
+            $hdirPhys = Get-PhysicalDirPath -Path $hdir
             if ($hdirPhys -and ($hdirPhys -eq $cfgPhys)) {
                 Pass-Line "PASS co-located harness config dir recognized (out of leak-guard scope): $hdir"
                 continue
