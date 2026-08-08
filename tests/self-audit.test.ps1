@@ -1502,7 +1502,7 @@ if ($jqAvail) {
     Assert-Eq 'self-audit.test: codex registry JSON reports the registry byte size informationally' `
         "$regBytes" "$cxBytes"
     Assert-Eq 'self-audit.test: codex registry JSON stays backward-compatible (existing fields intact, new field additive)' `
-        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures' "$fields"
+        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates' "$fields"
     Assert-Contains 'self-audit.test: codex registry markdown carries the non-scoring informational size line' `
         $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 
@@ -1804,3 +1804,329 @@ Assert-Eq 'self-audit.test: orientation surface the .agents co-render still meas
 Assert-Eq 'self-audit.test: orientation surface nothing is skipped when all four resolve' `
     0 @($oriMulti.orientation_surface.skipped).Count
 Remove-Item -LiteralPath $oriFixture4 -Recurse -Force -ErrorAction SilentlyContinue
+
+# =============================================================================
+# Operator sub-gates + project-note body budget
+# =============================================================================
+
+# --- operator sub-gates -------------------------------------------------------
+# Operators accumulate their own semantic checkers that no audit aggregates, so
+# the scorecard can read 100/100 while every one of them fails or silently
+# lapses. The registry names them. What is under test is the WIRING contract —
+# its own section, its own JSON key, and the load-bearing part: an operator gate
+# NEVER moves total, a pillar score, or gaps.
+#
+# Hermetic: the fixture repo's OWN local.env carries AUDIT_SUBGATES_FILE, and
+# every registered command is a stub written into the fixture — the operator's
+# real registry is never read (a fixture repo-root has no operator local.env).
+# This twin runs each command through `pwsh -NoProfile -Command`, so the
+# registry holds PowerShell commands where the bash twin holds sh commands.
+$sgFixture = New-SaTmp
+New-SaFixtureRepo $sgFixture
+$sgReg = Join-Path $sgFixture 'subgates.txt'
+# Quoted, like every other path fixture here (see D2/D1c): an UNQUOTED value
+# takes the bash-%q backslash-collapse branch in Get-SaLocalEnvValue, which
+# destroys a Windows temp path (`D:\a\...` → `D:a...`) and skipped this whole
+# suite on the Windows lane. The canonical local.env format quotes.
+Write-LfFile (Join-Path $sgFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + $sgReg + '"' + "`n")
+
+Write-LfFile $sgReg @"
+# operator sub-gates
+
+map check = Write-Output 'map is current'
+drift check = [Console]::Error.WriteLine('two entries drifted'); exit 4
+no command here
+"@
+
+$sgOut = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json') | ConvertFrom-Json
+Assert-Eq 'self-audit.test: operator sub-gates a passing gate reports pass with exit 0' `
+    'map check|pass|0' `
+    ("$($sgOut.operator_subgates.gates[0].name)|$($sgOut.operator_subgates.gates[0].status)|$($sgOut.operator_subgates.gates[0].exit_code)")
+Assert-Eq 'self-audit.test: operator sub-gates a passing gate carries its first output line as detail' `
+    'map is current' $sgOut.operator_subgates.gates[0].detail
+Assert-Eq 'self-audit.test: operator sub-gates a failing gate reports fail WITH its exit code' `
+    'drift check|fail|4' `
+    ("$($sgOut.operator_subgates.gates[1].name)|$($sgOut.operator_subgates.gates[1].status)|$($sgOut.operator_subgates.gates[1].exit_code)")
+Assert-Eq 'self-audit.test: operator sub-gates a failing gate stderr first line is the detail' `
+    'two entries drifted' $sgOut.operator_subgates.gates[1].detail
+# A typo that makes a gate disappear is exactly the failure this closes, so a
+# malformed line is REPORTED, never silently dropped.
+Assert-Eq 'self-audit.test: operator sub-gates a malformed registry line is named, not dropped' `
+    'no command here|error' `
+    ("$($sgOut.operator_subgates.gates[2].name)|$($sgOut.operator_subgates.gates[2].status)")
+Assert-Eq 'self-audit.test: operator sub-gates comments and blank lines register no gate' `
+    3 @($sgOut.operator_subgates.gates).Count
+Assert-Eq 'self-audit.test: operator sub-gates the JSON key carries a literal scored:false' `
+    'False' "$($sgOut.operator_subgates.scored)"
+
+# THE load-bearing property: informational means informational. Compared against
+# the SAME fixture with the registry disabled, so score-neutrality is proved
+# rather than asserted against a hard-coded number.
+$sgBase = Invoke-SelfAudit @('--repo-root', $sgFixture, '--no-subgates', '--json') | ConvertFrom-Json
+Assert-Eq 'self-audit.test: operator sub-gates a FAILING gate does not change the total score' `
+    "$($sgBase.total)" "$($sgOut.total)"
+Assert-Eq 'self-audit.test: operator sub-gates a FAILING gate does not enter the gap list' `
+    @($sgBase.gaps).Count @($sgOut.gaps).Count
+Assert-Eq 'self-audit.test: operator sub-gates a FAILING gate does not move the memory pillar' `
+    "$($sgBase.pillars.'memory-hygiene'.score)" "$($sgOut.pillars.'memory-hygiene'.score)"
+
+$sgMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Contains 'self-audit.test: operator sub-gates markdown has its own section' $sgMd '## Operator sub-gates'
+Assert-Contains 'self-audit.test: operator sub-gates markdown renders the passing gate' `
+    $sgMd '- map check: pass — map is current'
+Assert-Contains 'self-audit.test: operator sub-gates markdown renders the failing gate with its exit code' `
+    $sgMd '- drift check: fail (exit 4) — two entries drifted'
+Assert-Contains 'self-audit.test: operator sub-gates markdown states the informational boundary' `
+    $sgMd 'never scored'
+
+# A hanging gate is bounded and reported as that gate's OWN error — the audit
+# still exits 0. The timeout is injected so this costs a second, not a minute.
+Write-LfFile $sgReg "hang = Start-Sleep -Seconds 30`n"
+$env:SELF_AUDIT_SUBGATE_TIMEOUT = '1'
+try {
+    $sgSlowRaw = & pwsh -NoProfile -File $SA_SCRIPT '--repo-root' $sgFixture '--json' 2>$null
+    $sgSlowRc = $LASTEXITCODE
+    $sgSlow = (($sgSlowRaw -join "`n") | ConvertFrom-Json)
+} finally { Remove-Item Env:SELF_AUDIT_SUBGATE_TIMEOUT -ErrorAction SilentlyContinue }
+Assert-Eq 'self-audit.test: operator sub-gates a hanging gate does not fail the audit' 0 $sgSlowRc
+Assert-Eq 'self-audit.test: operator sub-gates a hanging gate is bounded and reported as error' `
+    'hang|error|timed out after 1s' `
+    ("$($sgSlow.operator_subgates.gates[0].name)|$($sgSlow.operator_subgates.gates[0].status)|$($sgSlow.operator_subgates.gates[0].detail)")
+
+# --no-subgates: execution off, section still rendered as a NAMED skip.
+Write-LfFile $sgReg "map check = Write-Output 'ran'`n"
+$sgNoSub = Invoke-SelfAudit @('--repo-root', $sgFixture, '--no-subgates', '--json') | ConvertFrom-Json
+$sgNoSubMd = Invoke-SelfAudit @('--repo-root', $sgFixture, '--no-subgates')
+Assert-Eq 'self-audit.test: operator sub-gates --no-subgates nulls the JSON key' `
+    'True' "$($null -eq $sgNoSub.operator_subgates)"
+Assert-Contains 'self-audit.test: operator sub-gates --no-subgates still renders a NAMED skip' `
+    $sgNoSubMd '_(skipped — --no-subgates given)_'
+
+# Registry configured but MISSING: a named skip, never a silent clean pass.
+Write-LfFile (Join-Path $sgFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + (Join-Path $sgFixture 'absent-registry.txt') + '"' + "`n")
+$sgGone = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json') | ConvertFrom-Json
+$sgGoneMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Eq 'self-audit.test: operator sub-gates a missing registry nulls the JSON key' `
+    'True' "$($null -eq $sgGone.operator_subgates)"
+Assert-Contains 'self-audit.test: operator sub-gates a missing registry is a NAMED skip' `
+    $sgGoneMd 'registry file not found:'
+
+# Key UNSET: same named-skip contract, different named reason.
+Write-LfFile (Join-Path $sgFixture 'local.env') "OBSIDIAN_VAULT_PATH=`n"
+$sgUnsetRaw = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json')
+$sgUnset = $sgUnsetRaw | ConvertFrom-Json
+$sgUnsetMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Eq 'self-audit.test: operator sub-gates an unset registry key nulls the JSON key' `
+    'True' "$($null -eq $sgUnset.operator_subgates)"
+Assert-Contains 'self-audit.test: operator sub-gates an unset registry key is a NAMED skip' `
+    $sgUnsetMd 'no AUDIT_SUBGATES_FILE configured'
+# The section can never vanish: an invisible sub-gate surface is the exact
+# failure mode this whole lane exists to close.
+Assert-Contains 'self-audit.test: operator sub-gates the section renders even when nothing ran' `
+    $sgUnsetMd '## Operator sub-gates'
+
+# JSON key ORDER: the new key is appended LAST so every pre-existing field keeps
+# its position for a positional consumer.
+Assert-Eq 'self-audit.test: operator sub-gates no pre-existing JSON key moved' `
+    'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates' `
+    ((($sgUnset.PSObject.Properties | ForEach-Object { $_.Name }) -join ','))
+Remove-Item -LiteralPath $sgFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- Pillar 2 sub-check 2.6: project-note body budget -------------------------
+# The recall caps bound the INDEX; nothing bounded the note BODIES the index
+# points at — exactly what a kickoff orient dereferences. Advisory: one
+# aggregate warn, never a hard cap.
+$pnbFixture = New-SaTmp
+New-SaFixtureRepo $pnbFixture
+$pnbMem = Join-Path $pnbFixture 'memory'
+New-Item -ItemType Directory -Path $pnbMem -Force | Out-Null
+$pnbBody = ("---`nmetadata:`n  type: project`n---`n" + (('x' * 50 + "`n") * 400))
+$pnbRefBody = ("---`nmetadata:`n  type: reference`n---`n" + (('x' * 50 + "`n") * 400))
+Write-LfFile (Join-Path $pnbMem 'project-big.md') $pnbBody
+Write-LfFile (Join-Path $pnbMem 'project-small.md') "---`nmetadata:`n  type: project`n---`nsmall`n"
+Write-LfFile (Join-Path $pnbMem 'reference-big.md') $pnbRefBody
+Write-LfFile (Join-Path $pnbMem 'MEMORY.md') "project-big.md project-small.md reference-big.md`n"
+
+function Invoke-SaPnb {
+    param([string[]]$Extra = @())
+    return (Invoke-SelfAudit (@('--isolated', '--repo-root', $pnbFixture, '--memory-dir', $pnbMem) + $Extra + @('--json')) | ConvertFrom-Json)
+}
+function Get-PnbGaps($obj) {
+    return @($obj.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' })
+}
+
+$pnbOverJson = Invoke-SaPnb
+$pnbGaps = Get-PnbGaps $pnbOverJson
+Assert-Eq 'self-audit.test: body budget an over-budget project note raises exactly one gap' `
+    1 $pnbGaps.Count
+Assert-Eq 'self-audit.test: body budget the gap carries leverage 4 on pillar 2' `
+    '2|4' "$($pnbGaps[0].pillar)|$($pnbGaps[0].leverage)"
+Assert-Contains 'self-audit.test: body budget the gap names the offending note' `
+    $pnbGaps[0].detail 'project-big.md'
+Assert-Contains 'self-audit.test: body budget the gap names the soft 16 KB default' `
+    $pnbGaps[0].detail 'soft 16 KB per-note budget'
+# A non-project note of the same size is NOT in scope — orient dereferences
+# project-type bodies, and warning on the rest is alarm fatigue.
+Assert-NotContains 'self-audit.test: body budget a non-project note of the same size does not trip the warn' `
+    $pnbGaps[0].detail 'reference-big.md'
+Assert-Eq 'self-audit.test: body budget the warn costs exactly 2 pillar-2 points' `
+    '18' "$($pnbOverJson.pillars.'memory-hygiene'.score)"
+
+# A raised threshold clears it — the knob is real, and the check is advisory.
+$pnbUnder = Invoke-SaPnb @('--project-note-warn-kb', '512')
+Assert-Eq 'self-audit.test: body budget a raised threshold clears the warn' `
+    0 (Get-PnbGaps $pnbUnder).Count
+Assert-Eq 'self-audit.test: body budget a raised threshold clears the deduction too' `
+    '20' "$($pnbUnder.pillars.'memory-hygiene'.score)"
+
+# A garbage knob falls back to the DEFAULT silently — an advisory measurement
+# must degrade to the default, never break the audit (or silently disable
+# itself, which a 0-KB or negative reading would do).
+foreach ($pnbBad in @('abc', '0', '-5')) {
+    Assert-Eq "self-audit.test: body budget a garbage threshold ($pnbBad) falls back to the 16 KB default" `
+        1 (Get-PnbGaps (Invoke-SaPnb @('--project-note-warn-kb', $pnbBad))).Count
+}
+
+# The warn is an AGGREGATE: two oversize notes still cost 2 points once.
+Write-LfFile (Join-Path $pnbMem 'project-big2.md') $pnbBody
+Write-LfFile (Join-Path $pnbMem 'MEMORY.md') "project-big.md project-big2.md project-small.md reference-big.md`n"
+$pnbTwo = Invoke-SaPnb
+Assert-Eq 'self-audit.test: body budget two oversize notes still deduct exactly once' `
+    '18' "$($pnbTwo.pillars.'memory-hygiene'.score)"
+Assert-Eq 'self-audit.test: body budget both oversize notes are named in the single gap' `
+    'True' "$((Get-PnbGaps $pnbTwo)[0].detail.StartsWith('2 project-type'))"
+Remove-Item -LiteralPath $pnbFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- operator sub-gates: bounding + a runner that never runs ------------------
+# The bash twin's bound had to be rebuilt around a process group (its in-process
+# alarm was defeated by `trap '' ALRM` and by backgrounded children). This twin
+# needed the SAME rebuild: Stop-Job left the job's grandchild pwsh running on
+# Windows, so a flooding gate survived its timeout as an orphan holding the
+# caller's stdout handle and wedged the whole lane — the runner is now a direct
+# Process killed with its entire tree on timeout. What the crasher case pins is
+# the other half: a runner that fails outright must be an ERROR or FAIL, never
+# a pass — seeding the exit code to 0 and falling through would report a runner
+# that never ran as a clean `pass "(no output)"`.
+$sgbFixture = New-SaTmp
+New-SaFixtureRepo $sgbFixture
+$sgbReg = Join-Path $sgbFixture 'subgates.txt'
+# Quoted — same Windows backslash-collapse trap as the fixture above.
+Write-LfFile (Join-Path $sgbFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + $sgbReg + '"' + "`n")
+
+function Invoke-SaSubgate {
+    param([string]$Timeout = '30')
+    $prev = $env:SELF_AUDIT_SUBGATE_TIMEOUT
+    $env:SELF_AUDIT_SUBGATE_TIMEOUT = $Timeout
+    try { return (Invoke-SelfAudit @('--repo-root', $sgbFixture, '--json') | ConvertFrom-Json) }
+    finally {
+        if ($null -eq $prev) { Remove-Item Env:\SELF_AUDIT_SUBGATE_TIMEOUT -ErrorAction SilentlyContinue }
+        else { $env:SELF_AUDIT_SUBGATE_TIMEOUT = $prev }
+    }
+}
+
+# A gate that exits without running a command. With the direct-Process runner
+# the wrapper's own `exit` carries the code through as an ordinary fail — what
+# this pins is that no shape of early exit ever lands on `pass`.
+Write-LfFile $sgbReg "crasher = exit 7`n"
+$sgbCrash = Invoke-SaSubgate '30'
+Assert-NotContains 'self-audit.test: sub-gate bounding a job with no exit status is never reported as pass' `
+    "$($sgbCrash.operator_subgates.gates[0].status)" 'pass'
+Assert-Eq 'self-audit.test: sub-gate bounding a nonzero gate is fail or error, never silently clean' `
+    'True' "$(@('fail','error') -contains $sgbCrash.operator_subgates.gates[0].status)"
+
+# A hanging gate is bounded and reported as this gate's OWN error.
+Write-LfFile $sgbReg "hang = Start-Sleep -Seconds 30`n"
+$sgbT0 = Get-Date
+$sgbHang = Invoke-SaSubgate '2'
+$sgbElapsed = ((Get-Date) - $sgbT0).TotalSeconds
+Assert-Eq 'self-audit.test: sub-gate bounding a hanging gate is bounded and reported as a timeout' `
+    'error|timed out after 2s' `
+    "$($sgbHang.operator_subgates.gates[0].status)|$($sgbHang.operator_subgates.gates[0].detail)"
+Assert-Eq 'self-audit.test: sub-gate bounding the hanging gate returns near its ceiling, not near its sleep' `
+    'True' "$($sgbElapsed -lt 25)"
+
+# A flooding gate: bounded in TIME by Wait-Job and in MEMORY by the file capture
+# + 512-byte bounded read (never Out-String accumulation). The audit exits 0.
+Write-LfFile $sgbReg "flood = while (`$true) { Write-Output ('A' * 200) }`n"
+$sgbFloodRaw = & pwsh -NoProfile -File $SA_SCRIPT '--repo-root' $sgbFixture '--json' 2>$null
+$sgbFloodRc = $LASTEXITCODE
+Assert-Eq 'self-audit.test: sub-gate bounding a flooding gate does not fail the audit' 0 $sgbFloodRc
+
+# A genuine fast exit 142: an ordinary failure carrying its code. (The bash twin
+# must disambiguate this from its runner's own SIGALRM code by wall clock; here
+# Wait-Job returns a distinct false, so no exit code can impersonate a timeout —
+# the twin asymmetry is deliberate.)
+Write-LfFile $sgbReg "e142 = exit 142`n"
+$sgb142 = Invoke-SaSubgate '30'
+Assert-Eq 'self-audit.test: sub-gate bounding a genuine fast exit 142 is a fail with its code, not a timeout' `
+    'e142|fail|142' `
+    "$($sgb142.operator_subgates.gates[0].name)|$($sgb142.operator_subgates.gates[0].status)|$($sgb142.operator_subgates.gates[0].exit_code)"
+
+# Registry-wide cap: 64 entries run, the rest are NAMED, never silent.
+$sgbLines = New-Object System.Text.StringBuilder
+for ($i = 1; $i -le 70; $i++) { [void]$sgbLines.AppendLine("gate-$i = exit 0") }
+Write-LfFile $sgbReg $sgbLines.ToString()
+$sgbCap = Invoke-SaSubgate '30'
+Assert-Eq 'self-audit.test: sub-gate bounding the registry cap runs exactly 64 gates' `
+    64 @($sgbCap.operator_subgates.gates).Count
+Assert-Eq 'self-audit.test: sub-gate bounding entries past the cap are COUNTED, never silently dropped' `
+    6 $sgbCap.operator_subgates.dropped
+$sgbCapMd = Invoke-SelfAudit @('--repo-root', $sgbFixture)
+Assert-Contains 'self-audit.test: sub-gate bounding the cap is a NAMED skip line in the markdown' `
+    $sgbCapMd 'registry capped at 64 gate(s); 6 further entr(y/ies) not run'
+Remove-Item -LiteralPath $sgbFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- knob arithmetic: an over-large budget must not WRAP -----------------------
+# The bash twin computes `$(( KB * 1024 ))` in 64-bit signed arithmetic, where
+# 18014398509481984 KB wraps the product to 0 and every note on disk lands "over
+# budget" — the knob an operator typed to make the check QUIETER fires it on a
+# 62-byte note instead. Both twins bound the accepted digit length so the two
+# agree, and this fixture pins the PS side of that agreement.
+$knobFixture = New-SaTmp
+New-SaFixtureRepo $knobFixture
+$knobMem = Join-Path $knobFixture 'memory'
+New-Item -ItemType Directory -Path $knobMem -Force | Out-Null
+Write-LfFile (Join-Path $knobMem 'project-tiny.md') "---`nmetadata:`n  type: project`n---`ntiny`n"
+Write-LfFile (Join-Path $knobMem 'MEMORY.md') "project-tiny.md`n"
+
+$knobBase = Invoke-SelfAudit @('--isolated', '--repo-root', $knobFixture, '--memory-dir', $knobMem, '--json') | ConvertFrom-Json
+$knobFlag = Invoke-SelfAudit @('--isolated', '--repo-root', $knobFixture, '--memory-dir', $knobMem,
+    '--project-note-warn-kb', '18014398509481984', '--json') | ConvertFrom-Json
+# Same value through the local.env DATA path, which has no flag parsing in front
+# of it — the knob must be validated where it is USED, not at the flag.
+Write-LfFile (Join-Path $knobFixture 'local.env') "PROJECT_NOTE_BODY_WARN_KB=18014398509481984`n"
+$knobEnv = Invoke-SelfAudit @('--repo-root', $knobFixture, '--memory-dir', $knobMem, '--json') | ConvertFrom-Json
+
+Assert-Eq 'self-audit.test: body budget an overflowing knob (flag) raises NO gap on a tiny note' `
+    0 @($knobFlag.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' }).Count
+Assert-Eq 'self-audit.test: body budget an overflowing knob (flag) leaves the memory pillar untouched' `
+    "$($knobBase.pillars.'memory-hygiene'.score)" "$($knobFlag.pillars.'memory-hygiene'.score)"
+Assert-Eq 'self-audit.test: body budget an overflowing knob via local.env raises NO gap either' `
+    0 @($knobEnv.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' }).Count
+Remove-Item -LiteralPath $knobFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- twin parity: mixed-case scan order ---------------------------------------
+# The gap detail lists offenders in SCAN order. bash walks `find | LC_ALL=C sort`
+# (ordinal, case-sensitive); this twin used `Sort-Object Name` (culture,
+# case-INsensitive), so a store holding both `project-Beta…` and `project-alpha…`
+# ordered them differently and the two twins stopped emitting identical details.
+$mcFixture = New-SaTmp
+New-SaFixtureRepo $mcFixture
+$mcMem = Join-Path $mcFixture 'memory'
+New-Item -ItemType Directory -Path $mcMem -Force | Out-Null
+$mcBody = ("---`nmetadata:`n  type: project`n---`n" + (('x' * 50 + "`n") * 400))
+# Deliberately NOT a case-only pair — a case-insensitive filesystem would
+# collapse those into one file and the fixture would prove nothing.
+foreach ($mcName in @('project-Beta.md', 'project-alpha.md')) {
+    Write-LfFile (Join-Path $mcMem $mcName) $mcBody
+}
+Write-LfFile (Join-Path $mcMem 'MEMORY.md') "project-Beta.md project-alpha.md`n"
+$mcOut = Invoke-SelfAudit @('--isolated', '--repo-root', $mcFixture, '--memory-dir', $mcMem, '--json') | ConvertFrom-Json
+$mcDetail = @($mcOut.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' })[0].detail
+$mcOrder = (@(($mcDetail -split ',') | ForEach-Object {
+    $t = $_.Trim(); $t = ($t -split '=')[0]; [System.IO.Path]::GetFileName($t)
+} | Where-Object { $_ -like 'project-*' }) -join ' ')
+# Byte order: uppercase sorts before lowercase, so Beta precedes alpha.
+Assert-Eq 'self-audit.test: body budget offenders are listed in ORDINAL byte order, not culture order' `
+    'project-Beta.md project-alpha.md' $mcOrder
+Remove-Item -LiteralPath $mcFixture -Recurse -Force -ErrorAction SilentlyContinue

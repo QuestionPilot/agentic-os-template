@@ -158,6 +158,28 @@ function Test-OrientSchema($doc) {
         foreach ($f in @('file', 'name', 'description')) { if (-not (_Str $m $f)) { return 'BAD' } }
     }
     foreach ($d in @($doc.degraded)) { if (-not ($d -is [string])) { return 'BAD' } }
+    if (-not (_Has $doc 'safety')) { return 'BAD' }
+    if (-not (_Str $doc.safety 'posture')) { return 'BAD' }
+    if (@('safe', 'tightened') -notcontains $doc.safety.posture) { return 'BAD' }
+    if (-not (_Str $doc.safety 'detection')) { return 'BAD' }
+    if (@('state-files', 'none-configured') -notcontains $doc.safety.detection) { return 'BAD' }
+    if (-not (_Has $doc.safety 'unresolved')) { return 'BAD' }
+    if (-not (_Arr $doc.safety 'tightenings')) { return 'BAD' }
+    foreach ($t in @($doc.safety.tightenings)) {
+        foreach ($f in @('name', 'path', 'detail')) { if (-not (_Str $t $f)) { return 'BAD' } }
+    }
+    if (-not (_Has $doc 'telemetry')) { return 'BAD' }
+    if ($null -ne $doc.telemetry) {
+        if (-not (_Has $doc.telemetry 'memory_index_bytes')) { return 'BAD' }
+        $mib = $doc.telemetry.memory_index_bytes
+        if ($null -ne $mib -and -not ($mib -is [int] -or $mib -is [long])) { return 'BAD' }
+        if (-not (_Arr $doc.telemetry 'project_note_bodies')) { return 'BAD' }
+        foreach ($b in @($doc.telemetry.project_note_bodies)) {
+            if (-not (_Str $b 'file')) { return 'BAD' }
+            if (-not (_Has $b 'bytes')) { return 'BAD' }
+        }
+        if (-not (_Has $doc.telemetry 'project_note_total_bytes')) { return 'BAD' }
+    }
     return 'ok'
 }
 
@@ -479,6 +501,165 @@ if ($IsWindows) {
     Remove-Item -LiteralPath $O10 -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# ============================ SAFETY POSTURE =================================
+# The Mode-1 "Safety posture" line used to restate DECLARED policy ("safe").
+# This key makes it report DETECTED state instead: each configured guardrail
+# state file that exists and is non-empty is one named tightening. The three
+# cases that matter are 0 files (the default-safe floor), 1, and 2 — plus the
+# negative cases (configured-but-absent, configured-but-empty) that must NOT
+# count, because a stale or empty state file claiming a tightening is the same
+# class of lie as declaring one that was never enforced.
+$OS1 = New-OrientTmp; $stubS = New-OrientStub $OS1; Copy-OrientFixtures $OS1
+
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: no guardrail state configured still exits 0' 0 $r.Rc
+Assert-Eq 'orient: no guardrail state configured reports safe/none-configured' `
+    'safe none-configured 0 0' `
+    (@($r.Doc.safety.posture, $r.Doc.safety.detection, (@($r.Doc.safety.tightenings).Count).ToString(), "$($r.Doc.safety.unresolved)") -join ' ')
+
+$OSF = New-OrientTmp
+[System.IO.File]::WriteAllText((Join-Path $OSF 'scope.state'), "edits frozen to the work dir`n")
+[System.IO.File]::WriteAllText((Join-Path $OSF 'careful.state'), "careful mode: confirm destructive commands`nsecond line ignored`n")
+[System.IO.File]::WriteAllText((Join-Path $OSF 'empty.state'), '')
+
+# 1 file — posture tightened, named by BASENAME, detail = its FIRST line.
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'scope.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: one guardrail state file tightens the posture' `
+    'tightened state-files 1' `
+    (@($r.Doc.safety.posture, $r.Doc.safety.detection, (@($r.Doc.safety.tightenings).Count).ToString()) -join ' ')
+Assert-Eq 'orient: a tightening is named by basename and detailed by its first line' `
+    'scope.state|edits frozen to the work dir' `
+    ("$(@($r.Doc.safety.tightenings)[0].name)|$(@($r.Doc.safety.tightenings)[0].detail)")
+Assert-Eq 'orient: a tightened document still satisfies the schema' 'ok' (Test-OrientSchema $r.Doc)
+
+# 2 files, plus an EMPTY one and an ABSENT one in the same list: only the two
+# non-empty existing files count, and the detail is the first line only.
+$env:GUARDRAIL_STATE_FILES = @(
+    (Join-Path $OSF 'scope.state'), (' ' + (Join-Path $OSF 'careful.state')),
+    (Join-Path $OSF 'empty.state'), (Join-Path $OSF 'nope.state')) -join ','
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: two guardrail state files yield two named tightenings' `
+    'scope.state careful.state' `
+    ((@($r.Doc.safety.tightenings | ForEach-Object { $_.name })) -join ' ')
+Assert-Eq 'orient: an empty or absent configured state file is NOT a tightening' `
+    '2' (@($r.Doc.safety.tightenings).Count).ToString()
+Assert-Eq 'orient: only the first line of a state file becomes the detail' `
+    'careful mode: confirm destructive commands' `
+    (@($r.Doc.safety.tightenings)[1].detail)
+
+# The key can only ADD tightenings: there is no configured value that reports a
+# posture looser than the default. But "configured and inactive" must NOT read
+# as "nothing configured" — the unresolved count is what keeps a broken
+# guardrail wiring from presenting as a clean default-safe run.
+$env:GUARDRAIL_STATE_FILES = @((Join-Path $OSF 'empty.state'), (Join-Path $OSF 'nope.state')) -join ','
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: configured-but-inactive guardrails still report the safe floor' `
+    'safe' $r.Doc.safety.posture
+Assert-Eq 'orient: configured-but-unresolved paths are COUNTED, not silently equal to unconfigured' `
+    'state-files 2' "$($r.Doc.safety.detection) $($r.Doc.safety.unresolved)"
+
+# A RELATIVE path is never resolved against the caller's cwd — a posture that
+# changes with the launch directory is not a detected posture. It counts as
+# unresolved, exactly like a missing one.
+$env:GUARDRAIL_STATE_FILES = 'scope.state'
+$osPrevCwd = (Get-Location).Path
+Set-Location -LiteralPath $OSF
+try { $r = Invoke-Orient $stubS } finally { Set-Location -LiteralPath $osPrevCwd }
+Assert-Eq 'orient: a relative guardrail path is unresolved, never cwd-resolved' `
+    'safe 0 1' `
+    (@($r.Doc.safety.posture, (@($r.Doc.safety.tightenings).Count).ToString(), "$($r.Doc.safety.unresolved)") -join ' ')
+
+# PER-ENTRY quotes: the local.env read strips one pair from the WHOLE value, so
+# individually-quoted paths arrive here still quoted. Both must still resolve.
+$env:GUARDRAIL_STATE_FILES = ('"' + (Join-Path $OSF 'scope.state') + '", "' + (Join-Path $OSF 'careful.state') + '"')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: individually-quoted paths are both detected, not silently corrupted' `
+    'tightened 2 0' `
+    (@($r.Doc.safety.posture, (@($r.Doc.safety.tightenings).Count).ToString(), "$($r.Doc.safety.unresolved)") -join ' ')
+
+# DETAIL HARDENING. A control character in a state file must not ride into
+# model-facing orient output.
+[System.IO.File]::WriteAllText((Join-Path $OSF 'ctl.state'),
+    ("scope active" + [char]27 + "[31mRED" + [char]7 + " tail`nsecond line`n"))
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'ctl.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: control characters are stripped from a state-file detail' `
+    'scope active[31mRED tail' (@($r.Doc.safety.tightenings)[0].detail)
+Assert-Eq 'orient: a control-char state file still satisfies the schema' 'ok' (Test-OrientSchema $r.Doc)
+
+# A first line LONGER than the truncation limit and made of MULTI-BYTE text: the
+# bash twin's byte-offset truncate must not split a UTF-8 sequence, because an
+# invalid tail makes its JSON assembler drop the record — and a dropped
+# tightening reports `safe` for a run that is tightened. Both twins apply the
+# same printable filter so the two details stay identical.
+$osAccent = [string][char]0x00E9
+[System.IO.File]::WriteAllText((Join-Path $OSF 'multi.state'), (($osAccent * 200) + "`n"))
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'multi.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: an over-long multibyte first line still exits 0' 0 $r.Rc
+Assert-Eq 'orient: an over-long multibyte detail never drops the tightening' `
+    'tightened 1' "$($r.Doc.safety.posture) $(@($r.Doc.safety.tightenings).Count)"
+Assert-Eq 'orient: a multibyte detail still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
+
+# A multi-GB newline-free state file must not stall the kickoff: the read is
+# bounded before the first-line split. Size is modest here (the bound is 512
+# bytes) — what is pinned is that the detail is TRUNCATED, not whole-file read.
+[System.IO.File]::WriteAllText((Join-Path $OSF 'huge.state'), ('z' * 4000))
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'huge.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: a newline-free state file yields a bounded 120-char detail' `
+    120 (@($r.Doc.safety.tightenings)[0].detail.Length)
+Remove-Item Env:\GUARDRAIL_STATE_FILES -ErrorAction SilentlyContinue
+
+# ============================ TELEMETRY ======================================
+# The O1 dynamic body reads are the expensive half of a kickoff and nothing
+# measured them. Byte counts are asserted against PLANTED fixture notes, not
+# against whatever the operator's real store happens to hold.
+$OT = New-OrientTmp
+[System.IO.File]::WriteAllText((Join-Path $OT 'MEMORY.md'), "INDEX`n")
+[System.IO.File]::WriteAllText((Join-Path $OT 'project-a.md'), "---`ntype: project`nname: a`ndescription: d`n---`nAAAA`n")
+[System.IO.File]::WriteAllText((Join-Path $OT 'project-b.md'), "---`ntype: project`nname: b`ndescription: d`n---`nBB`n")
+[System.IO.File]::WriteAllText((Join-Path $OT 'reference-c.md'), "---`ntype: reference`n---`nnot counted`n")
+$otA = (Get-Item -LiteralPath (Join-Path $OT 'project-a.md')).Length
+$otB = (Get-Item -LiteralPath (Join-Path $OT 'project-b.md')).Length
+$r = Invoke-Orient $stubS @('--memory-dir', $OT)
+Assert-Eq 'orient: telemetry reports the memory index size' '6' "$($r.Doc.telemetry.memory_index_bytes)"
+Assert-Eq 'orient: telemetry lists one body row per project-type note, in scan order' `
+    "project-a.md=$otA project-b.md=$otB" `
+    ((@($r.Doc.telemetry.project_note_bodies | ForEach-Object { "$($_.file)=$($_.bytes)" })) -join ' ')
+Assert-Eq 'orient: telemetry totals the project-note bodies it listed' `
+    "$($otA + $otB)" "$($r.Doc.telemetry.project_note_total_bytes)"
+# A non-project note is read at orient as a pointer, not a body — it must not
+# inflate the body budget the caller is being asked to watch.
+Assert-Eq 'orient: a non-project note contributes no body row' `
+    '0' (@($r.Doc.telemetry.project_note_bodies | Where-Object { $_.file -eq 'reference-c.md' }).Count).ToString()
+
+# A store with no MEMORY.md still measures bodies; the index reads null, never 0
+# (an absent index is not a zero-byte one).
+$OT2 = New-OrientTmp
+[System.IO.File]::WriteAllText((Join-Path $OT2 'project-x.md'), "---`ntype: project`n---`nX`n")
+$r = Invoke-Orient $stubS @('--memory-dir', $OT2)
+Assert-Eq 'orient: a store with no MEMORY.md reports a null index size, not 0' `
+    'True' "$($null -eq $r.Doc.telemetry.memory_index_bytes)"
+
+# An unresolved memory surface reports telemetry: null — an unmeasured cost is a
+# named absence, never a misleading zero.
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: no memory dir reports telemetry null, not a zeroed reading' `
+    'True' "$($null -eq $r.Doc.telemetry)"
+$r = Invoke-Orient $stubS @('--memory-dir', (Join-Path $OS1 'no-such-memory-dir'))
+Assert-Eq 'orient: an absent memory dir also reports telemetry null' `
+    'True' "$($null -eq $r.Doc.telemetry)"
+
+# ============================ KEY ORDERING ===================================
+# Both new keys are APPENDED LAST so a consumer reading the document
+# positionally keeps every pre-existing key at its old offset.
+$r = Invoke-Orient $stubS @('--memory-dir', $OT)
+Assert-Eq 'orient: safety + telemetry are appended LAST, after every pre-existing key' `
+    'schema,surfaces,projects,projectless_open_issues,mine_in_progress,anomalies,memory_pointers,degraded,safety,telemetry' `
+    ((@($r.Doc.PSObject.Properties | ForEach-Object { $_.Name })) -join ',')
+
 # ============================ ARGUMENT CONTRACT ==============================
 # A non-zero exit means the SCRIPT could not run — never that a surface was down.
 $bad = (& pwsh -NoProfile -File $ORIENT '--nope' 2>&1 | Out-String)
@@ -489,6 +670,7 @@ Assert-Eq 'orient: value-less --memory-dir exits 2 (no self-loop)' 2 $LASTEXITCO
 & pwsh -NoProfile -File $ORIENT '--lineark' 2>&1 | Out-Null
 Assert-Eq 'orient: value-less --lineark exits 2 (no self-loop)' 2 $LASTEXITCODE
 
-foreach ($d in @($O1, $O2, $O2N, $O3, $O4, $O5, $O6, $O7, $O8, $O9)) {
+foreach ($d in @($O1, $O2, $O2N, $O3, $O4, $O5, $O6, $O7, $O8, $O9,
+                 $OS1, $OSF, $OT, $OT2)) {
     Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
 }

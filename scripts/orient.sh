@@ -27,6 +27,43 @@
 #   memory_pointers          project-type memory notes: [{file, name, description}]
 #   degraded                 named degraded surfaces, e.g.
 #                            "linear: lineark not on PATH (lineark)"
+#   safety                   DETECTED per-run safety posture (see below)
+#   telemetry                orientation-cost measurement (see below)
+#
+# SAFETY POSTURE (appended last but one; schema id unchanged — additive).
+#   {posture: "safe"|"tightened",
+#    tightenings: [{name, path, detail}],
+#    detection: "state-files"|"none-configured",
+#    unresolved: <int>}
+# The kickoff line this feeds must report what was DETECTED, not what policy
+# declares. Detection reads $GUARDRAIL_STATE_FILES — a comma-separated list of
+# ABSOLUTE paths to the session-guardrail state files an operator's guardrail
+# skill writes, from local.env (read as DATA, never sourced) then the ambient
+# env. Each configured path that exists and is NON-EMPTY is one tightening:
+# name = its basename, detail = its first line (bounded read, control characters
+# stripped, truncated ~120 chars). No key configured → posture "safe",
+# detection "none-configured".
+#
+# `unresolved` counts configured paths that produced NO tightening — missing,
+# empty, or not absolute. "Nothing configured" and "configured but nothing in
+# force" are different states with different next actions; reporting both as a
+# bare "safe" is how broken guardrail wiring reads as a clean default.
+#
+# The key can only ADD tightenings to the default-safe posture: there is no
+# value of it that reports a LOOSER posture than "safe", so a hostile or stale
+# state file cannot talk the run into more authority than it started with.
+# Enforcement STRENGTH is harness-dependent and deliberately NOT claimed here —
+# this helper reports the state files it can see, not whether a hook enforces
+# them.
+#
+# TELEMETRY (appended last; informational, never a status).
+#   {memory_index_bytes, project_note_bodies: [{file, bytes}],
+#    project_note_total_bytes}
+# The O1 dynamic body reads are the expensive half of a kickoff and no other
+# surface measures them. Sizes come from the SAME memory dir this run already
+# scans — MEMORY.md plus each project-type note's file size. `telemetry` is
+# null when the memory surface did not resolve (an unmeasured cost is a named
+# absence, never a misleading 0).
 #
 # An `issue` is normalized to {identifier, title, state, priority, assignee, url}.
 #
@@ -117,6 +154,8 @@ ANOMALIES="$WORK/anomalies.jsonl"; : > "$ANOMALIES"
 PROJECTS_OUT="$WORK/projects.jsonl"; : > "$PROJECTS_OUT"
 MEM_OUT="$WORK/memory.jsonl"; : > "$MEM_OUT"
 PROJ_IDS="$WORK/proj.ids"; : > "$PROJ_IDS"
+GUARD_OUT="$WORK/guardrails.jsonl"; : > "$GUARD_OUT"
+BODY_OUT="$WORK/bodies.jsonl"; : > "$BODY_OUT"
 
 degrade() { printf '%s\n' "$1" >> "$DEGRADED"; }
 anomaly() { jq -nc --arg t "$1" --arg s "$2" --arg d "$3" '{type:$t,subject:$s,detail:$d}' >> "$ANOMALIES"; }
@@ -322,6 +361,12 @@ fm_field() {
 
 MEM_STATUS="absent"
 MEM_DETAIL=""
+# Telemetry state (see the header contract). TELEMETRY_OK stays 0 until the
+# memory dir is actually scanned, so an unresolved surface emits `telemetry:
+# null` rather than a 0-byte reading that reads like "orientation is free".
+TELEMETRY_OK=0
+MEM_INDEX_BYTES=-1
+PROJ_BODY_TOTAL=0
 if [ -z "$MEMORY_DIR" ]; then
   MEM_DETAIL="no --memory-dir given"
   degrade "memory: no --memory-dir given"
@@ -334,6 +379,11 @@ elif [ ! -r "$MEMORY_DIR" ] || [ ! -x "$MEMORY_DIR" ]; then
   degrade "memory: dir not readable ($MEMORY_DIR)"
 else
   MEM_STATUS="ok"
+  TELEMETRY_OK=1
+  if [ -f "$MEMORY_DIR/MEMORY.md" ]; then
+    _mi="$(wc -c < "$MEMORY_DIR/MEMORY.md" 2>/dev/null | tr -d ' ')"
+    case "${_mi:-}" in ''|*[!0-9]*) ;; *) MEM_INDEX_BYTES="$_mi" ;; esac
+  fi
   mem_total=0
   mem_proj=0
   while IFS= read -r mf; do
@@ -345,8 +395,142 @@ else
            --arg name "$(fm_field "$mf" name)" \
            --arg description "$(fm_field "$mf" description)" \
       '{file:$file, name:$name, description:$description}' >> "$MEM_OUT"
+    # Body cost of the same note, for the telemetry key. Measured here rather
+    # than in a second pass so the two lists can never disagree about which
+    # notes a kickoff reads.
+    _pb="$(wc -c < "$mf" 2>/dev/null | tr -d ' ')"
+    case "${_pb:-}" in ''|*[!0-9]*) _pb=0 ;; esac
+    PROJ_BODY_TOTAL=$(( PROJ_BODY_TOTAL + _pb ))
+    jq -nc --arg file "$(basename "$mf")" --argjson bytes "$_pb" \
+      '{file:$file, bytes:$bytes}' >> "$BODY_OUT"
   done < <(find "$MEMORY_DIR" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
   MEM_DETAIL="$mem_proj project-type note(s) of $mem_total note(s) in $MEMORY_DIR"
+fi
+
+# ---- safety posture (detected, never declared) -------------------------------
+# See the header contract. The value is read from local.env as DATA (the same
+# no-sourcing posture scripts/self-audit.sh uses: a hostile local.env must not
+# be able to run code or export a PATH that redirects the lookups above), then
+# from the ambient env. Local.env wins when it carries a non-empty value.
+#
+# _orient_localenv_get <path> <key> — ONE key's value, never executed. Mirrors
+# bash sourcing semantics for a key: a later assignment wins; one matching
+# surrounding quote pair is stripped; an unquoted backslash-escape collapses.
+_orient_localenv_get() {
+  local path="$1" key="$2" line t v f l inner result=""
+  [ -f "$path" ] || { printf '%s' ""; return 0; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    t="${line#"${line%%[![:space:]]*}"}"
+    t="${t%"${t##*[![:space:]]}"}"
+    [ -z "$t" ] && continue
+    case "$t" in '#'*) continue ;; esac
+    case "$t" in
+      export[[:space:]]*) t="${t#export}"; t="${t#"${t%%[![:space:]]*}"}" ;;
+    esac
+    case "$t" in
+      "$key="*) v="${t#"$key="}" ;;
+      *) continue ;;
+    esac
+    if [ "${#v}" -ge 2 ]; then
+      f="${v:0:1}"; l="${v:$(( ${#v} - 1 )):1}"
+      if { [ "$f" = '"' ] && [ "$l" = '"' ]; } || { [ "$f" = "'" ] && [ "$l" = "'" ]; }; then
+        inner=$(( ${#v} - 2 )); v="${v:1:$inner}"
+      else
+        case "$v" in
+          *'\'*) v="$(printf '%s' "$v" | LC_ALL=C sed -E 's/\\(.)/\1/g')" ;;
+        esac
+      fi
+    fi
+    result="$v"
+  done < "$path"
+  printf '%s' "$result"
+}
+
+ORIENT_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+GUARD_SPEC=""
+[ -n "${ORIENT_REPO_ROOT:-}" ] && GUARD_SPEC="$(_orient_localenv_get "$ORIENT_REPO_ROOT/local.env" GUARDRAIL_STATE_FILES)"
+[ -n "$GUARD_SPEC" ] || GUARD_SPEC="${GUARDRAIL_STATE_FILES:-}"
+
+SAFETY_POSTURE="safe"
+SAFETY_DETECTION="none-configured"
+# Configured paths that did NOT resolve into a tightening — missing, empty, or
+# not absolute. Reported as its own count because "no guardrails configured" and
+# "guardrails configured but none in force" are different states with different
+# next actions, and collapsing them is how a run reads a broken guardrail wiring
+# as a clean default-safe posture.
+SAFETY_UNRESOLVED=0
+if [ -n "$GUARD_SPEC" ]; then
+  SAFETY_DETECTION="state-files"
+  # LC_ALL=C on the split + trim + truncation: this is byte-oriented handling of
+  # an ASCII-delimited path list, and a caller-exported UTF-8 locale must not
+  # change where a field ends.
+  # `|| [ -n "$gpath" ]`: BSD sed preserves a missing trailing newline, so a
+  # single-entry list (no comma) reaches `read` with no terminator and a bare
+  # `while read` would drop the ONLY configured guardrail on the floor —
+  # silently reporting `safe` for a run that is in fact tightened.
+  while IFS= read -r gpath || [ -n "$gpath" ]; do
+    [ -n "$gpath" ] || continue
+    # PER-ENTRY quote stripping. The local.env read strips one quote pair from
+    # the WHOLE value, so an operator who quotes each path individually
+    # (`"/a.state", "/b.state"`) hands every entry here still wearing its own
+    # quotes — each one then fails the absolute-path test and detection dies
+    # silently on a config that looks perfectly reasonable in the file.
+    case "$gpath" in
+      \"*\") gpath="${gpath#\"}"; gpath="${gpath%\"}" ;;
+      \'*\') gpath="${gpath#\'}"; gpath="${gpath%\'}" ;;
+    esac
+    [ -n "$gpath" ] || continue
+    # ABSOLUTE only. The contract documents absolute paths, and resolving a
+    # relative one against the CALLER's cwd would make the same configuration
+    # detect a different file depending on where the session started — a posture
+    # that changes with the launch directory is not a detected posture.
+    case "$gpath" in
+      /*) ;;
+      *) SAFETY_UNRESOLVED=$(( SAFETY_UNRESOLVED + 1 )); continue ;;
+    esac
+    # A configured path that does not exist, or exists but is EMPTY, is not a
+    # tightening — a guardrail skill writes state only while a scope is active.
+    if [ ! -f "$gpath" ] || [ ! -s "$gpath" ]; then
+      SAFETY_UNRESOLVED=$(( SAFETY_UNRESOLVED + 1 ))
+      continue
+    fi
+    # BOUNDED + SANITIZED TO PRINTABLE ASCII. `head -c 512` first: a multi-GB
+    # newline-free state file must not stall the kickoff on a line read that
+    # never ends. Then `tr -cd '[:print:]'` (LC_ALL=C: 0x20-0x7E) — this string
+    # is model-facing orient output, so a terminal escape or prompt-shaped
+    # garbage must not ride into it.
+    #
+    # Filtering to ASCII rather than merely dropping control bytes is what makes
+    # the following byte-offset `cut` SAFE. A 120-BYTE cut through a multi-byte
+    # UTF-8 sequence leaves an invalid tail; `jq --arg` then errors, the
+    # tightening record is never written, and the posture silently reports
+    # `safe` for a run that IS tightened — a sanitizer that disables the guard
+    # it was protecting. Post-filter every byte is one ASCII character, so the
+    # cut can never split a sequence.
+    gdetail="$(LC_ALL=C head -c 512 "$gpath" 2>/dev/null | LC_ALL=C head -n 1 \
+               | LC_ALL=C tr -cd '[:print:]' | LC_ALL=C cut -c 1-120)"
+    jq -nc --arg name "$(basename "$gpath")" --arg path "$gpath" --arg detail "$gdetail" \
+      '{name:$name, path:$path, detail:$detail}' >> "$GUARD_OUT"
+    SAFETY_POSTURE="tightened"
+  done < <(printf '%s' "$GUARD_SPEC" | LC_ALL=C tr ',' '\n' \
+            | LC_ALL=C sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+fi
+
+SAFETY_JSON="$(jq -n --arg posture "$SAFETY_POSTURE" \
+                     --arg detection "$SAFETY_DETECTION" \
+                     --slurpfile tightenings "$GUARD_OUT" \
+                     --argjson unresolved "$SAFETY_UNRESOLVED" \
+  '{posture:$posture, tightenings:($tightenings // []), detection:$detection, unresolved:$unresolved}')"
+
+if [ "$TELEMETRY_OK" -eq 1 ]; then
+  _mib='null'
+  [ "$MEM_INDEX_BYTES" -ge 0 ] && _mib="$MEM_INDEX_BYTES"
+  TELEMETRY_JSON="$(jq -n --argjson index "$_mib" \
+                          --slurpfile bodies "$BODY_OUT" \
+                          --argjson total "$PROJ_BODY_TOTAL" \
+    '{memory_index_bytes:$index, project_note_bodies:($bodies // []), project_note_total_bytes:$total}')"
+else
+  TELEMETRY_JSON='null'
 fi
 
 # ---- emit --------------------------------------------------------------------
@@ -364,6 +548,8 @@ jq -n $JQ_FLAGS \
   --slurpfile anomalies "$ANOMALIES" \
   --slurpfile memory "$MEM_OUT" \
   --rawfile degraded "$DEGRADED" \
+  --argjson safety "$SAFETY_JSON" \
+  --argjson telemetry "$TELEMETRY_JSON" \
   '# Every array-typed key is `// []`-defaulted. --slurpfile over an EMPTY file
    # yields [], so `[0]` is null — and an intermediate jq that hard-errors (a
    # malformed tracker payload) leaves exactly that empty file behind. Without
@@ -381,5 +567,9 @@ jq -n $JQ_FLAGS \
      mine_in_progress: ($mineip[0] // []),
      anomalies: ($anomalies // []),
      memory_pointers: ($memory // []),
-     degraded: (($degraded // "") | split("\n") | map(select(length > 0)))
+     degraded: (($degraded // "") | split("\n") | map(select(length > 0))),
+     # APPENDED LAST, in this order, so every pre-existing key keeps its name,
+     # shape, AND position for a consumer that reads the document positionally.
+     safety: $safety,
+     telemetry: $telemetry
    }'

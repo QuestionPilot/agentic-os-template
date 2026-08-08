@@ -146,15 +146,19 @@ Orient:
 - Lesson index: <N lessons / triggers loaded | unreachable — recall degraded to memory-index headlines>
 - Cross-issue Linear claim verification: <pass / mismatches found>
 - Degraded surfaces: <one line per named degraded surface, or "none">
-- Safety posture: <default "safe"; name any active tightening from a session-guardrail skill or unattended-governance flag>
+- Safety posture: <orient `.safety`: "safe (none configured)" | "safe (configured, N unresolved)" | "tightened — <names>">
 ```
 
 Then proceed immediately to R1–R5 for the user's request — the orient summary and
 the routing declaration land in the same first response.
 
-The **Safety posture** line makes the run's posture visible at start; it defaults to
-`safe` and reports any active tightening, never a loosening — contract in
-`core/operating-system.md` → Per-Run Safety Posture.
+The **Safety posture** line reports what orient DETECTED (`.safety`), never declared
+policy: posture, each tightening's name, and — when guardrails are configured but not in
+force — the `unresolved` count, so broken wiring never reads as "none configured". It
+defaults to `safe` and only ever adds tightenings — contract in
+`core/operating-system.md` → Per-Run Safety Posture. Enforcement strength is
+harness-dependent (hard hooks on some harnesses, advisory elsewhere), so never let the
+line claim hard enforcement it cannot see.
 
 ---
 

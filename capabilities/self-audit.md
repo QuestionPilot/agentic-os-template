@@ -51,7 +51,7 @@ re-audit to score them. The bands above describe a fully-measured run.
 | Pillar | What it scores |
 | --- | --- |
 | **1. Cross-layer handoffs** | Each Active Linear project (≥1 open issue — closed-out projects with all issues Done/Canceled are skipped) has a project-type memory note (frontmatter `metadata.type: project`) + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
-| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) and each entry under the ~300-char per-line cap — **both caps apply to the framework's own per-note memory stores only**; the per-session **injection surface** — the largest per-note store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name. The codex-native memory registry (`$CODEX_HOME/memories`) is scored for index **presence** only: it is consolidator-owned, no codex-side size or read-truncation limit exists (verified against openai/codex at tag `rust-v0.144.1`), so its size is **reported informationally** — never deducted, never a gap — and it is excluded from the injection-surface largest-store pick |
+| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) and each entry under the ~300-char per-line cap — **both caps apply to the framework's own per-note memory stores only**; the per-session **injection surface** — the largest per-note store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name. The codex-native memory registry (`$CODEX_HOME/memories`) is scored for index **presence** only: it is consolidator-owned, no codex-side size or read-truncation limit exists (verified against openai/codex at tag `rust-v0.144.1`), so its size is **reported informationally** — never deducted, never a gap — and it is excluded from the injection-surface largest-store pick. Sub-check 2.6 adds the **per-note body budget**: the caps above bound the *index*, but nothing bounded the project-type note **bodies** the index points at — exactly what a kickoff orient dereferences. Any project-type note whose file size exceeds the soft `PROJECT_NOTE_BODY_WARN_KB` budget (default 16 KB) triggers one aggregate 2-pt warn and a named gap, never a hard cap |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
 | **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
@@ -85,6 +85,38 @@ distributing `**State:**` label, or conjunction inheritance. Under-reporting is
 the chosen bias — a missed stale claim costs one audit cycle, a false accusation
 costs trust in the whole signal. Both twins' tests pin the known false positives
 as regression anchors; loosening one twin without the other is twin divergence.
+
+**Operator sub-gates — aggregated and named, never scored.** Operators accumulate
+their own semantic checker scripts over time — a capability-map check, a drift
+check, a distillation check — and nothing aggregates them. The failure mode is
+quiet: this scorecard reads 100/100 while every operator gate fails, or worse,
+while one silently stopped being run at all. Point `AUDIT_SUBGATES_FILE` in
+`local.env` at a registry file (one `name = command` per line; `#` comments and
+blank lines ignored) and each run executes every registered gate with a bounded
+timeout (60s per gate) and reports it in a `## Operator sub-gates` section + an
+`operator_subgates` JSON key: name, status (`pass` on exit 0 / `fail` with the
+exit code / `error` on timeout or a malformed line), and the first line of
+output as detail. The registry path must be **absolute** (a relative one is a
+named skip, never resolved against the caller's cwd), at most **64** entries are
+executed per run (the rest are reported as a named drop count), and the ceiling
+is enforced from **outside** the gate — each gate runs in its own process group
+and is killed as a group on overrun, so a gate that traps the timeout signal or
+spawns workers is still bounded and still cleaned up.
+
+The surface is **informational only** — it never touches `total`, a pillar
+score, or `gaps`, the same separation `## Semantic currentness` holds. The
+framework cannot know an operator gate's semantics, so it must not price one
+into the framework's own number; what it can do is stop the gate from being
+invisible. An unset key, a missing registry, an empty registry, or
+`--no-subgates` all render the section as a **named skip** with
+`operator_subgates: null` — a skipped registry is never a clean pass.
+
+> **Security.** The registry is operator-authored **executable** content at the
+> same trust level as a harness hook: self-audit runs whatever it names, so
+> review a registry exactly as you would review a hook script, and never point
+> the key at a file you did not write. What does **not** change is the
+> `local.env` posture — both twins still parse `local.env` keys as *data* and
+> never execute the file itself.
 
 **Still out of scope (deferred to future PRs):** state-delta memory writes matched against Linear closeout comments; "recent Linear activity" cross-referenced with "recent file mtime". These are non-trivial to score deterministically and the cost outweighs the benefit today.
 
@@ -141,7 +173,10 @@ script's penalty rules are the canonical scoring.
    the `--injection-warn-kb <n>` flag > `INJECTION_SURFACE_WARN_KB` in
    `local.env` > the ambient env var > the 32 KB default. The value is whole
    KB; a non-positive or non-integer value silently falls back to the default
-   (the check is advisory, so a bad knob must not break the audit).
+   (the check is advisory, so a bad knob must not break the audit). The
+   per-note body budget (sub-check 2.6) is tunable identically:
+   `--project-note-warn-kb <n>` > `PROJECT_NOTE_BODY_WARN_KB` in `local.env` >
+   the ambient env var > the 16 KB default, with the same silent fallback.
 
 2. **Read the scorecard.** The script's default output is human-readable
    markdown. The top-of-output total + per-pillar scores are the answer; the
@@ -244,6 +279,7 @@ how widely a gap of that class radiates through the framework:
 | Broken MEMORY.md link | 4 |
 | Recent project memory missing `## State Deltas` | 4 |
 | Injection surface over the soft `INJECTION_SURFACE_WARN_KB` budget | 4 |
+| Project-type note body over the soft `PROJECT_NOTE_BODY_WARN_KB` budget | 4 |
 | Orphan memory file (no MEMORY.md entry) | 3 |
 | Orphan `verification/*.md` (no capability consumer) | 3 |
 | `lifecycle: superseded` artifact missing successor reference | 3 |
@@ -296,6 +332,11 @@ Total: <bytes> bytes — soft threshold <K> KB (OK|OVER)
 ## Skipped surfaces
 
 - <surface>: <reason> (e.g. "lineark not installed; cross-layer Linear checks skipped")
+
+## Operator sub-gates
+
+- <name>: pass | fail (exit <N>) | error — <first output line>
+_(skipped — <named reason>)_             (when no registry ran)
 ```
 
 The `## Injection surface` section lists each resolved component with its byte
@@ -308,7 +349,8 @@ outside the total.
 
 If `--json` is passed, the script emits a structured JSON object with
 `{total, unscored_count, pillars[name].score, pillars[name].unscored,
-pillars[name].notes, injection_surface, gaps[], codex_registry_bytes}` — used
+pillars[name].notes, injection_surface, gaps[], codex_registry_bytes,
+operator_subgates}` — used
 by the upstream acceptance suite's `tests/self-audit.test.sh` to assert against
 specific scores. An UNSCORED pillar reports `score: 0, unscored: true`; the
 history helper records that 0 truthfully. `injection_surface` is `null` when no
@@ -318,6 +360,10 @@ registry's index size, reported informationally — appended last so pre-existin
 fields keep their positions; `null` only when no registry resolved or it holds
 no `MEMORY.md`. The measurement runs outside the memory pillar's scored path,
 so a codex-only install (memory pillar UNSCORED) still reports it.
+`operator_subgates` is likewise appended last: `null` whenever the sub-gate
+surface did not run (unset key, missing or empty registry, `--no-subgates`),
+else `{registry, timeout_seconds, scored: false, gates[{name, status,
+exit_code, detail}], dropped}`.
 
 ## Limits
 
@@ -329,7 +375,10 @@ so a codex-only install (memory pillar UNSCORED) still reports it.
   transcript-only. The only other write surface is the trend-history `append`
   step, which writes solely to the gitignored, operator-local history store
   (never the framework tree) — see [Trend tracking](#trend-tracking). Gap
-  closure is the operator's call.
+  closure is the operator's call. One deliberate exception to "reads only":
+  the operator sub-gate registry (`AUDIT_SUBGATES_FILE`) is *executed* — its
+  commands are the operator's own, at hook trust level, and `--no-subgates`
+  turns execution off while still rendering the section as a named skip.
 - **Not a substitute for the PASS/FAIL gates.** `validate.sh`,
   `check-drift.sh`, and — where the upstream acceptance suite is present —
   `tests/run.sh` catch hard breakage. Self-audit catches thinning. Run both.

@@ -121,6 +121,19 @@ _orient_schema_ok() { # _orient_schema_ok <json> -> echoes ok|BAD
        and ([ .memory_pointers[] | (.file|type=="string") and (.name|type=="string") and (.description|type=="string") ] | all)
        and (.degraded | type == "array")
        and ([ .degraded[] | type == "string" ] | all)
+       and (.safety | type == "object")
+       and ((.safety.posture | IN("safe","tightened")))
+       and ((.safety.detection | IN("state-files","none-configured")))
+       and (.safety.unresolved | type == "number")
+       and (.safety.tightenings | type == "array")
+       and ([ .safety.tightenings[] | (.name|type=="string") and (.path|type=="string") and (.detail|type=="string") ] | all)
+       and ((.telemetry | type) | IN("object","null"))
+       and (if .telemetry == null then true else
+              ((.telemetry.memory_index_bytes | type) | IN("number","null"))
+              and (.telemetry.project_note_bodies | type == "array")
+              and ([ .telemetry.project_note_bodies[] | (.file|type=="string") and (.bytes|type=="number") ] | all)
+              and (.telemetry.project_note_total_bytes | type == "number")
+            end)
     then "ok" else "BAD" end' 2>/dev/null || printf 'BAD'
 }
 
@@ -391,6 +404,154 @@ assert_eq "orient: a non-object projects element still emits a schema-valid docu
 assert_eq "orient: the non-object project is dropped rather than emitted as a blank project" \
   "0" "$(printf '%s' "$o" | jq -r '.projects | length')"
 
+# ============================ SAFETY POSTURE =================================
+# The Mode-1 "Safety posture" line used to restate DECLARED policy ("safe").
+# This key makes it report DETECTED state instead: each configured guardrail
+# state file that exists and is non-empty is one named tightening. The three
+# cases that matter are 0 files (the default-safe floor), 1, and 2 — plus the
+# negative cases (configured-but-absent, configured-but-empty) that must NOT
+# count, because a stale or empty state file claiming a tightening is the same
+# class of lie as declaring one that was never enforced.
+OS1="$(mktemp -d)"; orient_stub "$OS1"; orient_fixtures "$OS1"
+
+# 0 files configured — posture safe, detection none-configured, no tightenings.
+o="$(run_orient "$OS1")"; rc=$?
+assert_eq "orient: no guardrail state configured still exits 0" 0 "$rc"
+assert_eq "orient: no guardrail state configured reports safe/none-configured" \
+  "safe none-configured 0 0" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, .safety.detection, (.safety.tightenings|length|tostring), (.safety.unresolved|tostring) ] | join(" ")')"
+
+OSF="$(mktemp -d)"
+printf 'edits frozen to the work dir\n' > "$OSF/scope.state"
+printf 'careful mode: confirm destructive commands\nsecond line ignored\n' > "$OSF/careful.state"
+: > "$OSF/empty.state"
+
+# 1 file — posture tightened, named by BASENAME, detail = its FIRST line.
+o="$(GUARDRAIL_STATE_FILES="$OSF/scope.state" run_orient "$OS1")"
+assert_eq "orient: one guardrail state file tightens the posture" \
+  "tightened state-files 1" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, .safety.detection, (.safety.tightenings|length|tostring) ] | join(" ")')"
+assert_eq "orient: a tightening is named by basename and detailed by its first line" \
+  "scope.state|edits frozen to the work dir" \
+  "$(printf '%s' "$o" | jq -r '.safety.tightenings[0] | "\(.name)|\(.detail)"')"
+assert_eq "orient: a tightened document still satisfies the schema" "ok" "$(_orient_schema_ok "$o")"
+
+# 2 files, plus an EMPTY one and an ABSENT one in the same list: only the two
+# non-empty existing files count, and the detail is the first line only.
+o="$(GUARDRAIL_STATE_FILES="$OSF/scope.state, $OSF/careful.state,$OSF/empty.state,$OSF/nope.state" \
+     run_orient "$OS1")"
+assert_eq "orient: two guardrail state files yield two named tightenings" \
+  "scope.state careful.state" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.tightenings[].name ] | join(" ")')"
+assert_eq "orient: an empty or absent configured state file is NOT a tightening" \
+  "2" "$(printf '%s' "$o" | jq -r '.safety.tightenings | length')"
+assert_eq "orient: only the first line of a state file becomes the detail" \
+  "careful mode: confirm destructive commands" \
+  "$(printf '%s' "$o" | jq -r '.safety.tightenings[1].detail')"
+# The key can only ADD tightenings: there is no configured value that reports a
+# posture looser than the default. But "configured and inactive" must NOT read
+# as "nothing configured" — the unresolved count is what keeps a broken
+# guardrail wiring from presenting as a clean default-safe run.
+o="$(GUARDRAIL_STATE_FILES="$OSF/empty.state,$OSF/nope.state" run_orient "$OS1")"
+assert_eq "orient: configured-but-inactive guardrails still report the safe floor" \
+  "safe" "$(printf '%s' "$o" | jq -r '.safety.posture')"
+assert_eq "orient: configured-but-unresolved paths are COUNTED, not silently equal to unconfigured" \
+  "state-files 2" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.detection, (.safety.unresolved|tostring) ] | join(" ")')"
+
+# A RELATIVE path is never resolved against the caller's cwd — a posture that
+# changes with the launch directory is not a detected posture. It counts as
+# unresolved, exactly like a missing one.
+o="$(cd "$OSF" && GUARDRAIL_STATE_FILES="scope.state" run_orient "$OS1")"
+assert_eq "orient: a relative guardrail path is unresolved, never cwd-resolved" \
+  "safe 0 1" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, (.safety.tightenings|length|tostring), (.safety.unresolved|tostring) ] | join(" ")')"
+
+# PER-ENTRY quotes: the local.env read strips one pair from the WHOLE value, so
+# individually-quoted paths arrive here still quoted. Both must still resolve.
+o="$(GUARDRAIL_STATE_FILES="\"$OSF/scope.state\", \"$OSF/careful.state\"" run_orient "$OS1")"
+assert_eq "orient: individually-quoted paths are both detected, not silently corrupted" \
+  "tightened 2 0" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, (.safety.tightenings|length|tostring), (.safety.unresolved|tostring) ] | join(" ")')"
+
+# DETAIL HARDENING. A control character in a state file must not ride into
+# model-facing orient output.
+printf 'scope active\033[31mRED\007 tail\nsecond line\n' > "$OSF/ctl.state"
+o="$(GUARDRAIL_STATE_FILES="$OSF/ctl.state" run_orient "$OS1")"
+assert_eq "orient: control characters are stripped from a state-file detail" \
+  "scope active[31mRED tail" "$(printf '%s' "$o" | jq -r '.safety.tightenings[0].detail')"
+assert_eq "orient: a control-char state file still satisfies the schema" "ok" "$(_orient_schema_ok "$o")"
+
+# A first line LONGER than the truncation limit and made of MULTI-BYTE text: the
+# byte-offset truncate must not split a UTF-8 sequence, because an invalid tail
+# makes the JSON assembler drop the record — and a dropped tightening reports
+# `safe` for a run that is tightened. The tightening must survive.
+LC_ALL=C awk 'BEGIN { s=""; while (i++ < 200) s = s "\303\251"; print s }' > "$OSF/multi.state"
+o="$(GUARDRAIL_STATE_FILES="$OSF/multi.state" run_orient "$OS1")"; rc=$?
+assert_eq "orient: an over-long multibyte first line still exits 0" 0 "$rc"
+assert_eq "orient: an over-long multibyte detail never drops the tightening" \
+  "tightened 1" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, (.safety.tightenings|length|tostring) ] | join(" ")')"
+assert_eq "orient: a multibyte detail still emits a schema-valid document" "ok" "$(_orient_schema_ok "$o")"
+
+# A multi-GB newline-free state file must not stall the kickoff: the read is
+# bounded before the first-line split. Size is modest here (the bound is 512
+# bytes) — what is pinned is that the detail is TRUNCATED, not whole-file read.
+LC_ALL=C awk 'BEGIN { s=""; while (i++ < 4000) s = s "z"; printf "%s", s }' > "$OSF/huge.state"
+o="$(GUARDRAIL_STATE_FILES="$OSF/huge.state" run_orient "$OS1")"
+assert_eq "orient: a newline-free state file yields a bounded 120-char detail" \
+  "120" "$(printf '%s' "$o" | jq -r '.safety.tightenings[0].detail | length')"
+
+# ============================ TELEMETRY ======================================
+# The O1 dynamic body reads are the expensive half of a kickoff and nothing
+# measured them. Byte counts are asserted against PLANTED fixture notes, not
+# against whatever the operator's real store happens to hold.
+OT="$(mktemp -d)"
+printf 'INDEX\n' > "$OT/MEMORY.md"                                   # 6 bytes
+printf -- '---\ntype: project\nname: a\ndescription: d\n---\nAAAA\n' > "$OT/project-a.md"
+printf -- '---\ntype: project\nname: b\ndescription: d\n---\nBB\n'   > "$OT/project-b.md"
+printf -- '---\ntype: reference\n---\nnot counted\n'                 > "$OT/reference-c.md"
+_ot_a="$(wc -c < "$OT/project-a.md" | tr -d ' ')"
+_ot_b="$(wc -c < "$OT/project-b.md" | tr -d ' ')"
+o="$(run_orient "$OS1" --memory-dir "$OT")"
+assert_eq "orient: telemetry reports the memory index size" \
+  "6" "$(printf '%s' "$o" | jq -r '.telemetry.memory_index_bytes')"
+assert_eq "orient: telemetry lists one body row per project-type note, in scan order" \
+  "project-a.md=$_ot_a project-b.md=$_ot_b" \
+  "$(printf '%s' "$o" | jq -r '[ .telemetry.project_note_bodies[] | "\(.file)=\(.bytes)" ] | join(" ")')"
+assert_eq "orient: telemetry totals the project-note bodies it listed" \
+  "$(( _ot_a + _ot_b ))" \
+  "$(printf '%s' "$o" | jq -r '.telemetry.project_note_total_bytes')"
+# A non-project note is read at orient as a pointer, not a body — it must not
+# inflate the body budget the caller is being asked to watch.
+assert_eq "orient: a non-project note contributes no body row" \
+  "0" "$(printf '%s' "$o" | jq -r '[ .telemetry.project_note_bodies[] | select(.file == "reference-c.md") ] | length')"
+
+# A store with no MEMORY.md still measures bodies; the index reads null, never 0
+# (an absent index is not a zero-byte one).
+OT2="$(mktemp -d)"
+printf -- '---\ntype: project\n---\nX\n' > "$OT2/project-x.md"
+o="$(run_orient "$OS1" --memory-dir "$OT2")"
+assert_eq "orient: a store with no MEMORY.md reports a null index size, not 0" \
+  "null" "$(printf '%s' "$o" | jq -r '.telemetry.memory_index_bytes')"
+
+# An unresolved memory surface reports telemetry: null — an unmeasured cost is a
+# named absence, never a misleading zero.
+o="$(run_orient "$OS1")"
+assert_eq "orient: no memory dir reports telemetry null, not a zeroed reading" \
+  "null" "$(printf '%s' "$o" | jq -r '.telemetry | type')"
+o="$(run_orient "$OS1" --memory-dir "$OS1/no-such-memory-dir")"
+assert_eq "orient: an absent memory dir also reports telemetry null" \
+  "null" "$(printf '%s' "$o" | jq -r '.telemetry | type')"
+
+# ============================ KEY ORDERING ===================================
+# Both new keys are APPENDED LAST so a consumer reading the document
+# positionally keeps every pre-existing key at its old offset.
+o="$(run_orient "$OS1" --memory-dir "$OT")"
+assert_eq "orient: safety + telemetry are appended LAST, after every pre-existing key" \
+  "schema,surfaces,projects,projectless_open_issues,mine_in_progress,anomalies,memory_pointers,degraded,safety,telemetry" \
+  "$(printf '%s' "$o" | jq -r 'keys_unsorted | join(",")')"
+
 # ============================ ARGUMENT CONTRACT ==============================
 # A non-zero exit means the SCRIPT could not run — never that a surface was down.
 o="$(bash "$ORIENT" --nope 2>&1)"; rc=$?
@@ -401,5 +562,6 @@ assert_eq "orient: value-less --memory-dir exits 2 (no self-loop)" 2 "$rc"
 o="$(bash "$ORIENT" --lineark 2>&1)"; rc=$?
 assert_eq "orient: value-less --lineark exits 2 (no self-loop)" 2 "$rc"
 
-rm -rf "$O1" "$O2" "$O2N" "$O3" "$O4" "$O5" "$O6" "$O7" "$O8" "$O9"
+rm -rf "$O1" "$O2" "$O2N" "$O3" "$O4" "$O5" "$O6" "$O7" "$O8" "$O9" \
+       "$OS1" "$OSF" "$OT" "$OT2"
 fi

@@ -1665,7 +1665,7 @@ _test_codex_registry_clean() {
   # Panel finding (<TEAM>-468): the new field is appended LAST so every
   # pre-existing field keeps its POSITION as well as its name and shape.
   assert_eq "codex registry: JSON stays backward-compatible (existing fields keep position, new field appended last)" \
-    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures" "$fields"
+    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates" "$fields"
   assert_contains "codex registry: markdown carries the non-scoring informational size line" \
     "$md_out" "- codex memory registry (informational, not scored): $reg_bytes bytes"
 }
@@ -2079,3 +2079,392 @@ _test_orientation_surface_unreadable_component() {
   fi
 }
 _test_orientation_surface_unreadable_component
+
+# =============================================================================
+# Operator sub-gates + project-note body budget
+# =============================================================================
+
+# --- operator sub-gates -------------------------------------------------------
+# Operators accumulate their own semantic checkers that no audit aggregates, so
+# the scorecard can read 100/100 while every one of them fails or silently
+# lapses. The registry names them. What is under test is the WIRING contract —
+# its own section, its own JSON key, and the load-bearing part: an operator gate
+# NEVER moves total, a pillar score, or gaps. A gate that could depress the
+# score would make operators stop registering gates.
+#
+# Hermetic: the fixture repo's OWN local.env carries AUDIT_SUBGATES_FILE, and
+# every registered command is a stub written into the fixture — the operator's
+# real registry is never read (a fixture repo-root has no operator local.env).
+_test_operator_subgates() {
+  command -v jq >/dev/null 2>&1 || { _skip "operator sub-gates wiring" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local reg="$fixture/subgates.txt"
+  printf 'AUDIT_SUBGATES_FILE=%s\n' "$reg" > "$fixture/local.env"
+
+  # Happy path: a passing gate, a failing gate, a comment, a blank line, and a
+  # line that names no command.
+  {
+    printf '# operator sub-gates\n'
+    printf '\n'
+    printf "map check = printf 'map is current\\\\n'\n"
+    printf "drift check = printf 'two entries drifted\\\\n' >&2; exit 4\n"
+    printf 'no command here\n'
+  } > "$reg"
+
+  local out base
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" --json 2>/dev/null)"
+  assert_eq "operator sub-gates: a passing gate reports pass with exit 0" \
+    "map check|pass|0" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.exit_code)"')"
+  assert_eq "operator sub-gates: a passing gate carries its first output line as detail" \
+    "map is current" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0].detail')"
+  assert_eq "operator sub-gates: a failing gate reports fail WITH its exit code" \
+    "drift check|fail|4" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[1] | "\(.name)|\(.status)|\(.exit_code)"')"
+  assert_eq "operator sub-gates: a failing gate's stderr first line is the detail" \
+    "two entries drifted" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[1].detail')"
+  # A typo that makes a gate disappear is exactly the failure this closes, so a
+  # malformed line is REPORTED, never silently dropped.
+  assert_eq "operator sub-gates: a malformed registry line is named, not dropped" \
+    "no command here|error" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[2] | "\(.name)|\(.status)"')"
+  assert_eq "operator sub-gates: comments and blank lines register no gate" \
+    "3" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates | length')"
+  assert_eq "operator sub-gates: the JSON key carries a literal scored:false" \
+    "false" "$(printf '%s' "$out" | jq -r '.operator_subgates.scored')"
+
+  # THE load-bearing property: informational means informational. Compared
+  # against the SAME fixture with the registry disabled, so score-neutrality is
+  # proved rather than asserted against a hard-coded number.
+  base="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" --no-subgates --json 2>/dev/null)"
+  assert_eq "operator sub-gates: a FAILING gate does not change the total score" \
+    "$(printf '%s' "$base" | jq -r '.total')" "$(printf '%s' "$out" | jq -r '.total')"
+  assert_eq "operator sub-gates: a FAILING gate does not enter the gap list" \
+    "$(printf '%s' "$base" | jq -r '.gaps | length')" "$(printf '%s' "$out" | jq -r '.gaps | length')"
+  assert_eq "operator sub-gates: a FAILING gate does not move the memory pillar" \
+    "$(_sa_pillar_score "$base" memory-hygiene)" "$(_sa_pillar_score "$out" memory-hygiene)"
+
+  # Markdown surface.
+  local md
+  md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  assert_contains "operator sub-gates: markdown has its own section" "$md" "## Operator sub-gates"
+  assert_contains "operator sub-gates: markdown renders the passing gate" \
+    "$md" "- map check: pass — map is current"
+  assert_contains "operator sub-gates: markdown renders the failing gate with its exit code" \
+    "$md" "- drift check: fail (exit 4) — two entries drifted"
+  assert_contains "operator sub-gates: markdown states the informational boundary" \
+    "$md" "never scored"
+
+  # A hanging gate is bounded and reported as that gate's OWN error — the audit
+  # still exits 0. The timeout is injected so this costs a second, not a minute.
+  printf "hang = sleep 30\n" > "$reg"
+  local slow_rc slow
+  slow="$(SELF_AUDIT_SUBGATE_TIMEOUT=1 bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --json 2>/dev/null)"; slow_rc=$?
+  assert_eq "operator sub-gates: a hanging gate does not fail the audit" 0 "$slow_rc"
+  assert_eq "operator sub-gates: a hanging gate is bounded and reported as error" \
+    "hang|error|timed out after 1s" \
+    "$(printf '%s' "$slow" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.detail)"')"
+
+  # --no-subgates: execution off, section still rendered as a NAMED skip.
+  printf "map check = printf 'ran\\\\n'\n" > "$reg"
+  local nosub nosub_md
+  nosub="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" --no-subgates --json 2>/dev/null)"
+  nosub_md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" --no-subgates 2>/dev/null)"
+  assert_eq "operator sub-gates: --no-subgates nulls the JSON key" \
+    "null" "$(printf '%s' "$nosub" | jq -r '.operator_subgates | type')"
+  assert_contains "operator sub-gates: --no-subgates still renders a NAMED skip" \
+    "$nosub_md" "_(skipped — --no-subgates given)_"
+
+  # Registry configured but MISSING: a named skip, never a silent clean pass.
+  printf 'AUDIT_SUBGATES_FILE=%s\n' "$fixture/absent-registry.txt" > "$fixture/local.env"
+  local gone gone_md
+  gone="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" --json 2>/dev/null)"
+  gone_md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  assert_eq "operator sub-gates: a missing registry nulls the JSON key" \
+    "null" "$(printf '%s' "$gone" | jq -r '.operator_subgates | type')"
+  assert_contains "operator sub-gates: a missing registry is a NAMED skip" \
+    "$gone_md" "registry file not found:"
+
+  # Key UNSET: same named-skip contract, different named reason.
+  printf 'OBSIDIAN_VAULT_PATH=\n' > "$fixture/local.env"
+  local unset_md unset_json
+  unset_json="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" --json 2>/dev/null)"
+  unset_md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  assert_eq "operator sub-gates: an unset registry key nulls the JSON key" \
+    "null" "$(printf '%s' "$unset_json" | jq -r '.operator_subgates | type')"
+  assert_contains "operator sub-gates: an unset registry key is a NAMED skip" \
+    "$unset_md" "no AUDIT_SUBGATES_FILE configured"
+  # The section can never vanish: an invisible sub-gate surface is the exact
+  # failure mode this whole lane exists to close.
+  assert_contains "operator sub-gates: the section renders even when nothing ran" \
+    "$unset_md" "## Operator sub-gates"
+
+  # JSON key ORDER: the new key is appended LAST so every pre-existing field
+  # keeps its position for a positional consumer.
+  assert_eq "operator sub-gates: operator_subgates is the LAST JSON key" \
+    "operator_subgates" "$(printf '%s' "$unset_json" | jq -r 'keys_unsorted | last')"
+  assert_eq "operator sub-gates: no pre-existing JSON key moved" \
+    "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates" \
+    "$(printf '%s' "$unset_json" | jq -r 'keys_unsorted | join(",")')"
+
+  rm -rf "$fixture"
+}
+_test_operator_subgates
+
+# --- Pillar 2 sub-check 2.6: project-note body budget -------------------------
+# The recall caps bound the INDEX; nothing bounded the note BODIES the index
+# points at — exactly what a kickoff orient dereferences. Advisory: one
+# aggregate warn, never a hard cap.
+_test_project_note_body_budget() {
+  command -v jq >/dev/null 2>&1 || { _skip "project-note body budget" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local mem="$fixture/memory"; mkdir -p "$mem"
+  # ~20 KB body, over the 16 KB default; a small sibling and a NON-project note
+  # of the same size stay under / out of scope.
+  { printf -- '---\nmetadata:\n  type: project\n---\n'
+    LC_ALL=C awk 'BEGIN { while (i++ < 400) printf "%s\n", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }'
+  } > "$mem/project-big.md"
+  printf -- '---\nmetadata:\n  type: project\n---\nsmall\n' > "$mem/project-small.md"
+  { printf -- '---\nmetadata:\n  type: reference\n---\n'
+    LC_ALL=C awk 'BEGIN { while (i++ < 400) printf "%s\n", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }'
+  } > "$mem/reference-big.md"
+  printf 'project-big.md project-small.md reference-big.md\n' > "$mem/MEMORY.md"
+
+  local run
+  run() { bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --memory-dir "$mem" "$@" --json 2>/dev/null; }
+
+  local over under
+  over="$(run)"
+  assert_eq "body budget: an over-budget project note raises exactly one gap" \
+    "1" "$(printf '%s' "$over" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+  assert_eq "body budget: the gap carries leverage 4 on pillar 2" \
+    "2|4" "$(printf '%s' "$over" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | "\(.pillar)|\(.leverage)"')"
+  assert_contains "body budget: the gap names the offending note and the threshold" \
+    "$(printf '%s' "$over" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail')" \
+    "project-big.md"
+  assert_contains "body budget: the gap names the soft 16 KB default" \
+    "$(printf '%s' "$over" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail')" \
+    "soft 16 KB per-note budget"
+  # A non-project note of the same size is NOT in scope — orient dereferences
+  # project-type bodies, and warning on the rest is alarm fatigue.
+  assert_not_contains "body budget: a non-project note of the same size does not trip the warn" \
+    "$(printf '%s' "$over" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail')" \
+    "reference-big.md"
+  assert_eq "body budget: the warn costs exactly 2 pillar-2 points" \
+    "18" "$(_sa_pillar_score "$over" memory-hygiene)"
+
+  # A raised threshold clears it — the knob is real, and the check is advisory.
+  under="$(run --project-note-warn-kb 512)"
+  assert_eq "body budget: a raised threshold clears the warn" \
+    "0" "$(printf '%s' "$under" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+  assert_eq "body budget: a raised threshold clears the deduction too" \
+    "20" "$(_sa_pillar_score "$under" memory-hygiene)"
+
+  # A garbage knob falls back to the DEFAULT silently — an advisory measurement
+  # must degrade to the default, never break the audit (or silently disable
+  # itself, which a 0-KB or negative reading would do).
+  local garbage
+  for garbage in abc 0 -5; do
+    assert_eq "body budget: a garbage threshold ($garbage) falls back to the 16 KB default" \
+      "1" "$(run --project-note-warn-kb "$garbage" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+  done
+
+  # The warn is an AGGREGATE: two oversize notes still cost 2 points once.
+  cp "$mem/project-big.md" "$mem/project-big2.md"
+  printf 'project-big.md project-big2.md project-small.md reference-big.md\n' > "$mem/MEMORY.md"
+  local two
+  two="$(run)"
+  assert_eq "body budget: two oversize notes still deduct exactly once" \
+    "18" "$(_sa_pillar_score "$two" memory-hygiene)"
+  assert_eq "body budget: both oversize notes are named in the single gap" \
+    "2" "$(printf '%s' "$two" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail | capture("(?<n>[0-9]+) project-type") | .n')"
+
+  rm -rf "$fixture"
+  unset -f run
+}
+_test_project_note_body_budget
+
+# --- operator sub-gates: bounding an ADVERSARIAL gate --------------------------
+# The first bound here was an in-process `perl -e 'alarm N; exec …'`. It is not a
+# bound at all against two ordinary shell behaviours, and both were measured:
+#   (a) a gate that runs `trap '' ALRM` inherits the ignore across the exec and
+#       runs to completion, ceiling or not;
+#   (b) a gate that backgrounds a child left the driver's command substitution
+#       waiting on that child's stdout EOF — 19s under a 1s ceiling, reported
+#       `pass`.
+# The bound is now a driver-side watchdog over a dedicated PROCESS GROUP:
+# enforcement lives outside the process being bounded, and TERM/KILL reach the
+# whole tree. These fixtures are the regression anchors for that.
+_test_operator_subgates_bounding() {
+  command -v jq >/dev/null 2>&1 || { _skip "operator sub-gates bounding" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local reg="$fixture/subgates.txt"
+  printf 'AUDIT_SUBGATES_FILE=%s\n' "$reg" > "$fixture/local.env"
+
+  local run_json t0 elapsed out rc
+  run_json() { SELF_AUDIT_SUBGATE_TIMEOUT="$1" bash "$REPO_ROOT/scripts/self-audit.sh" \
+                 --repo-root "$fixture" --json 2>/dev/null; }
+
+  # (a) SIGALRM-ignoring gate. The ceiling must still hold.
+  printf "trapper = trap '' ALRM; sleep 20\n" > "$reg"
+  t0="$(date +%s)"
+  out="$(run_json 2)"
+  elapsed=$(( $(date +%s) - t0 ))
+  assert_eq "sub-gate bounding: a SIGALRM-ignoring gate is still bounded and reported as a timeout" \
+    "trapper|error|timed out after 2s" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.detail)"')"
+  # Generous ceiling — this asserts the bound EXISTS, not a performance number.
+  if [ "$elapsed" -lt 15 ]; then
+    _pass "sub-gate bounding: the SIGALRM-ignoring gate returns near its ceiling, not near its sleep (${elapsed}s)"
+  else
+    _fail "sub-gate bounding: the SIGALRM-ignoring gate returns near its ceiling, not near its sleep" \
+      "elapsed=${elapsed}s — the ceiling did not hold"
+  fi
+
+  # (b) The measured regression: a gate that backgrounds a child and then
+  # EXITS. The old command-substitution capture waited on the orphan's stdout
+  # EOF — 19s under a 1s ceiling — and reported `pass`. The gate's own output
+  # must still be captured on this fast path.
+  # The sentinel is unique per run: a machine-global `pgrep` pattern would let
+  # any unrelated process on the box decide this assertion.
+  local sentinel="sa-subgate-probe-$$-$(date +%s)"
+  printf "bg = printf 'started\\\\n'; sh -c 'exec -a %s sleep 47' &\n" "$sentinel" > "$reg"
+  t0="$(date +%s)"
+  out="$(run_json 2)"
+  elapsed=$(( $(date +%s) - t0 ))
+  if [ "$elapsed" -lt 15 ]; then
+    _pass "sub-gate bounding: a backgrounded child does not hold the driver past the ceiling (${elapsed}s)"
+  else
+    _fail "sub-gate bounding: a backgrounded child does not hold the driver past the ceiling" \
+      "elapsed=${elapsed}s — the driver waited on the orphan's stdout EOF"
+  fi
+  assert_eq "sub-gate bounding: a fast-exiting gate's own output is still captured" \
+    "started" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0].detail')"
+  pkill -f "$sentinel" >/dev/null 2>&1
+
+  # (b2) Process-group kill: a TIMED-OUT gate's descendants die with it.
+  # Without the group kill the bound leaks a process per timed-out gate, run
+  # after run.
+  sentinel="sa-subgate-orphan-$$-$(date +%s)"
+  printf "bg2 = sh -c 'exec -a %s sleep 47' & sleep 20\n" "$sentinel" > "$reg"
+  out="$(run_json 2)"
+  assert_eq "sub-gate bounding: a gate held open by a foreground sleep times out" \
+    "error" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0].status')"
+  if pgrep -f "$sentinel" >/dev/null 2>&1; then
+    _fail "sub-gate bounding: a timed-out gate's descendants are killed with its process group" \
+      "the $sentinel descendant outlived the gate"
+    pkill -f "$sentinel" >/dev/null 2>&1
+  else
+    _pass "sub-gate bounding: a timed-out gate's descendants are killed with its process group"
+  fi
+
+  # (c) A flooding gate: bounded in TIME by the watchdog and in MEMORY by the
+  # file capture + 512-byte read. The audit still exits 0.
+  printf "flood = yes AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n" > "$reg"
+  out="$(run_json 2)"; rc=$?
+  assert_eq "sub-gate bounding: a flooding gate does not fail the audit" 0 "$rc"
+  assert_eq "sub-gate bounding: a flooding gate is bounded and reported as a timeout" \
+    "error|timed out after 2s" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.status)|\(.detail)"')"
+
+  # (d) A gate that exits 142 FAST is an ordinary failure, not a timeout: the
+  # wall clock is the timeout signal, never an exit code (the runner's own
+  # SIGALRM/SIGTERM codes are in that same range).
+  printf "e142 = exit 142\n" > "$reg"
+  out="$(run_json 30)"
+  assert_eq "sub-gate bounding: a genuine fast exit 142 is a fail with its code, not a timeout" \
+    "e142|fail|142" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.exit_code)"')"
+
+  # (e) Registry-wide cap: 64 entries run, the rest are NAMED, never silent.
+  : > "$reg"
+  local i=1
+  while [ "$i" -le 70 ]; do printf 'gate-%s = true\n' "$i" >> "$reg"; i=$((i+1)); done
+  out="$(run_json 30)"
+  assert_eq "sub-gate bounding: the registry cap runs exactly 64 gates" \
+    "64" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates | length')"
+  assert_eq "sub-gate bounding: entries past the cap are COUNTED, never silently dropped" \
+    "6" "$(printf '%s' "$out" | jq -r '.operator_subgates.dropped')"
+  local md
+  md="$(SELF_AUDIT_SUBGATE_TIMEOUT=30 bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  assert_contains "sub-gate bounding: the cap is a NAMED skip line in the markdown" \
+    "$md" "registry capped at 64 gate(s); 6 further entr(y/ies) not run"
+
+  rm -rf "$fixture"
+  unset -f run_json
+}
+_test_operator_subgates_bounding
+
+# --- knob arithmetic: an over-large budget must not WRAP -----------------------
+# `$(( KB * 1024 ))` is 64-bit signed: 18014398509481984 KB wraps the product to
+# 0, so every note on disk lands "over budget". The knob an operator typed to
+# make the check QUIETER would instead fire it on a 62-byte note and take 2
+# points off Pillar 2 — a silent inversion of the operator's intent.
+_test_project_note_budget_knob_overflow() {
+  command -v jq >/dev/null 2>&1 || { _skip "body budget knob overflow" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local mem="$fixture/memory"; mkdir -p "$mem"
+  printf -- '---\nmetadata:\n  type: project\n---\ntiny\n' > "$mem/project-tiny.md"
+  printf 'project-tiny.md\n' > "$mem/MEMORY.md"
+
+  local base over_flag over_env
+  base="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$mem" --json 2>/dev/null)"
+  over_flag="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+               --memory-dir "$mem" --project-note-warn-kb 18014398509481984 --json 2>/dev/null)"
+  # Same value through the local.env DATA path, which has no flag parsing in
+  # front of it — the knob must be validated where it is USED, not at the flag.
+  printf 'PROJECT_NOTE_BODY_WARN_KB=18014398509481984\n' > "$fixture/local.env"
+  over_env="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" \
+              --memory-dir "$mem" --json 2>/dev/null)"
+
+  assert_eq "body budget: an overflowing knob (flag) raises NO gap on a tiny note" \
+    "0" "$(printf '%s' "$over_flag" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+  assert_eq "body budget: an overflowing knob (flag) leaves the memory pillar untouched" \
+    "$(_sa_pillar_score "$base" memory-hygiene)" "$(_sa_pillar_score "$over_flag" memory-hygiene)"
+  assert_eq "body budget: an overflowing knob via local.env raises NO gap either" \
+    "0" "$(printf '%s' "$over_env" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+
+  rm -rf "$fixture"
+}
+_test_project_note_budget_knob_overflow
+
+# --- twin parity: mixed-case scan order ---------------------------------------
+# The gap detail lists offenders in SCAN order. bash walks `find | LC_ALL=C sort`
+# (ordinal, case-sensitive) and the PS twin used `Sort-Object Name` (culture,
+# case-INsensitive), so a store holding both `project-A…` and `project-b…`
+# ordered them differently and the two twins stopped emitting identical details.
+# This fixture pins the bash side of that contract; its PS twin pins the other.
+_test_body_budget_mixed_case_order() {
+  command -v jq >/dev/null 2>&1 || { _skip "body budget mixed-case order" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local mem="$fixture/memory"; mkdir -p "$mem"
+  local big; big="$(LC_ALL=C awk 'BEGIN { while (i++ < 400) printf "%s\n", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }')"
+  # Two names that a CASE-SENSITIVE byte sort and a culture sort order
+  # differently ('B' = 0x42 sorts before 'a' = 0x61; a culture sort puts alpha
+  # first). Deliberately NOT a case-only pair — a case-insensitive filesystem
+  # would collapse those into one file and the fixture would prove nothing.
+  local n
+  for n in project-Beta.md project-alpha.md; do
+    { printf -- '---\nmetadata:\n  type: project\n---\n'; printf '%s\n' "$big"; } > "$mem/$n"
+  done
+  printf 'project-Beta.md project-alpha.md\n' > "$mem/MEMORY.md"
+
+  local out detail
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+        --memory-dir "$mem" --json 2>/dev/null)"
+  detail="$(printf '%s' "$out" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail')"
+  # Byte order: uppercase sorts before lowercase, so Beta precedes alpha.
+  assert_eq "body budget: offenders are listed in ORDINAL byte order, not culture order" \
+    "project-Beta.md project-alpha.md" \
+    "$(printf '%s' "$detail" | LC_ALL=C tr ',' '\n' | LC_ALL=C sed 's|.*/||; s|=.*||' | LC_ALL=C tr '\n' ' ' | LC_ALL=C sed 's/ *$//')"
+
+  rm -rf "$fixture"
+}
+_test_body_budget_mixed_case_order
