@@ -1824,7 +1824,11 @@ Remove-Item -LiteralPath $oriFixture4 -Recurse -Force -ErrorAction SilentlyConti
 $sgFixture = New-SaTmp
 New-SaFixtureRepo $sgFixture
 $sgReg = Join-Path $sgFixture 'subgates.txt'
-Write-LfFile (Join-Path $sgFixture 'local.env') "AUDIT_SUBGATES_FILE=$sgReg`n"
+# Quoted, like every other path fixture here (see D2/D1c): an UNQUOTED value
+# takes the bash-%q backslash-collapse branch in Get-SaLocalEnvValue, which
+# destroys a Windows temp path (`D:\a\...` → `D:a...`) and skipped this whole
+# suite on the Windows lane. The canonical local.env format quotes.
+Write-LfFile (Join-Path $sgFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + $sgReg + '"' + "`n")
 
 Write-LfFile $sgReg @"
 # operator sub-gates
@@ -1899,7 +1903,7 @@ Assert-Contains 'self-audit.test: operator sub-gates --no-subgates still renders
     $sgNoSubMd '_(skipped — --no-subgates given)_'
 
 # Registry configured but MISSING: a named skip, never a silent clean pass.
-Write-LfFile (Join-Path $sgFixture 'local.env') ("AUDIT_SUBGATES_FILE=" + (Join-Path $sgFixture 'absent-registry.txt') + "`n")
+Write-LfFile (Join-Path $sgFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + (Join-Path $sgFixture 'absent-registry.txt') + '"' + "`n")
 $sgGone = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json') | ConvertFrom-Json
 $sgGoneMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
 Assert-Eq 'self-audit.test: operator sub-gates a missing registry nulls the JSON key' `
@@ -2003,7 +2007,8 @@ Remove-Item -LiteralPath $pnbFixture -Recurse -Force -ErrorAction SilentlyContin
 $sgbFixture = New-SaTmp
 New-SaFixtureRepo $sgbFixture
 $sgbReg = Join-Path $sgbFixture 'subgates.txt'
-Write-LfFile (Join-Path $sgbFixture 'local.env') "AUDIT_SUBGATES_FILE=$sgbReg`n"
+# Quoted — same Windows backslash-collapse trap as the fixture above.
+Write-LfFile (Join-Path $sgbFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + $sgbReg + '"' + "`n")
 
 function Invoke-SaSubgate {
     param([string]$Timeout = '30')
