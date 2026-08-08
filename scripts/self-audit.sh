@@ -6,6 +6,7 @@
 #                              [--repo-root <path>] [--memory-dir <path>]
 #                              [--vault-dir <path>] [--config-dir <path>]
 #                              [--injection-warn-kb <n>]
+#                              [--project-note-warn-kb <n>] [--no-subgates]
 #
 # Read-only diagnostic. Never gates: exits 0 unless a USAGE error.
 #
@@ -33,6 +34,12 @@
 #   --injection-warn-kb  soft kickoff-injection budget in KB for sub-check 2.4
 #                  (default 32; flag > local.env INJECTION_SURFACE_WARN_KB >
 #                  ambient env > default — <TEAM>-364)
+#   --project-note-warn-kb  soft per-note BODY budget in KB for sub-check 2.6
+#                  (default 16; flag > local.env PROJECT_NOTE_BODY_WARN_KB >
+#                  ambient env > default). Mirrors the injection-surface knob:
+#                  a non-positive or non-integer value falls back silently.
+#   --no-subgates  skip execution of the operator sub-gate registry; the
+#                  section still renders, as a NAMED skip.
 #
 # `lineark` (the Linear CLI per linear/linear-setup.md) is optional;
 # Linear-side checks degrade with a "skipped: lineark not configured" note.
@@ -41,7 +48,8 @@
 #   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
 #    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]},
 #    orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]},
-#    recall_failures{status,reason,scored,window,files_considered,meaningful_total,scanned,not_loaded,loaded_but_ignored,unclassified,records[]}}
+#    recall_failures{status,reason,scored,window,files_considered,meaningful_total,scanned,not_loaded,loaded_but_ignored,unclassified,records[]},
+#    operator_subgates}
 #
 # `semantic_currentness` is ADVISORY and lives in its own key + its own markdown
 # section: it comes from scripts/check-state-currentness.sh (tracker-reachable
@@ -57,6 +65,23 @@
 # orient. `injection_surface` measures a different thing (the auto-injected
 # component budget); an entrypoint appearing in both is not a double-count,
 # because the two keys answer two different questions.
+#
+# `operator_subgates` is INFORMATIONAL, in its own key + its own markdown
+# section, and likewise never contributes to `total`, a pillar score, or `gaps`.
+# Operators accumulate their own semantic checker scripts — capability-map
+# checks, drift checks, distillation checks — that no audit aggregates or even
+# names, so this scorecard could read 100/100 while every one of them failed or
+# quietly lapsed. The registry named by `AUDIT_SUBGATES_FILE` (one
+# `name = command` per line; `#` comments and blank lines ignored) is executed
+# with a bounded timeout and each gate reported by name + status + first output
+# line. It is deliberately never scored: an operator-authored gate the framework
+# cannot see the semantics of must not move the framework's own number.
+#
+# SECURITY. The registry is operator-authored EXECUTABLE content at the same
+# trust level as a harness hook: self-audit runs whatever it names, so an
+# operator must treat it exactly as they treat a hook script. What does NOT
+# change is the local.env posture — self-audit still parses local.env keys as
+# DATA and never executes the file itself.
 #
 # `recall_failures` is INFORMATIONAL, in its own key + its own markdown section,
 # and likewise never contributes to `total`, a pillar score, or `gaps` (the key
@@ -90,6 +115,27 @@ CODEX_MEMORY_DIR=""
 # flag; the local.env / ambient-env fallbacks and the default apply below,
 # after the config-resolution block (mirroring CONFIG_DIR / VAULT_DIR).
 INJECTION_WARN_KB=""
+# Soft per-note BODY budget in KB for sub-check 2.6. Empty here = not set by
+# flag; the local.env / ambient-env fallbacks and the default apply below,
+# exactly like INJECTION_WARN_KB.
+PROJECT_NOTE_WARN_KB=""
+# Operator sub-gate registry: path resolved from local.env AUDIT_SUBGATES_FILE
+# (or the ambient env). SUBGATES_ENABLED=0 (--no-subgates) skips EXECUTION but
+# still renders the section as a named skip — a silently absent section is the
+# failure mode this whole surface exists to close.
+SUBGATES_FILE=""
+SUBGATES_ENABLED=1
+# Per-gate wall-clock ceiling in seconds. A registry gate that hangs must not
+# hang the audit; overrun is reported as that gate's own `error`, never as the
+# audit failing. $SELF_AUDIT_SUBGATE_TIMEOUT is a TEST-INJECTION seam (same
+# pattern as $SELF_AUDIT_CURRENTNESS_BIN) so the hermetic suite can exercise the
+# timeout path in a second instead of a minute; a non-positive or non-integer
+# value falls back to the default silently.
+SUBGATE_TIMEOUT="${SELF_AUDIT_SUBGATE_TIMEOUT:-60}"
+case "$SUBGATE_TIMEOUT" in
+  ''|*[!0-9]*) SUBGATE_TIMEOUT=60 ;;
+  *) [ "$SUBGATE_TIMEOUT" -gt 0 ] 2>/dev/null || SUBGATE_TIMEOUT=60 ;;
+esac
 # --isolated turns off all operator-env fallbacks (env vars + lineark detection).
 # Used by tests/self-audit.test.sh so fixtures only see what the test sets up.
 ISOLATED=0
@@ -104,6 +150,8 @@ while [ $# -gt 0 ]; do
     --vault-dir)   VAULT_DIR="${2:?--vault-dir needs a path}"; shift 2 ;;
     --config-dir)  CONFIG_DIR="${2:?--config-dir needs a path}"; shift 2 ;;
     --injection-warn-kb) INJECTION_WARN_KB="${2:?--injection-warn-kb needs a value}"; shift 2 ;;
+    --project-note-warn-kb) PROJECT_NOTE_WARN_KB="${2:?--project-note-warn-kb needs a value}"; shift 2 ;;
+    --no-subgates) SUBGATES_ENABLED=0; shift ;;
     --isolated)    ISOLATED=1; shift ;;
     -h|--help)     grep -E '^# ' "$0" | sed 's/^# //'; exit 0 ;;
     *) printf 'self-audit.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
@@ -228,6 +276,19 @@ if [ "$ISOLATED" -eq 0 ]; then
       _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" INJECTION_SURFACE_WARN_KB)"
       [ -n "$_le_v" ] && INJECTION_WARN_KB="$_le_v"
     fi
+    # PROJECT_NOTE_BODY_WARN_KB: same precedence as INJECTION_SURFACE_WARN_KB —
+    # flag (already set above) > local.env > ambient env > default.
+    if [ -z "$PROJECT_NOTE_WARN_KB" ]; then
+      _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" PROJECT_NOTE_BODY_WARN_KB)"
+      [ -n "$_le_v" ] && PROJECT_NOTE_WARN_KB="$_le_v"
+    fi
+    # AUDIT_SUBGATES_FILE: the operator sub-gate registry. Read as DATA like
+    # every other key here — the VALUE names a file self-audit will execute
+    # commands from, but local.env itself is still never sourced.
+    if [ -z "$SUBGATES_FILE" ]; then
+      _le_v="$(_sa_localenv_get "$REPO_ROOT/local.env" AUDIT_SUBGATES_FILE)"
+      [ -n "$_le_v" ] && SUBGATES_FILE="$_le_v"
+    fi
     # CODEX_HOME (<TEAM>-394): the codex-native memory registry lives at
     # $CODEX_HOME/memories. Same precedence as the other paths — flag (already
     # set above) > local.env > ambient env. Never joins MEMORY_DIRS: its
@@ -248,6 +309,12 @@ if [ "$ISOLATED" -eq 0 ]; then
   fi
   if [ -z "$INJECTION_WARN_KB" ] && [ -n "${INJECTION_SURFACE_WARN_KB:-}" ]; then
     INJECTION_WARN_KB="$INJECTION_SURFACE_WARN_KB"
+  fi
+  if [ -z "$PROJECT_NOTE_WARN_KB" ] && [ -n "${PROJECT_NOTE_BODY_WARN_KB:-}" ]; then
+    PROJECT_NOTE_WARN_KB="$PROJECT_NOTE_BODY_WARN_KB"
+  fi
+  if [ -z "$SUBGATES_FILE" ] && [ -n "${AUDIT_SUBGATES_FILE:-}" ]; then
+    SUBGATES_FILE="$AUDIT_SUBGATES_FILE"
   fi
   if [ -z "$CODEX_MEMORY_DIR" ] && [ -n "${CODEX_HOME:-}" ] && [ -d "$CODEX_HOME/memories" ]; then
     CODEX_MEMORY_DIR="$CODEX_HOME/memories"
@@ -287,6 +354,14 @@ fi
 case "$INJECTION_WARN_KB" in
   ''|*[!0-9]*) INJECTION_WARN_KB=32 ;;
   *) [ "$INJECTION_WARN_KB" -gt 0 ] 2>/dev/null || INJECTION_WARN_KB=32 ;;
+esac
+
+# Same contract for the per-note body budget (sub-check 2.6): positive integer
+# KB, else fall back to the 16 KB default SILENTLY. Advisory measurement — a bad
+# knob value must degrade to the default, never break the audit.
+case "$PROJECT_NOTE_WARN_KB" in
+  ''|*[!0-9]*) PROJECT_NOTE_WARN_KB=16 ;;
+  *) [ "$PROJECT_NOTE_WARN_KB" -gt 0 ] 2>/dev/null || PROJECT_NOTE_WARN_KB=16 ;;
 esac
 
 # --- pillar state -- parallel indexed arrays, bash 3.2 compatible -------------
@@ -364,6 +439,14 @@ INJ_COMP_NAMES=()
 INJ_COMP_PATHS=()
 INJ_COMP_BYTES=()
 INJ_SKIPPED=()
+
+# Project-note body-budget state, filled by sub-check 2.6 in
+# score_memory_hygiene. Mirrors the injection-surface pattern exactly: a soft
+# advisory threshold, ONE aggregate warn per run no matter how many notes or
+# stores tripped it, and a named list so the operator knows which bodies to
+# trim. Parallel indexed arrays (bash 3.2).
+PNB_OVER_PATHS=()
+PNB_OVER_BYTES=()
 
 # Codex-native registry reporting state (<TEAM>-468), filled by sub-check 2.5.
 # Purely INFORMATIONAL — never scored, never a gap. -1 means "not measured"
@@ -714,7 +797,45 @@ score_memory_hygiene() {
         "$long_lines index line(s) in $md_dir/MEMORY.md exceed the ~300-char per-entry cap" \
         "Trim each to a one-line headline; move detail into the named topic file"
     fi
+
+    # Sub-check 2.6: per-note BODY budget. Sub-checks 2.2/2.3 cap the INDEX;
+    # nothing capped the note bodies the index points at, and a project-type
+    # note is exactly the body a kickoff orient dereferences. Unbounded growth
+    # there is a per-session context tax that no index-side cap can see. SOFT
+    # threshold, same posture as sub-check 2.4: a 2-pt warn, never a hard cap,
+    # because a large arc note can be a deliberate operator choice.
+    # Newline-delimited + `LC_ALL=C sort` (not `sort -z`, which BSD sort lacks):
+    # a deterministic, byte-ordered scan order so the reported list matches the
+    # PS twin's name-sorted enumeration on the same store.
+    local pnb_f pnb_b
+    while IFS= read -r pnb_f; do
+      [ -f "$pnb_f" ] || continue
+      [ "$(basename "$pnb_f")" = "MEMORY.md" ] && continue
+      [ "$(mem_note_type "$pnb_f")" = "project" ] || continue
+      pnb_b="$(wc -c < "$pnb_f" 2>/dev/null | tr -d ' ')"
+      [ -n "$pnb_b" ] || continue
+      if [ "$pnb_b" -gt $(( PROJECT_NOTE_WARN_KB * 1024 )) ]; then
+        PNB_OVER_PATHS+=("$pnb_f")
+        PNB_OVER_BYTES+=("$pnb_b")
+      fi
+    done < <(find "$md_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
   done
+
+  # ONE aggregate warn for sub-check 2.6, fired after every store is scanned —
+  # so the deduction cannot compound per note or per store (the same
+  # fires-at-most-once property sub-check 2.4 holds).
+  if [ "${#PNB_OVER_PATHS[@]}" -gt 0 ]; then
+    local pnb_i pnb_list=""
+    for pnb_i in "${!PNB_OVER_PATHS[@]}"; do
+      [ -n "$pnb_list" ] && pnb_list="$pnb_list, "
+      pnb_list="${pnb_list}${PNB_OVER_PATHS[$pnb_i]}=${PNB_OVER_BYTES[$pnb_i]}"
+    done
+    deduct "$key" 2
+    record_gap 2 4 \
+      "Project-type note body over budget" \
+      "${#PNB_OVER_PATHS[@]} project-type memory note body/bodies exceed the soft $PROJECT_NOTE_WARN_KB KB per-note budget: $pnb_list" \
+      "Distil the oversize note(s) into the durable vault and leave a pointer — or raise PROJECT_NOTE_BODY_WARN_KB if the size is deliberate"
+  fi
 
   # Sub-check 2.5 (<TEAM>-394, rescoped <TEAM>-468): the codex-native memory
   # registry — an AUDIT-COVERED read-only surface, never canonical.
@@ -1669,6 +1790,122 @@ emit_recall_markdown() {
   printf 'Informational only; never scored. A rolling count, not a grade — there is no target number, and the extractor under-reports by design.\n'
 }
 
+# --- operator sub-gates (informational, NEVER scored) -------------------------
+# See the header note. The registry is a plain text file, one gate per line:
+#
+#   <name> = <command>
+#
+# `#` comments and blank lines are ignored. Each command runs through `sh -c`
+# with a bounded wall clock; the gate's status is pass (exit 0) / fail (exit N)
+# / error (timed out, or the runner could not spawn it), and the FIRST line of
+# its combined output is the reported detail.
+#
+# The whole surface is informational: it never touches `total`, a pillar score,
+# or `gaps`. That separation is deliberate and mirrors `## Semantic currentness`
+# — the framework cannot know an operator gate's semantics, so it must not price
+# one into the framework's own number. What it CAN do is stop the gate from
+# being invisible.
+SG_STATUS="skipped"      # ran | skipped
+SG_REASON=""
+SG_NAMES=()
+SG_STATUSES=()
+SG_EXITS=()              # integer, or the literal "null" for a gate never run
+SG_DETAILS=()
+
+run_operator_subgates() {
+  if [ "$SUBGATES_ENABLED" -eq 0 ]; then
+    SG_REASON="--no-subgates given"
+    return
+  fi
+  if [ "$ISOLATED" -eq 1 ] && [ -z "$SUBGATES_FILE" ]; then
+    SG_REASON="isolated run — operator sub-gates not evaluated"
+    return
+  fi
+  if [ -z "$SUBGATES_FILE" ]; then
+    SG_REASON="no AUDIT_SUBGATES_FILE configured in local.env"
+    return
+  fi
+  if [ ! -f "$SUBGATES_FILE" ]; then
+    SG_REASON="registry file not found: $SUBGATES_FILE"
+    return
+  fi
+  # macOS ships no `timeout`. `perl -e 'alarm N; exec @ARGV'` is the portable
+  # bound this repo uses; without perl the run would be UNBOUNDED, so the honest
+  # answer is a named skip rather than a hung audit.
+  if ! command -v perl >/dev/null 2>&1; then
+    SG_REASON="perl unavailable — cannot bound sub-gate execution"
+    return
+  fi
+
+  local line name cmd out rc detail
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -z "$line" ] && continue
+    case "$line" in '#'*) continue ;; esac
+    case "$line" in
+      *=*) name="${line%%=*}"; cmd="${line#*=}" ;;
+      # A line that names no command is REPORTED, not silently dropped: a typo
+      # that makes a gate disappear is the exact failure this surface closes.
+      *) SG_NAMES+=("$line"); SG_STATUSES+=("error"); SG_EXITS+=("null")
+         SG_DETAILS+=("malformed registry line — expected \`name = command\`")
+         continue ;;
+    esac
+    name="${name%"${name##*[![:space:]]}"}"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    if [ -z "$name" ] || [ -z "$cmd" ]; then
+      SG_NAMES+=("$line"); SG_STATUSES+=("error"); SG_EXITS+=("null")
+      SG_DETAILS+=("malformed registry line — expected \`name = command\`")
+      continue
+    fi
+
+    out="$(perl -e 'my $t = shift; alarm $t; exec @ARGV or exit 127' \
+             "$SUBGATE_TIMEOUT" /bin/sh -c "$cmd" 2>&1)"
+    rc=$?
+    detail="$(printf '%s' "$out" | LC_ALL=C head -n 1 | LC_ALL=C cut -c 1-200)"
+    SG_NAMES+=("$name")
+    if [ "$rc" -eq 0 ]; then
+      SG_STATUSES+=("pass"); SG_EXITS+=("0")
+      [ -n "$detail" ] || detail="(no output)"
+    elif [ "$rc" -eq 142 ]; then
+      # perl dies on SIGALRM -> 128+14. Reported as this gate's OWN error; the
+      # audit itself still exits 0.
+      SG_STATUSES+=("error"); SG_EXITS+=("null")
+      detail="timed out after ${SUBGATE_TIMEOUT}s"
+    else
+      SG_STATUSES+=("fail"); SG_EXITS+=("$rc")
+      [ -n "$detail" ] || detail="(no output)"
+    fi
+    SG_DETAILS+=("$detail")
+  done < "$SUBGATES_FILE"
+
+  if [ "${#SG_NAMES[@]}" -eq 0 ]; then
+    # A registry that registers nothing is a named skip, not a silent clean run.
+    SG_REASON="registry has no sub-gates: $SUBGATES_FILE"
+    return
+  fi
+  SG_STATUS="ran"
+}
+run_operator_subgates
+
+# emit_subgates_markdown — the `## Operator sub-gates` body (no heading).
+emit_subgates_markdown() {
+  if [ "$SG_STATUS" != "ran" ]; then
+    printf '_(skipped — %s)_\n' "$SG_REASON"
+    printf 'Informational only; never scored — a skipped registry is NOT a clean pass.\n'
+    return
+  fi
+  local i
+  for i in "${!SG_NAMES[@]}"; do
+    if [ "${SG_STATUSES[$i]}" = "fail" ]; then
+      printf -- '- %s: fail (exit %s) — %s\n' "${SG_NAMES[$i]}" "${SG_EXITS[$i]}" "${SG_DETAILS[$i]}"
+    else
+      printf -- '- %s: %s — %s\n' "${SG_NAMES[$i]}" "${SG_STATUSES[$i]}" "${SG_DETAILS[$i]}"
+    fi
+  done
+  printf 'Informational only; never scored — operator-authored gates never move the pillar scores above.\n'
+}
+
 # --- output -------------------------------------------------------------------
 emit_markdown() {
   printf '# /self-audit scorecard — %s\n\n' "$DATE"
@@ -1759,6 +1996,11 @@ emit_markdown() {
   # reason: every pre-existing section keeps its offset.
   printf '\n## Recall failures\n\n'
   emit_recall_markdown
+
+  # Appended after Recall failures for the same positional-stability reason:
+  # every pre-existing section keeps its offset.
+  printf '\n## Operator sub-gates\n\n'
+  emit_subgates_markdown
 }
 
 emit_json() {
@@ -1962,6 +2204,30 @@ emit_json() {
       unclassified: ($unclassified | tonumber? // null),
       records: (if $reported then $records else [] end)}')"
 
+  # operator_subgates — ADDITIVE optional field, its OWN key so a consumer can
+  # never read an operator-authored gate result as a framework pillar result.
+  # NULL whenever the surface did not run (unset key, missing/empty registry,
+  # --no-subgates); the markdown section carries the NAMED reason in that case.
+  # APPENDED LAST for the same positional-stability reason as the fields before
+  # it.
+  local sg_json='null'
+  if [ "$SG_STATUS" = "ran" ]; then
+    local sg_gates='[]' sg_i
+    for sg_i in "${!SG_NAMES[@]}"; do
+      sg_gates="$(printf '%s' "$sg_gates" | jq \
+        --arg name "${SG_NAMES[$sg_i]}" \
+        --arg status "${SG_STATUSES[$sg_i]}" \
+        --argjson exit_code "${SG_EXITS[$sg_i]}" \
+        --arg detail "${SG_DETAILS[$sg_i]}" \
+        '. += [{name: $name, status: $status, exit_code: $exit_code, detail: $detail}]')"
+    done
+    sg_json="$(jq -n \
+      --arg registry "$SUBGATES_FILE" \
+      --argjson timeout_seconds "$SUBGATE_TIMEOUT" \
+      --argjson gates "$sg_gates" \
+      '{registry: $registry, timeout_seconds: $timeout_seconds, scored: false, gates: $gates}')"
+  fi
+
   jq -n \
     --arg date "$DATE" \
     --argjson total "$TOTAL" \
@@ -1974,7 +2240,8 @@ emit_json() {
     --argjson semantic_currentness "$sc_json" \
     --argjson orientation_surface "$ori_json" \
     --argjson recall_failures "$rf_json" \
-    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness, orientation_surface: $orientation_surface, recall_failures: $recall_failures}'
+    --argjson operator_subgates "$sg_json" \
+    '{date: $date, total: $total, unscored_count: $unscored_count, pillars: $pillars, injection_surface: $injection_surface, gaps: $gaps, skipped: $skipped, codex_registry_bytes: $codex_registry_bytes, semantic_currentness: $semantic_currentness, orientation_surface: $orientation_surface, recall_failures: $recall_failures, operator_subgates: $operator_subgates}'
 }
 
 OUTPUT=""

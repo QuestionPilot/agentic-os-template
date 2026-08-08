@@ -33,6 +33,33 @@
       memory_pointers          project-type memory notes: [{file, name, description}]
       degraded                 named degraded surfaces, e.g.
                                "linear: lineark not on PATH (lineark)"
+      safety                   DETECTED per-run safety posture (see below)
+      telemetry                orientation-cost measurement (see below)
+
+    SAFETY POSTURE (appended last but one; schema id unchanged — additive).
+      {posture: "safe"|"tightened",
+       tightenings: [{name, path, detail}],
+       detection: "state-files"|"none-configured"}
+    The kickoff line this feeds must report what was DETECTED, not what policy
+    declares. Detection reads $GUARDRAIL_STATE_FILES — a comma-separated list
+    of absolute paths to the session-guardrail state files an operator's
+    guardrail skill writes, from local.env (read as DATA, never imported) then
+    the ambient env. Each configured path that exists and is NON-EMPTY is one
+    tightening: name = its basename, detail = its first line (truncated ~120
+    chars). No key configured -> posture "safe", detection "none-configured".
+
+    The key can only ADD tightenings to the default-safe posture: there is no
+    value of it that reports a LOOSER posture than "safe". Enforcement STRENGTH
+    is harness-dependent and deliberately NOT claimed here — this helper
+    reports the state files it can see, not whether a hook enforces them.
+
+    TELEMETRY (appended last; informational, never a status).
+      {memory_index_bytes, project_note_bodies: [{file, bytes}],
+       project_note_total_bytes}
+    The O1 dynamic body reads are the expensive half of a kickoff and no other
+    surface measures them. Sizes come from the SAME memory dir this run already
+    scans. `telemetry` is null when the memory surface did not resolve (an
+    unmeasured cost is a named absence, never a misleading 0).
 
     An `issue` is normalized to {identifier, title, state, priority, assignee, url}.
 
@@ -432,6 +459,13 @@ function Get-FmField([string]$path, [string]$key) {
 
 $memStatus = 'absent'
 $memDetail = ''
+# Telemetry state (see the header contract). $telemetryOk stays $false until the
+# memory dir is actually scanned, so an unresolved surface emits `telemetry:
+# null` rather than a 0-byte reading that reads like "orientation is free".
+$telemetryOk = $false
+$memIndexBytes = [long](-1)
+$projBodyTotal = [long]0
+$projBodies = [System.Collections.Generic.List[object]]::new()
 
 # CONTAINED PROBE. $ErrorActionPreference is 'Stop' for the whole script, so a
 # bare `Test-Path` here promotes a provider/access error (an unreadable ancestor
@@ -477,6 +511,11 @@ if ($MemoryDir -eq '') {
         Add-Degraded "memory: dir not readable ($MemoryDir)"
     } else {
         $memStatus = 'ok'
+        $telemetryOk = $true
+        $memIndex = Join-Path $MemoryDir 'MEMORY.md'
+        if (Test-Path -LiteralPath $memIndex -PathType Leaf) {
+            try { $memIndexBytes = [long](Get-Item -LiteralPath $memIndex).Length } catch { $memIndexBytes = [long](-1) }
+        }
         $memProj = 0
         foreach ($mf in $notes) {
             if ((Get-FmType $mf) -cne 'project') { continue }
@@ -486,8 +525,99 @@ if ($MemoryDir -eq '') {
                 name        = (Get-FmField $mf 'name')
                 description = (Get-FmField $mf 'description')
             })
+            # Body cost of the same note, for the telemetry key. Measured here
+            # rather than in a second pass so the two lists can never disagree
+            # about which notes a kickoff reads.
+            $pb = [long]0
+            try { $pb = [long](Get-Item -LiteralPath $mf).Length } catch { $pb = [long]0 }
+            $projBodyTotal += $pb
+            $projBodies.Add([ordered]@{ file = [System.IO.Path]::GetFileName($mf); bytes = $pb })
         }
         $memDetail = "$memProj project-type note(s) of $($notes.Count) note(s) in $MemoryDir"
+    }
+}
+
+# ---- safety posture (detected, never declared) -------------------------------
+# See the header contract. The value is read from local.env as DATA (the same
+# no-importing posture scripts/self-audit.ps1 uses — Import-LocalEnv would push
+# EVERY key, including a hostile PATH=, into the process env), then from the
+# ambient env. local.env wins when it carries a non-empty value.
+function Get-OrientLocalEnvValue {
+    param([string]$Path, [string]$Key)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $pat = '^(?:export\s+)?' + [regex]::Escape($Key) + '=(.*)$'
+    $result = ''
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        $t = $line.Trim()
+        if ($t.Length -eq 0 -or $t.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        if ($t -match $pat) {
+            $v = $matches[1]
+            if ($v.Length -ge 2) {
+                $f = $v[0]; $l = $v[$v.Length - 1]
+                if (($f -ceq '"' -and $l -ceq '"') -or ($f -ceq "'" -and $l -ceq "'")) {
+                    $v = $v.Substring(1, $v.Length - 2)
+                } elseif ($v.Contains([char]'\')) {
+                    $v = [System.Text.RegularExpressions.Regex]::Replace($v, '\\(.)', '$1')
+                }
+            }
+            $result = $v  # last assignment wins
+        }
+    }
+    return $result
+}
+
+$orientRepoRoot = ''
+if ($PSScriptRoot) { $orientRepoRoot = Split-Path $PSScriptRoot -Parent }
+$guardSpec = ''
+if ($orientRepoRoot) {
+    try { $guardSpec = Get-OrientLocalEnvValue -Path (Join-Path $orientRepoRoot 'local.env') -Key 'GUARDRAIL_STATE_FILES' } catch { $guardSpec = '' }
+}
+if ([string]::IsNullOrEmpty($guardSpec) -and -not [string]::IsNullOrEmpty($env:GUARDRAIL_STATE_FILES)) {
+    $guardSpec = $env:GUARDRAIL_STATE_FILES
+}
+
+$safetyPosture = 'safe'
+$safetyDetection = 'none-configured'
+$tightenings = [System.Collections.Generic.List[object]]::new()
+if (-not [string]::IsNullOrEmpty($guardSpec)) {
+    $safetyDetection = 'state-files'
+    foreach ($raw in ($guardSpec -split ',')) {
+        $gpath = $raw.Trim()
+        if ($gpath -eq '') { continue }
+        # A configured path that does not exist, or exists but is EMPTY, is not
+        # a tightening — a guardrail skill writes state only while a scope is
+        # active. Contained probe: $ErrorActionPreference is 'Stop', so an
+        # unreadable ancestor must not kill the document.
+        $ok = $false
+        try { $ok = [bool]((Test-Path -LiteralPath $gpath -PathType Leaf) -and ((Get-Item -LiteralPath $gpath).Length -gt 0)) } catch { $ok = $false }
+        if (-not $ok) { continue }
+        $detail = ''
+        try {
+            $first = (Get-Content -LiteralPath $gpath -TotalCount 1 -ErrorAction Stop)
+            if ($null -ne $first) { $detail = "$first" }
+        } catch { $detail = '' }
+        if ($detail.Length -gt 120) { $detail = $detail.Substring(0, 120) }
+        $tightenings.Add([ordered]@{
+            name   = [System.IO.Path]::GetFileName($gpath)
+            path   = $gpath
+            detail = $detail
+        })
+        $safetyPosture = 'tightened'
+    }
+}
+
+$safetyObj = [ordered]@{
+    posture     = $safetyPosture
+    tightenings = $tightenings
+    detection   = $safetyDetection
+}
+
+$telemetryObj = $null
+if ($telemetryOk) {
+    $telemetryObj = [ordered]@{
+        memory_index_bytes      = $(if ($memIndexBytes -ge 0) { $memIndexBytes } else { $null })
+        project_note_bodies     = $projBodies
+        project_note_total_bytes = $projBodyTotal
     }
 }
 
@@ -504,6 +634,10 @@ $doc = [ordered]@{
     anomalies               = $anomalies
     memory_pointers         = $memoryOut
     degraded                = $degraded
+    # APPENDED LAST, in this order, so every pre-existing key keeps its name,
+    # shape, AND position for a consumer that reads the document positionally.
+    safety                  = $safetyObj
+    telemetry               = $telemetryObj
 }
 
 # -Depth 12 clears the deepest nesting (doc -> projects -> open_issues -> field)

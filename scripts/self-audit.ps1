@@ -49,6 +49,14 @@
     Default 32; precedence is flag > local.env INJECTION_SURFACE_WARN_KB >
     ambient env > default.
 
+.PARAMETER ProjectNoteWarnKb
+    Soft per-note BODY budget in KB for sub-check 2.6. Default 16; precedence
+    is flag > local.env PROJECT_NOTE_BODY_WARN_KB > ambient env > default.
+
+.PARAMETER NoSubgates
+    Skip EXECUTION of the operator sub-gate registry. The section still
+    renders, as a NAMED skip.
+
 .PARAMETER Isolated
     Turn off all operator-env fallbacks (env vars + lineark detection). Used
     by tests so fixtures only see what the test sets up.
@@ -82,6 +90,8 @@ param(
     [string]$VaultDir = '',
     [string]$ConfigDir = '',
     [string]$InjectionWarnKb = '',
+    [string]$ProjectNoteWarnKb = '',
+    [switch]$NoSubgates,
     [switch]$Isolated,
     [Alias('h')][switch]$Help,
 
@@ -131,6 +141,11 @@ while ($i -lt $Rest.Count) {
             if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --injection-warn-kb needs a value'); exit 2 }
             $InjectionWarnKb = $Rest[$i + 1]; $i += 2
         }
+        '--project-note-warn-kb' {
+            if ($i + 1 -ge $Rest.Count) { [Console]::Error.WriteLine('self-audit.ps1: --project-note-warn-kb needs a value'); exit 2 }
+            $ProjectNoteWarnKb = $Rest[$i + 1]; $i += 2
+        }
+        '--no-subgates' { $NoSubgates = [switch]$true; $i += 1 }
         '-h'     { $Help = [switch]$true; $i += 1 }
         '--help' { $Help = [switch]$true; $i += 1 }
         default {
@@ -158,7 +173,9 @@ Usage:
                                     [-RepoRoot <path>] [-MemoryDir <path>]
                                     [-CodexMemoryDir <path>]
                                     [-VaultDir <path>] [-ConfigDir <path>]
-                                    [-InjectionWarnKb <n>] [-Isolated]
+                                    [-InjectionWarnKb <n>]
+                                    [-ProjectNoteWarnKb <n>] [-NoSubgates]
+                                    [-Isolated]
 
 Read-only diagnostic. Never gates: exits 0 unless a USAGE error.
 
@@ -185,12 +202,33 @@ Default inputs:
   -InjectionWarnKb  soft kickoff-injection budget in KB for sub-check 2.4
                (default 32; flag > local.env INJECTION_SURFACE_WARN_KB >
                ambient env > default)
+  -ProjectNoteWarnKb  soft per-note BODY budget in KB for sub-check 2.6
+               (default 16; flag > local.env PROJECT_NOTE_BODY_WARN_KB >
+               ambient env > default)
+  -NoSubgates  skip execution of the operator sub-gate registry; the section
+               still renders, as a NAMED skip
 
 Output: markdown by default. -Json emits a structured object for tests:
   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
    codex_registry_bytes, semantic_currentness{status,reason,claims[],projects[]},
    orientation_surface{measured,lesson_index,harnesses[],total_bytes,total_lines,skipped[]},
-   recall_failures{status,reason,scored,window,files_considered,meaningful_total,scanned,not_loaded,loaded_but_ignored,unclassified,records[]}}
+   recall_failures{status,reason,scored,window,files_considered,meaningful_total,scanned,not_loaded,loaded_but_ignored,unclassified,records[]},
+   operator_subgates}
+
+    `operator_subgates` is INFORMATIONAL, in its own key + its own markdown
+    section, and likewise never contributes to `total`, a pillar score, or
+    `gaps`. Operators accumulate their own semantic checker scripts that no
+    audit aggregates or even names, so this scorecard could read 100/100 while
+    every one of them failed or quietly lapsed. The registry named by
+    `AUDIT_SUBGATES_FILE` (one `name = command` per line; `#` comments and
+    blank lines ignored) is executed with a bounded timeout and each gate is
+    reported by name + status + first output line. SECURITY: the registry is
+    operator-authored EXECUTABLE content at the same trust level as a harness
+    hook — self-audit runs whatever it names. What does NOT change is the
+    local.env posture: local.env keys are still parsed as DATA and the file
+    itself is never executed. This twin runs each command through
+    `pwsh -NoProfile -Command`; the bash twin runs it through `sh -c`, so a
+    registry shared across platforms should hold platform-appropriate commands.
 
     `semantic_currentness` is ADVISORY and lives in its own key + its own
     markdown section: it comes from scripts/check-state-currentness.ps1
@@ -327,6 +365,22 @@ function Get-SaMemoryDirs {
 # the set. Mirrors the bash twin's MEMORY_DIRS.
 $MemoryDirs = @()
 
+# Operator sub-gate registry path — resolved from local.env AUDIT_SUBGATES_FILE
+# (or the ambient env) below. Mirrors the bash twin's SUBGATES_FILE.
+$SubgatesFile = ''
+# Per-gate wall-clock ceiling in seconds. A registry gate that hangs must not
+# hang the audit; overrun is reported as that gate's own `error`, never as the
+# audit failing. $env:SELF_AUDIT_SUBGATE_TIMEOUT is a TEST-INJECTION seam (same
+# pattern as $env:SELF_AUDIT_CURRENTNESS_BIN); a non-positive or non-integer
+# value falls back to the default silently. Mirrors the bash twin.
+$SubgateTimeout = 60
+if ($env:SELF_AUDIT_SUBGATE_TIMEOUT -match '^[0-9]+$') {
+    $sgParsed = 0
+    if ([int]::TryParse($env:SELF_AUDIT_SUBGATE_TIMEOUT, [ref]$sgParsed) -and $sgParsed -gt 0) {
+        $SubgateTimeout = $sgParsed
+    }
+}
+
 # -Isolated turns off env-fallbacks (mirror bash ISOLATED=1).
 if (-not $Isolated.IsPresent) {
     # <TEAM>-180 D2: read operator config from local.env (the same source the bash
@@ -359,6 +413,19 @@ if (-not $Isolated.IsPresent) {
             $v = Get-SaLocalEnvValue -Path $localEnv -Key 'INJECTION_SURFACE_WARN_KB'
             if (-not [string]::IsNullOrEmpty($v)) { $InjectionWarnKb = $v }
         }
+        # PROJECT_NOTE_BODY_WARN_KB: same precedence as INJECTION_SURFACE_WARN_KB
+        # — flag (already set above) > local.env > ambient env > default.
+        if ([string]::IsNullOrEmpty($ProjectNoteWarnKb)) {
+            $v = Get-SaLocalEnvValue -Path $localEnv -Key 'PROJECT_NOTE_BODY_WARN_KB'
+            if (-not [string]::IsNullOrEmpty($v)) { $ProjectNoteWarnKb = $v }
+        }
+        # AUDIT_SUBGATES_FILE: the operator sub-gate registry. Read as DATA like
+        # every other key here — the VALUE names a file self-audit will execute
+        # commands from, but local.env itself is still never imported.
+        if ([string]::IsNullOrEmpty($SubgatesFile)) {
+            $v = Get-SaLocalEnvValue -Path $localEnv -Key 'AUDIT_SUBGATES_FILE'
+            if (-not [string]::IsNullOrEmpty($v)) { $SubgatesFile = $v }
+        }
         # CODEX_HOME (<TEAM>-394): the codex-native memory registry lives at
         # $CODEX_HOME/memories. Same precedence as the other paths — flag
         # (already set above) > local.env > ambient env. Never joins
@@ -380,6 +447,12 @@ if (-not $Isolated.IsPresent) {
     }
     if ([string]::IsNullOrEmpty($InjectionWarnKb) -and -not [string]::IsNullOrEmpty($env:INJECTION_SURFACE_WARN_KB)) {
         $InjectionWarnKb = $env:INJECTION_SURFACE_WARN_KB
+    }
+    if ([string]::IsNullOrEmpty($ProjectNoteWarnKb) -and -not [string]::IsNullOrEmpty($env:PROJECT_NOTE_BODY_WARN_KB)) {
+        $ProjectNoteWarnKb = $env:PROJECT_NOTE_BODY_WARN_KB
+    }
+    if ([string]::IsNullOrEmpty($SubgatesFile) -and -not [string]::IsNullOrEmpty($env:AUDIT_SUBGATES_FILE)) {
+        $SubgatesFile = $env:AUDIT_SUBGATES_FILE
     }
     if ([string]::IsNullOrEmpty($CodexMemoryDir) -and -not [string]::IsNullOrEmpty($env:CODEX_HOME) -and
         (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'memories') -PathType Container)) {
@@ -416,6 +489,24 @@ if ($InjectionWarnKb -match '^[0-9]+$') {
         $InjectionWarnKbInt = $injParsed
     }
 }
+
+# Same contract for the per-note body budget (sub-check 2.6): positive integer
+# KB, else fall back to the 16 KB default SILENTLY. Advisory measurement — a bad
+# knob value must degrade to the default, never break the audit.
+$ProjectNoteWarnKbInt = 16
+if ($ProjectNoteWarnKb -match '^[0-9]+$') {
+    $pnbParsed = 0
+    if ([int]::TryParse($ProjectNoteWarnKb, [ref]$pnbParsed) -and $pnbParsed -gt 0) {
+        $ProjectNoteWarnKbInt = $pnbParsed
+    }
+}
+
+# Project-note body-budget state, filled by sub-check 2.6 in Invoke-Pillar2.
+# Mirrors the injection-surface pattern exactly: a soft advisory threshold, ONE
+# aggregate warn per run no matter how many notes or stores tripped it, and a
+# named list so the operator knows which bodies to trim. Mirrors the bash twin's
+# PNB_* state.
+$pnbOver = New-Object System.Collections.Generic.List[object]
 
 # Injection-surface measurement state (<TEAM>-364), filled by sub-check 2.4 in
 # Invoke-Pillar2 and read by both emitters. Hashtable entries (a reference
@@ -849,6 +940,33 @@ function Invoke-Pillar2 {
                 "$longLines index line(s) in $mdDir/MEMORY.md exceed the ~300-char per-entry cap" `
                 'Trim each to a one-line headline; move detail into the named topic file'
         }
+
+        # Sub-check 2.6 — per-note BODY budget. Sub-checks 2.2/2.3 cap the
+        # INDEX; nothing capped the note bodies the index points at, and a
+        # project-type note is exactly the body a kickoff orient dereferences.
+        # SOFT threshold, same posture as sub-check 2.4: a 2-pt warn, never a
+        # hard cap. Name-sorted so the reported list matches the bash twin's
+        # `LC_ALL=C sort` scan order on the same store.
+        foreach ($pnbFile in @($mdFiles | Sort-Object Name)) {
+            if ($pnbFile.Name -eq 'MEMORY.md') { continue }
+            if ((Get-MemNoteType $pnbFile.FullName) -ne 'project') { continue }
+            $pnbBytes = [long]$pnbFile.Length
+            if ($pnbBytes -gt ([long]$ProjectNoteWarnKbInt * 1024)) {
+                [void]$pnbOver.Add([pscustomobject]@{ path = $pnbFile.FullName; bytes = $pnbBytes })
+            }
+        }
+    }
+
+    # ONE aggregate warn for sub-check 2.6, fired after every store is scanned —
+    # so the deduction cannot compound per note or per store (the same
+    # fires-at-most-once property sub-check 2.4 holds).
+    if ($pnbOver.Count -gt 0) {
+        $pnbList = @($pnbOver | ForEach-Object { "$($_.path)=$($_.bytes)" }) -join ', '
+        Use-Deduct $key 2
+        Add-Gap 2 4 `
+            'Project-type note body over budget' `
+            "$($pnbOver.Count) project-type memory note body/bodies exceed the soft $ProjectNoteWarnKbInt KB per-note budget: $pnbList" `
+            'Distil the oversize note(s) into the durable vault and leave a pointer — or raise PROJECT_NOTE_BODY_WARN_KB if the size is deliberate'
     }
 
     # Sub-check 2.5 (<TEAM>-394, rescoped <TEAM>-468): the codex-native memory
@@ -1828,6 +1946,140 @@ function Get-RecallMarkdown {
 }
 
 # ---------------------------------------------------------------------------
+# Operator sub-gates (informational, NEVER scored)
+# ---------------------------------------------------------------------------
+# See the .DESCRIPTION note. The registry is a plain text file, one gate per
+# line: `<name> = <command>`; `#` comments and blank lines are ignored. Each
+# command runs through `pwsh -NoProfile -Command` (the bash twin uses `sh -c`)
+# inside a background job with a bounded wall clock; the gate's status is pass
+# (exit 0) / fail (exit N) / error (timed out, or the runner could not spawn
+# it), and the FIRST line of its combined output is the reported detail.
+#
+# The whole surface is informational: it never touches $total, a pillar score,
+# or $gaps — the framework cannot know an operator gate's semantics, so it must
+# not price one into the framework's own number. What it CAN do is stop the
+# gate from being invisible.
+$sgStatus = 'skipped'     # ran | skipped
+$sgReason = ''
+$sgGates = @()            # plain array — see the $scClaims note below
+
+function Invoke-OperatorSubgates {
+    if ($NoSubgates.IsPresent) {
+        $script:sgReason = '--no-subgates given'
+        return
+    }
+    if ($Isolated.IsPresent -and [string]::IsNullOrEmpty($SubgatesFile)) {
+        $script:sgReason = 'isolated run — operator sub-gates not evaluated'
+        return
+    }
+    if ([string]::IsNullOrEmpty($SubgatesFile)) {
+        $script:sgReason = 'no AUDIT_SUBGATES_FILE configured in local.env'
+        return
+    }
+    if (-not (Test-Path -LiteralPath $SubgatesFile -PathType Leaf)) {
+        $script:sgReason = "registry file not found: $SubgatesFile"
+        return
+    }
+
+    $collected = @()
+    foreach ($rawLine in [System.IO.File]::ReadAllLines($SubgatesFile)) {
+        $line = $rawLine.Trim()
+        if ($line.Length -eq 0 -or $line.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        $eq = $line.IndexOf('=')
+        $name = ''
+        $cmd = ''
+        if ($eq -ge 0) {
+            $name = $line.Substring(0, $eq).Trim()
+            $cmd = $line.Substring($eq + 1).Trim()
+        }
+        if ($eq -lt 0 -or $name -eq '' -or $cmd -eq '') {
+            # A line that names no command is REPORTED, not silently dropped: a
+            # typo that makes a gate disappear is the exact failure this surface
+            # closes.
+            $collected += [pscustomobject]@{
+                name = $line; status = 'error'; exit_code = $null
+                detail = 'malformed registry line — expected `name = command`'
+            }
+            continue
+        }
+
+        $status = 'pass'
+        $exitCode = 0
+        $detail = ''
+        $job = $null
+        try {
+            $job = Start-Job -ScriptBlock {
+                param($c)
+                $ErrorActionPreference = 'Continue'
+                $o = (& pwsh -NoProfile -Command $c 2>&1 | Out-String)
+                [pscustomobject]@{ out = $o; code = $LASTEXITCODE }
+            } -ArgumentList $cmd
+            if (Wait-Job -Job $job -Timeout $SubgateTimeout) {
+                $r = Receive-Job -Job $job
+                $out = ''
+                $code = 0
+                if ($null -ne $r) {
+                    if ($null -ne $r.out) { $out = "$($r.out)" }
+                    if ($null -ne $r.code) { $code = [int]$r.code }
+                }
+                $firstLine = @($out -split "`r?`n" | Where-Object { $_ -ne '' })
+                $detail = if ($firstLine.Count -gt 0) { $firstLine[0] } else { '' }
+                if ($detail.Length -gt 200) { $detail = $detail.Substring(0, 200) }
+                if ($code -eq 0) {
+                    $status = 'pass'; $exitCode = 0
+                    if ($detail -eq '') { $detail = '(no output)' }
+                } else {
+                    $status = 'fail'; $exitCode = $code
+                    if ($detail -eq '') { $detail = '(no output)' }
+                }
+            } else {
+                # Reported as this gate's OWN error; the audit itself still
+                # exits 0.
+                Stop-Job -Job $job -ErrorAction SilentlyContinue
+                $status = 'error'; $exitCode = $null
+                $detail = "timed out after $($SubgateTimeout)s"
+            }
+        } catch {
+            $status = 'error'; $exitCode = $null
+            $detail = 'could not spawn the sub-gate command'
+        } finally {
+            if ($null -ne $job) { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+        }
+        $collected += [pscustomobject]@{
+            name = $name; status = $status; exit_code = $exitCode; detail = $detail
+        }
+    }
+
+    if ($collected.Count -eq 0) {
+        # A registry that registers nothing is a named skip, not a silent clean run.
+        $script:sgReason = "registry has no sub-gates: $SubgatesFile"
+        return
+    }
+    $script:sgGates = $collected
+    $script:sgStatus = 'ran'
+}
+Invoke-OperatorSubgates
+
+# Get-SubgatesMarkdown — the `## Operator sub-gates` body (no heading).
+function Get-SubgatesMarkdown {
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($sgStatus -ne 'ran') {
+        $lines.Add("_(skipped — $sgReason)_")
+        $lines.Add('Informational only; never scored — a skipped registry is NOT a clean pass.')
+        return $lines
+    }
+    foreach ($g in $sgGates) {
+        if ($g.status -eq 'fail') {
+            $lines.Add("- $($g.name): fail (exit $($g.exit_code)) — $($g.detail)")
+        } else {
+            $lines.Add("- $($g.name): $($g.status) — $($g.detail)")
+        }
+    }
+    $lines.Add('Informational only; never scored — operator-authored gates never move the pillar scores above.')
+    return $lines
+}
+
+# ---------------------------------------------------------------------------
 # Output emitters
 # ---------------------------------------------------------------------------
 function Get-MarkdownOutput {
@@ -1913,6 +2165,12 @@ function Get-MarkdownOutput {
     [void]$sb.AppendLine('## Recall failures')
     [void]$sb.AppendLine('')
     foreach ($l in (Get-RecallMarkdown)) { [void]$sb.AppendLine($l) }
+    # Appended after Recall failures for the same positional-stability reason:
+    # every pre-existing section keeps its offset.
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## Operator sub-gates')
+    [void]$sb.AppendLine('')
+    foreach ($l in (Get-SubgatesMarkdown)) { [void]$sb.AppendLine($l) }
     # Bash twin emits via `printf '%s\n' "$OUTPUT"` so output ends with one
     # trailing newline. AppendLine already added per-line newlines; the
     # final state has a trailing `\n` from the last AppendLine. Match bash.
@@ -2065,6 +2323,30 @@ function Get-JsonOutput {
         unclassified       = (Get-RfNum 'unclassified')
         records            = $rfRecordObjs
     }
+    # operator_subgates — ADDITIVE optional field, its OWN key so a consumer can
+    # never read an operator-authored gate result as a framework pillar result.
+    # $null whenever the surface did not run (unset key, missing/empty registry,
+    # -NoSubgates); the markdown section carries the NAMED reason in that case.
+    # APPENDED LAST for the same positional-stability reason as the fields
+    # before it. Plain arrays — see the $scClaims note above.
+    $sgObj = $null
+    if ($sgStatus -eq 'ran') {
+        $sgGateObjs = @()
+        foreach ($g in $sgGates) {
+            $sgGateObjs += [ordered]@{
+                name      = $g.name
+                status    = $g.status
+                exit_code = $g.exit_code
+                detail    = $g.detail
+            }
+        }
+        $sgObj = [ordered]@{
+            registry        = $SubgatesFile
+            timeout_seconds = $SubgateTimeout
+            scored          = $false
+            gates           = $sgGateObjs
+        }
+    }
     $obj = [ordered]@{
         date                 = $dateStr
         total                = $total
@@ -2077,6 +2359,7 @@ function Get-JsonOutput {
         semantic_currentness = $scObj
         orientation_surface  = $oriObj
         recall_failures      = $rfObj
+        operator_subgates    = $sgObj
     }
     return ($obj | ConvertTo-Json -Depth 7)
 }

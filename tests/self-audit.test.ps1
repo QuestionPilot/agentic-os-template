@@ -1502,7 +1502,7 @@ if ($jqAvail) {
     Assert-Eq 'self-audit.test: codex registry JSON reports the registry byte size informationally' `
         "$regBytes" "$cxBytes"
     Assert-Eq 'self-audit.test: codex registry JSON stays backward-compatible (existing fields intact, new field additive)' `
-        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures' "$fields"
+        'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates' "$fields"
     Assert-Contains 'self-audit.test: codex registry markdown carries the non-scoring informational size line' `
         $mdOut "- codex memory registry (informational, not scored): $regBytes bytes"
 
@@ -1804,3 +1804,191 @@ Assert-Eq 'self-audit.test: orientation surface the .agents co-render still meas
 Assert-Eq 'self-audit.test: orientation surface nothing is skipped when all four resolve' `
     0 @($oriMulti.orientation_surface.skipped).Count
 Remove-Item -LiteralPath $oriFixture4 -Recurse -Force -ErrorAction SilentlyContinue
+
+# =============================================================================
+# Operator sub-gates + project-note body budget
+# =============================================================================
+
+# --- operator sub-gates -------------------------------------------------------
+# Operators accumulate their own semantic checkers that no audit aggregates, so
+# the scorecard can read 100/100 while every one of them fails or silently
+# lapses. The registry names them. What is under test is the WIRING contract —
+# its own section, its own JSON key, and the load-bearing part: an operator gate
+# NEVER moves total, a pillar score, or gaps.
+#
+# Hermetic: the fixture repo's OWN local.env carries AUDIT_SUBGATES_FILE, and
+# every registered command is a stub written into the fixture — the operator's
+# real registry is never read (a fixture repo-root has no operator local.env).
+# This twin runs each command through `pwsh -NoProfile -Command`, so the
+# registry holds PowerShell commands where the bash twin holds sh commands.
+$sgFixture = New-SaTmp
+New-SaFixtureRepo $sgFixture
+$sgReg = Join-Path $sgFixture 'subgates.txt'
+Write-LfFile (Join-Path $sgFixture 'local.env') "AUDIT_SUBGATES_FILE=$sgReg`n"
+
+Write-LfFile $sgReg @"
+# operator sub-gates
+
+map check = Write-Output 'map is current'
+drift check = [Console]::Error.WriteLine('two entries drifted'); exit 4
+no command here
+"@
+
+$sgOut = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json') | ConvertFrom-Json
+Assert-Eq 'self-audit.test: operator sub-gates a passing gate reports pass with exit 0' `
+    'map check|pass|0' `
+    ("$($sgOut.operator_subgates.gates[0].name)|$($sgOut.operator_subgates.gates[0].status)|$($sgOut.operator_subgates.gates[0].exit_code)")
+Assert-Eq 'self-audit.test: operator sub-gates a passing gate carries its first output line as detail' `
+    'map is current' $sgOut.operator_subgates.gates[0].detail
+Assert-Eq 'self-audit.test: operator sub-gates a failing gate reports fail WITH its exit code' `
+    'drift check|fail|4' `
+    ("$($sgOut.operator_subgates.gates[1].name)|$($sgOut.operator_subgates.gates[1].status)|$($sgOut.operator_subgates.gates[1].exit_code)")
+Assert-Eq 'self-audit.test: operator sub-gates a failing gate stderr first line is the detail' `
+    'two entries drifted' $sgOut.operator_subgates.gates[1].detail
+# A typo that makes a gate disappear is exactly the failure this closes, so a
+# malformed line is REPORTED, never silently dropped.
+Assert-Eq 'self-audit.test: operator sub-gates a malformed registry line is named, not dropped' `
+    'no command here|error' `
+    ("$($sgOut.operator_subgates.gates[2].name)|$($sgOut.operator_subgates.gates[2].status)")
+Assert-Eq 'self-audit.test: operator sub-gates comments and blank lines register no gate' `
+    3 @($sgOut.operator_subgates.gates).Count
+Assert-Eq 'self-audit.test: operator sub-gates the JSON key carries a literal scored:false' `
+    'False' "$($sgOut.operator_subgates.scored)"
+
+# THE load-bearing property: informational means informational. Compared against
+# the SAME fixture with the registry disabled, so score-neutrality is proved
+# rather than asserted against a hard-coded number.
+$sgBase = Invoke-SelfAudit @('--repo-root', $sgFixture, '--no-subgates', '--json') | ConvertFrom-Json
+Assert-Eq 'self-audit.test: operator sub-gates a FAILING gate does not change the total score' `
+    "$($sgBase.total)" "$($sgOut.total)"
+Assert-Eq 'self-audit.test: operator sub-gates a FAILING gate does not enter the gap list' `
+    @($sgBase.gaps).Count @($sgOut.gaps).Count
+Assert-Eq 'self-audit.test: operator sub-gates a FAILING gate does not move the memory pillar' `
+    "$($sgBase.pillars.'memory-hygiene'.score)" "$($sgOut.pillars.'memory-hygiene'.score)"
+
+$sgMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Contains 'self-audit.test: operator sub-gates markdown has its own section' $sgMd '## Operator sub-gates'
+Assert-Contains 'self-audit.test: operator sub-gates markdown renders the passing gate' `
+    $sgMd '- map check: pass — map is current'
+Assert-Contains 'self-audit.test: operator sub-gates markdown renders the failing gate with its exit code' `
+    $sgMd '- drift check: fail (exit 4) — two entries drifted'
+Assert-Contains 'self-audit.test: operator sub-gates markdown states the informational boundary' `
+    $sgMd 'never scored'
+
+# A hanging gate is bounded and reported as that gate's OWN error — the audit
+# still exits 0. The timeout is injected so this costs a second, not a minute.
+Write-LfFile $sgReg "hang = Start-Sleep -Seconds 30`n"
+$env:SELF_AUDIT_SUBGATE_TIMEOUT = '1'
+try {
+    $sgSlowRaw = & pwsh -NoProfile -File $SA_SCRIPT '--repo-root' $sgFixture '--json' 2>$null
+    $sgSlowRc = $LASTEXITCODE
+    $sgSlow = (($sgSlowRaw -join "`n") | ConvertFrom-Json)
+} finally { Remove-Item Env:SELF_AUDIT_SUBGATE_TIMEOUT -ErrorAction SilentlyContinue }
+Assert-Eq 'self-audit.test: operator sub-gates a hanging gate does not fail the audit' 0 $sgSlowRc
+Assert-Eq 'self-audit.test: operator sub-gates a hanging gate is bounded and reported as error' `
+    'hang|error|timed out after 1s' `
+    ("$($sgSlow.operator_subgates.gates[0].name)|$($sgSlow.operator_subgates.gates[0].status)|$($sgSlow.operator_subgates.gates[0].detail)")
+
+# --no-subgates: execution off, section still rendered as a NAMED skip.
+Write-LfFile $sgReg "map check = Write-Output 'ran'`n"
+$sgNoSub = Invoke-SelfAudit @('--repo-root', $sgFixture, '--no-subgates', '--json') | ConvertFrom-Json
+$sgNoSubMd = Invoke-SelfAudit @('--repo-root', $sgFixture, '--no-subgates')
+Assert-Eq 'self-audit.test: operator sub-gates --no-subgates nulls the JSON key' `
+    'True' "$($null -eq $sgNoSub.operator_subgates)"
+Assert-Contains 'self-audit.test: operator sub-gates --no-subgates still renders a NAMED skip' `
+    $sgNoSubMd '_(skipped — --no-subgates given)_'
+
+# Registry configured but MISSING: a named skip, never a silent clean pass.
+Write-LfFile (Join-Path $sgFixture 'local.env') ("AUDIT_SUBGATES_FILE=" + (Join-Path $sgFixture 'absent-registry.txt') + "`n")
+$sgGone = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json') | ConvertFrom-Json
+$sgGoneMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Eq 'self-audit.test: operator sub-gates a missing registry nulls the JSON key' `
+    'True' "$($null -eq $sgGone.operator_subgates)"
+Assert-Contains 'self-audit.test: operator sub-gates a missing registry is a NAMED skip' `
+    $sgGoneMd 'registry file not found:'
+
+# Key UNSET: same named-skip contract, different named reason.
+Write-LfFile (Join-Path $sgFixture 'local.env') "OBSIDIAN_VAULT_PATH=`n"
+$sgUnsetRaw = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json')
+$sgUnset = $sgUnsetRaw | ConvertFrom-Json
+$sgUnsetMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Eq 'self-audit.test: operator sub-gates an unset registry key nulls the JSON key' `
+    'True' "$($null -eq $sgUnset.operator_subgates)"
+Assert-Contains 'self-audit.test: operator sub-gates an unset registry key is a NAMED skip' `
+    $sgUnsetMd 'no AUDIT_SUBGATES_FILE configured'
+# The section can never vanish: an invisible sub-gate surface is the exact
+# failure mode this whole lane exists to close.
+Assert-Contains 'self-audit.test: operator sub-gates the section renders even when nothing ran' `
+    $sgUnsetMd '## Operator sub-gates'
+
+# JSON key ORDER: the new key is appended LAST so every pre-existing field keeps
+# its position for a positional consumer.
+Assert-Eq 'self-audit.test: operator sub-gates no pre-existing JSON key moved' `
+    'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates' `
+    ((($sgUnset.PSObject.Properties | ForEach-Object { $_.Name }) -join ','))
+Remove-Item -LiteralPath $sgFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- Pillar 2 sub-check 2.6: project-note body budget -------------------------
+# The recall caps bound the INDEX; nothing bounded the note BODIES the index
+# points at — exactly what a kickoff orient dereferences. Advisory: one
+# aggregate warn, never a hard cap.
+$pnbFixture = New-SaTmp
+New-SaFixtureRepo $pnbFixture
+$pnbMem = Join-Path $pnbFixture 'memory'
+New-Item -ItemType Directory -Path $pnbMem -Force | Out-Null
+$pnbBody = ("---`nmetadata:`n  type: project`n---`n" + (('x' * 50 + "`n") * 400))
+$pnbRefBody = ("---`nmetadata:`n  type: reference`n---`n" + (('x' * 50 + "`n") * 400))
+Write-LfFile (Join-Path $pnbMem 'project-big.md') $pnbBody
+Write-LfFile (Join-Path $pnbMem 'project-small.md') "---`nmetadata:`n  type: project`n---`nsmall`n"
+Write-LfFile (Join-Path $pnbMem 'reference-big.md') $pnbRefBody
+Write-LfFile (Join-Path $pnbMem 'MEMORY.md') "project-big.md project-small.md reference-big.md`n"
+
+function Invoke-SaPnb {
+    param([string[]]$Extra = @())
+    return (Invoke-SelfAudit (@('--isolated', '--repo-root', $pnbFixture, '--memory-dir', $pnbMem) + $Extra + @('--json')) | ConvertFrom-Json)
+}
+function Get-PnbGaps($obj) {
+    return @($obj.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' })
+}
+
+$pnbOverJson = Invoke-SaPnb
+$pnbGaps = Get-PnbGaps $pnbOverJson
+Assert-Eq 'self-audit.test: body budget an over-budget project note raises exactly one gap' `
+    1 $pnbGaps.Count
+Assert-Eq 'self-audit.test: body budget the gap carries leverage 4 on pillar 2' `
+    '2|4' "$($pnbGaps[0].pillar)|$($pnbGaps[0].leverage)"
+Assert-Contains 'self-audit.test: body budget the gap names the offending note' `
+    $pnbGaps[0].detail 'project-big.md'
+Assert-Contains 'self-audit.test: body budget the gap names the soft 16 KB default' `
+    $pnbGaps[0].detail 'soft 16 KB per-note budget'
+# A non-project note of the same size is NOT in scope — orient dereferences
+# project-type bodies, and warning on the rest is alarm fatigue.
+Assert-NotContains 'self-audit.test: body budget a non-project note of the same size does not trip the warn' `
+    $pnbGaps[0].detail 'reference-big.md'
+Assert-Eq 'self-audit.test: body budget the warn costs exactly 2 pillar-2 points' `
+    '18' "$($pnbOverJson.pillars.'memory-hygiene'.score)"
+
+# A raised threshold clears it — the knob is real, and the check is advisory.
+$pnbUnder = Invoke-SaPnb @('--project-note-warn-kb', '512')
+Assert-Eq 'self-audit.test: body budget a raised threshold clears the warn' `
+    0 (Get-PnbGaps $pnbUnder).Count
+Assert-Eq 'self-audit.test: body budget a raised threshold clears the deduction too' `
+    '20' "$($pnbUnder.pillars.'memory-hygiene'.score)"
+
+# A garbage knob falls back to the DEFAULT silently — an advisory measurement
+# must degrade to the default, never break the audit (or silently disable
+# itself, which a 0-KB or negative reading would do).
+foreach ($pnbBad in @('abc', '0', '-5')) {
+    Assert-Eq "self-audit.test: body budget a garbage threshold ($pnbBad) falls back to the 16 KB default" `
+        1 (Get-PnbGaps (Invoke-SaPnb @('--project-note-warn-kb', $pnbBad))).Count
+}
+
+# The warn is an AGGREGATE: two oversize notes still cost 2 points once.
+Write-LfFile (Join-Path $pnbMem 'project-big2.md') $pnbBody
+Write-LfFile (Join-Path $pnbMem 'MEMORY.md') "project-big.md project-big2.md project-small.md reference-big.md`n"
+$pnbTwo = Invoke-SaPnb
+Assert-Eq 'self-audit.test: body budget two oversize notes still deduct exactly once' `
+    '18' "$($pnbTwo.pillars.'memory-hygiene'.score)"
+Assert-Eq 'self-audit.test: body budget both oversize notes are named in the single gap' `
+    'True' "$((Get-PnbGaps $pnbTwo)[0].detail.StartsWith('2 project-type'))"
+Remove-Item -LiteralPath $pnbFixture -Recurse -Force -ErrorAction SilentlyContinue
