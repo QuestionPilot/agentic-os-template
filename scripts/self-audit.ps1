@@ -2080,42 +2080,81 @@ function Invoke-OperatorSubgates {
         $status = 'pass'
         $exitCode = 0
         $detail = ''
-        $job = $null
+        $p = $null
         try {
-            # Output goes to a FILE inside the job, never back through the job's
-            # output buffer. Accumulating a gate's stdout in memory (Out-String)
-            # lets a flooding gate grow the audit's footprint without bound; a
-            # file plus the 512-byte bounded read above caps it. The job emits
-            # only the exit code.
+            # Output goes to a FILE inside the runner, never back through a
+            # pipe the audit must drain. Accumulating a gate's stdout in memory
+            # (Out-String) lets a flooding gate grow the audit's footprint
+            # without bound; a file plus the 512-byte bounded read above caps it.
+            #
+            # A direct Process, NOT Start-Job: Stop-Job stops the job host but
+            # on Windows leaves the grandchild pwsh the job spawned RUNNING —
+            # a flooding or hanging gate survives its own timeout as an orphan
+            # that also holds the caller's inherited stdout handle, so the
+            # AUDIT'S CALLER hangs waiting for EOF long after the audit exited
+            # (the PS-twin sibling of the bash timeout escape the process-group
+            # watchdog closed; observed live as a wedged Windows CI lane).
+            # Process.Kill($true) kills the wrapper's live process tree on
+            # timeout. DOCUMENTED LIMITATION (parity with the bash twin's
+            # process group): a gate that deliberately detaches a descendant
+            # (setsid / daemonize / reparent) escapes any tree- or group-kill;
+            # the bound covers the tree that stays attached.
+            #
+            # The command and output path travel as environment variables, not
+            # interpolated text — arbitrary registry commands never get
+            # re-quoted into a wrapper string. The wrapper's exit is
+            # null-guarded: if the inner pwsh never launched, $LASTEXITCODE is
+            # $null and a bare `exit $LASTEXITCODE` would exit 0 — a runner
+            # that never ran reported as the quietest possible success.
             [System.IO.File]::WriteAllText($outFile, '')
-            $job = Start-Job -ScriptBlock {
-                param($c, $f)
-                $ErrorActionPreference = 'Continue'
-                & pwsh -NoProfile -Command $c *> $f
-                $LASTEXITCODE
-            } -ArgumentList $cmd, $outFile
-            if (Wait-Job -Job $job -Timeout $SubgateTimeout) {
-                # A job that FAILED, or that came back with no result at all, is
-                # an ERROR — never a pass. Seeding $code to 0 and falling
-                # through would have reported a job that never ran (a crashed
-                # runner, an unspawnable pwsh) as a clean `pass "(no output)"`:
-                # the loudest possible failure rendered as the quietest possible
-                # success.
-                #
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = 'pwsh'
+            [void]$psi.ArgumentList.Add('-NoProfile')
+            [void]$psi.ArgumentList.Add('-Command')
+            [void]$psi.ArgumentList.Add('$ErrorActionPreference = ''Continue''; & pwsh -NoProfile -Command $env:SA_SUBGATE_CMD *> $env:SA_SUBGATE_OUT; if ($null -eq $LASTEXITCODE) { exit 197 }; exit $LASTEXITCODE')
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.Environment['SA_SUBGATE_CMD'] = $cmd
+            $psi.Environment['SA_SUBGATE_OUT'] = $outFile
+            $p = [System.Diagnostics.Process]::Start($psi)
+            # Drain the redirected pipes concurrently. The gate's own output
+            # goes through *> into the file, so these normally carry almost
+            # nothing — but an undrained redirected pipe is a standing
+            # deadlock: any wrapper-level spew (host warnings, spawn errors)
+            # past the OS pipe buffer would block the wrapper and misreport a
+            # completed gate as a timeout. Bounded by the wrapper's own
+            # output, which no registry command controls.
+            $drainOut = $p.StandardOutput.ReadToEndAsync()
+            $drainErr = $p.StandardError.ReadToEndAsync()
+            if ($p.WaitForExit($SubgateTimeout * 1000)) {
                 # DOCUMENTED LIMITATION: a gate whose script writes errors but
-                # never calls `exit N` leaves $LASTEXITCODE at 0 and is reported
-                # as pass. That mirrors a bash gate that swallows its own
-                # failure — the gate's exit code is the contract, and a gate
-                # that does not set one is not making a claim this surface can
-                # check.
-                $r = Receive-Job -Job $job
-                $rv = if ($null -ne $r) { @($r)[-1] } else { $null }
+                # never calls `exit N` exits 0 and is reported as pass. That
+                # mirrors a bash gate that swallows its own failure — the
+                # gate's exit code is the contract, and a gate that does not
+                # set one is not making a claim this surface can check.
+                $code = $p.ExitCode
                 $detail = Get-SgFirstLine $outFile
-                if ($job.State -eq 'Failed' -or $null -eq $rv) {
-                    $status = 'error'; $exitCode = $null
-                    if ($detail -eq '') { $detail = 'sub-gate produced no exit status (job did not run to completion)' }
+                if ($code -eq 0) {
+                    $status = 'pass'; $exitCode = 0
+                    if ($detail -eq '') { $detail = '(no output)' }
                 } else {
-                    $code = [int]$rv
+                    $status = 'fail'; $exitCode = $code
+                    if ($detail -eq '') { $detail = '(no output)' }
+                }
+            } else {
+                # Reported as this gate's OWN error; the audit itself still
+                # exits 0. Kill the TREE, then reap, so nothing attached
+                # outlives the bound holding the out-file or an inherited
+                # console handle. A gate that finished in the race between the
+                # deadline and the kill DID complete — report its real result,
+                # not a timeout.
+                $racedExit = $false
+                try { $p.Kill($true) } catch { if ($p.HasExited) { $racedExit = $true } }
+                try { $p.WaitForExit(5000) | Out-Null } catch { }
+                if ($racedExit) {
+                    $code = $p.ExitCode
+                    $detail = Get-SgFirstLine $outFile
                     if ($code -eq 0) {
                         $status = 'pass'; $exitCode = 0
                         if ($detail -eq '') { $detail = '(no output)' }
@@ -2123,19 +2162,16 @@ function Invoke-OperatorSubgates {
                         $status = 'fail'; $exitCode = $code
                         if ($detail -eq '') { $detail = '(no output)' }
                     }
+                } else {
+                    $status = 'error'; $exitCode = $null
+                    $detail = "timed out after $($SubgateTimeout)s"
                 }
-            } else {
-                # Reported as this gate's OWN error; the audit itself still
-                # exits 0.
-                Stop-Job -Job $job -ErrorAction SilentlyContinue
-                $status = 'error'; $exitCode = $null
-                $detail = "timed out after $($SubgateTimeout)s"
             }
         } catch {
             $status = 'error'; $exitCode = $null
-            $detail = 'could not spawn the sub-gate command'
+            $detail = 'could not spawn the sub-gate command: ' + $_.Exception.Message
         } finally {
-            if ($null -ne $job) { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+            if ($null -ne $p) { $p.Dispose() }
         }
         $collected += [pscustomobject]@{
             name = $name; status = $status; exit_code = $exitCode; detail = $detail

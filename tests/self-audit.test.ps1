@@ -1997,13 +1997,16 @@ Assert-Eq 'self-audit.test: body budget both oversize notes are named in the sin
     'True' "$((Get-PnbGaps $pnbTwo)[0].detail.StartsWith('2 project-type'))"
 Remove-Item -LiteralPath $pnbFixture -Recurse -Force -ErrorAction SilentlyContinue
 
-# --- operator sub-gates: bounding + a job that never runs ---------------------
+# --- operator sub-gates: bounding + a runner that never runs ------------------
 # The bash twin's bound had to be rebuilt around a process group (its in-process
-# alarm was defeated by `trap '' ALRM` and by backgrounded children). Wait-Job
-# has no such ambiguity, so what this twin pins is the OTHER half: a job that
-# fails or returns nothing must be an ERROR, never a pass. Seeding the exit code
-# to 0 and falling through reported a runner that never ran as a clean
-# `pass "(no output)"` — the loudest failure as the quietest success.
+# alarm was defeated by `trap '' ALRM` and by backgrounded children). This twin
+# needed the SAME rebuild: Stop-Job left the job's grandchild pwsh running on
+# Windows, so a flooding gate survived its timeout as an orphan holding the
+# caller's stdout handle and wedged the whole lane — the runner is now a direct
+# Process killed with its entire tree on timeout. What the crasher case pins is
+# the other half: a runner that fails outright must be an ERROR or FAIL, never
+# a pass — seeding the exit code to 0 and falling through would report a runner
+# that never ran as a clean `pass "(no output)"`.
 $sgbFixture = New-SaTmp
 New-SaFixtureRepo $sgbFixture
 $sgbReg = Join-Path $sgbFixture 'subgates.txt'
@@ -2021,9 +2024,9 @@ function Invoke-SaSubgate {
     }
 }
 
-# A job that cannot produce an exit status. `exit` inside the job's own runspace
-# ends the job before it emits $LASTEXITCODE, so Receive-Job yields nothing —
-# the exact shape a crashed or unspawnable runner produces.
+# A gate that exits without running a command. With the direct-Process runner
+# the wrapper's own `exit` carries the code through as an ordinary fail — what
+# this pins is that no shape of early exit ever lands on `pass`.
 Write-LfFile $sgbReg "crasher = exit 7`n"
 $sgbCrash = Invoke-SaSubgate '30'
 Assert-NotContains 'self-audit.test: sub-gate bounding a job with no exit status is never reported as pass' `
