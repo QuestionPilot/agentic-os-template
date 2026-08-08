@@ -124,6 +124,7 @@ _orient_schema_ok() { # _orient_schema_ok <json> -> echoes ok|BAD
        and (.safety | type == "object")
        and ((.safety.posture | IN("safe","tightened")))
        and ((.safety.detection | IN("state-files","none-configured")))
+       and (.safety.unresolved | type == "number")
        and (.safety.tightenings | type == "array")
        and ([ .safety.tightenings[] | (.name|type=="string") and (.path|type=="string") and (.detail|type=="string") ] | all)
        and ((.telemetry | type) | IN("object","null"))
@@ -417,8 +418,8 @@ OS1="$(mktemp -d)"; orient_stub "$OS1"; orient_fixtures "$OS1"
 o="$(run_orient "$OS1")"; rc=$?
 assert_eq "orient: no guardrail state configured still exits 0" 0 "$rc"
 assert_eq "orient: no guardrail state configured reports safe/none-configured" \
-  "safe none-configured 0" \
-  "$(printf '%s' "$o" | jq -r '[ .safety.posture, .safety.detection, (.safety.tightenings|length|tostring) ] | join(" ")')"
+  "safe none-configured 0 0" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, .safety.detection, (.safety.tightenings|length|tostring), (.safety.unresolved|tostring) ] | join(" ")')"
 
 OSF="$(mktemp -d)"
 printf 'edits frozen to the work dir\n' > "$OSF/scope.state"
@@ -448,10 +449,58 @@ assert_eq "orient: only the first line of a state file becomes the detail" \
   "careful mode: confirm destructive commands" \
   "$(printf '%s' "$o" | jq -r '.safety.tightenings[1].detail')"
 # The key can only ADD tightenings: there is no configured value that reports a
-# posture looser than the default.
+# posture looser than the default. But "configured and inactive" must NOT read
+# as "nothing configured" — the unresolved count is what keeps a broken
+# guardrail wiring from presenting as a clean default-safe run.
+o="$(GUARDRAIL_STATE_FILES="$OSF/empty.state,$OSF/nope.state" run_orient "$OS1")"
 assert_eq "orient: configured-but-inactive guardrails still report the safe floor" \
-  "safe" \
-  "$(GUARDRAIL_STATE_FILES="$OSF/empty.state,$OSF/nope.state" run_orient "$OS1" | jq -r '.safety.posture')"
+  "safe" "$(printf '%s' "$o" | jq -r '.safety.posture')"
+assert_eq "orient: configured-but-unresolved paths are COUNTED, not silently equal to unconfigured" \
+  "state-files 2" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.detection, (.safety.unresolved|tostring) ] | join(" ")')"
+
+# A RELATIVE path is never resolved against the caller's cwd — a posture that
+# changes with the launch directory is not a detected posture. It counts as
+# unresolved, exactly like a missing one.
+o="$(cd "$OSF" && GUARDRAIL_STATE_FILES="scope.state" run_orient "$OS1")"
+assert_eq "orient: a relative guardrail path is unresolved, never cwd-resolved" \
+  "safe 0 1" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, (.safety.tightenings|length|tostring), (.safety.unresolved|tostring) ] | join(" ")')"
+
+# PER-ENTRY quotes: the local.env read strips one pair from the WHOLE value, so
+# individually-quoted paths arrive here still quoted. Both must still resolve.
+o="$(GUARDRAIL_STATE_FILES="\"$OSF/scope.state\", \"$OSF/careful.state\"" run_orient "$OS1")"
+assert_eq "orient: individually-quoted paths are both detected, not silently corrupted" \
+  "tightened 2 0" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, (.safety.tightenings|length|tostring), (.safety.unresolved|tostring) ] | join(" ")')"
+
+# DETAIL HARDENING. A control character in a state file must not ride into
+# model-facing orient output.
+printf 'scope active\033[31mRED\007 tail\nsecond line\n' > "$OSF/ctl.state"
+o="$(GUARDRAIL_STATE_FILES="$OSF/ctl.state" run_orient "$OS1")"
+assert_eq "orient: control characters are stripped from a state-file detail" \
+  "scope active[31mRED tail" "$(printf '%s' "$o" | jq -r '.safety.tightenings[0].detail')"
+assert_eq "orient: a control-char state file still satisfies the schema" "ok" "$(_orient_schema_ok "$o")"
+
+# A first line LONGER than the truncation limit and made of MULTI-BYTE text: the
+# byte-offset truncate must not split a UTF-8 sequence, because an invalid tail
+# makes the JSON assembler drop the record — and a dropped tightening reports
+# `safe` for a run that is tightened. The tightening must survive.
+LC_ALL=C awk 'BEGIN { s=""; while (i++ < 200) s = s "\303\251"; print s }' > "$OSF/multi.state"
+o="$(GUARDRAIL_STATE_FILES="$OSF/multi.state" run_orient "$OS1")"; rc=$?
+assert_eq "orient: an over-long multibyte first line still exits 0" 0 "$rc"
+assert_eq "orient: an over-long multibyte detail never drops the tightening" \
+  "tightened 1" \
+  "$(printf '%s' "$o" | jq -r '[ .safety.posture, (.safety.tightenings|length|tostring) ] | join(" ")')"
+assert_eq "orient: a multibyte detail still emits a schema-valid document" "ok" "$(_orient_schema_ok "$o")"
+
+# A multi-GB newline-free state file must not stall the kickoff: the read is
+# bounded before the first-line split. Size is modest here (the bound is 512
+# bytes) — what is pinned is that the detail is TRUNCATED, not whole-file read.
+LC_ALL=C awk 'BEGIN { s=""; while (i++ < 4000) s = s "z"; printf "%s", s }' > "$OSF/huge.state"
+o="$(GUARDRAIL_STATE_FILES="$OSF/huge.state" run_orient "$OS1")"
+assert_eq "orient: a newline-free state file yields a bounded 120-char detail" \
+  "120" "$(printf '%s' "$o" | jq -r '.safety.tightenings[0].detail | length')"
 
 # ============================ TELEMETRY ======================================
 # The O1 dynamic body reads are the expensive half of a kickoff and nothing

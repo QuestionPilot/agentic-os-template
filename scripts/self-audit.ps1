@@ -374,12 +374,18 @@ $SubgatesFile = ''
 # pattern as $env:SELF_AUDIT_CURRENTNESS_BIN); a non-positive or non-integer
 # value falls back to the default silently. Mirrors the bash twin.
 $SubgateTimeout = 60
-if ($env:SELF_AUDIT_SUBGATE_TIMEOUT -match '^[0-9]+$') {
+if ($env:SELF_AUDIT_SUBGATE_TIMEOUT -match '^[0-9]{1,7}$') {
     $sgParsed = 0
     if ([int]::TryParse($env:SELF_AUDIT_SUBGATE_TIMEOUT, [ref]$sgParsed) -and $sgParsed -gt 0) {
         $SubgateTimeout = $sgParsed
     }
 }
+# Registry-wide entry cap. A read-only diagnostic must not become an unbounded
+# execution engine because a registry was generated or appended to in a loop:
+# worst-case wall clock is $SubgateMax x $SubgateTimeout, and entries past the
+# cap are reported as a named drop count rather than silently ignored. Mirrors
+# the bash twin's SUBGATE_MAX.
+$SubgateMax = 64
 
 # -Isolated turns off env-fallbacks (mirror bash ISOLATED=1).
 if (-not $Isolated.IsPresent) {
@@ -493,8 +499,15 @@ if ($InjectionWarnKb -match '^[0-9]+$') {
 # Same contract for the per-note body budget (sub-check 2.6): positive integer
 # KB, else fall back to the 16 KB default SILENTLY. Advisory measurement — a bad
 # knob value must degrade to the default, never break the audit.
+#
+# The DIGIT-LENGTH bound is load-bearing, not cosmetic — it keeps this twin
+# byte-identical to the bash twin, where `$(( KB * 1024 ))` on a value like
+# 18014398509481984 wraps the product to 0 so every note lands "over budget":
+# the knob an operator typed to RAISE the threshold silently drives it to zero.
+# Anything over 7 digits (~9.5 TB) is not a budget, so it falls back to the
+# default like any other unusable value.
 $ProjectNoteWarnKbInt = 16
-if ($ProjectNoteWarnKb -match '^[0-9]+$') {
+if ($ProjectNoteWarnKb -match '^[0-9]{1,7}$') {
     $pnbParsed = 0
     if ([int]::TryParse($ProjectNoteWarnKb, [ref]$pnbParsed) -and $pnbParsed -gt 0) {
         $ProjectNoteWarnKbInt = $pnbParsed
@@ -945,14 +958,22 @@ function Invoke-Pillar2 {
         # INDEX; nothing capped the note bodies the index points at, and a
         # project-type note is exactly the body a kickoff orient dereferences.
         # SOFT threshold, same posture as sub-check 2.4: a 2-pt warn, never a
-        # hard cap. Name-sorted so the reported list matches the bash twin's
-        # `LC_ALL=C sort` scan order on the same store.
-        foreach ($pnbFile in @($mdFiles | Sort-Object Name)) {
-            if ($pnbFile.Name -eq 'MEMORY.md') { continue }
-            if ((Get-MemNoteType $pnbFile.FullName) -ne 'project') { continue }
-            $pnbBytes = [long]$pnbFile.Length
+        # hard cap.
+        #
+        # ORDINAL sort on the FULL PATH — the exact key and collation the bash
+        # twin's `find | LC_ALL=C sort` uses. `Sort-Object Name` is
+        # culture-sensitive and case-insensitive, so a store holding both
+        # `project-A.md` and `project-b.md` ordered them differently on the two
+        # twins and the gap detail (which lists the offenders in scan order)
+        # stopped being byte-identical across platforms.
+        [string[]]$pnbPaths = @($mdFiles | ForEach-Object { $_.FullName })
+        [Array]::Sort($pnbPaths, [System.StringComparer]::Ordinal)
+        foreach ($pnbPath in $pnbPaths) {
+            if ([System.IO.Path]::GetFileName($pnbPath) -eq 'MEMORY.md') { continue }
+            if ((Get-MemNoteType $pnbPath) -ne 'project') { continue }
+            $pnbBytes = [long](Get-Item -LiteralPath $pnbPath).Length
             if ($pnbBytes -gt ([long]$ProjectNoteWarnKbInt * 1024)) {
-                [void]$pnbOver.Add([pscustomobject]@{ path = $pnbFile.FullName; bytes = $pnbBytes })
+                [void]$pnbOver.Add([pscustomobject]@{ path = $pnbPath; bytes = $pnbBytes })
             }
         }
     }
@@ -1959,9 +1980,43 @@ function Get-RecallMarkdown {
 # or $gaps — the framework cannot know an operator gate's semantics, so it must
 # not price one into the framework's own number. What it CAN do is stop the
 # gate from being invisible.
+#
+# TWIN ASYMMETRY, deliberate: the bash twin must disambiguate a real timeout
+# from a gate that legitimately exits 142 (its runner signals SIGALRM as
+# 128+14), so it compares elapsed wall clock against the ceiling. Here
+# Wait-Job returns a distinct false, so no exit code can impersonate a timeout
+# and no wall-clock check is needed.
+#
+# KNOWN LIMITATION: Stop-Job ends the job and the `pwsh` it launched, but a gate
+# that spawns DETACHED descendants can leave them running after the ceiling —
+# the bounded wait still returns on time, so the audit is never held up, but the
+# orphans are the operator's to reap. Killing a whole process tree portably is
+# out of scope for a read-only diagnostic.
 $sgStatus = 'skipped'     # ran | skipped
 $sgReason = ''
 $sgGates = @()            # plain array — see the $scClaims note below
+$sgDropped = 0            # registry entries past $SubgateMax — named, never silent
+
+# Get-SgFirstLine — BOUNDED detail read: at most 512 bytes off the front of the
+# capture file, then its first line, then a 200-char cut. A gate that emits
+# gigabytes on one line can neither exhaust memory here nor stall the read.
+# Mirrors the bash twin's `head -c 512 | head -n 1 | cut -c 1-200`.
+function Get-SgFirstLine {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $buf = New-Object byte[] 512
+    $n = 0
+    try {
+        $fs = [System.IO.File]::OpenRead($Path)
+        try { $n = $fs.Read($buf, 0, 512) } finally { $fs.Dispose() }
+    } catch { return '' }
+    if ($n -le 0) { return '' }
+    $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $n)
+    $first = @($text -split "`r?`n" | Where-Object { $_ -ne '' })
+    $detail = if ($first.Count -gt 0) { $first[0] } else { '' }
+    if ($detail.Length -gt 200) { $detail = $detail.Substring(0, 200) }
+    return $detail
+}
 
 function Invoke-OperatorSubgates {
     if ($NoSubgates.IsPresent) {
@@ -1976,15 +2031,34 @@ function Invoke-OperatorSubgates {
         $script:sgReason = 'no AUDIT_SUBGATES_FILE configured in local.env'
         return
     }
+    # ABSOLUTE paths only. The contract documents an absolute path, and resolving
+    # a relative one against the CALLER's cwd would make the same local.env
+    # execute a different file depending on where the audit was launched from —
+    # a cwd-dependent choice of what code to run is not a resolution rule, it is
+    # a hijack surface.
+    if (-not [System.IO.Path]::IsPathRooted($SubgatesFile)) {
+        $script:sgReason = "registry path is not absolute: $SubgatesFile"
+        return
+    }
     if (-not (Test-Path -LiteralPath $SubgatesFile -PathType Leaf)) {
         $script:sgReason = "registry file not found: $SubgatesFile"
         return
     }
 
     $collected = @()
+    $seen = 0
+    $outFile = [IO.Path]::GetTempFileName()
     foreach ($rawLine in [System.IO.File]::ReadAllLines($SubgatesFile)) {
         $line = $rawLine.Trim()
         if ($line.Length -eq 0 -or $line.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        # Registry-wide bound: a runaway or generated registry must not turn a
+        # read-only diagnostic into an unbounded execution engine. Entries past
+        # the cap are COUNTED and named, never silently dropped.
+        $seen++
+        if ($seen -gt $SubgateMax) {
+            $script:sgDropped++
+            continue
+        }
         $eq = $line.IndexOf('=')
         $name = ''
         $cmd = ''
@@ -2008,29 +2082,47 @@ function Invoke-OperatorSubgates {
         $detail = ''
         $job = $null
         try {
+            # Output goes to a FILE inside the job, never back through the job's
+            # output buffer. Accumulating a gate's stdout in memory (Out-String)
+            # lets a flooding gate grow the audit's footprint without bound; a
+            # file plus the 512-byte bounded read above caps it. The job emits
+            # only the exit code.
+            [System.IO.File]::WriteAllText($outFile, '')
             $job = Start-Job -ScriptBlock {
-                param($c)
+                param($c, $f)
                 $ErrorActionPreference = 'Continue'
-                $o = (& pwsh -NoProfile -Command $c 2>&1 | Out-String)
-                [pscustomobject]@{ out = $o; code = $LASTEXITCODE }
-            } -ArgumentList $cmd
+                & pwsh -NoProfile -Command $c *> $f
+                $LASTEXITCODE
+            } -ArgumentList $cmd, $outFile
             if (Wait-Job -Job $job -Timeout $SubgateTimeout) {
+                # A job that FAILED, or that came back with no result at all, is
+                # an ERROR — never a pass. Seeding $code to 0 and falling
+                # through would have reported a job that never ran (a crashed
+                # runner, an unspawnable pwsh) as a clean `pass "(no output)"`:
+                # the loudest possible failure rendered as the quietest possible
+                # success.
+                #
+                # DOCUMENTED LIMITATION: a gate whose script writes errors but
+                # never calls `exit N` leaves $LASTEXITCODE at 0 and is reported
+                # as pass. That mirrors a bash gate that swallows its own
+                # failure — the gate's exit code is the contract, and a gate
+                # that does not set one is not making a claim this surface can
+                # check.
                 $r = Receive-Job -Job $job
-                $out = ''
-                $code = 0
-                if ($null -ne $r) {
-                    if ($null -ne $r.out) { $out = "$($r.out)" }
-                    if ($null -ne $r.code) { $code = [int]$r.code }
-                }
-                $firstLine = @($out -split "`r?`n" | Where-Object { $_ -ne '' })
-                $detail = if ($firstLine.Count -gt 0) { $firstLine[0] } else { '' }
-                if ($detail.Length -gt 200) { $detail = $detail.Substring(0, 200) }
-                if ($code -eq 0) {
-                    $status = 'pass'; $exitCode = 0
-                    if ($detail -eq '') { $detail = '(no output)' }
+                $rv = if ($null -ne $r) { @($r)[-1] } else { $null }
+                $detail = Get-SgFirstLine $outFile
+                if ($job.State -eq 'Failed' -or $null -eq $rv) {
+                    $status = 'error'; $exitCode = $null
+                    if ($detail -eq '') { $detail = 'sub-gate produced no exit status (job did not run to completion)' }
                 } else {
-                    $status = 'fail'; $exitCode = $code
-                    if ($detail -eq '') { $detail = '(no output)' }
+                    $code = [int]$rv
+                    if ($code -eq 0) {
+                        $status = 'pass'; $exitCode = 0
+                        if ($detail -eq '') { $detail = '(no output)' }
+                    } else {
+                        $status = 'fail'; $exitCode = $code
+                        if ($detail -eq '') { $detail = '(no output)' }
+                    }
                 }
             } else {
                 # Reported as this gate's OWN error; the audit itself still
@@ -2049,6 +2141,7 @@ function Invoke-OperatorSubgates {
             name = $name; status = $status; exit_code = $exitCode; detail = $detail
         }
     }
+    Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
 
     if ($collected.Count -eq 0) {
         # A registry that registers nothing is a named skip, not a silent clean run.
@@ -2074,6 +2167,9 @@ function Get-SubgatesMarkdown {
         } else {
             $lines.Add("- $($g.name): $($g.status) — $($g.detail)")
         }
+    }
+    if ($sgDropped -gt 0) {
+        $lines.Add("- _(skipped — registry capped at $SubgateMax gate(s); $sgDropped further entr(y/ies) not run)_")
     }
     $lines.Add('Informational only; never scored — operator-authored gates never move the pillar scores above.')
     return $lines
@@ -2340,11 +2436,14 @@ function Get-JsonOutput {
                 detail    = $g.detail
             }
         }
+        # `dropped` is appended LAST inside this object for the same
+        # positional-stability reason the object itself is appended last.
         $sgObj = [ordered]@{
             registry        = $SubgatesFile
             timeout_seconds = $SubgateTimeout
             scored          = $false
             gates           = $sgGateObjs
+            dropped         = $sgDropped
         }
     }
     $obj = [ordered]@{

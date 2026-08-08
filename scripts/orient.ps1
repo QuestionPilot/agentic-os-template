@@ -39,14 +39,21 @@
     SAFETY POSTURE (appended last but one; schema id unchanged — additive).
       {posture: "safe"|"tightened",
        tightenings: [{name, path, detail}],
-       detection: "state-files"|"none-configured"}
+       detection: "state-files"|"none-configured",
+       unresolved: <int>}
     The kickoff line this feeds must report what was DETECTED, not what policy
     declares. Detection reads $GUARDRAIL_STATE_FILES — a comma-separated list
-    of absolute paths to the session-guardrail state files an operator's
+    of ABSOLUTE paths to the session-guardrail state files an operator's
     guardrail skill writes, from local.env (read as DATA, never imported) then
     the ambient env. Each configured path that exists and is NON-EMPTY is one
-    tightening: name = its basename, detail = its first line (truncated ~120
-    chars). No key configured -> posture "safe", detection "none-configured".
+    tightening: name = its basename, detail = its first line (bounded read,
+    control characters stripped, truncated ~120 chars). No key configured ->
+    posture "safe", detection "none-configured".
+
+    `unresolved` counts configured paths that produced NO tightening — missing,
+    empty, or not absolute. "Nothing configured" and "configured but nothing in
+    force" are different states with different next actions; reporting both as
+    a bare "safe" is how broken guardrail wiring reads as a clean default.
 
     The key can only ADD tightenings to the default-safe posture: there is no
     value of it that reports a LOOSER posture than "safe". Enforcement STRENGTH
@@ -578,24 +585,62 @@ if ([string]::IsNullOrEmpty($guardSpec) -and -not [string]::IsNullOrEmpty($env:G
 
 $safetyPosture = 'safe'
 $safetyDetection = 'none-configured'
+# Configured paths that did NOT resolve into a tightening — missing, empty, or
+# not absolute. Reported as its own count because "no guardrails configured" and
+# "guardrails configured but none in force" are different states with different
+# next actions, and collapsing them is how a run reads a broken guardrail wiring
+# as a clean default-safe posture.
+$safetyUnresolved = 0
 $tightenings = [System.Collections.Generic.List[object]]::new()
 if (-not [string]::IsNullOrEmpty($guardSpec)) {
     $safetyDetection = 'state-files'
     foreach ($raw in ($guardSpec -split ',')) {
         $gpath = $raw.Trim()
+        # PER-ENTRY quote stripping. The local.env read strips one quote pair
+        # from the WHOLE value, so an operator who quotes each path individually
+        # (`"/a.state", "/b.state"`) hands every entry here still wearing its
+        # own quotes — each one then fails the absolute-path test and detection
+        # dies silently on a config that looks perfectly reasonable in the file.
+        if ($gpath.Length -ge 2) {
+            $qf = $gpath[0]; $ql = $gpath[$gpath.Length - 1]
+            if (($qf -ceq '"' -and $ql -ceq '"') -or ($qf -ceq "'" -and $ql -ceq "'")) {
+                $gpath = $gpath.Substring(1, $gpath.Length - 2)
+            }
+        }
         if ($gpath -eq '') { continue }
+        # ABSOLUTE only. The contract documents absolute paths, and resolving a
+        # relative one against the CALLER's cwd would make the same
+        # configuration detect a different file depending on where the session
+        # started — a posture that changes with the launch directory is not a
+        # detected posture.
+        if (-not [System.IO.Path]::IsPathRooted($gpath)) { $safetyUnresolved++; continue }
         # A configured path that does not exist, or exists but is EMPTY, is not
         # a tightening — a guardrail skill writes state only while a scope is
         # active. Contained probe: $ErrorActionPreference is 'Stop', so an
         # unreadable ancestor must not kill the document.
         $ok = $false
         try { $ok = [bool]((Test-Path -LiteralPath $gpath -PathType Leaf) -and ((Get-Item -LiteralPath $gpath).Length -gt 0)) } catch { $ok = $false }
-        if (-not $ok) { continue }
+        if (-not $ok) { $safetyUnresolved++; continue }
+        # BOUNDED + SANITIZED TO PRINTABLE ASCII. Read at most 512 bytes first:
+        # a multi-GB newline-free state file must not stall the kickoff on a
+        # line read that never ends. Then filter to printable ASCII — this
+        # string is model-facing orient output, so a terminal escape or
+        # prompt-shaped garbage must not ride into it. .Substring is already
+        # character-safe here; the same filter runs anyway so both twins emit
+        # byte-identical details (see the bash twin's note on why the ASCII
+        # filter is what makes ITS byte-offset cut safe).
         $detail = ''
         try {
-            $first = (Get-Content -LiteralPath $gpath -TotalCount 1 -ErrorAction Stop)
-            if ($null -ne $first) { $detail = "$first" }
+            $buf = New-Object byte[] 512
+            $n = 0
+            $fs = [System.IO.File]::OpenRead($gpath)
+            try { $n = $fs.Read($buf, 0, 512) } finally { $fs.Dispose() }
+            if ($n -gt 0) {
+                $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $n)
+                $detail = @($text -split "`r?`n")[0]
+            }
         } catch { $detail = '' }
+        $detail = [System.Text.RegularExpressions.Regex]::Replace($detail, '[^\x20-\x7E]', '')
         if ($detail.Length -gt 120) { $detail = $detail.Substring(0, 120) }
         $tightenings.Add([ordered]@{
             name   = [System.IO.Path]::GetFileName($gpath)
@@ -610,6 +655,7 @@ $safetyObj = [ordered]@{
     posture     = $safetyPosture
     tightenings = $tightenings
     detection   = $safetyDetection
+    unresolved  = $safetyUnresolved
 }
 
 $telemetryObj = $null

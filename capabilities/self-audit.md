@@ -96,7 +96,12 @@ blank lines ignored) and each run executes every registered gate with a bounded
 timeout (60s per gate) and reports it in a `## Operator sub-gates` section + an
 `operator_subgates` JSON key: name, status (`pass` on exit 0 / `fail` with the
 exit code / `error` on timeout or a malformed line), and the first line of
-output as detail.
+output as detail. The registry path must be **absolute** (a relative one is a
+named skip, never resolved against the caller's cwd), at most **64** entries are
+executed per run (the rest are reported as a named drop count), and the ceiling
+is enforced from **outside** the gate — each gate runs in its own process group
+and is killed as a group on overrun, so a gate that traps the timeout signal or
+spawns workers is still bounded and still cleaned up.
 
 The surface is **informational only** — it never touches `total`, a pillar
 score, or `gaps`, the same separation `## Semantic currentness` holds. The
@@ -358,7 +363,7 @@ so a codex-only install (memory pillar UNSCORED) still reports it.
 `operator_subgates` is likewise appended last: `null` whenever the sub-gate
 surface did not run (unset key, missing or empty registry, `--no-subgates`),
 else `{registry, timeout_seconds, scored: false, gates[{name, status,
-exit_code, detail}]}`.
+exit_code, detail}], dropped}`.
 
 ## Limits
 

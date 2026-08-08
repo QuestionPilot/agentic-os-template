@@ -134,8 +134,14 @@ SUBGATES_ENABLED=1
 SUBGATE_TIMEOUT="${SELF_AUDIT_SUBGATE_TIMEOUT:-60}"
 case "$SUBGATE_TIMEOUT" in
   ''|*[!0-9]*) SUBGATE_TIMEOUT=60 ;;
-  *) [ "$SUBGATE_TIMEOUT" -gt 0 ] 2>/dev/null || SUBGATE_TIMEOUT=60 ;;
+  *) [ "${#SUBGATE_TIMEOUT}" -gt 7 ] && SUBGATE_TIMEOUT=60
+     [ "$SUBGATE_TIMEOUT" -gt 0 ] 2>/dev/null || SUBGATE_TIMEOUT=60 ;;
 esac
+# Registry-wide entry cap. A read-only diagnostic must not become an unbounded
+# execution engine because a registry was generated or appended to in a loop:
+# worst-case wall clock is SUBGATE_MAX × SUBGATE_TIMEOUT, and entries past the
+# cap are reported as a named drop count rather than silently ignored.
+SUBGATE_MAX=64
 # --isolated turns off all operator-env fallbacks (env vars + lineark detection).
 # Used by tests/self-audit.test.sh so fixtures only see what the test sets up.
 ISOLATED=0
@@ -351,6 +357,13 @@ fi
 # to the 32 KB default SILENTLY. The measurement is advisory — a soft warn,
 # never a gate (a design panel explicitly rejected a hard cap — <TEAM>-364) —
 # so a garbage knob value must degrade to the default, not break the audit.
+#
+# KNOWN LATENT ISSUE, deliberately left untouched here: this knob accepts an
+# arbitrarily long digit string, and `$(( KB * 1024 ))` on a value near the
+# 64-bit ceiling WRAPS to a small or negative threshold, which would make the
+# warn fire on a tiny surface. The sub-check 2.6 knob below bounds its digit
+# length for exactly that reason. Fixing this one belongs to its own change —
+# it predates this surface and shares none of its code path.
 case "$INJECTION_WARN_KB" in
   ''|*[!0-9]*) INJECTION_WARN_KB=32 ;;
   *) [ "$INJECTION_WARN_KB" -gt 0 ] 2>/dev/null || INJECTION_WARN_KB=32 ;;
@@ -359,9 +372,18 @@ esac
 # Same contract for the per-note body budget (sub-check 2.6): positive integer
 # KB, else fall back to the 16 KB default SILENTLY. Advisory measurement — a bad
 # knob value must degrade to the default, never break the audit.
+#
+# The DIGIT-LENGTH bound is load-bearing, not cosmetic. `$(( KB * 1024 ))` is
+# 64-bit signed arithmetic: a value like 18014398509481984 wraps the product to
+# 0, so every note on disk lands "over budget" and the knob that was meant to
+# RAISE the threshold silently drives it to zero — a warn plus a 2-pt deduction
+# from a number an operator typed to make the check quieter. Anything over 7
+# digits (~9.5 TB) is not a budget, so it falls back to the default like any
+# other unusable value.
 case "$PROJECT_NOTE_WARN_KB" in
   ''|*[!0-9]*) PROJECT_NOTE_WARN_KB=16 ;;
-  *) [ "$PROJECT_NOTE_WARN_KB" -gt 0 ] 2>/dev/null || PROJECT_NOTE_WARN_KB=16 ;;
+  *) [ "${#PROJECT_NOTE_WARN_KB}" -gt 7 ] && PROJECT_NOTE_WARN_KB=16
+     [ "$PROJECT_NOTE_WARN_KB" -gt 0 ] 2>/dev/null || PROJECT_NOTE_WARN_KB=16 ;;
 esac
 
 # --- pillar state -- parallel indexed arrays, bash 3.2 compatible -------------
@@ -1811,6 +1833,7 @@ SG_NAMES=()
 SG_STATUSES=()
 SG_EXITS=()              # integer, or the literal "null" for a gate never run
 SG_DETAILS=()
+SG_DROPPED=0             # registry entries past SUBGATE_MAX — named, never silent
 
 run_operator_subgates() {
   if [ "$SUBGATES_ENABLED" -eq 0 ]; then
@@ -1825,6 +1848,15 @@ run_operator_subgates() {
     SG_REASON="no AUDIT_SUBGATES_FILE configured in local.env"
     return
   fi
+  # ABSOLUTE paths only. The contract documents an absolute path, and resolving a
+  # relative one against the CALLER's cwd would make the same local.env execute a
+  # different file depending on where the audit was launched from — a
+  # cwd-dependent choice of what code to run is not a resolution rule, it is a
+  # hijack surface.
+  case "$SUBGATES_FILE" in
+    /*) ;;
+    *) SG_REASON="registry path is not absolute: $SUBGATES_FILE"; return ;;
+  esac
   if [ ! -f "$SUBGATES_FILE" ]; then
     SG_REASON="registry file not found: $SUBGATES_FILE"
     return
@@ -1837,12 +1869,28 @@ run_operator_subgates() {
     return
   fi
 
-  local line name cmd out rc detail
+  local line name cmd rc detail sg_outf sg_t0 sg_elapsed sg_pid sg_watch sg_seen=0
+  # Output goes to a FILE, never a command substitution. `$( )` waits for stdout
+  # EOF, and a gate that backgrounds a child (`sleep 15 &`) leaves that child
+  # holding the pipe long after the alarm kills the bounded shell — measured at
+  # 19s under a 1s ceiling, reported as `pass`. Waiting only on the bounded
+  # runner and reading the file afterwards makes the ceiling real. It also caps
+  # memory: a flooding gate fills a temp file that is read 512 bytes at a time,
+  # instead of a shell variable that grows without bound.
+  sg_outf="$(mktemp)"
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [ -z "$line" ] && continue
     case "$line" in '#'*) continue ;; esac
+    # Registry-wide bound: a runaway or generated registry must not turn a
+    # read-only diagnostic into an unbounded execution engine. Entries past the
+    # cap are COUNTED and named, never silently dropped.
+    sg_seen=$(( sg_seen + 1 ))
+    if [ "$sg_seen" -gt "$SUBGATE_MAX" ]; then
+      SG_DROPPED=$(( SG_DROPPED + 1 ))
+      continue
+    fi
     case "$line" in
       *=*) name="${line%%=*}"; cmd="${line#*=}" ;;
       # A line that names no command is REPORTED, not silently dropped: a typo
@@ -1859,16 +1907,42 @@ run_operator_subgates() {
       continue
     fi
 
-    out="$(perl -e 'my $t = shift; alarm $t; exec @ARGV or exit 127' \
-             "$SUBGATE_TIMEOUT" /bin/sh -c "$cmd" 2>&1)"
-    rc=$?
-    detail="$(printf '%s' "$out" | LC_ALL=C head -n 1 | LC_ALL=C cut -c 1-200)"
+    # DRIVER-SIDE WATCHDOG over a dedicated PROCESS GROUP. An in-process alarm
+    # (`perl -e 'alarm N; exec …'`) is not a bound at all against a gate that
+    # runs `trap '' ALRM` — the exec'd shell inherits the ignore and the audit
+    # hangs past the ceiling — and it leaves a gate's descendants running when
+    # it does fire. `setpgrp` puts the gate in its own group, so the enforcement
+    # lives OUTSIDE the process being bounded and TERM/KILL reach the whole
+    # tree, workers included. The watchdog is a single perl process (not a
+    # subshell around `sleep`, which would strand its own child), itself in its
+    # own group, so cancelling it on the fast path leaves nothing behind.
+    : > "$sg_outf"
+    sg_t0="$(date +%s)"
+    perl -e 'setpgrp; exec @ARGV or exit 127' /bin/sh -c "$cmd" > "$sg_outf" 2>&1 &
+    sg_pid=$!
+    perl -e 'setpgrp; my ($t, $pg) = @ARGV; sleep $t; kill("TERM", -$pg); sleep 2; kill("KILL", -$pg);' \
+      "$SUBGATE_TIMEOUT" "$sg_pid" >/dev/null 2>&1 &
+    sg_watch=$!
+    wait "$sg_pid"; rc=$?
+    sg_elapsed=$(( $(date +%s) - sg_t0 ))
+    kill "$sg_watch" 2>/dev/null
+    wait "$sg_watch" 2>/dev/null
+    # BOUNDED read: at most 512 bytes off the front, then its first line, then a
+    # 200-char cut. A gate that emits gigabytes on one line can neither exhaust
+    # memory here nor stall the read.
+    detail="$(LC_ALL=C head -c 512 "$sg_outf" 2>/dev/null | LC_ALL=C head -n 1 | LC_ALL=C cut -c 1-200)"
     SG_NAMES+=("$name")
     if [ "$rc" -eq 0 ]; then
+      # A completed, successful run is a pass no matter how long it took — the
+      # ceiling bounds hanging, it does not fail slow-but-finished work.
       SG_STATUSES+=("pass"); SG_EXITS+=("0")
       [ -n "$detail" ] || detail="(no output)"
-    elif [ "$rc" -eq 142 ]; then
-      # perl dies on SIGALRM -> 128+14. Reported as this gate's OWN error; the
+    elif [ "$sg_elapsed" -ge "$SUBGATE_TIMEOUT" ]; then
+      # The WALL CLOCK is the timeout signal, never an exit code: a killed gate
+      # reports 143 (TERM), 137 (KILL), or whatever its own trap chose, and 142
+      # is a code a gate may legitimately exit with. Only a run that actually
+      # reached the ceiling is a timeout; a fast `exit 142` stays an ordinary
+      # failure carrying its own code. Reported as this gate's OWN error; the
       # audit itself still exits 0.
       SG_STATUSES+=("error"); SG_EXITS+=("null")
       detail="timed out after ${SUBGATE_TIMEOUT}s"
@@ -1878,6 +1952,7 @@ run_operator_subgates() {
     fi
     SG_DETAILS+=("$detail")
   done < "$SUBGATES_FILE"
+  rm -f "$sg_outf"
 
   if [ "${#SG_NAMES[@]}" -eq 0 ]; then
     # A registry that registers nothing is a named skip, not a silent clean run.
@@ -1903,6 +1978,10 @@ emit_subgates_markdown() {
       printf -- '- %s: %s — %s\n' "${SG_NAMES[$i]}" "${SG_STATUSES[$i]}" "${SG_DETAILS[$i]}"
     fi
   done
+  if [ "$SG_DROPPED" -gt 0 ]; then
+    printf -- '- _(skipped — registry capped at %s gate(s); %s further entr(y/ies) not run)_\n' \
+      "$SUBGATE_MAX" "$SG_DROPPED"
+  fi
   printf 'Informational only; never scored — operator-authored gates never move the pillar scores above.\n'
 }
 
@@ -2221,11 +2300,14 @@ emit_json() {
         --arg detail "${SG_DETAILS[$sg_i]}" \
         '. += [{name: $name, status: $status, exit_code: $exit_code, detail: $detail}]')"
     done
+    # `dropped` is appended LAST inside this object for the same
+    # positional-stability reason the object itself is appended last.
     sg_json="$(jq -n \
       --arg registry "$SUBGATES_FILE" \
       --argjson timeout_seconds "$SUBGATE_TIMEOUT" \
       --argjson gates "$sg_gates" \
-      '{registry: $registry, timeout_seconds: $timeout_seconds, scored: false, gates: $gates}')"
+      --argjson dropped "$SG_DROPPED" \
+      '{registry: $registry, timeout_seconds: $timeout_seconds, scored: false, gates: $gates, dropped: $dropped}')"
   fi
 
   jq -n \

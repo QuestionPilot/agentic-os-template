@@ -2286,3 +2286,185 @@ _test_project_note_body_budget() {
   unset -f run
 }
 _test_project_note_body_budget
+
+# --- operator sub-gates: bounding an ADVERSARIAL gate --------------------------
+# The first bound here was an in-process `perl -e 'alarm N; exec …'`. It is not a
+# bound at all against two ordinary shell behaviours, and both were measured:
+#   (a) a gate that runs `trap '' ALRM` inherits the ignore across the exec and
+#       runs to completion, ceiling or not;
+#   (b) a gate that backgrounds a child left the driver's command substitution
+#       waiting on that child's stdout EOF — 19s under a 1s ceiling, reported
+#       `pass`.
+# The bound is now a driver-side watchdog over a dedicated PROCESS GROUP:
+# enforcement lives outside the process being bounded, and TERM/KILL reach the
+# whole tree. These fixtures are the regression anchors for that.
+_test_operator_subgates_bounding() {
+  command -v jq >/dev/null 2>&1 || { _skip "operator sub-gates bounding" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local reg="$fixture/subgates.txt"
+  printf 'AUDIT_SUBGATES_FILE=%s\n' "$reg" > "$fixture/local.env"
+
+  local run_json t0 elapsed out rc
+  run_json() { SELF_AUDIT_SUBGATE_TIMEOUT="$1" bash "$REPO_ROOT/scripts/self-audit.sh" \
+                 --repo-root "$fixture" --json 2>/dev/null; }
+
+  # (a) SIGALRM-ignoring gate. The ceiling must still hold.
+  printf "trapper = trap '' ALRM; sleep 20\n" > "$reg"
+  t0="$(date +%s)"
+  out="$(run_json 2)"
+  elapsed=$(( $(date +%s) - t0 ))
+  assert_eq "sub-gate bounding: a SIGALRM-ignoring gate is still bounded and reported as a timeout" \
+    "trapper|error|timed out after 2s" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.detail)"')"
+  # Generous ceiling — this asserts the bound EXISTS, not a performance number.
+  if [ "$elapsed" -lt 15 ]; then
+    _pass "sub-gate bounding: the SIGALRM-ignoring gate returns near its ceiling, not near its sleep (${elapsed}s)"
+  else
+    _fail "sub-gate bounding: the SIGALRM-ignoring gate returns near its ceiling, not near its sleep" \
+      "elapsed=${elapsed}s — the ceiling did not hold"
+  fi
+
+  # (b) The measured regression: a gate that backgrounds a child and then
+  # EXITS. The old command-substitution capture waited on the orphan's stdout
+  # EOF — 19s under a 1s ceiling — and reported `pass`. The gate's own output
+  # must still be captured on this fast path.
+  # The sentinel is unique per run: a machine-global `pgrep` pattern would let
+  # any unrelated process on the box decide this assertion.
+  local sentinel="sa-subgate-probe-$$-$(date +%s)"
+  printf "bg = printf 'started\\\\n'; sh -c 'exec -a %s sleep 47' &\n" "$sentinel" > "$reg"
+  t0="$(date +%s)"
+  out="$(run_json 2)"
+  elapsed=$(( $(date +%s) - t0 ))
+  if [ "$elapsed" -lt 15 ]; then
+    _pass "sub-gate bounding: a backgrounded child does not hold the driver past the ceiling (${elapsed}s)"
+  else
+    _fail "sub-gate bounding: a backgrounded child does not hold the driver past the ceiling" \
+      "elapsed=${elapsed}s — the driver waited on the orphan's stdout EOF"
+  fi
+  assert_eq "sub-gate bounding: a fast-exiting gate's own output is still captured" \
+    "started" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0].detail')"
+  pkill -f "$sentinel" >/dev/null 2>&1
+
+  # (b2) Process-group kill: a TIMED-OUT gate's descendants die with it.
+  # Without the group kill the bound leaks a process per timed-out gate, run
+  # after run.
+  sentinel="sa-subgate-orphan-$$-$(date +%s)"
+  printf "bg2 = sh -c 'exec -a %s sleep 47' & sleep 20\n" "$sentinel" > "$reg"
+  out="$(run_json 2)"
+  assert_eq "sub-gate bounding: a gate held open by a foreground sleep times out" \
+    "error" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0].status')"
+  if pgrep -f "$sentinel" >/dev/null 2>&1; then
+    _fail "sub-gate bounding: a timed-out gate's descendants are killed with its process group" \
+      "the $sentinel descendant outlived the gate"
+    pkill -f "$sentinel" >/dev/null 2>&1
+  else
+    _pass "sub-gate bounding: a timed-out gate's descendants are killed with its process group"
+  fi
+
+  # (c) A flooding gate: bounded in TIME by the watchdog and in MEMORY by the
+  # file capture + 512-byte read. The audit still exits 0.
+  printf "flood = yes AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n" > "$reg"
+  out="$(run_json 2)"; rc=$?
+  assert_eq "sub-gate bounding: a flooding gate does not fail the audit" 0 "$rc"
+  assert_eq "sub-gate bounding: a flooding gate is bounded and reported as a timeout" \
+    "error|timed out after 2s" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.status)|\(.detail)"')"
+
+  # (d) A gate that exits 142 FAST is an ordinary failure, not a timeout: the
+  # wall clock is the timeout signal, never an exit code (the runner's own
+  # SIGALRM/SIGTERM codes are in that same range).
+  printf "e142 = exit 142\n" > "$reg"
+  out="$(run_json 30)"
+  assert_eq "sub-gate bounding: a genuine fast exit 142 is a fail with its code, not a timeout" \
+    "e142|fail|142" \
+    "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.exit_code)"')"
+
+  # (e) Registry-wide cap: 64 entries run, the rest are NAMED, never silent.
+  : > "$reg"
+  local i=1
+  while [ "$i" -le 70 ]; do printf 'gate-%s = true\n' "$i" >> "$reg"; i=$((i+1)); done
+  out="$(run_json 30)"
+  assert_eq "sub-gate bounding: the registry cap runs exactly 64 gates" \
+    "64" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates | length')"
+  assert_eq "sub-gate bounding: entries past the cap are COUNTED, never silently dropped" \
+    "6" "$(printf '%s' "$out" | jq -r '.operator_subgates.dropped')"
+  local md
+  md="$(SELF_AUDIT_SUBGATE_TIMEOUT=30 bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  assert_contains "sub-gate bounding: the cap is a NAMED skip line in the markdown" \
+    "$md" "registry capped at 64 gate(s); 6 further entr(y/ies) not run"
+
+  rm -rf "$fixture"
+  unset -f run_json
+}
+_test_operator_subgates_bounding
+
+# --- knob arithmetic: an over-large budget must not WRAP -----------------------
+# `$(( KB * 1024 ))` is 64-bit signed: 18014398509481984 KB wraps the product to
+# 0, so every note on disk lands "over budget". The knob an operator typed to
+# make the check QUIETER would instead fire it on a 62-byte note and take 2
+# points off Pillar 2 — a silent inversion of the operator's intent.
+_test_project_note_budget_knob_overflow() {
+  command -v jq >/dev/null 2>&1 || { _skip "body budget knob overflow" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local mem="$fixture/memory"; mkdir -p "$mem"
+  printf -- '---\nmetadata:\n  type: project\n---\ntiny\n' > "$mem/project-tiny.md"
+  printf 'project-tiny.md\n' > "$mem/MEMORY.md"
+
+  local base over_flag over_env
+  base="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --memory-dir "$mem" --json 2>/dev/null)"
+  over_flag="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+               --memory-dir "$mem" --project-note-warn-kb 18014398509481984 --json 2>/dev/null)"
+  # Same value through the local.env DATA path, which has no flag parsing in
+  # front of it — the knob must be validated where it is USED, not at the flag.
+  printf 'PROJECT_NOTE_BODY_WARN_KB=18014398509481984\n' > "$fixture/local.env"
+  over_env="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" \
+              --memory-dir "$mem" --json 2>/dev/null)"
+
+  assert_eq "body budget: an overflowing knob (flag) raises NO gap on a tiny note" \
+    "0" "$(printf '%s' "$over_flag" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+  assert_eq "body budget: an overflowing knob (flag) leaves the memory pillar untouched" \
+    "$(_sa_pillar_score "$base" memory-hygiene)" "$(_sa_pillar_score "$over_flag" memory-hygiene)"
+  assert_eq "body budget: an overflowing knob via local.env raises NO gap either" \
+    "0" "$(printf '%s' "$over_env" | jq -r '[ .gaps[] | select(.title == "Project-type note body over budget") ] | length')"
+
+  rm -rf "$fixture"
+}
+_test_project_note_budget_knob_overflow
+
+# --- twin parity: mixed-case scan order ---------------------------------------
+# The gap detail lists offenders in SCAN order. bash walks `find | LC_ALL=C sort`
+# (ordinal, case-sensitive) and the PS twin used `Sort-Object Name` (culture,
+# case-INsensitive), so a store holding both `project-A…` and `project-b…`
+# ordered them differently and the two twins stopped emitting identical details.
+# This fixture pins the bash side of that contract; its PS twin pins the other.
+_test_body_budget_mixed_case_order() {
+  command -v jq >/dev/null 2>&1 || { _skip "body budget mixed-case order" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local mem="$fixture/memory"; mkdir -p "$mem"
+  local big; big="$(LC_ALL=C awk 'BEGIN { while (i++ < 400) printf "%s\n", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }')"
+  # Two names that a CASE-SENSITIVE byte sort and a culture sort order
+  # differently ('B' = 0x42 sorts before 'a' = 0x61; a culture sort puts alpha
+  # first). Deliberately NOT a case-only pair — a case-insensitive filesystem
+  # would collapse those into one file and the fixture would prove nothing.
+  local n
+  for n in project-Beta.md project-alpha.md; do
+    { printf -- '---\nmetadata:\n  type: project\n---\n'; printf '%s\n' "$big"; } > "$mem/$n"
+  done
+  printf 'project-Beta.md project-alpha.md\n' > "$mem/MEMORY.md"
+
+  local out detail
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+        --memory-dir "$mem" --json 2>/dev/null)"
+  detail="$(printf '%s' "$out" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail')"
+  # Byte order: uppercase sorts before lowercase, so Beta precedes alpha.
+  assert_eq "body budget: offenders are listed in ORDINAL byte order, not culture order" \
+    "project-Beta.md project-alpha.md" \
+    "$(printf '%s' "$detail" | LC_ALL=C tr ',' '\n' | LC_ALL=C sed 's|.*/||; s|=.*||' | LC_ALL=C tr '\n' ' ' | LC_ALL=C sed 's/ *$//')"
+
+  rm -rf "$fixture"
+}
+_test_body_budget_mixed_case_order

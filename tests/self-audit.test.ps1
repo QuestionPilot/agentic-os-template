@@ -1992,3 +1992,133 @@ Assert-Eq 'self-audit.test: body budget two oversize notes still deduct exactly 
 Assert-Eq 'self-audit.test: body budget both oversize notes are named in the single gap' `
     'True' "$((Get-PnbGaps $pnbTwo)[0].detail.StartsWith('2 project-type'))"
 Remove-Item -LiteralPath $pnbFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- operator sub-gates: bounding + a job that never runs ---------------------
+# The bash twin's bound had to be rebuilt around a process group (its in-process
+# alarm was defeated by `trap '' ALRM` and by backgrounded children). Wait-Job
+# has no such ambiguity, so what this twin pins is the OTHER half: a job that
+# fails or returns nothing must be an ERROR, never a pass. Seeding the exit code
+# to 0 and falling through reported a runner that never ran as a clean
+# `pass "(no output)"` — the loudest failure as the quietest success.
+$sgbFixture = New-SaTmp
+New-SaFixtureRepo $sgbFixture
+$sgbReg = Join-Path $sgbFixture 'subgates.txt'
+Write-LfFile (Join-Path $sgbFixture 'local.env') "AUDIT_SUBGATES_FILE=$sgbReg`n"
+
+function Invoke-SaSubgate {
+    param([string]$Timeout = '30')
+    $prev = $env:SELF_AUDIT_SUBGATE_TIMEOUT
+    $env:SELF_AUDIT_SUBGATE_TIMEOUT = $Timeout
+    try { return (Invoke-SelfAudit @('--repo-root', $sgbFixture, '--json') | ConvertFrom-Json) }
+    finally {
+        if ($null -eq $prev) { Remove-Item Env:\SELF_AUDIT_SUBGATE_TIMEOUT -ErrorAction SilentlyContinue }
+        else { $env:SELF_AUDIT_SUBGATE_TIMEOUT = $prev }
+    }
+}
+
+# A job that cannot produce an exit status. `exit` inside the job's own runspace
+# ends the job before it emits $LASTEXITCODE, so Receive-Job yields nothing —
+# the exact shape a crashed or unspawnable runner produces.
+Write-LfFile $sgbReg "crasher = exit 7`n"
+$sgbCrash = Invoke-SaSubgate '30'
+Assert-NotContains 'self-audit.test: sub-gate bounding a job with no exit status is never reported as pass' `
+    "$($sgbCrash.operator_subgates.gates[0].status)" 'pass'
+Assert-Eq 'self-audit.test: sub-gate bounding a nonzero gate is fail or error, never silently clean' `
+    'True' "$(@('fail','error') -contains $sgbCrash.operator_subgates.gates[0].status)"
+
+# A hanging gate is bounded and reported as this gate's OWN error.
+Write-LfFile $sgbReg "hang = Start-Sleep -Seconds 30`n"
+$sgbT0 = Get-Date
+$sgbHang = Invoke-SaSubgate '2'
+$sgbElapsed = ((Get-Date) - $sgbT0).TotalSeconds
+Assert-Eq 'self-audit.test: sub-gate bounding a hanging gate is bounded and reported as a timeout' `
+    'error|timed out after 2s' `
+    "$($sgbHang.operator_subgates.gates[0].status)|$($sgbHang.operator_subgates.gates[0].detail)"
+Assert-Eq 'self-audit.test: sub-gate bounding the hanging gate returns near its ceiling, not near its sleep' `
+    'True' "$($sgbElapsed -lt 25)"
+
+# A flooding gate: bounded in TIME by Wait-Job and in MEMORY by the file capture
+# + 512-byte bounded read (never Out-String accumulation). The audit exits 0.
+Write-LfFile $sgbReg "flood = while (`$true) { Write-Output ('A' * 200) }`n"
+$sgbFloodRaw = & pwsh -NoProfile -File $SA_SCRIPT '--repo-root' $sgbFixture '--json' 2>$null
+$sgbFloodRc = $LASTEXITCODE
+Assert-Eq 'self-audit.test: sub-gate bounding a flooding gate does not fail the audit' 0 $sgbFloodRc
+
+# A genuine fast exit 142: an ordinary failure carrying its code. (The bash twin
+# must disambiguate this from its runner's own SIGALRM code by wall clock; here
+# Wait-Job returns a distinct false, so no exit code can impersonate a timeout —
+# the twin asymmetry is deliberate.)
+Write-LfFile $sgbReg "e142 = exit 142`n"
+$sgb142 = Invoke-SaSubgate '30'
+Assert-Eq 'self-audit.test: sub-gate bounding a genuine fast exit 142 is a fail with its code, not a timeout' `
+    'e142|fail|142' `
+    "$($sgb142.operator_subgates.gates[0].name)|$($sgb142.operator_subgates.gates[0].status)|$($sgb142.operator_subgates.gates[0].exit_code)"
+
+# Registry-wide cap: 64 entries run, the rest are NAMED, never silent.
+$sgbLines = New-Object System.Text.StringBuilder
+for ($i = 1; $i -le 70; $i++) { [void]$sgbLines.AppendLine("gate-$i = exit 0") }
+Write-LfFile $sgbReg $sgbLines.ToString()
+$sgbCap = Invoke-SaSubgate '30'
+Assert-Eq 'self-audit.test: sub-gate bounding the registry cap runs exactly 64 gates' `
+    64 @($sgbCap.operator_subgates.gates).Count
+Assert-Eq 'self-audit.test: sub-gate bounding entries past the cap are COUNTED, never silently dropped' `
+    6 $sgbCap.operator_subgates.dropped
+$sgbCapMd = Invoke-SelfAudit @('--repo-root', $sgbFixture)
+Assert-Contains 'self-audit.test: sub-gate bounding the cap is a NAMED skip line in the markdown' `
+    $sgbCapMd 'registry capped at 64 gate(s); 6 further entr(y/ies) not run'
+Remove-Item -LiteralPath $sgbFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- knob arithmetic: an over-large budget must not WRAP -----------------------
+# The bash twin computes `$(( KB * 1024 ))` in 64-bit signed arithmetic, where
+# 18014398509481984 KB wraps the product to 0 and every note on disk lands "over
+# budget" — the knob an operator typed to make the check QUIETER fires it on a
+# 62-byte note instead. Both twins bound the accepted digit length so the two
+# agree, and this fixture pins the PS side of that agreement.
+$knobFixture = New-SaTmp
+New-SaFixtureRepo $knobFixture
+$knobMem = Join-Path $knobFixture 'memory'
+New-Item -ItemType Directory -Path $knobMem -Force | Out-Null
+Write-LfFile (Join-Path $knobMem 'project-tiny.md') "---`nmetadata:`n  type: project`n---`ntiny`n"
+Write-LfFile (Join-Path $knobMem 'MEMORY.md') "project-tiny.md`n"
+
+$knobBase = Invoke-SelfAudit @('--isolated', '--repo-root', $knobFixture, '--memory-dir', $knobMem, '--json') | ConvertFrom-Json
+$knobFlag = Invoke-SelfAudit @('--isolated', '--repo-root', $knobFixture, '--memory-dir', $knobMem,
+    '--project-note-warn-kb', '18014398509481984', '--json') | ConvertFrom-Json
+# Same value through the local.env DATA path, which has no flag parsing in front
+# of it — the knob must be validated where it is USED, not at the flag.
+Write-LfFile (Join-Path $knobFixture 'local.env') "PROJECT_NOTE_BODY_WARN_KB=18014398509481984`n"
+$knobEnv = Invoke-SelfAudit @('--repo-root', $knobFixture, '--memory-dir', $knobMem, '--json') | ConvertFrom-Json
+
+Assert-Eq 'self-audit.test: body budget an overflowing knob (flag) raises NO gap on a tiny note' `
+    0 @($knobFlag.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' }).Count
+Assert-Eq 'self-audit.test: body budget an overflowing knob (flag) leaves the memory pillar untouched' `
+    "$($knobBase.pillars.'memory-hygiene'.score)" "$($knobFlag.pillars.'memory-hygiene'.score)"
+Assert-Eq 'self-audit.test: body budget an overflowing knob via local.env raises NO gap either' `
+    0 @($knobEnv.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' }).Count
+Remove-Item -LiteralPath $knobFixture -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- twin parity: mixed-case scan order ---------------------------------------
+# The gap detail lists offenders in SCAN order. bash walks `find | LC_ALL=C sort`
+# (ordinal, case-sensitive); this twin used `Sort-Object Name` (culture,
+# case-INsensitive), so a store holding both `project-Beta…` and `project-alpha…`
+# ordered them differently and the two twins stopped emitting identical details.
+$mcFixture = New-SaTmp
+New-SaFixtureRepo $mcFixture
+$mcMem = Join-Path $mcFixture 'memory'
+New-Item -ItemType Directory -Path $mcMem -Force | Out-Null
+$mcBody = ("---`nmetadata:`n  type: project`n---`n" + (('x' * 50 + "`n") * 400))
+# Deliberately NOT a case-only pair — a case-insensitive filesystem would
+# collapse those into one file and the fixture would prove nothing.
+foreach ($mcName in @('project-Beta.md', 'project-alpha.md')) {
+    Write-LfFile (Join-Path $mcMem $mcName) $mcBody
+}
+Write-LfFile (Join-Path $mcMem 'MEMORY.md') "project-Beta.md project-alpha.md`n"
+$mcOut = Invoke-SelfAudit @('--isolated', '--repo-root', $mcFixture, '--memory-dir', $mcMem, '--json') | ConvertFrom-Json
+$mcDetail = @($mcOut.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' })[0].detail
+$mcOrder = (@(($mcDetail -split ',') | ForEach-Object {
+    $t = $_.Trim(); $t = ($t -split '=')[0]; [System.IO.Path]::GetFileName($t)
+} | Where-Object { $_ -like 'project-*' }) -join ' ')
+# Byte order: uppercase sorts before lowercase, so Beta precedes alpha.
+Assert-Eq 'self-audit.test: body budget offenders are listed in ORDINAL byte order, not culture order' `
+    'project-Beta.md project-alpha.md' $mcOrder
+Remove-Item -LiteralPath $mcFixture -Recurse -Force -ErrorAction SilentlyContinue

@@ -163,6 +163,7 @@ function Test-OrientSchema($doc) {
     if (@('safe', 'tightened') -notcontains $doc.safety.posture) { return 'BAD' }
     if (-not (_Str $doc.safety 'detection')) { return 'BAD' }
     if (@('state-files', 'none-configured') -notcontains $doc.safety.detection) { return 'BAD' }
+    if (-not (_Has $doc.safety 'unresolved')) { return 'BAD' }
     if (-not (_Arr $doc.safety 'tightenings')) { return 'BAD' }
     foreach ($t in @($doc.safety.tightenings)) {
         foreach ($f in @('name', 'path', 'detail')) { if (-not (_Str $t $f)) { return 'BAD' } }
@@ -513,8 +514,8 @@ $OS1 = New-OrientTmp; $stubS = New-OrientStub $OS1; Copy-OrientFixtures $OS1
 $r = Invoke-Orient $stubS
 Assert-Eq 'orient: no guardrail state configured still exits 0' 0 $r.Rc
 Assert-Eq 'orient: no guardrail state configured reports safe/none-configured' `
-    'safe none-configured 0' `
-    (@($r.Doc.safety.posture, $r.Doc.safety.detection, (@($r.Doc.safety.tightenings).Count).ToString()) -join ' ')
+    'safe none-configured 0 0' `
+    (@($r.Doc.safety.posture, $r.Doc.safety.detection, (@($r.Doc.safety.tightenings).Count).ToString(), "$($r.Doc.safety.unresolved)") -join ' ')
 
 $OSF = New-OrientTmp
 [System.IO.File]::WriteAllText((Join-Path $OSF 'scope.state'), "edits frozen to the work dir`n")
@@ -548,11 +549,67 @@ Assert-Eq 'orient: only the first line of a state file becomes the detail' `
     (@($r.Doc.safety.tightenings)[1].detail)
 
 # The key can only ADD tightenings: there is no configured value that reports a
-# posture looser than the default.
+# posture looser than the default. But "configured and inactive" must NOT read
+# as "nothing configured" — the unresolved count is what keeps a broken
+# guardrail wiring from presenting as a clean default-safe run.
 $env:GUARDRAIL_STATE_FILES = @((Join-Path $OSF 'empty.state'), (Join-Path $OSF 'nope.state')) -join ','
 $r = Invoke-Orient $stubS
 Assert-Eq 'orient: configured-but-inactive guardrails still report the safe floor' `
     'safe' $r.Doc.safety.posture
+Assert-Eq 'orient: configured-but-unresolved paths are COUNTED, not silently equal to unconfigured' `
+    'state-files 2' "$($r.Doc.safety.detection) $($r.Doc.safety.unresolved)"
+
+# A RELATIVE path is never resolved against the caller's cwd — a posture that
+# changes with the launch directory is not a detected posture. It counts as
+# unresolved, exactly like a missing one.
+$env:GUARDRAIL_STATE_FILES = 'scope.state'
+$osPrevCwd = (Get-Location).Path
+Set-Location -LiteralPath $OSF
+try { $r = Invoke-Orient $stubS } finally { Set-Location -LiteralPath $osPrevCwd }
+Assert-Eq 'orient: a relative guardrail path is unresolved, never cwd-resolved' `
+    'safe 0 1' `
+    (@($r.Doc.safety.posture, (@($r.Doc.safety.tightenings).Count).ToString(), "$($r.Doc.safety.unresolved)") -join ' ')
+
+# PER-ENTRY quotes: the local.env read strips one pair from the WHOLE value, so
+# individually-quoted paths arrive here still quoted. Both must still resolve.
+$env:GUARDRAIL_STATE_FILES = ('"' + (Join-Path $OSF 'scope.state') + '", "' + (Join-Path $OSF 'careful.state') + '"')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: individually-quoted paths are both detected, not silently corrupted' `
+    'tightened 2 0' `
+    (@($r.Doc.safety.posture, (@($r.Doc.safety.tightenings).Count).ToString(), "$($r.Doc.safety.unresolved)") -join ' ')
+
+# DETAIL HARDENING. A control character in a state file must not ride into
+# model-facing orient output.
+[System.IO.File]::WriteAllText((Join-Path $OSF 'ctl.state'),
+    ("scope active" + [char]27 + "[31mRED" + [char]7 + " tail`nsecond line`n"))
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'ctl.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: control characters are stripped from a state-file detail' `
+    'scope active[31mRED tail' (@($r.Doc.safety.tightenings)[0].detail)
+Assert-Eq 'orient: a control-char state file still satisfies the schema' 'ok' (Test-OrientSchema $r.Doc)
+
+# A first line LONGER than the truncation limit and made of MULTI-BYTE text: the
+# bash twin's byte-offset truncate must not split a UTF-8 sequence, because an
+# invalid tail makes its JSON assembler drop the record — and a dropped
+# tightening reports `safe` for a run that is tightened. Both twins apply the
+# same printable filter so the two details stay identical.
+$osAccent = [string][char]0x00E9
+[System.IO.File]::WriteAllText((Join-Path $OSF 'multi.state'), (($osAccent * 200) + "`n"))
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'multi.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: an over-long multibyte first line still exits 0' 0 $r.Rc
+Assert-Eq 'orient: an over-long multibyte detail never drops the tightening' `
+    'tightened 1' "$($r.Doc.safety.posture) $(@($r.Doc.safety.tightenings).Count)"
+Assert-Eq 'orient: a multibyte detail still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
+
+# A multi-GB newline-free state file must not stall the kickoff: the read is
+# bounded before the first-line split. Size is modest here (the bound is 512
+# bytes) — what is pinned is that the detail is TRUNCATED, not whole-file read.
+[System.IO.File]::WriteAllText((Join-Path $OSF 'huge.state'), ('z' * 4000))
+$env:GUARDRAIL_STATE_FILES = (Join-Path $OSF 'huge.state')
+$r = Invoke-Orient $stubS
+Assert-Eq 'orient: a newline-free state file yields a bounded 120-char detail' `
+    120 (@($r.Doc.safety.tightenings)[0].detail.Length)
 Remove-Item Env:\GUARDRAIL_STATE_FILES -ErrorAction SilentlyContinue
 
 # ============================ TELEMETRY ======================================

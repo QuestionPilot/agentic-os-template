@@ -33,14 +33,21 @@
 # SAFETY POSTURE (appended last but one; schema id unchanged — additive).
 #   {posture: "safe"|"tightened",
 #    tightenings: [{name, path, detail}],
-#    detection: "state-files"|"none-configured"}
+#    detection: "state-files"|"none-configured",
+#    unresolved: <int>}
 # The kickoff line this feeds must report what was DETECTED, not what policy
 # declares. Detection reads $GUARDRAIL_STATE_FILES — a comma-separated list of
-# absolute paths to the session-guardrail state files an operator's guardrail
+# ABSOLUTE paths to the session-guardrail state files an operator's guardrail
 # skill writes, from local.env (read as DATA, never sourced) then the ambient
 # env. Each configured path that exists and is NON-EMPTY is one tightening:
-# name = its basename, detail = its first line (truncated ~120 chars). No key
-# configured → posture "safe", detection "none-configured".
+# name = its basename, detail = its first line (bounded read, control characters
+# stripped, truncated ~120 chars). No key configured → posture "safe",
+# detection "none-configured".
+#
+# `unresolved` counts configured paths that produced NO tightening — missing,
+# empty, or not absolute. "Nothing configured" and "configured but nothing in
+# force" are different states with different next actions; reporting both as a
+# bare "safe" is how broken guardrail wiring reads as a clean default.
 #
 # The key can only ADD tightenings to the default-safe posture: there is no
 # value of it that reports a LOOSER posture than "safe", so a hostile or stale
@@ -446,6 +453,12 @@ GUARD_SPEC=""
 
 SAFETY_POSTURE="safe"
 SAFETY_DETECTION="none-configured"
+# Configured paths that did NOT resolve into a tightening — missing, empty, or
+# not absolute. Reported as its own count because "no guardrails configured" and
+# "guardrails configured but none in force" are different states with different
+# next actions, and collapsing them is how a run reads a broken guardrail wiring
+# as a clean default-safe posture.
+SAFETY_UNRESOLVED=0
 if [ -n "$GUARD_SPEC" ]; then
   SAFETY_DETECTION="state-files"
   # LC_ALL=C on the split + trim + truncation: this is byte-oriented handling of
@@ -457,10 +470,45 @@ if [ -n "$GUARD_SPEC" ]; then
   # silently reporting `safe` for a run that is in fact tightened.
   while IFS= read -r gpath || [ -n "$gpath" ]; do
     [ -n "$gpath" ] || continue
+    # PER-ENTRY quote stripping. The local.env read strips one quote pair from
+    # the WHOLE value, so an operator who quotes each path individually
+    # (`"/a.state", "/b.state"`) hands every entry here still wearing its own
+    # quotes — each one then fails the absolute-path test and detection dies
+    # silently on a config that looks perfectly reasonable in the file.
+    case "$gpath" in
+      \"*\") gpath="${gpath#\"}"; gpath="${gpath%\"}" ;;
+      \'*\') gpath="${gpath#\'}"; gpath="${gpath%\'}" ;;
+    esac
+    [ -n "$gpath" ] || continue
+    # ABSOLUTE only. The contract documents absolute paths, and resolving a
+    # relative one against the CALLER's cwd would make the same configuration
+    # detect a different file depending on where the session started — a posture
+    # that changes with the launch directory is not a detected posture.
+    case "$gpath" in
+      /*) ;;
+      *) SAFETY_UNRESOLVED=$(( SAFETY_UNRESOLVED + 1 )); continue ;;
+    esac
     # A configured path that does not exist, or exists but is EMPTY, is not a
     # tightening — a guardrail skill writes state only while a scope is active.
-    [ -f "$gpath" ] && [ -s "$gpath" ] || continue
-    gdetail="$(LC_ALL=C head -n 1 "$gpath" 2>/dev/null | LC_ALL=C cut -c 1-120)"
+    if [ ! -f "$gpath" ] || [ ! -s "$gpath" ]; then
+      SAFETY_UNRESOLVED=$(( SAFETY_UNRESOLVED + 1 ))
+      continue
+    fi
+    # BOUNDED + SANITIZED TO PRINTABLE ASCII. `head -c 512` first: a multi-GB
+    # newline-free state file must not stall the kickoff on a line read that
+    # never ends. Then `tr -cd '[:print:]'` (LC_ALL=C: 0x20-0x7E) — this string
+    # is model-facing orient output, so a terminal escape or prompt-shaped
+    # garbage must not ride into it.
+    #
+    # Filtering to ASCII rather than merely dropping control bytes is what makes
+    # the following byte-offset `cut` SAFE. A 120-BYTE cut through a multi-byte
+    # UTF-8 sequence leaves an invalid tail; `jq --arg` then errors, the
+    # tightening record is never written, and the posture silently reports
+    # `safe` for a run that IS tightened — a sanitizer that disables the guard
+    # it was protecting. Post-filter every byte is one ASCII character, so the
+    # cut can never split a sequence.
+    gdetail="$(LC_ALL=C head -c 512 "$gpath" 2>/dev/null | LC_ALL=C head -n 1 \
+               | LC_ALL=C tr -cd '[:print:]' | LC_ALL=C cut -c 1-120)"
     jq -nc --arg name "$(basename "$gpath")" --arg path "$gpath" --arg detail "$gdetail" \
       '{name:$name, path:$path, detail:$detail}' >> "$GUARD_OUT"
     SAFETY_POSTURE="tightened"
@@ -471,7 +519,8 @@ fi
 SAFETY_JSON="$(jq -n --arg posture "$SAFETY_POSTURE" \
                      --arg detection "$SAFETY_DETECTION" \
                      --slurpfile tightenings "$GUARD_OUT" \
-  '{posture:$posture, tightenings:($tightenings // []), detection:$detection}')"
+                     --argjson unresolved "$SAFETY_UNRESOLVED" \
+  '{posture:$posture, tightenings:($tightenings // []), detection:$detection, unresolved:$unresolved}')"
 
 if [ "$TELEMETRY_OK" -eq 1 ]; then
   _mib='null'
