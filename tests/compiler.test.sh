@@ -232,14 +232,17 @@ if [ -f "$pl_out/settings.json" ]; then
     "$(jq -r '.theme // "null"' "$pl_out/settings.json")"
   assert_eq "fresh install ships no effortLevel (spine-only base)" "null" \
     "$(jq -r '.effortLevel // "null"' "$pl_out/settings.json")"
+  assert_eq "fresh install ships no outputStyle (spine-only base)" "null" \
+    "$(jq -r '.outputStyle // "null"' "$pl_out/settings.json")"
   # Operator enables a plugin, sets a notif preference, and sets cost/UI
-  # preferences (theme, effortLevel) in their LOCAL config. theme uses a
-  # non-default value ("dark") so the assertion proves the OPERATOR's value is
-  # carried, not a base default re-asserted.
+  # preferences (theme, effortLevel, outputStyle) in their LOCAL config. theme
+  # uses a non-default value ("dark") so the assertion proves the OPERATOR's
+  # value is carried, not a base default re-asserted.
   jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true
       | .agentPushNotifEnabled = false
       | .theme = "dark"
-      | .effortLevel = "xhigh"' \
+      | .effortLevel = "xhigh"
+      | .outputStyle = "Test Style"' \
     "$pl_out/settings.json" > "$pl_out/settings.json.tmp"
   mv "$pl_out/settings.json.tmp" "$pl_out/settings.json"
   # Re-render: generate_settings must carry the local choices forward.
@@ -254,6 +257,8 @@ if [ -f "$pl_out/settings.json" ]; then
     "$(jq -r '.theme // "DROPPED"' "$pl_out/settings.json")"
   assert_eq "re-render preserves operator effortLevel (preserve-live)" "xhigh" \
     "$(jq -r '.effortLevel // "DROPPED"' "$pl_out/settings.json")"
+  assert_eq "re-render preserves operator outputStyle (preserve-live)" "Test Style" \
+    "$(jq -r '.outputStyle // "DROPPED"' "$pl_out/settings.json")"
   # Hooks remain wired after the preserve-live re-render.
   assert_eq "re-render still wires PreToolUse hook" "true" \
     "$(jq -r '.hooks.PreToolUse != null' "$pl_out/settings.json")"

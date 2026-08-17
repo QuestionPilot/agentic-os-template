@@ -634,7 +634,7 @@ generate_settings() {
   # user). Once an operator has a live settings.json, THEIR plugin choices
   # (enabledPlugins), notification preferences (agentPushNotifEnabled,
   # inputNeededNotifEnabled — both app-written), and UI/cost
-  # preferences (theme, effortLevel) must survive a re-render; otherwise every
+  # preferences (theme, effortLevel, outputStyle) must survive a re-render; otherwise every
   # install reverts them to base — re-enabling plugins the operator disabled,
   # dropping the notification keys, and discarding the operator's theme/effortLevel.
   # Mirrors the tracker/vault model: the brain stays opinion-free, the operator's
@@ -654,9 +654,9 @@ generate_settings() {
   if [ -z "${AI_CONFIG_SKIP_PRESERVE_LIVE:-}" ] && [ -f "$live" ] \
      && jq -e 'type == "object"' "$live" >/dev/null 2>&1; then
     # enabledPlugins is plugin-id -> boolean; keep only boolean-valued entries so
-    # a malformed/hostile nested value can't ride through into the render. theme +
-    # effortLevel are scalar string preferences; preserve only when they parse as
-    # strings so a hostile non-string value can't ride through.
+    # a malformed/hostile nested value can't ride through into the render. theme,
+    # effortLevel + outputStyle are scalar string preferences; preserve only when
+    # they parse as strings so a hostile non-string value can't ride through.
     overlay="$(jq -c '
         (if (has("enabledPlugins") and (.enabledPlugins | type == "object"))
            then {enabledPlugins: (.enabledPlugins | with_entries(select(.value | type == "boolean")))}
@@ -665,6 +665,7 @@ generate_settings() {
       + (if has("inputNeededNotifEnabled") then {inputNeededNotifEnabled} else {} end)
       + (if (has("theme") and (.theme | type == "string")) then {theme} else {} end)
       + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)
+      + (if (has("outputStyle") and (.outputStyle | type == "string")) then {outputStyle} else {} end)
     ' "$live")" || overlay='{}'
   fi
 

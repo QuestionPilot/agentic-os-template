@@ -106,11 +106,41 @@ $npmPkg = @{
   codex     = "@openai/codex"
 }
 
+function Resolve-ExecutableCommand([string]$name) {
+  # On Windows, PATH can resolve a name to a file PowerShell cannot execute
+  # directly (e.g. an extensionless shebang script planted by a test fixture,
+  # or a stray datafile named like a CLI). Invoking it falls through to
+  # ShellExecute, which pops a GUI "Select an app to open" dialog per probe
+  # and returns nothing. Walk ALL candidates in precedence order and return
+  # the first shape `&` executes natively — a rejected extensionless hit must
+  # not shadow a real <name>.exe later on PATH (cross-model panel finding).
+  # Anything left counts as absent; a native PE binary shipped WITHOUT an
+  # extension is also rejected — an accepted tradeoff, that shape is
+  # vanishingly rare on Windows. POSIX hosts keep plain resolution — an
+  # extensionless executable is the normal shape there.
+  $candidates = @(Get-Command $name -All -ErrorAction SilentlyContinue)
+  foreach ($cmd in $candidates) {
+    # Only file-backed shapes are invocable by path everywhere (an alias/
+    # function/cmdlet has an empty or module-valued Source and cannot shadow
+    # a real executable here).
+    if ($cmd.CommandType -notin @('Application', 'ExternalScript')) { continue }
+    if ([string]::IsNullOrEmpty($cmd.Source)) { continue }
+    if ($IsWindows -and $cmd.CommandType -eq 'Application') {
+      $ext = [System.IO.Path]::GetExtension($cmd.Source)
+      if ($ext -notin @('.exe', '.cmd', '.bat', '.com')) { continue }
+    }
+    return $cmd
+  }
+  return $null
+}
+
 function Get-CliVersion([string]$name) {
   try {
+    $cmd = Resolve-ExecutableCommand $name
+    if (-not $cmd) { return $null }
     # Native multi-line output is captured as an array; -join makes it a
     # single string so -match populates $Matches.
-    $out = (& $name --version 2>$null) -join "`n"
+    $out = (& $cmd --version 2>$null) -join "`n"
     if ($out -match '(\d+\.\d+(\.\d+)?)') { return $Matches[1] }
   } catch {}
   return $null
@@ -155,7 +185,7 @@ function Invoke-CheckClis {
   if ($Harness -contains 'codex') { $required = @('codex') + $required }
   foreach ($name in $required) {
     $min = $cliMin[$name]
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+    if (-not (Resolve-ExecutableCommand $name)) {
       bs_warn "${name}: not found (required)"; $script:missingClis += $name; $ok = $false
     } elseif ($min -eq "presence") {
       bs_info "${name}: present (presence-only)"
@@ -175,10 +205,11 @@ function Invoke-CheckClis {
 
 function Invoke-CheckAuth {
   $ok = $true
-  if (Get-Command gh -ErrorAction SilentlyContinue) {
+  $ghCmd = Resolve-ExecutableCommand 'gh'
+  if ($ghCmd) {
     # A native command's non-zero exit is not a terminating error in PS 7.x,
     # so try/catch would never fire — check $LASTEXITCODE instead.
-    & gh auth status >$null 2>&1
+    & $ghCmd auth status >$null 2>&1
     if ($LASTEXITCODE -eq 0) {
       bs_info "gh: authenticated"
     } else {

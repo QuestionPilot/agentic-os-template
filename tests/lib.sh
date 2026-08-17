@@ -152,6 +152,55 @@ make_stub_cli() {
   chmod +x "$dir/$name"
 }
 
+# --- Windows-executable stub twins ------------------------------------------
+# pwsh on Windows cannot execute an extensionless shebang stub: command
+# discovery falls through to ShellExecute, which pops a GUI "Select an app"
+# dialog per probe and returns nothing (~25 dialogs in one `make verify` run).
+# Any stub dir that feeds a *pwsh* invocation must be planted with these _ps
+# twins: on a Windows host they write a natively executable <name>.cmd; POSIX
+# hosts keep the exact make_stub_cli sh shape, so the bash lane is
+# byte-unchanged. Removal must go through rm_stub_cli_ps so both spellings die.
+# LIMITATION (cmd.exe branch): <version-output> is inlined into a batch file —
+# keep it free of cmd metacharacters (% & | ^ < > and, for the gh twin's
+# if/else block, parentheses); such a value would silently corrupt the stub.
+# All current callers pass plain "name N.N.N" shapes.
+stub_host_is_windows() {
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+# make_stub_cli_ps <dir> <name> <version-output>
+make_stub_cli_ps() {
+  local dir="$1" name="$2" ver="$3"
+  if stub_host_is_windows; then
+    # Plain top-level `echo` — no ( ) block, so a version string containing
+    # parentheses cannot close a block early. CRLF endings for cmd.exe.
+    printf '@echo off\r\necho %s\r\n' "$ver" > "$dir/$name.cmd"
+  else
+    make_stub_cli "$dir" "$name" "$ver"
+  fi
+}
+
+# make_stub_gh_ps <dir> <version-output>
+# gh stub answering `--version` with <version-output> and any other subcommand
+# (e.g. `auth status`) with "Logged in"; exit 0 both ways. The cmd branch uses
+# an if/else ( ) block, so <version-output> must stay parenthesis-free.
+make_stub_gh_ps() {
+  local dir="$1" ver="$2"
+  if stub_host_is_windows; then
+    printf '@echo off\r\nif "%%~1"=="--version" (echo %s) else (echo Logged in)\r\n' \
+      "$ver" > "$dir/gh.cmd"
+  else
+    printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "%s"; exit 0; fi\necho "Logged in"; exit 0\n' \
+      "$ver" > "$dir/gh"
+    chmod +x "$dir/gh"
+  fi
+}
+
+# rm_stub_cli_ps <dir> <name> — removes whichever spelling the host planted.
+rm_stub_cli_ps() {
+  rm -f "$1/$2" "$1/$2.cmd"
+}
+
 # --- Test tiering -------------------------------------------------
 # A test file opts into the SLOW tier with a marker comment line:
 # # test-tier: slow

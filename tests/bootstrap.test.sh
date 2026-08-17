@@ -355,14 +355,17 @@ if command -v pwsh >/dev/null 2>&1; then
   # install + validate through pwsh natively). The stub set must therefore
   # omit bash too — leaving it in is harmless but signals the wrong
   # expectation. See "bootstrap.ps1 NO LONGER requires bash" assertion below.
+  # Stubs feeding a pwsh invocation use the _ps twins (tests/lib.sh): on a
+  # Windows host they plant natively executable .cmd stubs — an extensionless
+  # sh stub would ShellExecute into a GUI "Select an app" dialog per probe and
+  # read as version-unknown. POSIX hosts get the identical sh stubs as before.
   PS_STUBS="$(mktemp -d)"
-  make_stub_cli "$PS_STUBS" codex     "codex 0.132.0"
-  make_stub_cli "$PS_STUBS" firecrawl "firecrawl 1.0.0"
-  make_stub_cli "$PS_STUBS" jq        "jq-1.7.0"
-  make_stub_cli "$PS_STUBS" rg        "ripgrep 14.0.0"
+  make_stub_cli_ps "$PS_STUBS" codex     "codex 0.132.0"
+  make_stub_cli_ps "$PS_STUBS" firecrawl "firecrawl 1.0.0"
+  make_stub_cli_ps "$PS_STUBS" jq        "jq-1.7.0"
+  make_stub_cli_ps "$PS_STUBS" rg        "ripgrep 14.0.0"
   # gh stub also responds to subcommands for the auth check.
-  printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.50.0"; exit 0; fi\necho "Logged in"; exit 0\n' \
-    > "$PS_STUBS/gh"; chmod +x "$PS_STUBS/gh"
+  make_stub_gh_ps "$PS_STUBS" "gh version 2.50.0"
 
   # Strip the inherited PATH down to ONLY the stub dir — even /usr/bin:/bin is
   # unsafe because Linux/CI hosts typically install rg/jq/gh under /usr/bin
@@ -376,7 +379,7 @@ if command -v pwsh >/dev/null 2>&1; then
   assert_eq "bootstrap.ps1 -Check exits 0 with all CLIs present" "0" "$ps_ok"
 
   # Remove rg → -Check exits non-zero
-  rm "$PS_STUBS/rg"
+  rm_stub_cli_ps "$PS_STUBS" rg
   ps_miss=0
   PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Check 2>/dev/null || ps_miss=$?
   assert_eq "bootstrap.ps1 -Check exits 1 on missing CLI" "1" "$ps_miss"
@@ -390,7 +393,7 @@ if command -v pwsh >/dev/null 2>&1; then
   # shell out to `bash install.sh` / `bash validate.sh`. Static-source check
   # plus a behavioral check (no `bash` in $cliMin via -Check on a PATH
   # without bash).
-  make_stub_cli "$PS_STUBS" rg "ripgrep 14.0.0"  # restore rg so -Check has all required CLIs
+  make_stub_cli_ps "$PS_STUBS" rg "ripgrep 14.0.0"  # restore rg so -Check has all required CLIs
 
   # Build a PATH that DELIBERATELY excludes any system bash — only the stub
   # dir. -Check must still exit 0 because bash is no longer required.
@@ -443,7 +446,7 @@ if command -v pwsh >/dev/null 2>&1; then
   # Conditional requirement: with codex ABSENT, -Harness codex -Check flags it
   # (exit 1), but -Harness claude -Check still passes (codex not required for
   # claude). Mirrors bootstrap.sh's harness-conditional codex tests.
-  rm "$PS_STUBS/codex"
+  rm_stub_cli_ps "$PS_STUBS" codex
   ps_codex_absent_exit=0
   PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness codex -Check >/dev/null 2>&1 \
     || ps_codex_absent_exit=$?
@@ -452,7 +455,7 @@ if command -v pwsh >/dev/null 2>&1; then
   PATH="$PS_TEST_PATH" "$PWSH_BIN" -File "$PS1" -Harness claude -Check >/dev/null 2>&1 \
     || ps_claude_nocodex_exit=$?
   assert_eq "bootstrap.ps1 -Check (claude) does not require codex" "0" "$ps_claude_nocodex_exit"
-  make_stub_cli "$PS_STUBS" codex "codex 0.132.0"  # restore for the dry-run tests below
+  make_stub_cli_ps "$PS_STUBS" codex "codex 0.132.0"  # restore for the dry-run tests below
 
   # The -DryRun mode should show the install action routed through pwsh, not
   # bash. With all CLIs present, -DryRun on full mode (not just -Check) lists
@@ -516,11 +519,10 @@ PSSTUB
   assert_not_contains "bootstrap.ps1 \$cliMin does not list firecrawl" \
     "$PS137_SRC" 'firecrawl = "presence"'
   PS137_STUBS="$(mktemp -d)"
-  make_stub_cli "$PS137_STUBS" codex "codex 0.132.0"
-  make_stub_cli "$PS137_STUBS" jq    "jq-1.7.0"
-  make_stub_cli "$PS137_STUBS" rg    "ripgrep 14.0.0"
-  printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.50.0"; exit 0; fi\necho "Logged in"; exit 0\n' \
-    > "$PS137_STUBS/gh"; chmod +x "$PS137_STUBS/gh"
+  make_stub_cli_ps "$PS137_STUBS" codex "codex 0.132.0"
+  make_stub_cli_ps "$PS137_STUBS" jq    "jq-1.7.0"
+  make_stub_cli_ps "$PS137_STUBS" rg    "ripgrep 14.0.0"
+  make_stub_gh_ps "$PS137_STUBS" "gh version 2.50.0"
   ps137_check=0
   PATH="$PS137_STUBS" "$PWSH_BIN" -File "$PS1" -Check 2>/dev/null || ps137_check=$?
   assert_eq "bootstrap.ps1 -Check exits 0 with firecrawl absent" "0" "$ps137_check"
@@ -534,12 +536,11 @@ PSSTUB
   # "13" can't reach the comparator via -Check — Get-CliVersion's regex requires
   # a dot — so the stubs use the 2-segment shape the [System.Version] bug hit.)
   PS_SEG_STUBS="$(mktemp -d)"
-  make_stub_cli "$PS_SEG_STUBS" codex     "codex 0.132.0"
-  make_stub_cli "$PS_SEG_STUBS" firecrawl "firecrawl 1.0.0"
-  make_stub_cli "$PS_SEG_STUBS" jq        "jq-1.6"        # 2-seg == floor 1.6.0
-  make_stub_cli "$PS_SEG_STUBS" rg        "ripgrep 13.0"   # 2-seg == floor 13.0.0
-  printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.40"; exit 0; fi\necho "Logged in"; exit 0\n' \
-    > "$PS_SEG_STUBS/gh"; chmod +x "$PS_SEG_STUBS/gh"   # 2-seg == floor 2.40.0
+  make_stub_cli_ps "$PS_SEG_STUBS" codex     "codex 0.132.0"
+  make_stub_cli_ps "$PS_SEG_STUBS" firecrawl "firecrawl 1.0.0"
+  make_stub_cli_ps "$PS_SEG_STUBS" jq        "jq-1.6"        # 2-seg == floor 1.6.0
+  make_stub_cli_ps "$PS_SEG_STUBS" rg        "ripgrep 13.0"   # 2-seg == floor 13.0.0
+  make_stub_gh_ps "$PS_SEG_STUBS" "gh version 2.40"   # 2-seg == floor 2.40.0
   ps_seg_check=0
   PATH="$PS_SEG_STUBS" "$PWSH_BIN" -File "$PS1" -Check 2>/dev/null || ps_seg_check=$?
   assert_eq "bootstrap.ps1 -Check accepts segment-short versions equal to their floors (F6: version_ge parity, not [System.Version])" "0" "$ps_seg_check"
@@ -550,16 +551,46 @@ PSSTUB
   # Test-VersionGe, where the old [long] cast overflowed (FormatException); the
   # [double] port yields +Inf and compares cleanly. Stub gh at a >Int64 version.
   PS_HUGE_STUBS="$(mktemp -d)"
-  make_stub_cli "$PS_HUGE_STUBS" codex     "codex 0.132.0"
-  make_stub_cli "$PS_HUGE_STUBS" firecrawl "firecrawl 1.0.0"
-  make_stub_cli "$PS_HUGE_STUBS" jq        "jq-1.7.0"
-  make_stub_cli "$PS_HUGE_STUBS" rg        "ripgrep 14.0.0"
-  printf '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 999999999999999999999.0.0"; exit 0; fi\necho "Logged in"; exit 0\n' \
-    > "$PS_HUGE_STUBS/gh"; chmod +x "$PS_HUGE_STUBS/gh"
+  make_stub_cli_ps "$PS_HUGE_STUBS" codex     "codex 0.132.0"
+  make_stub_cli_ps "$PS_HUGE_STUBS" firecrawl "firecrawl 1.0.0"
+  make_stub_cli_ps "$PS_HUGE_STUBS" jq        "jq-1.7.0"
+  make_stub_cli_ps "$PS_HUGE_STUBS" rg        "ripgrep 14.0.0"
+  make_stub_gh_ps "$PS_HUGE_STUBS" "gh version 999999999999999999999.0.0"
   ps_huge_check=0
   PATH="$PS_HUGE_STUBS" "$PWSH_BIN" -File "$PS1" -Check 2>/dev/null || ps_huge_check=$?
   assert_eq "bootstrap.ps1 -Check survives an oversized (>Int64) version segment (F6: [double] port, no overflow crash)" "0" "$ps_huge_check"
   rm -rf "$PS_HUGE_STUBS"
+
+  # --- probe guard: extensionless resolution counts as ABSENT on Windows ---
+  # bootstrap.ps1's Resolve-ExecutableCommand must refuse a PATH hit that pwsh
+  # cannot execute natively (extensionless shebang script) instead of falling
+  # through to ShellExecute (GUI "Select an app" dialog, probe reads unknown).
+  # Windows-host-only: on POSIX an extensionless stub IS executable and must
+  # keep working — that side is covered by every _ps stub test above.
+  if stub_host_is_windows; then
+    PS517_STUBS="$(mktemp -d)"
+    make_stub_cli_ps "$PS517_STUBS" codex "codex 0.132.0"
+    make_stub_cli_ps "$PS517_STUBS" jq    "jq-1.7.0"
+    make_stub_gh_ps "$PS517_STUBS" "gh version 2.50.0"
+    # rg present ONLY as an extensionless sh script — must read as absent.
+    make_stub_cli "$PS517_STUBS" rg "ripgrep 14.0.0"
+    ps517_out="$(PATH="$PS517_STUBS" "$PWSH_BIN" -File "$PS1" -Check 2>&1)" \
+      && ps517_exit=0 || ps517_exit=$?
+    assert_eq "bootstrap.ps1 -Check treats an extensionless PATH hit as absent (exit 1, no ShellExecute)" \
+      "1" "$ps517_exit"
+    assert_contains "bootstrap.ps1 -Check reports the extensionless CLI as not found" \
+      "$ps517_out" "rg: not found"
+    # Shadowing: a rejected extensionless hit must not mask a real executable
+    # elsewhere in the resolution order (panel finding — resolver walks -All
+    # candidates). Plant the .cmd twin BESIDE the extensionless rg; -Check
+    # must now resolve rg via the .cmd and pass.
+    make_stub_cli_ps "$PS517_STUBS" rg "ripgrep 14.0.0"
+    ps517_shadow=0
+    PATH="$PS517_STUBS" "$PWSH_BIN" -File "$PS1" -Check >/dev/null 2>&1 || ps517_shadow=$?
+    assert_eq "bootstrap.ps1 -Check resolves past a rejected extensionless hit to the .cmd twin" \
+      "0" "$ps517_shadow"
+    rm -rf "$PS517_STUBS"
+  fi
 
   # --- <TEAM>-297: co-located-by-default resolution (bootstrap.ps1) ---
   # Fresh clone, NO local.env, clean env -> claude+codex default to gitignored

@@ -290,10 +290,14 @@ if (Test-Path -LiteralPath $plSettings -PathType Leaf) {
     $plEffort = & jq -r '.effortLevel // "null"' $plSettings 2>$null
     if ($plEffort -is [array]) { $plEffort = $plEffort -join '' }
     Assert-Eq 'compiler.test: fresh install ships no effortLevel (spine-only base)' 'null' "$plEffort"
+    $plStyle = & jq -r '.outputStyle // "null"' $plSettings 2>$null
+    if ($plStyle -is [array]) { $plStyle = $plStyle -join '' }
+    Assert-Eq 'compiler.test: fresh install ships no outputStyle (spine-only base)' 'null' "$plStyle"
     # Operator enables a plugin, sets a notif preference, and sets cost/UI
-    # preferences (theme, effortLevel). theme uses a non-default ("dark") so the
-    # assertion proves the OPERATOR's value is carried, not a base default.
-    $plMutated = & jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true | .agentPushNotifEnabled = false | .theme = "dark" | .effortLevel = "xhigh"' $plSettings 2>$null
+    # preferences (theme, effortLevel, outputStyle). theme uses a non-default
+    # ("dark") so the assertion proves the OPERATOR's value is carried, not a
+    # base default.
+    $plMutated = & jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true | .agentPushNotifEnabled = false | .theme = "dark" | .effortLevel = "xhigh" | .outputStyle = "Test Style"' $plSettings 2>$null
     if ($plMutated -is [array]) { $plMutated = $plMutated -join "`n" }
     Write-LfFile -Path $plSettings -Content $plMutated
     # Re-render: New-Settings must carry the local choices forward.
@@ -312,6 +316,9 @@ if (Test-Path -LiteralPath $plSettings -PathType Leaf) {
     $plEffortAfter = & jq -r '.effortLevel // "DROPPED"' $plSettings 2>$null
     if ($plEffortAfter -is [array]) { $plEffortAfter = $plEffortAfter -join '' }
     Assert-Eq 'compiler.test: re-render preserves operator effortLevel (preserve-live)' 'xhigh' "$plEffortAfter"
+    $plStyleAfter = & jq -r '.outputStyle // "DROPPED"' $plSettings 2>$null
+    if ($plStyleAfter -is [array]) { $plStyleAfter = $plStyleAfter -join '' }
+    Assert-Eq 'compiler.test: re-render preserves operator outputStyle (preserve-live)' 'Test Style' "$plStyleAfter"
     $plHook = & jq -r '.hooks.PreToolUse != null' $plSettings 2>$null
     if ($plHook -is [array]) { $plHook = $plHook -join '' }
     Assert-Eq 'compiler.test: re-render still wires PreToolUse hook' 'true' "$plHook"
