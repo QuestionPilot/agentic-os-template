@@ -248,12 +248,28 @@ HKPS_SA_LC
   # lowercase connected are all EXCLUDED. The probe runs in a Start-Job child that
   # inherits PATH, so prepend the stub dir.
   hkps_stub="$hkps_tmpdir/bin"; mkdir -p "$hkps_stub"
-  cat > "$hkps_stub/claude" <<'HKPS_CLAUDE_STUB'
+  if stub_host_is_windows; then
+    # pwsh on Windows cannot execute an extensionless sh stub (ShellExecute
+    # pops a GUI "Select an app" dialog), and the hook's resolver rejects
+    # that shape as absent. Plant a .ps1 twin the resolver accepts.
+    cat > "$hkps_stub/claude.ps1" <<'HKPS_CLAUDE_STUB'
+if (-not ($args.Count -ge 2 -and $args[0] -eq 'mcp' -and $args[1] -eq 'list')) { exit 0 }
+"linear: https://x - ✓ Connected"
+"notebook: a b - Z Connected"
+"broken: c - ✗ Failed to connect"
+"gone: d - ✗ Disconnected"
+"tricky: e - x Not really Connected"
+"lower: f - ✓ connected"
+exit 0
+HKPS_CLAUDE_STUB
+  else
+    cat > "$hkps_stub/claude" <<'HKPS_CLAUDE_STUB'
 #!/bin/sh
 [ "$1" = "mcp" ] && [ "$2" = "list" ] || exit 0
 printf '%s\n' "linear: https://x - ✓ Connected" "notebook: a b - Z Connected" "broken: c - ✗ Failed to connect" "gone: d - ✗ Disconnected" "tricky: e - x Not really Connected" "lower: f - ✓ connected"
 HKPS_CLAUDE_STUB
-  chmod +x "$hkps_stub/claude"
+    chmod +x "$hkps_stub/claude"
+  fi
   hkps_fs2="$REPO_ROOT/harnesses/claude/hooks/framework-surface.ps1"
   hkps_out="$(printf '%s' '{"source":"startup"}' | PATH="$hkps_stub:$PATH" CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1 pwsh -NoProfile -File "$hkps_fs2" 2>/dev/null)"
   if printf '%s' "$hkps_out" | grep -q -- '- linear' \

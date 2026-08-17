@@ -199,7 +199,24 @@ Disable this check: env ``CLAUDE_SKIP_LOCAL_HOOK_CHECK=1``.
 
 # --- 2. MCP-health probe block ------------------------------------
 $MCP_BLOCK = ''
-if ($env:CLAUDE_SKIP_MCP_PROBE -ne '1' -and (Get-Command claude -ErrorAction SilentlyContinue)) {
+# Resolve `claude` to a shape `&` can execute natively BEFORE probing — on
+# Windows an extensionless PATH hit (e.g. a test-planted sh stub) passes a
+# presence-only Get-Command check but falls through to ShellExecute inside the
+# probe job, popping a GUI "Select an app" dialog. Walk all
+# candidates so a rejected hit cannot shadow a real claude.exe later on PATH.
+$claudeCmd = $null
+foreach ($cand in @(Get-Command claude -All -ErrorAction SilentlyContinue)) {
+    # Only file-backed shapes survive into the Start-Job child (an alias/
+    # function/cmdlet has an empty or module-valued Source there).
+    if ($cand.CommandType -notin @('Application', 'ExternalScript')) { continue }
+    if ([string]::IsNullOrEmpty($cand.Source)) { continue }
+    if ($IsWindows -and $cand.CommandType -eq 'Application') {
+        $ext = [System.IO.Path]::GetExtension($cand.Source)
+        if ($ext -notin @('.exe', '.cmd', '.bat', '.com')) { continue }
+    }
+    $claudeCmd = $cand; break
+}
+if ($env:CLAUDE_SKIP_MCP_PROBE -ne '1' -and $claudeCmd) {
     # Bound the probe via Start-Job with a 5-second timeout — pwsh-portable
     # equivalent of gtimeout/timeout. Start-Job is available on Windows /
     # macOS / Linux. Capture both stdout AND the wrapped command's
@@ -211,13 +228,14 @@ if ($env:CLAUDE_SKIP_MCP_PROBE -ne '1' -and (Get-Command claude -ErrorAction Sil
     # command exited non-zero. Capture $LASTEXITCODE inside the script
     # block via a sentinel object so the consumer can distinguish.
     $job = Start-Job -ScriptBlock {
-        $out = & claude mcp list 2>$null
+        param($claudePath)
+        $out = & $claudePath mcp list 2>$null
         # Emit a sentinel envelope (last line) so the consumer can split
         # rc from output without re-evaluating $LASTEXITCODE in the parent
         # scope (which is a different scope from the job's $LASTEXITCODE).
         $rc = $LASTEXITCODE
         [pscustomobject]@{ kind = 'mcp-probe-envelope'; out = $out; rc = $rc }
-    }
+    } -ArgumentList $claudeCmd.Source
     $mcpOut = $null
     if (Wait-Job -Job $job -Timeout 5) {
         $received = Receive-Job -Job $job -ErrorAction SilentlyContinue
