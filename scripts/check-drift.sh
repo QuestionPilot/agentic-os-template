@@ -11,7 +11,7 @@ jqr() { jq -r "$@" | tr -d '\r'; }
 
 # --- arg parse: --cure-soft-drift is optional + position-insensitive --------
 # The flag opts into soft-drift auto-cure. When set, a drift case
-# limited to settings.json's user-preference keys (theme, effortLevel,
+# limited to settings.json's user-preference keys (theme, effortLevel, outputStyle,
 # agentPushNotifEnabled, inputNeededNotifEnabled, key
 # reordering inside enabledPlugins/extraKnownMarketplaces) triggers a
 # transparent re-render via install.sh instead of erroring. ANY drift outside
@@ -376,7 +376,7 @@ with open(sys.argv[1]) as f:
       # differs MUST be in the soft-key allowlist; any key present in one but
       # not the other MUST also be in the allowlist.
       #
-      # Soft-key allowlist (top-level): theme, effortLevel, plus the app-written
+      # Soft-key allowlist (top-level): theme, effortLevel, outputStyle, plus the app-written
       # notification preferences agentPushNotifEnabled and
       # inputNeededNotifEnabled. PLUS we tolerate
       # any RE-ORDERING (but not value change) inside `enabledPlugins` and
@@ -439,7 +439,7 @@ with open(sys.argv[1]) as f:
         done
       done
       # Compute the soft-key allowlist as a JSON array for jq.
-      soft_keys='["theme","effortLevel","agentPushNotifEnabled","inputNeededNotifEnabled"]'
+      soft_keys='["theme","effortLevel","outputStyle","agentPushNotifEnabled","inputNeededNotifEnabled"]'
       reorder_tolerant='["enabledPlugins","extraKnownMarketplaces"]'
       # jq script: for each top-level key in the union of both objects,
       # categorize. Output the set of NON-soft drifted keys; empty = soft.
