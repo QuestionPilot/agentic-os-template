@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Session-agent enforcement hook (Cursor `preToolUse` event, matcher Write).
+# Session-agent enforcement hook (Cursor `preToolUse` event, matcher Write|Delete).
 # Blocks the first file-modifying tool use of a conversation unless the
 # session-agent capability ran and a complete routing declaration exists —
 # BOTH the `Linear gate:` line (active-work disposition) and the `Lessons:`
@@ -45,6 +45,14 @@
 #      carrying the full declaration (`Linear gate:` AND `Lessons:` lines).
 #      This hook ALLOWS exactly that write pre-gate, then later calls find the
 #      marker on disk.
+#
+#      DESTINATION IS CHECKED, NOT MENTIONED. When the payload carries a
+#      `tool_input.file_path`, that field alone decides whether this is the
+#      gate-declaration write — a write to some OTHER file whose CONTENT merely
+#      quotes the gate path and the two declaration lines is denied. The
+#      string-sweep fallback below runs only when no `file_path` key exists at
+#      all; without this split, any file could be written by smuggling the
+#      marker text into its body (cross-model panel finding).
 #   2. The `Shell` tool is outside this hook's matcher, so a shell-driven write
 #      of the same marker also works — the documented fallback if a future
 #      Write payload shape hides the content from the sweep below.
@@ -73,9 +81,25 @@ fi
 
 allow() { printf '{"permission":"allow"}\n'; exit 0; }
 
+# deny <reason> — emit a deny decision and stop.
+#
+# FAIL-OPEN GUARD: on Cursor an exit 0 with EMPTY stdout is not a decision, so
+# the action proceeds. `jq` is present (checked above) but can still fail at
+# run time — a broken build, a locale/encoding fault, a reason string it cannot
+# encode. Capture its output and fall back to a hand-written static deny rather
+# than letting an empty stdout become a silent allow. The static message is
+# JSON-safe by construction: no double quotes, backslashes, or newlines.
 deny() {
-  jq -nc --arg r "$1" \
-    '{permission: "deny", user_message: "agentic-os session-agent gate: blocked (see the agent message for the fix).", agent_message: $r}'
+  local out=""
+  out="$(jq -nc --arg r "$1" \
+    '{permission: "deny", user_message: "agentic-os session-agent gate: blocked (see the agent message for the fix).", agent_message: $r}' 2>/dev/null)" || out=""
+  if [[ -n "$out" ]]; then
+    printf '%s\n' "$out"
+  else
+    cat <<'EOF'
+{"permission":"deny","user_message":"agentic-os session-agent gate: blocked and the hook could not encode its own reason.","agent_message":"The session-agent enforcement hook blocked this action but jq failed while encoding the explanation. The gate fails closed. Open the gate by writing the per-conversation marker under the agentic-os state dir in your Cursor config home, or set env CLAUDE_SKIP_SESSION_AGENT=1 to bypass enforcement."}
+EOF
+  fi
   exit 0
 }
 
@@ -97,10 +121,21 @@ if [[ -z "$CONV_ID" ]]; then
 fi
 
 # A conversation id is interpolated into a filesystem path below. Cursor's ids
-# are opaque strings; refuse anything carrying a path separator or a dot-segment
-# so a hostile/degenerate id cannot escape the state dir.
+# are opaque strings; refuse anything that could escape the state dir or break
+# the matching this hook depends on:
+#   - a path separator or dot-segment escapes the directory;
+#   - WHITESPACE (a newline especially) silently breaks both `grep -qF` on the
+#     composed gate path and the `find` reap — the id would look accepted while
+#     the marker could never match (cross-model panel finding);
+#   - a non-printable byte is never a legitimate Cursor id and corrupts the
+#     deny message it would be echoed into.
 case "$CONV_ID" in
-  */*|*\\*|.|..) deny "The session-agent enforcement hook refuses a conversation_id containing a path separator. The gate fails closed. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1." ;;
+  */*|*\\*|.|..)
+    deny "The session-agent enforcement hook refuses a conversation_id containing a path separator. The gate fails closed. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1." ;;
+  *[[:space:]]*)
+    deny "The session-agent enforcement hook refuses a conversation_id containing whitespace — it cannot form a matchable gate-marker path. The gate fails closed. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1." ;;
+  *[![:print:]]*)
+    deny "The session-agent enforcement hook refuses a conversation_id containing non-printable characters. The gate fails closed. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1." ;;
 esac
 
 # Config-home resolution: hooks are installed at <config>/hooks/, so the
@@ -129,20 +164,48 @@ fi
 #    A Write call carries `tool_input.file_path` + `tool_input.content`
 #    (live-verified 2026-08-18, headless `agent -p`), but Cursor's docs specify
 #    `tool_input` only for the Shell tool, so the shape is not contractual and
-#    an IDE-side or future build could differ. Rather than depend on those two
-#    keys, sweep EVERY string value in tool_input: a call is a gate-declaration
-#    write when some string carries the gate path, and the declaration lines are
-#    sought across the joined strings. The verified keys are a strict subset of
-#    that sweep, so this is both correct today and shape-agnostic tomorrow — and
-#    it degrades to a deny-with-explanation rather than a silent allow.
+#    an IDE-side or future build could differ. Hence two branches:
+#
+#    (a) `file_path` PRESENT — the destination is authoritative. Allow only when
+#        it IS the gate file, then require both declaration lines in the
+#        content. A write to any other path is NOT a gate declaration no matter
+#        what its body says, so it falls through to the deny below. This closes
+#        the content-smuggling bypass a sweep-only check has: quoting the gate
+#        path and the two lines inside some unrelated file's body would
+#        otherwise open the gate AND write that file.
+#
+#    (b) `file_path` ABSENT — an unknown payload shape. Fall back to sweeping
+#        every string in `tool_input`: the gate path must appear somewhere and
+#        both declaration lines must be present. Weaker (a sweep cannot tell
+#        destination from mention), but it is reached only when the hook has no
+#        destination field to trust, and it degrades to a deny-with-explanation
+#        rather than a silent allow.
 if [[ "$TOOL" == "Write" ]]; then
-  TI_STRINGS="$(printf '%s' "$INPUT" | jq -r '[.tool_input? | .. | strings] | join("\n")' 2>/dev/null || printf '')"
-  if [[ -n "$TI_STRINGS" ]] && printf '%s\n' "$TI_STRINGS" | grep -qF -- "$GATE_FILE"; then
-    if printf '%s\n' "$TI_STRINGS" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
-        && printf '%s\n' "$TI_STRINGS" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
-      allow
+  # `has()` raises on a non-object; try/catch makes an absent or scalar
+  # tool_input report "false" rather than aborting the branch.
+  TI_HAS_PATH="$(printf '%s' "$INPUT" | jq -r 'try (.tool_input | has("file_path")) catch false' 2>/dev/null || printf 'false')"
+
+  if [[ "$TI_HAS_PATH" == "true" ]]; then
+    TI_DEST="$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || printf '')"
+    if [[ "$TI_DEST" == "$GATE_FILE" ]]; then
+      TI_CONTENT="$(printf '%s' "$INPUT" | jq -r '.tool_input.content // empty' 2>/dev/null || printf '')"
+      if printf '%s\n' "$TI_CONTENT" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
+          && printf '%s\n' "$TI_CONTENT" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
+        allow
+      fi
+      deny "The gate file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line AND the \`Lessons: <matched lesson names> | none match | index unreachable | skipped — <reason>\` line in its content. If this write already contained both lines, Cursor's Write tool payload did not expose them to the hook: write the marker with the \`Shell\` tool instead (Shell is outside this gate's matcher)."
     fi
-    deny "The gate file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line AND the \`Lessons: <matched lesson names> | none match | index unreachable | skipped — <reason>\` line in its content. If this write already contained both lines, Cursor's Write tool payload did not expose them to the hook: write the marker with the \`Shell\` tool instead (Shell is outside this gate's matcher)."
+    # A different destination is not a gate declaration — fall through to the
+    # closing deny, whatever its content claims.
+  else
+    TI_STRINGS="$(printf '%s' "$INPUT" | jq -r '[.tool_input? | .. | strings] | join("\n")' 2>/dev/null || printf '')"
+    if [[ -n "$TI_STRINGS" ]] && printf '%s\n' "$TI_STRINGS" | grep -qF -- "$GATE_FILE"; then
+      if printf '%s\n' "$TI_STRINGS" | grep -qE '^[[:space:]]*Linear gate:[[:space:]]*[^[:space:]]' \
+          && printf '%s\n' "$TI_STRINGS" | grep -qE '^[[:space:]]*Lessons:[[:space:]]*[^[:space:]]'; then
+        allow
+      fi
+      deny "The gate file must carry the routing declaration — include the full \`Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted\` line AND the \`Lessons: <matched lesson names> | none match | index unreachable | skipped — <reason>\` line in its content. If this write already contained both lines, Cursor's Write tool payload did not expose them to the hook: write the marker with the \`Shell\` tool instead (Shell is outside this gate's matcher)."
+    fi
   fi
 fi
 

@@ -551,12 +551,13 @@ function Resolve-HookForClass {
         'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'apply_patch' }
         'hermes:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'pre_tool_call'; matcher = 'write_file|patch|terminal' }
         # cursor: preToolUse matchers filter by TOOL TYPE. A file edit reports
-        # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`), so
-        # `Write` is the whole matcher. `Shell` is deliberately excluded (same
-        # posture as claude/codex) and `Delete` is unconfirmed — both gaps are
-        # recorded in harnesses/cursor/adapter.md Fact 2. Mirrors install.sh
-        # hook_for_class (cursor:pre-edit-gate).
-        'cursor:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'preToolUse'; matcher = 'Write' }
+        # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`);
+        # `Delete` is docs-listed but unobserved, included on the cheap-breadth
+        # argument (an inert alternation costs nothing; a missing mutation path
+        # costs enforcement). `Shell` stays deliberately excluded, same posture
+        # as claude/codex. See harnesses/cursor/adapter.md Fact 2. Mirrors
+        # install.sh hook_for_class (cursor:pre-edit-gate).
+        'cursor:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'preToolUse'; matcher = 'Write|Delete' }
     }
     $key = "${Harness}:${Class}"
     if (-not $rows.ContainsKey($key)) {
@@ -846,7 +847,7 @@ function New-Settings {
     # theme, no effortLevel — those would otherwise ship the authoring operator's
     # xhigh cost setting downstream); the operator's LIVE enabledPlugins,
     # agentPushNotifEnabled, inputNeededNotifEnabled, theme, effortLevel, and
-    # outputStyle must survive a re-render, else every install reverts them to base.
+    # outputStyle + switchModelsOnFlag must survive a re-render, else every install reverts them to base.
     #
     # AI_CONFIG_SKIP_PRESERVE_LIVE: check-drift.ps1 sets this when building the
     # canonical comparison artifact, so the soft-drift classifier baseline stays
@@ -862,6 +863,9 @@ function New-Settings {
         if ($LASTEXITCODE -eq 0) {
             # enabledPlugins is plugin-id -> boolean; keep only boolean-valued
             # entries so a malformed/hostile nested value can't ride through.
+            # switchModelsOnFlag is the boolean member of the same preference
+            # family, type-checked the same way and kept in lockstep with
+            # check-drift.ps1's soft-key allowlist.
             # theme, effortLevel + outputStyle are scalar string preferences;
             # preserve only when they parse as strings so a hostile non-string
             # can't ride through.
@@ -871,7 +875,8 @@ function New-Settings {
               + (if has("inputNeededNotifEnabled") then {inputNeededNotifEnabled} else {} end)
               + (if (has("theme") and (.theme | type == "string")) then {theme} else {} end)
               + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)
-              + (if (has("outputStyle") and (.outputStyle | type == "string")) then {outputStyle} else {} end)'
+              + (if (has("outputStyle") and (.outputStyle | type == "string")) then {outputStyle} else {} end)
+              + (if (has("switchModelsOnFlag") and (.switchModelsOnFlag | type == "boolean")) then {switchModelsOnFlag} else {} end)'
             if ($LASTEXITCODE -eq 0) {
                 $overlay = if ($overlayOut -is [array]) { $overlayOut -join '' } else { $overlayOut }
             }
@@ -984,6 +989,20 @@ function New-CursorHooks {
     if ($LASTEXITCODE -ne 0) { Die "failed to generate hooks.json" }
     $wrapped = if ($wrappedOut -is [array]) { $wrappedOut -join "`n" } else { $wrappedOut }
     Write-LfFile -Path $outHooks -Content $wrapped
+
+    # The gate-marker state dir (mirrors install.sh generate_cursor_hooks). The
+    # realization tells the model to write <config>/agentic-os/gate-<id>, but
+    # nothing created that directory and Cursor's Write parent-creation behavior
+    # is UNVERIFIED. Deliberately NOT a managed path: per-conversation runtime
+    # state, so it lives outside the manifest and the drift gate — created in
+    # $TARGET, not $BUILD, or every marker written later would read as drift.
+    $stateDir = Join-Path $TARGET 'agentic-os'
+    if (-not (Test-Path -LiteralPath $stateDir)) {
+        New-Item -ItemType Directory -Path $stateDir -Force -ErrorAction SilentlyContinue | Out-Null
+        if (-not (Test-Path -LiteralPath $stateDir)) {
+            Warn "could not create the gate-marker state dir $stateDir - the first gate declaration will have to create it"
+        }
+    }
 }
 
 # ---------------------------------------------------------------------------

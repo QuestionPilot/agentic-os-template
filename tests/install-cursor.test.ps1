@@ -81,8 +81,8 @@ try {
         Assert-Eq 'install-cursor.test: hooks.json declares schema version 1' '1' "$($hooks.version)"
 
         $gate = $hooks.hooks.preToolUse[0]
-        Assert-Eq 'install-cursor.test: the pre-edit gate is wired on preToolUse with the Write matcher' `
-            'Write' "$($gate.matcher)"
+        Assert-Eq 'install-cursor.test: the pre-edit gate is wired on preToolUse with the Write|Delete matcher' `
+            'Write|Delete' "$($gate.matcher)"
         # Cursor's DEFAULT is fail-OPEN on a hook crash/timeout/bad-JSON. A gate
         # shipped without failClosed silently degrades to "allow" the moment
         # anything goes wrong — this is the regression guard for that class.

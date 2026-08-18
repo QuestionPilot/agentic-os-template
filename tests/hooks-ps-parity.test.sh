@@ -616,3 +616,91 @@ fi
 # Cleanup of helper vars to avoid leakage into other test files (tests/run.sh
 # dot-sources each test in the same shell).
 unset hkps_root hkps_sh_pairs hkps_ps1_pairs hkps_missing_ps1 hkps_missing_sh sh_path ps1_path f hkps_ms hkps_hfs hkps_cfs hkps_sgsh hkps_sgps
+
+# --- 4. Cursor PS hook behavior (panel fix A9) — bash-lane mirror of the
+# .test.ps1 twin's section 4. Runs the cursor .ps1 hooks under pwsh with
+# synthetic Cursor payloads; skips when pwsh is absent.
+if command -v pwsh >/dev/null 2>&1; then
+  # ${TMPDIR%/}: macOS TMPDIR carries a trailing slash — left in, the payload
+  # path gains a double slash the gate's strict path-equality (correctly)
+  # refuses to match.
+  hkcu_tmpbase="${TMPDIR:-/tmp}"; hkcu_tmpbase="${hkcu_tmpbase%/}"
+  hkcu_tmp="$(mktemp -d "$hkcu_tmpbase/hkcu-sh-XXXXXX")"
+  mkdir -p "$hkcu_tmp/hooks"
+  cp "$REPO_ROOT/harnesses/cursor/hooks/session-agent.ps1" "$hkcu_tmp/hooks/"
+  # framework-surface.ps1 carries the @@AI_CONFIG_DIR@@ placeholder — substitute
+  # like install does. LC_ALL=C keeps sed byte-oriented.
+  LC_ALL=C sed "s|@@AI_CONFIG_DIR@@|$REPO_ROOT|g" \
+    "$REPO_ROOT/harnesses/cursor/hooks/framework-surface.ps1" > "$hkcu_tmp/hooks/framework-surface.ps1"
+  hkcu_cid="shtestconv01"
+  hkcu_gatefile="$hkcu_tmp/agentic-os/gate-$hkcu_cid"
+
+  hkcu_decision() {
+    printf '%s' "$1" | pwsh -NoProfile -File "$hkcu_tmp/hooks/session-agent.ps1" 2>/dev/null \
+      | jq -r '.permission // "none"' 2>/dev/null || printf 'invoke-failed'
+  }
+
+  assert_eq "hooks-ps-parity: cursor gate .ps1 denies a Write before the gate is open" "deny" \
+    "$(hkcu_decision '{"conversation_id":"'"$hkcu_cid"'","tool_name":"Write","tool_input":{"file_path":"/tmp/x.txt","content":"hi"},"cwd":"/tmp"}')"
+
+  hkcu_decl="$(jq -nc --arg p "$hkcu_gatefile" --arg c 'Routing: x
+Lessons: none match
+Linear gate: none - single-step' --arg id "$hkcu_cid" \
+    '{conversation_id: $id, tool_name: "Write", tool_input: {file_path: $p, content: $c}, cwd: "/tmp"}')"
+  assert_eq "hooks-ps-parity: cursor gate .ps1 allows the declaration write" "allow" \
+    "$(hkcu_decision "$hkcu_decl")"
+
+  hkcu_smuggle="$(jq -nc --arg p "/tmp/unrelated.js" --arg c "// $hkcu_gatefile
+// Linear gate: none - single-step
+// Lessons: none match" --arg id "$hkcu_cid" \
+    '{conversation_id: $id, tool_name: "Write", tool_input: {file_path: $p, content: $c}, cwd: "/tmp"}')"
+  assert_eq "hooks-ps-parity: cursor gate .ps1 denies a smuggled gate path in unrelated content" "deny" \
+    "$(hkcu_decision "$hkcu_smuggle")"
+
+  mkdir -p "$hkcu_tmp/agentic-os"
+  printf 'Routing: x\nLessons: none match\nLinear gate: none - single-step\n' > "$hkcu_gatefile"
+  assert_eq "hooks-ps-parity: cursor gate .ps1 opens once the marker is declared" "allow" \
+    "$(hkcu_decision '{"conversation_id":"'"$hkcu_cid"'","tool_name":"Write","tool_input":{"file_path":"/tmp/x.txt","content":"hi"}}')"
+
+  assert_eq "hooks-ps-parity: cursor gate .ps1 denies a payload with no conversation_id" "deny" \
+    "$(hkcu_decision '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}')"
+  assert_eq "hooks-ps-parity: cursor gate .ps1 denies an unparseable payload" "deny" \
+    "$(hkcu_decision 'not json at all')"
+  assert_eq "hooks-ps-parity: cursor gate .ps1 denies a path-separator conversation_id" "deny" \
+    "$(hkcu_decision '{"conversation_id":"../../etc","tool_name":"Write"}')"
+
+  assert_eq "hooks-ps-parity: cursor gate .ps1 kill switch allows" "allow" \
+    "$(printf '%s' '{"conversation_id":"otherconv","tool_name":"Write"}' \
+      | CLAUDE_SKIP_SESSION_AGENT=1 pwsh -NoProfile -File "$hkcu_tmp/hooks/session-agent.ps1" 2>/dev/null \
+      | jq -r '.permission // "none"')"
+
+  # framework-surface: real session id interpolated into the gate path (A1).
+  hkcu_fs="$(printf '{"session_id":"%s","is_background_agent":false,"composer_mode":"agent"}' "$hkcu_cid" \
+    | pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
+  hkcu_ctx="$(printf '%s' "$hkcu_fs" | jq -r '.additional_context // ""' 2>/dev/null || printf '')"
+  case "$hkcu_ctx" in
+    *"gate-$hkcu_cid"*)
+      _pass "hooks-ps-parity: cursor framework-surface.ps1 interpolates the real session id" ;;
+    *)
+      _fail "hooks-ps-parity: cursor framework-surface.ps1 interpolates the real session id" "context: $hkcu_ctx" ;;
+  esac
+
+  hkcu_ask="$(printf '{"session_id":"%s","composer_mode":"ask"}' "$hkcu_cid" \
+    | pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null \
+    | jq -r '.additional_context // ""' 2>/dev/null || printf '')"
+  case "$hkcu_ask" in
+    *"kickoff orient"*)
+      _fail "hooks-ps-parity: cursor framework-surface.ps1 suppresses the directive in ask-mode" "got directive" ;;
+    *)
+      _pass "hooks-ps-parity: cursor framework-surface.ps1 suppresses the directive in ask-mode" ;;
+  esac
+
+  assert_eq "hooks-ps-parity: cursor framework-surface.ps1 kill switch silences it" "" \
+    "$(printf '{"session_id":"x"}' | CLAUDE_SKIP_FRAMEWORK_SURFACE=1 pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
+
+  rm -rf "$hkcu_tmp"
+  unset hkcu_tmp hkcu_cid hkcu_gatefile hkcu_decl hkcu_smuggle hkcu_fs hkcu_ctx hkcu_ask
+  unset -f hkcu_decision
+else
+  _pass "hooks-ps-parity: skipping cursor PS behavioral checks (pwsh not on PATH)"
+fi

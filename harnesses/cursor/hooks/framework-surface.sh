@@ -61,6 +61,26 @@ CHOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
 EVENT_JSON="$(cat)"
 COMPOSER_MODE="$(printf '%s' "$EVENT_JSON" | jq -r '.composer_mode // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
 
+# The sessionStart payload carries `session_id` — the SAME value preToolUse
+# calls `conversation_id`, which is what the gate marker is keyed on. Read it so
+# the directive below can name the EXACT marker path. Without this the directive
+# printed a literal `<conversation_id>` placeholder and every fresh conversation
+# spent one sacrificial deny discovering the real path (cross-model panel
+# finding). Rejected here on the same grounds the gate hook rejects an id
+# (separator / whitespace / non-printable) — those never form a usable path, so
+# fall back to the placeholder text rather than printing a broken one.
+SESSION_ID="$(printf '%s' "$EVENT_JSON" | jq -r '.session_id // .conversation_id // empty' 2>/dev/null)"
+case "$SESSION_ID" in
+  ''|*/*|*\\*|.|..|*[[:space:]]*|*[![:print:]]*) SESSION_ID="" ;;
+esac
+if [[ -n "$SESSION_ID" ]]; then
+  GATE_HINT="${CHOME}/agentic-os/gate-${SESSION_ID}"
+  GATE_HINT_NOTE=""
+else
+  GATE_HINT="${CHOME}/agentic-os/gate-<conversation_id>"
+  GATE_HINT_NOTE=" — substituting this conversation's id"
+fi
+
 # --- 1. agentic-os-template git-log block ----------------------------------
 # Use -e (not -d) on .git: inside a linked git worktree it's a regular file
 # (gitlink) pointing at the main repo's .git/worktrees/<name>, not a directory.
@@ -159,9 +179,8 @@ route only — Mode 1's orient outputs are still live in context).
 
 Before your first file-modifying tool use, open the edit gate: write your R5
 routing declaration (including the \`Linear gate:\` and \`Lessons:\` lines) to
-\`${CHOME}/agentic-os/gate-<conversation_id>\` — substituting this
-conversation's id. The realization body in the capability spells out the
-contract.
+\`${GATE_HINT}\`${GATE_HINT_NOTE}. The realization body in the capability spells
+out the contract.
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."

@@ -614,12 +614,14 @@ hook_for_class() {
     codex:pre-edit-gate)     echo "session-agent.sh PreToolUse apply_patch" ;;
     hermes:pre-edit-gate)    echo "session-agent.sh pre_tool_call write_file|patch|terminal" ;;
     # Cursor preToolUse matchers filter by TOOL TYPE. A file edit reports
-    # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`), which is
-    # the whole matcher: `Delete` appears in the docs' matcher list but its real
-    # tool_name is unconfirmed, and `Shell` is deliberately excluded (same posture
-    # as claude/codex) because gating every shell command would block the orient
-    # itself. Both gaps are recorded in harnesses/cursor/adapter.md Fact 2.
-    cursor:pre-edit-gate)    echo "session-agent.sh preToolUse Write" ;;
+    # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`); `Delete`
+    # is in the docs' matcher list but has not been observed firing, so it is
+    # included on the cheap-breadth argument — an inert alternation costs
+    # nothing, a missing mutation path costs enforcement (U6 tracks whether it
+    # fires). `Shell` stays deliberately excluded (same posture as claude/codex)
+    # because gating every shell command would block the orient itself. Both
+    # decisions are recorded in harnesses/cursor/adapter.md Fact 2.
+    cursor:pre-edit-gate)    echo "session-agent.sh preToolUse Write|Delete" ;;
     *) return 1 ;;
   esac
 }
@@ -651,7 +653,7 @@ generate_settings() {
   # user). Once an operator has a live settings.json, THEIR plugin choices
   # (enabledPlugins), notification preferences (agentPushNotifEnabled,
   # inputNeededNotifEnabled — both app-written), and UI/cost
-  # preferences (theme, effortLevel, outputStyle) must survive a re-render; otherwise every
+  # preferences (theme, effortLevel, outputStyle, switchModelsOnFlag) must survive a re-render; otherwise every
   # install reverts them to base — re-enabling plugins the operator disabled,
   # dropping the notification keys, and discarding the operator's theme/effortLevel.
   # Mirrors the tracker/vault model: the brain stays opinion-free, the operator's
@@ -674,6 +676,9 @@ generate_settings() {
     # a malformed/hostile nested value can't ride through into the render. theme,
     # effortLevel + outputStyle are scalar string preferences; preserve only when
     # they parse as strings so a hostile non-string value can't ride through.
+    # switchModelsOnFlag is the boolean member of the same family — type-checked
+    # the same way, and kept in lockstep with check-drift.sh's soft-key
+    # allowlist so a key the gate tolerates is a key the cure preserves.
     overlay="$(jq -c '
         (if (has("enabledPlugins") and (.enabledPlugins | type == "object"))
            then {enabledPlugins: (.enabledPlugins | with_entries(select(.value | type == "boolean")))}
@@ -683,6 +688,7 @@ generate_settings() {
       + (if (has("theme") and (.theme | type == "string")) then {theme} else {} end)
       + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)
       + (if (has("outputStyle") and (.outputStyle | type == "string")) then {outputStyle} else {} end)
+      + (if (has("switchModelsOnFlag") and (.switchModelsOnFlag | type == "boolean")) then {switchModelsOnFlag} else {} end)
     ' "$live")" || overlay='{}'
   fi
 
@@ -742,9 +748,16 @@ generate_cursor_hooks() {
       preToolUse) fail_closed=true ;;
       *)          fail_closed=false ;;
     esac
+    # A2: the command is ONE shell string (Cursor's entry has no args array), so
+    # an UNQUOTED absolute path splits on the first space — a CURSOR_CONFIG_DIR
+    # under e.g. "/Agentic OS/" would launch nothing and the gate would silently
+    # never run (fail-OPEN if failClosed turns out to be inert on preToolUse).
+    # Quote it, exactly as the PS twin quotes its pwsh launcher. A double quote
+    # cannot appear in the path on any platform the build targets, so wrapping
+    # is sufficient — no escape layer needed.
     entry="$(jq -n \
       --arg matcher "$matcher" \
-      --arg command "$TARGET/hooks/$script" \
+      --arg command "\"$TARGET/hooks/$script\"" \
       --argjson failClosed "$fail_closed" \
       '{command: $command}
        + (if ($matcher | length) > 0 then {matcher: $matcher} else {} end)
@@ -757,6 +770,21 @@ generate_cursor_hooks() {
 
   jq -n --argjson hooks "$hooks_json" '{version: 1, hooks: $hooks}' \
     > "$BUILD/hooks.json" || die "failed to generate hooks.json"
+
+  # The gate-marker state dir. The session-agent realization tells the model to
+  # write <config>/agentic-os/gate-<conversation_id>, but nothing created that
+  # directory — and whether Cursor's Write tool creates missing parents is
+  # UNVERIFIED, so the very first gate declaration of a fresh install could fail
+  # for a reason the deny message does not explain. Create it at render.
+  #
+  # Deliberately NOT a managed path: it holds per-conversation runtime state, so
+  # it is outside MANAGED_PATHS and therefore outside the manifest and the drift
+  # gate — the same treatment the claude and hermes renders give their own
+  # agentic-os state dirs. Created directly in $TARGET rather than $BUILD for
+  # exactly that reason: a $BUILD entry would be hashed into `generated` and
+  # every marker written afterwards would read as drift.
+  mkdir -p "$TARGET/agentic-os" 2>/dev/null || \
+    warn "could not create the gate-marker state dir $TARGET/agentic-os — the first gate declaration will have to create it"
 }
 
 # hermes_hook_command_yaml <abs-path> — render an absolute hook path as the inner

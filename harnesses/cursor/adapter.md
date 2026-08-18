@@ -467,26 +467,23 @@ script that exits 1 after printing nothing, and attempt a file edit. Blocked →
 `failClosed` is honored on `preToolUse`. Allowed → the entry's `failClosed` is
 inert there and the in-script deny path is the sole guard; record that here.
 
-### U2 — User-level `<config>/AGENTS.md` auto-discovery
+### U2 — User-level `<config>/AGENTS.md` auto-discovery — **RESOLVED: NOT discovered**
 
-**Claim.** The build renders `<config>/AGENTS.md` as the Cursor-global
-entrypoint, mirroring how Codex loads `$CODEX_HOME/AGENTS.md`.
+**Verdict (live-verified 2026-08-18, CLI 2026.08.11-e8db854, headless).** A
+sentinel token planted in `~/.cursor/AGENTS.md` was NOT visible to the agent in
+a scratch project (`agent -p --trust` answered `NONE`), while the identical
+probe phrasing surfaces tokens that ARE in context (the sessionStart-injection
+sentinel from the same session was returned verbatim) — so the instrument can
+detect a positive and the negative is real. User-level `<config>/AGENTS.md` is
+**not** auto-discovered on this surface.
 
-**Why it is open.** Cursor's docs describe `AGENTS.md` discovery from the
-**project** tree (root + nested subdirs). They do not state that a user-level
-`~/.cursor/AGENTS.md` is loaded, and the documented global-instructions slot is
-**User Rules**, which are app-stored and have no file render target. The live
-run used a project-level config and did not probe the user-level entrypoint. So
-the rendered file may be canonical-but-inert until a project entrypoint points
-at it.
-
-**Reproduction recipe.** In a scratch repo with **no** project `AGENTS.md`,
-`CLAUDE.md`, or `.cursor/rules`, ask the agent to quote a distinctive sentinel
-sentence that exists only in `<config>/AGENTS.md`. Quoted verbatim → user-level
-discovery works. Not quoted → it does not, and Fact 4's project-entrypoint
-channel is the only one; say so here and consider rendering a
-`.cursor/rules/*.mdc` `alwaysApply` rule as the global slot instead (an open
-design question — see the closing section).
+**Consequence (design question 2 decided).** The rendered `<config>/AGENTS.md`
+is a **reference document**, not a live instruction channel. The AUTHORITATIVE
+global channel for the spine is the `sessionStart` `additional_context`
+injection (live-verified working, V4); project-root `AGENTS.md` remains
+first-class for repos that opt in. The template's own framing states this.
+Re-probe on major Cursor releases — an IDE-side or future build could change
+discovery.
 
 ### U3 — Hook firing in the IDE and the interactive CLI
 
@@ -554,15 +551,31 @@ intercept.
 
 **Why it is open.** `Delete` appears in the docs' list of `preToolUse` matcher
 values, but no observed call has reported it and the tool's input shape is
-undocumented, so the gate matches `Write` only. If Cursor names the deletion
-tool differently in practice, adding `Delete` would be inert; if it names it
-exactly that, the gate is currently missing a mutation path.
+undocumented. The generated matcher is `Write|Delete` (panel fix A4 —
+cheap-breadth: inert if Cursor names the deletion tool differently, coverage if
+it names it exactly that). What stays unverified is whether `Delete` ever
+actually fires and what its payload looks like.
 
 **Reproduction recipe.** Add `cat >> /tmp/cursor-pretooluse.log` to the top of
 the rendered `hooks/session-agent.sh`, ask the agent to delete a file, and read
 the `tool_name` it reports. Then widen the matcher in
 `scripts/install.{sh,ps1}` (`hook_for_class` / `Resolve-HookForClass`) and record
 the payload shape in Fact 2.
+
+## Accepted limitations (documented, not fixed)
+
+- **Ask-mode start loses the directive for that conversation.** `sessionStart`
+  fires once per conversation; the surfacing hook suppresses the session-agent
+  block in `ask` composer mode, and a later switch to Agent/Edit mode does not
+  re-fire the event. Recovery is by design the gate itself: the first denied
+  write carries the full declaration instructions, including the exact gate
+  path.
+- **A trusted project's hooks can outrank the user-level gate.** Cursor merges
+  hook responses with project > user priority, so a repo-committed
+  `.cursor/hooks.json` that answers `allow` on the same event can override the
+  user-level deny. The gate is a discipline net, not a security boundary — same
+  posture as every other harness realization, stated here because Cursor is the
+  only harness where a repo can structurally outvote the user config.
 
 ## Open design questions
 
@@ -576,10 +589,12 @@ Not gaps in knowledge — decisions deliberately left for review:
    heuristic on shell syntax, and the capability realization deliberately points
    the model at `Shell` as the fallback channel for writing the gate marker, so
    gating it needs a carve-out designed alongside it.
-2. **Is `AGENTS.md` the right global slot, or should the build render a
-   `.cursor/rules/*.mdc` `alwaysApply` rule?** Depends entirely on U2. A rules
-   file is the documented always-on channel; `AGENTS.md` is the portable one the
-   other harnesses already speak.
+2. **DECIDED (U2 resolved negative, 2026-08-18).** User-level `AGENTS.md` is
+   not discovered, so the authoritative global channel is the `sessionStart`
+   `additional_context` injection (verified working); the rendered
+   `<config>/AGENTS.md` stays as a reference document. A `.cursor/rules/*.mdc`
+   `alwaysApply` render remains a possible future addition for IDE sessions if
+   U3 verification shows the IDE needs a hook-independent channel.
 3. **Should the build offer a project-level render?** Cloud Agents and the
    workspace-trust story both point at `.cursor/hooks.json` committed in-repo as
    the only channel that reaches every surface. That is a different product —

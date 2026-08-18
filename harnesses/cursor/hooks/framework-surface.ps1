@@ -71,10 +71,36 @@ $chome = Split-Path -Parent $PSScriptRoot
 # case-insensitive, matching the bash twin's explicit lowercase normalization.
 $inputRaw = [Console]::In.ReadToEnd()
 $composerMode = ''
+$sessionId = ''
 try {
     $evt = $inputRaw | ConvertFrom-Json
-    if ($evt) { $composerMode = [string]$evt.composer_mode }
-} catch { $composerMode = '' }
+    if ($evt) {
+        $composerMode = [string]$evt.composer_mode
+        # The sessionStart payload carries `session_id` — the SAME value
+        # preToolUse calls `conversation_id`, which the gate marker is keyed on.
+        # Read it so the directive can name the EXACT marker path instead of a
+        # `<conversation_id>` placeholder the model has to guess at (parity with
+        # the bash twin; cross-model panel finding).
+        $sessionId = [string]$evt.session_id
+        if (-not $sessionId) { $sessionId = [string]$evt.conversation_id }
+    }
+} catch { $composerMode = ''; $sessionId = '' }
+
+# Reject on the same grounds the gate hook rejects an id — a separator,
+# whitespace, or a non-printable byte never forms a usable marker path, so fall
+# back to the placeholder rather than printing a broken one.
+if ($sessionId -match '[/\\]' -or $sessionId -match '\s' -or
+    $sessionId -match '[^\p{L}\p{N}\p{P}\p{S}]' -or
+    $sessionId -eq '.' -or $sessionId -eq '..') {
+    $sessionId = ''
+}
+if ($sessionId) {
+    $gateHint = "$chome/agentic-os/gate-$sessionId"
+    $gateHintNote = ''
+} else {
+    $gateHint = "$chome/agentic-os/gate-<conversation_id>"
+    $gateHintNote = " — substituting this conversation's id"
+}
 
 # --- 1. agentic-os-template git-log block ----------------------------------
 # Test-Path (not a directory test) on .git: inside a linked git worktree it is
@@ -109,8 +135,31 @@ if ($env:CLAUDE_SKIP_FRESHNESS_CHECK -ne '1') {
     if ($installDir -and
         (Test-Path -LiteralPath (Join-Path $installDir '.build-manifest.json')) -and
         (Test-Path -LiteralPath $freshnessScript)) {
-        $staleList = @(& pwsh -NoProfile -File $freshnessScript -Manifest $installDir -List 2>$null)
-        $freshRc = $LASTEXITCODE
+        # Bound the child at 5s — parity with the bash twin's `timeout 5`. A
+        # stalled manifest scan (locked file, antivirus, slow filesystem) must
+        # not wedge sessionStart. System.Diagnostics.Process + Kill($true)
+        # tree-kills on timeout (Stop-Job orphans grandchild pwsh processes).
+        # Any failure or timeout leaves rc=2 (indeterminate) — fail-open.
+        $staleList = @(); $freshRc = 2
+        try {
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = 'pwsh'
+            foreach ($a in @('-NoProfile', '-File', $freshnessScript, '-Manifest', $installDir, '-List')) {
+                $psi.ArgumentList.Add($a)
+            }
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.UseShellExecute = $false
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+            $errTask = $proc.StandardError.ReadToEndAsync()
+            if ($proc.WaitForExit(5000)) {
+                $freshRc = $proc.ExitCode
+                $staleList = @($outTask.Result -split "`r?`n" | Where-Object { $_ })
+            } else {
+                try { $proc.Kill($true) } catch {}
+            }
+        } catch {}
         if ($freshRc -eq 1 -and $staleList.Count -gt 0) {
             $staleLines = ($staleList | ForEach-Object { "- $_" }) -join "`n"
             $freshBlock = @"
@@ -156,8 +205,8 @@ route only — Mode 1's orient outputs are still live in context).
 
 Before your first file-modifying tool use, open the edit gate: write your R5
 routing declaration (including the ``Linear gate:`` and ``Lessons:`` lines) to
-``$chome/agentic-os/gate-<conversation_id>`` — substituting this conversation's
-id. The realization body in the capability spells out the contract.
+``$gateHint``$gateHintNote. The realization body in the capability spells out
+the contract.
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.

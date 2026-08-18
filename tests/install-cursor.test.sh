@@ -53,10 +53,12 @@ if command -v jq >/dev/null 2>&1; then
   assert_exit "cursor hooks.json is valid JSON" 0 -- jq empty "$IC_OUT/hooks.json"
   assert_eq "hooks.json declares schema version 1" "1" \
     "$(jq -r '.version' "$IC_OUT/hooks.json")"
-  assert_eq "the pre-edit gate is wired on preToolUse with the Write matcher" "Write" \
+  # Matcher `Write|Delete` (panel fix A4): Delete is docs-listed, cheap breadth.
+  assert_eq "the pre-edit gate is wired on preToolUse with the Write|Delete matcher" "Write|Delete" \
     "$(jq -r '.hooks.preToolUse[0].matcher' "$IC_OUT/hooks.json")"
-  assert_eq "the gate entry commands the rendered gate script (absolute path)" \
-    "$IC_OUT/hooks/session-agent.sh" \
+  # Command path is double-quoted (panel fix A2): unquoted splits on spaces.
+  assert_eq "the gate entry commands the rendered gate script (quoted absolute path)" \
+    "\"$IC_OUT/hooks/session-agent.sh\"" \
     "$(jq -r '.hooks.preToolUse[0].command' "$IC_OUT/hooks.json")"
   # Cursor's DEFAULT is fail-OPEN on a hook crash/timeout/bad-JSON. A gate that
   # ships without failClosed silently degrades to "allow" the moment anything
@@ -64,7 +66,7 @@ if command -v jq >/dev/null 2>&1; then
   assert_eq "the gate entry sets failClosed (Cursor defaults to fail-OPEN)" "true" \
     "$(jq -r '.hooks.preToolUse[0].failClosed' "$IC_OUT/hooks.json")"
   assert_eq "framework-surface is wired on sessionStart" \
-    "$IC_OUT/hooks/framework-surface.sh" \
+    "\"$IC_OUT/hooks/framework-surface.sh\"" \
     "$(jq -r '.hooks.sessionStart[0].command' "$IC_OUT/hooks.json")"
   # The surfacing hook must NOT be fail-closed: a failed context injection must
   # never break a session. Absent key (null) is the correct state.
@@ -190,6 +192,25 @@ Linear gate: none - single-step' --arg id "$IC_CID" \
     '{conversation_id: $id, tool_name: "Write", tool_input: {edits: [{target: $p, new_string: $c}]}, cwd: "/tmp"}')"
   assert_eq "an unknown Write payload shape still matches (schema-agnostic sweep)" "allow" \
     "$(ic_gate_decision "$ic_decl_nested")"
+
+  # 5b4. CONTENT-SMUGGLING DENIED (panel fix A3): when file_path is PRESENT and
+  # points somewhere else, a payload whose CONTENT merely mentions the gate path
+  # + both lines must NOT be allowed — the destination field is authoritative.
+  ic_smuggle="$(jq -nc --arg p "/tmp/unrelated.js" --arg c "// $IC_GATEFILE
+// Linear gate: none - single-step
+// Lessons: none match" --arg id "$IC_CID" \
+    '{conversation_id: $id, tool_name: "Write", tool_input: {file_path: $p, content: $c}, cwd: "/tmp"}')"
+  assert_eq "a smuggled gate path in an unrelated Write's content is denied" "deny" \
+    "$(ic_gate_decision "$ic_smuggle")"
+
+  # 5b5. the generated hooks.json command is a QUOTED path (panel fix A2): an
+  # unquoted absolute path splits on spaces in Cursor's command parsing and the
+  # gate never launches — fail-open if failClosed is inert.
+  ic_cmd="$(jq -r '.hooks.preToolUse[0].command' "$IC_OUT/hooks.json")"
+  case "$ic_cmd" in
+    \"*\") assert_eq "hooks.json command path is double-quoted" "quoted" "quoted" ;;
+    *)     assert_eq "hooks.json command path is double-quoted" "quoted" "UNQUOTED:$ic_cmd" ;;
+  esac
 
   # 5c. once the marker is on disk with both lines, writes pass.
   mkdir -p "$IC_OUT/agentic-os"
