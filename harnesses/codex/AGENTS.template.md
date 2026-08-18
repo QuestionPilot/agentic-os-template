@@ -70,7 +70,7 @@ Before opening a PR or pushing a branch with framework changes, run
 failing fast on first non-zero exit: the acceptance suite (`tests/run.sh`)
 when present, static validation (`scripts/validate.sh`), and the manifest-based
 drift check across every rendered harness home (`scripts/check-drift.sh --auto`
-— the claude, codex, and hermes renders; a home that is unset or not yet
+— the claude, codex, hermes, and cursor renders; a home that is unset or not yet
 rendered is skipped with a notice). These are the same gates a future-Codex or
 future-operator runs when picking up the change.
 

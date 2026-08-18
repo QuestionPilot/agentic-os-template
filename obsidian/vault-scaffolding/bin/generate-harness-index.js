@@ -26,7 +26,7 @@ const rel = (p) => path.relative(root, p).split(path.sep).join("/");
 
 // Harness views to emit. Union of this baseline and every concrete `harness:`
 // value found in note frontmatter, so adding a new harness needs no edit here.
-const BASELINE_HARNESSES = ["claude", "codex", "hermes"];
+const BASELINE_HARNESSES = ["claude", "codex", "hermes", "cursor"];
 
 const VIEW_DIR = "90-Indexes";
 const VIEW_PREFIX = "Harness Index - ";
