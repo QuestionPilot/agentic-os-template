@@ -69,8 +69,19 @@ if ($tool -eq 'write_file') {
     # equivalent: POSIX paths have a single separator spelling.)
     $wpathEq = $false
     if ($wpath) {
-        try { $wpathEq = ([IO.Path]::GetFullPath($wpath) -eq [IO.Path]::GetFullPath($gateFile)) }
-        catch { $wpathEq = ($wpath -eq $gateFile) }
+        if ([IO.Path]::IsPathFullyQualified($wpath)) {
+            # Trailing separators trimmed: GetFullPath preserves them, and
+            # "<dir>\" names the same file target as "<dir>".
+            try { $wpathEq = (([IO.Path]::GetFullPath($wpath).TrimEnd('\', '/')) -eq ([IO.Path]::GetFullPath($gateFile).TrimEnd('\', '/'))) }
+            catch { $wpathEq = ($wpath -eq $gateFile) }
+        } else {
+            # A RELATIVE write path resolves against the TOOL's cwd, not this
+            # hook process's — normalizing it here could equate it with the
+            # gate file while the tool writes somewhere else entirely (panel
+            # finding). Keep the plain compare; the deny message names the
+            # absolute gate path, so the model writes that exact spelling.
+            $wpathEq = ($wpath -eq $gateFile)
+        }
     }
     if ($wpathEq) {
         if (($wcontent -cmatch '(?m)^\s*Linear gate:[ \t]*\S') -and

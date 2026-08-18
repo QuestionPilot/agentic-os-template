@@ -423,7 +423,17 @@ function Resolve-ConfigTargets {
   # stays unequal by design — the bash twin recognizes its own seeding.
   function Test-BsPathEq([string]$a, [string]$b) {
     if (-not $a -or -not $b) { return $false }
-    try { return ([IO.Path]::GetFullPath($a)) -eq ([IO.Path]::GetFullPath($b)) } catch { return ($a -eq $b) }
+    # Only FULLY-QUALIFIED paths are normalized: GetFullPath resolves a
+    # relative value against the PROCESS cwd, which is not a meaningful base
+    # for a config value (panel finding) — relative values keep the plain
+    # compare. Trailing separators are trimmed after normalization:
+    # GetFullPath preserves them, and "<dir>\" names the same dir as "<dir>".
+    if (-not ([IO.Path]::IsPathFullyQualified($a) -and [IO.Path]::IsPathFullyQualified($b))) {
+      return ($a -eq $b)
+    }
+    try {
+      return ([IO.Path]::GetFullPath($a).TrimEnd('\', '/')) -eq ([IO.Path]::GetFullPath($b).TrimEnd('\', '/'))
+    } catch { return ($a -eq $b) }
   }
   if ($Scattered) {
     $bsHome = [Environment]::GetFolderPath('UserProfile')
