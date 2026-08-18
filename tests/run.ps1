@@ -39,13 +39,15 @@ $env:REPO_ROOT = $repoRoot
 
 # Isolate the harness config-dir env vars for the WHOLE suite (mirrors run.sh).
 # A render test resolves its build target from CLAUDE_CONFIG_DIR / CODEX_HOME /
-# HERMES_HOME whenever its fixture local.env does not set them; an inherited
+# HERMES_HOME / CURSOR_CONFIG_DIR whenever its fixture local.env does not set
+# them; an inherited
 # co-located value would leak the LIVE config dir into a throwaway build and
 # overwrite the operator's real entrypoint. Clearing them makes a live-folder run
 # behave like a clean clone. Tests that need one set it themselves per-invocation.
 Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue
 Remove-Item Env:CODEX_HOME        -ErrorAction SilentlyContinue
 Remove-Item Env:HERMES_HOME       -ErrorAction SilentlyContinue
+Remove-Item Env:CURSOR_CONFIG_DIR -ErrorAction SilentlyContinue
 
 # Dot-source the assertion library so counters and helpers live in this scope.
 # (Counters are $script:-scoped; dot-source makes lib.ps1's $script: scope =

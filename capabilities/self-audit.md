@@ -3,7 +3,7 @@ name: self-audit
 summary: Score the agentic OS on five leverage-weighted pillars (cross-layer handoffs / memory hygiene / folder hygiene / verification coverage / closeout + spine discipline), surface the top-3 gaps with concrete fixes. Read-only diagnostic — never auto-remediates. The third native spine capability after session-agent + closeout.
 triggers: [user says /self-audit or "audit the framework", periodic framework-hygiene checks, before claiming the framework is "in good shape", after a wave of merges to confirm nothing thinned out, debugging "why does this still feel rough"]
 verification: self-audit
-harnesses: [claude, codex, hermes]
+harnesses: [claude, codex, hermes, cursor]
 kind: native
 lifecycle: shipped
 ---
@@ -54,7 +54,7 @@ re-audit to score them. The bands above describe a fully-measured run.
 | **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) and each entry under the ~300-char per-line cap — **both caps apply to the framework's own per-note memory stores only**; the per-session **injection surface** — the largest per-note store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name. The codex-native memory registry (`$CODEX_HOME/memories`) is scored for index **presence** only: it is consolidator-owned, no codex-side size or read-truncation limit exists (verified against openai/codex at tag `rust-v0.144.1`), so its size is **reported informationally** — never deducted, never a gap — and it is excluded from the injection-surface largest-store pick. Sub-check 2.6 adds the **per-note body budget**: the caps above bound the *index*, but nothing bounded the project-type note **bodies** the index points at — exactly what a kickoff orient dereferences. Any project-type note whose file size exceeds the soft `PROJECT_NOTE_BODY_WARN_KB` budget (default 16 KB) triggers one aggregate 2-pt warn and a named gap, never a hard cap |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
 | **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
-| **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
+| **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes, cursor — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
 
 **Semantic currentness — reported, never scored.** Every pillar above is
 **mechanical**: it proves a structural property of the local filesystem. All five
@@ -398,5 +398,5 @@ exit_code, detail}], dropped}`.
   — answered by running the script against fixtures.
 - The capability is the framework's third `kind: native` spine entry. Spine
   symmetry — every native capability has a realization for each harness it
-  declares in its `harnesses:` frontmatter (claude, codex, hermes) — is itself
+  declares in its `harnesses:` frontmatter (claude, codex, hermes, cursor) — is itself
   one of the things Pillar 5 scores.

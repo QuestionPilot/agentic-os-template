@@ -29,6 +29,7 @@ printf 'Repo: %s\n\n' "$repo_root"
 cfg_claude="${CLAUDE_CONFIG_DIR:-}"
 cfg_codex="${CODEX_HOME:-}"
 cfg_hermes="${HERMES_HOME:-}"
+cfg_cursor="${CURSOR_CONFIG_DIR:-}"
 
 # Read local.env as DATA, never source it. The prior subshell-source EXECUTED
 # the whole file (three times): a hostile or malformed local.env could run
@@ -135,6 +136,7 @@ if [ -f "$repo_root/local.env" ]; then
   if [ -z "$cfg_claude" ]; then cfg_claude="$(_v_le_get CLAUDE_CONFIG_DIR)"; fi
   if [ -z "$cfg_codex" ];  then cfg_codex="$(_v_le_get CODEX_HOME)"; fi
   if [ -z "$cfg_hermes" ]; then cfg_hermes="$(_v_le_get HERMES_HOME)"; fi
+  if [ -z "$cfg_cursor" ]; then cfg_cursor="$(_v_le_get CURSOR_CONFIG_DIR)"; fi
 fi
 # Physical path of a configured config dir ('' when unset or nonexistent).
 # ALWAYS returns 0: a non-zero status here would abort validate.sh under
@@ -149,13 +151,16 @@ _phys_dir() {
 cfg_claude_p="$(_phys_dir "$cfg_claude")"
 cfg_codex_p="$(_phys_dir "$cfg_codex")"
 cfg_hermes_p="$(_phys_dir "$cfg_hermes")"
+cfg_cursor_p="$(_phys_dir "$cfg_cursor")"
 
 # Register the repo-root harness dirs that ARE the operator's co-located config
 # dir. The co-located DECISION is made by PHYSICAL path (pwd -P on both sides),
 # so a /var↔/private symlink can never misclassify; the stored key is the
 # repo_root-relative dir ($repo_root/.claude), which matches the prefix that
 # find prints for artifacts inside it. .agents has no config variable, so it is
-# never registered and stays fully guarded.
+# never registered and stays fully guarded. (Neither .hermes nor .cursor is
+# co-located by DEFAULT — both name live app homes — but an operator who points
+# the variable at a repo-root dir is recognized here just like the others.)
 colocated_dirs=()
 _register_colocated() {
   local name="$1" cfg_phys="$2" hd hd_phys
@@ -169,6 +174,7 @@ _register_colocated() {
 _register_colocated ".claude" "$cfg_claude_p"
 _register_colocated ".codex"  "$cfg_codex_p"
 _register_colocated ".hermes" "$cfg_hermes_p"
+_register_colocated ".cursor" "$cfg_cursor_p"
 
 # True when $1 lives inside a recognized co-located config dir (registered
 # above). Guarded length check keeps the empty-array expansion safe under
@@ -320,11 +326,12 @@ for forbidden in \
   fi
 done
 
-# (Co-located config-dir resolution — cfg_claude_p / cfg_codex_p / cfg_hermes_p —
+# (Co-located config-dir resolution — cfg_claude_p / cfg_codex_p / cfg_hermes_p /
+# cfg_cursor_p —
 # is hoisted to the top of this script by <TEAM>-319 so the .DS_Store + embedded-.git
 # scans above share it. The loop below consumes the same resolved paths.)
 
-# Harness-config dirs (.claude/, .codex/, .hermes/, .agents/) at agentic-os-template repo root
+# Harness-config dirs (.claude/, .codex/, .hermes/, .cursor/, .agents/) at agentic-os-template repo root
 # may contain ONLY framework-development workflow state:
 #   worktrees/             — operator's parallel-branch workspaces when
 #                           working on agentic-os-template PRs (Claude Code's
@@ -333,7 +340,8 @@ done
 #                           session
 #
 # Everything else is operator state and belongs in $CLAUDE_CONFIG_DIR (or
-# $CODEX_HOME for .codex/) — including per-project CLAUDE.md, settings.json,
+# $CODEX_HOME for .codex/, $CURSOR_CONFIG_DIR for .cursor/) — including
+# per-project CLAUDE.md, settings.json,
 # skills/, commands/, hooks/, agents/, plugin caches, MCP tool drop-ins.
 # The allowlist is intentionally narrow: any addition requires a conscious
 # framework-content-vs-operator-state decision. See <TEAM>-70 + <TEAM>-76.
@@ -344,14 +352,15 @@ done
 # subtree present in Claude Code's cwd is auto-loaded into the session
 # without prompting. Letting it pass validation would silently weaken
 # that defense.
-for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes" "$repo_root/.agents"; do
+for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes" "$repo_root/.cursor" "$repo_root/.agents"; do
   [ -e "$harness_dir" ] || continue
   if [ ! -d "$harness_dir" ]; then
     printf 'FAIL forbidden harness-config artifact at repo root (not a directory): %s\n' "$harness_dir" >&2
     exit 1
   fi
   # Co-located config target: when this repo-root harness dir IS the operator's
-  # configured CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME, its contents are the
+  # configured CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME / CURSOR_CONFIG_DIR,
+  # its contents are the
   # harness's own gitignored output + state, not a leaked hand-edit — recognize
   # it and skip the reject. The match is by physical path, so a stray .claude/
   # when the config dir lives elsewhere (the maintainer default) still falls
@@ -361,6 +370,7 @@ for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes"
     */.claude) _cfg_phys="$cfg_claude_p" ;;
     */.codex)  _cfg_phys="$cfg_codex_p" ;;
     */.hermes) _cfg_phys="$cfg_hermes_p" ;;
+    */.cursor) _cfg_phys="$cfg_cursor_p" ;;
     *)         _cfg_phys="" ;;
   esac
   if [ -n "$_cfg_phys" ]; then
@@ -374,7 +384,7 @@ for harness_dir in "$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes"
   # OPERATOR STATE by excluding it in .git/info/exclude — the established
   # local-only pattern for the ONE harness workspace with no config variable
   # (a Gemini-family CLI discovers .agents/, carrying its own skills copy;
-  # .claude/.codex/.hermes all have config vars, so co-location above is
+  # .claude/.codex/.hermes/.cursor all have config vars, so co-location above is
   # their recognition path). Restricted to .agents DELIBERATELY (panel F2):
   # .claude/skills/ is the actual finding-#8 auto-load surface and the local
   # harness loads it regardless of git ignore status, so an ignore-based

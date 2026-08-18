@@ -45,6 +45,7 @@ install: <one-line install method>
   and are no longer declared by any capability.)
 - `harnesses` lists the harnesses that currently receive this capability. Each
   listed value must have a `harnesses/<value>/` adapter directory; the
-  framework ships three adapters today (`claude`, `codex`, and `hermes`).
+  framework ships four adapters today (`claude`, `codex`, `hermes`, and
+  `cursor`).
 
 `scripts/validate.sh` checks every header for completeness against this schema.

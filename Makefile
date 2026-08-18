@@ -38,7 +38,8 @@ validate:
 	bash scripts/validate.sh
 
 # Manifest-based drift check against EVERY rendered harness home — claude
-# ($$CLAUDE_CONFIG_DIR), codex ($$CODEX_HOME), hermes ($$HERMES_HOME) — via
+# ($$CLAUDE_CONFIG_DIR), codex ($$CODEX_HOME), hermes ($$HERMES_HOME), cursor
+# ($$CURSOR_CONFIG_DIR) — via
 # check-drift.sh --auto (env var first, then local.env read as data). The old
 # recipe checked only $$CLAUDE_CONFIG_DIR while the codex entrypoint promised
 # $$CODEX_HOME coverage. Fresh-clone-safe: a home that is unset or has no
@@ -59,5 +60,5 @@ help:
 	@printf '  test     - run acceptance suite (full tier) when present\n'
 	@printf '  test-fast- run only fast-tier tests (skips clone/build-heavy; inner loop)\n'
 	@printf '  validate - run repo validation (scripts/validate.sh)\n'
-	@printf '  drift    - run drift gate against every rendered harness home (claude/codex/hermes; $$CLAUDE_CONFIG_DIR et al.)\n'
+	@printf '  drift    - run drift gate against every rendered harness home (claude/codex/hermes/cursor; $$CLAUDE_CONFIG_DIR et al.)\n'
 	@printf '  render   - re-render harness entrypoints (writes to $$CLAUDE_CONFIG_DIR)\n'

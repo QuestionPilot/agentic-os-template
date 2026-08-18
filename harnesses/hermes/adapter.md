@@ -35,7 +35,7 @@ Each capability compiles to one skill file at `<config>/skills/<name>/SKILL.md`.
 Hermes discovers skills under `$HERMES_HOME/skills/` automatically and converts
 each into a `/<name>` slash command. The format is the **agentskills.io open
 standard** — the same `SKILL.md` shape Claude Code and Codex consume, so the
-compiler emits one frontmatter shape for all three harnesses:
+compiler emits one frontmatter shape for all four harnesses:
 
 ```yaml
 ---

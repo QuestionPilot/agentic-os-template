@@ -1,0 +1,59 @@
+---
+lifecycle: shipped
+---
+
+## Cursor realization — session-agent
+
+- **Invocation:** type `/session-agent` in Agent chat, or let the agent apply it
+  on its own — Cursor presents every discovered skill's description and the
+  model decides relevance (the spine capability sets no
+  `disable-model-invocation`, so both paths are live). Cursor reads
+  `<CURSOR_CONFIG_DIR>/skills/session-agent/SKILL.md` when the skill is used.
+- **Auto-fire:** the `sessionStart` hook
+  (`<CURSOR_CONFIG_DIR>/hooks/framework-surface.sh`) returns
+  `additional_context` telling the model to invoke `/session-agent` as its first
+  action (Mode 1). One trigger per conversation. `sessionStart` is
+  fire-and-forget on Cursor — it *surfaces* the directive, it cannot compel it;
+  the `preToolUse` gate below is the enforcement half.
+- **Enforcement:** class `pre-edit-gate` → the `preToolUse` hook
+  `hooks/session-agent.sh`, matcher `Write` (a file edit reports
+  `tool_name: "Write"` — live-verified 2026-08-18). Blocks the first
+  file-modifying tool use unless the gate is open for this conversation. `Shell`
+  is deliberately outside the matcher (mirroring the Claude and Codex gates), so
+  a shell-driven write is a known, accepted bypass — this is a discipline net,
+  not a security boundary. Safety net only; the primary auto-fire is the
+  `sessionStart` directive. Kill switch: env `CLAUDE_SKIP_SESSION_AGENT=1` —
+  same name on every harness.
+- **Gate declaration (Cursor-specific):** Cursor exposes a `transcript_path` to
+  hooks and the transcript really is on disk (JSONL under
+  `<CURSOR_CONFIG_DIR>/projects/<slug>/agent-transcripts/`), but its format is
+  undocumented, so the gate does not parse it. Declare the gate on disk
+  instead — the same marker channel Claude and Hermes use. After
+  emitting the R5 routing declaration in your response, write the gate file:
+  - path: `<CURSOR_CONFIG_DIR>/agentic-os/gate-<conversation_id>` — the
+    conversation id is stable across turns; if you do not know it, read it from
+    the directive the `sessionStart` hook injected, or write the file with the
+    `Shell` tool (`Shell` is outside the gate matcher, so it always runs).
+  - content: the full R5 declaration block, including the `Linear gate:` and
+    `Lessons:` lines. Both lines are required, at line start, each with a
+    non-empty value after the colon.
+
+  The enforcement hook allows exactly this write through pre-gate and treats the
+  file as the open-gate marker for the rest of the conversation. If the write is
+  denied with a message about an unreadable tool payload, fall back to `Shell`.
+  A `Write` call carries `tool_input.file_path` + `tool_input.content`
+  (live-verified 2026-08-18), so the normal path works; the fallback exists
+  because that shape is observed behavior, not a documented contract.
+- **Catalog inputs (R2):** the OS capability catalog in the rendered
+  `<CURSOR_CONFIG_DIR>/AGENTS.md` and the capability specs under
+  `<AI_CONFIG_DIR>/capabilities/`; the routable capabilities are the compiled
+  skills under `<CURSOR_CONFIG_DIR>/skills/`.
+- **Surface notes.** The headless Agent CLI (`agent -p --trust`) fires both
+  hooks and the gate really blocks (live-verified 2026-08-18) — this harness has
+  full enforcement parity in an automation lane, unlike Codex, whose
+  non-interactive mode runs no hooks at all. The IDE and interactive-TUI
+  surfaces are expected to fire but are not yet confirmed (adapter U3). A Cursor
+  **Cloud Agent** runs neither user-level hooks nor `sessionStart` at all
+  (documented): there is no auto-fire directive and no edit gate there — invoke
+  the capability as your first action and emit the R5 declaration anyway.
+  Enforcement is advisory on that surface.

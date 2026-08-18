@@ -1610,6 +1610,7 @@ measure_orientation_surface() {
   for pair in "claude:CLAUDE_CONFIG_DIR:CLAUDE.md" \
               "codex:CODEX_HOME:AGENTS.md" \
               "hermes:HERMES_HOME:SOUL.md" \
+              "cursor:CURSOR_CONFIG_DIR:AGENTS.md" \
               "agents:AGENTS_DIR:"; do
     name="${pair%%:*}"; entry="${pair##*:}"
     var="${pair#*:}"; var="${var%%:*}"

@@ -67,7 +67,8 @@ function Pass-Line { param([string]$Msg) Write-Host $Msg }
 # ---------------------------------------------------------------------------
 # Co-located harness config-dir resolution (<TEAM>-285 recognition; hoisted by
 # <TEAM>-319). When the operator points a harness config-dir variable
-# (CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME) at a dir under the repo root,
+# (CLAUDE_CONFIG_DIR / CODEX_HOME / HERMES_HOME / CURSOR_CONFIG_DIR) at a dir
+# under the repo root,
 # that dir holds the harness's own gitignored output + runtime state — plugin
 # clones carrying their OWN .git, a Finder .DS_Store, etc. <TEAM>-285 added this
 # recognition to the forbidden-artifacts scan ONLY; <TEAM>-319 hoists it ABOVE the
@@ -215,7 +216,7 @@ function Get-PhysicalDirPath {
 }
 
 # Resolve a harness config-dir variable (CLAUDE_CONFIG_DIR / CODEX_HOME /
-# HERMES_HOME) to a physical path — environment first, then the resolved
+# HERMES_HOME / CURSOR_CONFIG_DIR) to a physical path — environment first, then the resolved
 # local.env map (Get-LocalEnvMap, which mirrors bash sourcing incl. variable
 # composition). Returns '' when unset or the path does not resolve. Mirrors
 # validate.sh's env-then-local.env resolution so a CO-LOCATED config dir is
@@ -237,7 +238,7 @@ function Get-ConfiguredConfigDirPhys {
 # registered and stays fully guarded.)
 #
 # Mirrors validate.sh's _register_colocated EXACTLY: a config var is recognized
-# ONLY when a repo-root harness dir (.claude/.codex/.hermes) PHYSICALLY equals
+# ONLY when a repo-root harness dir (.claude/.codex/.hermes/.cursor) PHYSICALLY equals
 # the resolved config path. Storing every resolved config path unconditionally
 # would prune leak-guard findings under ANY dir a config var happens to point at
 # (e.g. CLAUDE_CONFIG_DIR=$repo/core) — which bash never does. The stored key is
@@ -247,7 +248,8 @@ $script:ColocatedCfgDirs = @()
 foreach ($pair in @(
     @{ Name = '.claude'; EnvName = 'CLAUDE_CONFIG_DIR' },
     @{ Name = '.codex';  EnvName = 'CODEX_HOME' },
-    @{ Name = '.hermes'; EnvName = 'HERMES_HOME' }
+    @{ Name = '.hermes'; EnvName = 'HERMES_HOME' },
+    @{ Name = '.cursor'; EnvName = 'CURSOR_CONFIG_DIR' }
 )) {
     $cfgPhys = Get-ConfiguredConfigDirPhys $pair.EnvName $repo
     if ([string]::IsNullOrEmpty($cfgPhys)) { continue }
@@ -439,6 +441,7 @@ function Test-ForbiddenArtifacts {
         '.claude' = (Get-ConfiguredConfigDirPhys 'CLAUDE_CONFIG_DIR' $repo)
         '.codex'  = (Get-ConfiguredConfigDirPhys 'CODEX_HOME' $repo)
         '.hermes' = (Get-ConfiguredConfigDirPhys 'HERMES_HOME' $repo)
+        '.cursor' = (Get-ConfiguredConfigDirPhys 'CURSOR_CONFIG_DIR' $repo)
     }
 
     # Harness-config dirs at repo root may contain ONLY:
@@ -446,7 +449,7 @@ function Test-ForbiddenArtifacts {
     #   settings.local.json   — operator-local permission tweaks
     # Anything else is a hand-edit leak (unless the dir is the co-located config
     # target recognized via $cfgDirs above).
-    foreach ($hname in '.claude', '.codex', '.hermes', '.agents') {
+    foreach ($hname in '.claude', '.codex', '.hermes', '.cursor', '.agents') {
         $hdir = Join-Path $repo $hname
         if (-not (Test-Path -LiteralPath $hdir)) { continue }
         if (-not (Test-Path -LiteralPath $hdir -PathType Container)) {
@@ -468,7 +471,7 @@ function Test-ForbiddenArtifacts {
         }
         # <TEAM>-394: an operator can declare the repo-root .agents/ dir their
         # own OPERATOR STATE by excluding it in .git/info/exclude — the ONE
-        # harness workspace with no config variable (.claude/.codex/.hermes
+        # harness workspace with no config variable (.claude/.codex/.hermes/.cursor
         # use the co-location path above). Restricted to .agents DELIBERATELY
         # (panel F2): .claude/skills/ is the actual finding-#8 auto-load
         # surface and the harness loads it regardless of git ignore status.

@@ -1759,6 +1759,7 @@ function Measure-OrientationSurface {
         @{ name = 'claude'; var = 'CLAUDE_CONFIG_DIR'; entry = 'CLAUDE.md' },
         @{ name = 'codex';  var = 'CODEX_HOME';        entry = 'AGENTS.md' },
         @{ name = 'hermes'; var = 'HERMES_HOME';       entry = 'SOUL.md'   },
+        @{ name = 'cursor'; var = 'CURSOR_CONFIG_DIR'; entry = 'AGENTS.md' },
         @{ name = 'agents'; var = 'AGENTS_DIR';        entry = ''          }
     )
     $localEnvPath = Join-Path $RepoRoot 'local.env'

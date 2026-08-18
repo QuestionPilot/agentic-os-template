@@ -408,3 +408,118 @@ try {
 } finally {
     Remove-Item -LiteralPath $hkdn_tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# --- 4. Cursor PS hook behavior (panel fix A9) -------------------------------
+# The cursor .ps1 hooks' runtime logic (payload parse, fail-closed error paths,
+# gate detection, smuggling refusal, directive emission) was previously
+# untested on every lane — install-cursor.test.ps1 _Skips it pointing here.
+# Stage the SOURCE hooks in a temp home (<home>/hooks/) so the hook's
+# config-home resolution (parent of $PSScriptRoot) lands in the temp dir and
+# gate-marker writes stay out of the repo. framework-surface.ps1 carries the
+# @@AI_CONFIG_DIR@@ build placeholder — substitute it the way install.ps1 does.
+$hkcu_tmp = Join-Path ([IO.Path]::GetTempPath()) ('hkcu-ps-' + [Guid]::NewGuid().Guid.Substring(0,8))
+$hkcu_hooks = Join-Path $hkcu_tmp 'hooks'
+New-Item -ItemType Directory -Path $hkcu_hooks -Force | Out-Null
+try {
+    $hkcu_src = Join-Path $env:REPO_ROOT 'harnesses' 'cursor' 'hooks'
+    Copy-Item (Join-Path $hkcu_src 'session-agent.ps1') $hkcu_hooks
+    $hkcu_fs_body = [System.IO.File]::ReadAllText((Join-Path $hkcu_src 'framework-surface.ps1'))
+    $hkcu_fs_body = $hkcu_fs_body.Replace('@@AI_CONFIG_DIR@@', $env:REPO_ROOT)
+    $hkcu_fs = Join-Path $hkcu_hooks 'framework-surface.ps1'
+    [System.IO.File]::WriteAllText($hkcu_fs, $hkcu_fs_body, [System.Text.UTF8Encoding]::new($false))
+
+    $hkcu_gatehook = Join-Path $hkcu_hooks 'session-agent.ps1'
+    $hkcu_cid = 'pstestconv01'
+    $hkcu_state = Join-Path $hkcu_tmp 'agentic-os'
+    $hkcu_gatefile = Join-Path $hkcu_state "gate-$hkcu_cid"
+
+    function Get-CursorGateDecision {
+        param([string]$Payload)
+        $out = $Payload | & pwsh -NoProfile -File $hkcu_gatehook 2>$null
+        if ($out -is [array]) { $out = $out -join "`n" }
+        try { return ([string]$out | ConvertFrom-Json).permission } catch { return "unparseable:[$out]" }
+    }
+
+    # 4a. plain Write, gate closed -> deny.
+    $p = @{ conversation_id = $hkcu_cid; tool_name = 'Write'
+            tool_input = @{ file_path = '/tmp/x.txt'; content = 'hi' }; cwd = '/tmp' } |
+        ConvertTo-Json -Compress -Depth 5
+    Assert-Eq 'hooks-ps-parity.test: cursor gate denies a Write before the gate is open' 'deny' (Get-CursorGateDecision $p)
+
+    # 4b. the gate-declaration write itself (destination == gate file, both
+    # contract lines in content) -> allow.
+    $p = @{ conversation_id = $hkcu_cid; tool_name = 'Write'
+            tool_input = @{ file_path = $hkcu_gatefile
+                            content = "Routing: x`nLessons: none match`nLinear gate: none - single-step" }
+            cwd = '/tmp' } | ConvertTo-Json -Compress -Depth 5
+    Assert-Eq 'hooks-ps-parity.test: cursor gate allows the declaration write' 'allow' (Get-CursorGateDecision $p)
+
+    # 4c. CONTENT SMUGGLING denied (panel fix A3): file_path present and
+    # pointing elsewhere while the content merely mentions the gate path + lines.
+    $p = @{ conversation_id = $hkcu_cid; tool_name = 'Write'
+            tool_input = @{ file_path = '/tmp/unrelated.js'
+                            content = "// $hkcu_gatefile`n// Linear gate: none - single-step`n// Lessons: none match" }
+            cwd = '/tmp' } | ConvertTo-Json -Compress -Depth 5
+    Assert-Eq 'hooks-ps-parity.test: cursor gate denies a smuggled gate path in unrelated content' 'deny' (Get-CursorGateDecision $p)
+
+    # 4d. marker on disk with both lines -> subsequent writes allowed.
+    New-Item -ItemType Directory -Path $hkcu_state -Force | Out-Null
+    [System.IO.File]::WriteAllText($hkcu_gatefile,
+        "Routing: x`nLessons: none match`nLinear gate: none - single-step`n",
+        [System.Text.UTF8Encoding]::new($false))
+    $p = @{ conversation_id = $hkcu_cid; tool_name = 'Write'
+            tool_input = @{ file_path = '/tmp/x.txt'; content = 'hi' } } |
+        ConvertTo-Json -Compress -Depth 5
+    Assert-Eq 'hooks-ps-parity.test: cursor gate opens once the marker is declared' 'allow' (Get-CursorGateDecision $p)
+
+    # 4e. error paths DENY (fail-closed; Cursor default is fail-open).
+    Assert-Eq 'hooks-ps-parity.test: cursor gate denies a payload with no conversation_id' 'deny' `
+        (Get-CursorGateDecision '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}')
+    Assert-Eq 'hooks-ps-parity.test: cursor gate denies an unparseable payload' 'deny' `
+        (Get-CursorGateDecision 'not json at all')
+    Assert-Eq 'hooks-ps-parity.test: cursor gate denies a path-separator conversation_id' 'deny' `
+        (Get-CursorGateDecision '{"conversation_id":"../../etc","tool_name":"Write"}')
+
+    # 4f. kill switch -> allow.
+    $env:CLAUDE_SKIP_SESSION_AGENT = '1'
+    try {
+        Assert-Eq 'hooks-ps-parity.test: cursor gate kill switch allows' 'allow' `
+            (Get-CursorGateDecision '{"conversation_id":"otherconv","tool_name":"Write"}')
+    } finally { Remove-Item Env:CLAUDE_SKIP_SESSION_AGENT -ErrorAction SilentlyContinue }
+
+    # 4g. framework-surface emits a directive with valid JSON + real session id
+    # interpolated into the gate path (panel fix A1).
+    $fsOut = ('{"session_id":"' + $hkcu_cid + '","is_background_agent":false,"composer_mode":"agent"}') |
+        & pwsh -NoProfile -File $hkcu_fs 2>$null
+    if ($fsOut -is [array]) { $fsOut = $fsOut -join "`n" }
+    $fsCtx = ''
+    try { $fsCtx = ([string]$fsOut | ConvertFrom-Json).additional_context } catch {}
+    if ($fsCtx -and $fsCtx.Contains("gate-$hkcu_cid")) {
+        _Pass 'hooks-ps-parity.test: cursor framework-surface interpolates the real session id into the gate path'
+    } else {
+        _Fail 'hooks-ps-parity.test: cursor framework-surface interpolates the real session id into the gate path' `
+            "additional_context: $fsCtx"
+    }
+
+    # 4h. ask-mode composer suppresses the kickoff directive.
+    $fsAsk = ('{"session_id":"' + $hkcu_cid + '","composer_mode":"ask"}') |
+        & pwsh -NoProfile -File $hkcu_fs 2>$null
+    if ($fsAsk -is [array]) { $fsAsk = $fsAsk -join "`n" }
+    $fsAskCtx = ''
+    try { $fsAskCtx = ([string]$fsAsk | ConvertFrom-Json).additional_context } catch {}
+    if ($fsAskCtx -and $fsAskCtx.Contains('kickoff orient')) {
+        _Fail 'hooks-ps-parity.test: cursor framework-surface suppresses the directive in ask-mode' "got: $fsAskCtx"
+    } else {
+        _Pass 'hooks-ps-parity.test: cursor framework-surface suppresses the directive in ask-mode'
+    }
+
+    # 4i. whole-hook kill switch silences the surfacing hook (fail-open by design).
+    $env:CLAUDE_SKIP_FRAMEWORK_SURFACE = '1'
+    try {
+        $fsQuiet = '{"session_id":"x"}' | & pwsh -NoProfile -File $hkcu_fs 2>$null
+        if ($fsQuiet -is [array]) { $fsQuiet = $fsQuiet -join "`n" }
+        Assert-Eq 'hooks-ps-parity.test: cursor framework-surface kill switch silences it' '' ([string]$fsQuiet)
+    } finally { Remove-Item Env:CLAUDE_SKIP_FRAMEWORK_SURFACE -ErrorAction SilentlyContinue }
+} finally {
+    Remove-Item -LiteralPath $hkcu_tmp -Recurse -Force -ErrorAction SilentlyContinue
+}

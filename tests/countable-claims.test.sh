@@ -101,7 +101,7 @@ assert_contains "self-audit.sh header pillar count matches PILLAR_KEYS ($pillar_
 # summary to that source: extract each adapter's verified version and assert the
 # README matrix carries the same string. Bump an adapter without the README (or
 # vice-versa) and this goes RED — the same prose-vs-truth drift this file guards.
-for _h in claude codex hermes; do
+for _h in claude codex hermes cursor; do
   _adapter="$REPO_ROOT/harnesses/$_h/adapter.md"
   # The adapter's "Verified against **<Display Name> vX.Y.Z**" carries BOTH the
   # harness display name and the version — extract both, so the README check can

@@ -41,6 +41,7 @@ $MarkerToken = '@@CAPABILITY_CATALOG@@'
 $MarkerTemplates = @(
     'harnesses/claude/CLAUDE.template.md',
     'harnesses/codex/AGENTS.template.md',
+    'harnesses/cursor/AGENTS.template.md',
     'harnesses/claude/SKILLS.template.md'
 )
 

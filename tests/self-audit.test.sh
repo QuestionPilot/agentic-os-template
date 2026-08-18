@@ -649,7 +649,7 @@ assert_contains "self-audit capability declares name: self-audit" \
 assert_contains "self-audit capability declares kind: native" \
   "$SA_CONTENT" "kind: native"
 assert_contains "self-audit capability ships to every spine harness" \
-  "$SA_CONTENT" "harnesses: [claude, codex, hermes]"
+  "$SA_CONTENT" "harnesses: [claude, codex, hermes, cursor]"
 assert_contains "self-audit capability declares verification: self-audit" \
   "$SA_CONTENT" "verification: self-audit"
 
@@ -2019,7 +2019,7 @@ _test_orientation_surface_no_home_resolves() {
   assert_eq "orientation surface: no resolvable home → total_bytes null (distinct from 0)" \
     "null" "$(printf '%s' "$out" | jq -r '.orientation_surface.total_bytes')"
   assert_eq "orientation surface: every unresolved home is named in skipped" \
-    "4" "$(printf '%s' "$out" | jq -r '.orientation_surface.skipped | length')"
+    "5" "$(printf '%s' "$out" | jq -r '.orientation_surface.skipped | length')"
   assert_contains "orientation surface: markdown still carries the section when unmeasured" \
     "$md" "## Orientation surface"
   assert_contains "orientation surface: markdown names the unmeasured state" \
@@ -2027,41 +2027,45 @@ _test_orientation_surface_no_home_resolves() {
 }
 _test_orientation_surface_no_home_resolves
 
-# Multi-harness: resolution mirrors check-drift.sh --auto's four harness:env-var
-# pairs, so a codex/hermes/agents render each gets its own row with its own
+# Multi-harness: resolution mirrors check-drift.sh --auto's five harness:env-var
+# pairs, so a codex/hermes/cursor/agents render each gets its own row with its own
 # entrypoint (and the .agents co-render, which has no entrypoint of its own,
 # reports null rather than pretending to one).
 _test_orientation_surface_multi_harness() {
   command -v jq >/dev/null 2>&1 || { _skip "orientation-surface multi-harness test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
-  local cfg="$fixture/claude" cdx="$fixture/codex" hms="$fixture/hermes" agt="$fixture/agents"
+  local cfg="$fixture/claude" cdx="$fixture/codex" hms="$fixture/hermes"
+  local cur="$fixture/cursor" agt="$fixture/agents"
   _sa_mk_orient_home "$cfg" "CLAUDE.md"
   _sa_mk_orient_home "$cdx" "AGENTS.md"
   _sa_mk_orient_home "$hms" "SOUL.md"
+  _sa_mk_orient_home "$cur" "AGENTS.md"
   _sa_mk_orient_home "$agt" "unused.md"
 
   # Non-isolated (so the env fallbacks run) with an empty fixture repo root, and
   # every operator env var pinned per-invocation — no ambient leak.
   local out
   out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
-          CODEX_HOME="$cdx" HERMES_HOME="$hms" AGENTS_DIR="$agt" \
+          CODEX_HOME="$cdx" HERMES_HOME="$hms" CURSOR_CONFIG_DIR="$cur" AGENTS_DIR="$agt" \
           bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" \
           --config-dir "$cfg" --json 2>/dev/null)"
   rm -rf "$fixture"
 
-  assert_eq "orientation surface: all four render homes get a row" \
-    "claude|codex|hermes|agents" \
+  assert_eq "orientation surface: all five render homes get a row" \
+    "claude|codex|hermes|cursor|agents" \
     "$(printf '%s' "$out" | jq -r '[.orientation_surface.harnesses[].harness] | join("|")')"
   assert_eq "orientation surface: the codex row names AGENTS.md" \
     "AGENTS.md" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[1].entrypoint')"
   assert_eq "orientation surface: the hermes row names SOUL.md" \
     "SOUL.md" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[2].entrypoint')"
+  assert_eq "orientation surface: the cursor row names AGENTS.md" \
+    "AGENTS.md" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[3].entrypoint')"
   assert_eq "orientation surface: the .agents co-render reports no entrypoint of its own" \
-    "null" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[3].entrypoint')"
+    "null" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[4].entrypoint')"
   assert_eq "orientation surface: the .agents co-render still measures its spine bodies" \
-    "true" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[3].spine_bytes > 0')"
-  assert_eq "orientation surface: nothing is skipped when all four resolve" \
+    "true" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[4].spine_bytes > 0')"
+  assert_eq "orientation surface: nothing is skipped when all five resolve" \
     "0" "$(printf '%s' "$out" | jq -r '.orientation_surface.skipped | length')"
 }
 _test_orientation_surface_multi_harness

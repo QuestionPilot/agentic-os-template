@@ -11,7 +11,7 @@ jqr() { jq -r "$@" | tr -d '\r'; }
 
 # --- arg parse: --cure-soft-drift is optional + position-insensitive --------
 # The flag opts into soft-drift auto-cure. When set, a drift case
-# limited to settings.json's user-preference keys (theme, effortLevel, outputStyle,
+# limited to settings.json's user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag,
 # agentPushNotifEnabled, inputNeededNotifEnabled, key
 # reordering inside enabledPlugins/extraKnownMarketplaces) triggers a
 # transparent re-render via install.sh instead of erroring. ANY drift outside
@@ -79,7 +79,7 @@ if [ "${1:-}" = "--auto" ]; then
   # "agents" is the codex pass's .agents co-render (install.sh corender_agents),
   # not a harness of its own — but it has a manifest and hand-edits to it are
   # drift like any other render, so it runs the same gate.
-  for auto_pair in "claude:CLAUDE_CONFIG_DIR" "codex:CODEX_HOME" "hermes:HERMES_HOME" "agents:AGENTS_DIR"; do
+  for auto_pair in "claude:CLAUDE_CONFIG_DIR" "codex:CODEX_HOME" "hermes:HERMES_HOME" "cursor:CURSOR_CONFIG_DIR" "agents:AGENTS_DIR"; do
     auto_harness="${auto_pair%%:*}"; auto_var="${auto_pair#*:}"
     auto_dir="${!auto_var:-}"
     auto_src="env"
@@ -376,9 +376,12 @@ with open(sys.argv[1]) as f:
       # differs MUST be in the soft-key allowlist; any key present in one but
       # not the other MUST also be in the allowlist.
       #
-      # Soft-key allowlist (top-level): theme, effortLevel, outputStyle, plus the app-written
-      # notification preferences agentPushNotifEnabled and
-      # inputNeededNotifEnabled. PLUS we tolerate
+      # Soft-key allowlist (top-level): theme, effortLevel, outputStyle,
+      # switchModelsOnFlag, plus the app-written notification preferences
+      # agentPushNotifEnabled and inputNeededNotifEnabled. Every entry is an
+      # operator/app-written PREFERENCE the framework has no opinion on — a
+      # value the harness app writes into settings.json on its own must be
+      # curable, or the drift gate refuses on a key the operator never touched. PLUS we tolerate
       # any RE-ORDERING (but not value change) inside `enabledPlugins` and
       # `extraKnownMarketplaces` — install.sh's `jq` serialization may emit a
       # different key order than the harness app's pretty-printer.
@@ -439,7 +442,7 @@ with open(sys.argv[1]) as f:
         done
       done
       # Compute the soft-key allowlist as a JSON array for jq.
-      soft_keys='["theme","effortLevel","outputStyle","agentPushNotifEnabled","inputNeededNotifEnabled"]'
+      soft_keys='["theme","effortLevel","outputStyle","switchModelsOnFlag","agentPushNotifEnabled","inputNeededNotifEnabled"]'
       reorder_tolerant='["enabledPlugins","extraKnownMarketplaces"]'
       # jq script: for each top-level key in the union of both objects,
       # categorize. Output the set of NON-soft drifted keys; empty = soft.
@@ -895,12 +898,16 @@ assert_absent 'device-dependent review lane found in baseline skills catalog' \
 # Harness-agnostic guard: shared dirs carry no single-harness tool/hook/plugin
 # names or harness-specific paths. Symmetric AGENTS.md/CLAUDE.md mentions are NOT
 # denied; harness-entrypoints.md is the one playbook allowed to discuss setup.
-# The trailing alternation group is the Hermes token set (hook event names, the
-# Hermes home dir, Hermes-specific tool names) — harnesses/hermes/ is the only
-# home for those, same rule as the Claude/Codex tokens before it.
+# The trailing alternation groups are the Hermes token set (hook event names, the
+# Hermes home dir, Hermes-specific tool names) and then the Cursor token set
+# (its config dir, its camelCase hook event names, and its CLI config filename)
+# — harnesses/hermes/ and harnesses/cursor/ are the only homes
+# for those, same rule as the Claude/Codex tokens before them. `preToolUse` etc.
+# are spelled here in Cursor's camelCase; the PascalCase Claude/Codex spellings
+# are already denied above, and the two are distinct literals.
 assert_absent 'single-harness token found in shared framework content' \
   --exclude=harness-entrypoints.md \
-  -e 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/|on_session_start|on_session_end|pre_tool_call|post_tool_call|pre_llm_call|\.hermes/|SOUL\.md|skill_manage|delegate_task' \
+  -e 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/|on_session_start|on_session_end|pre_tool_call|post_tool_call|pre_llm_call|\.hermes/|SOUL\.md|skill_manage|delegate_task|\.cursor/|preToolUse|postToolUse|sessionStart|sessionEnd|beforeShellExecution|afterFileEdit|cli-config\.json' \
   "$repo_root/core" "$repo_root/playbooks" "$repo_root/verification" \
   "$repo_root/skills" "$repo_root/capabilities" "$repo_root/linear" "$repo_root/obsidian"
 

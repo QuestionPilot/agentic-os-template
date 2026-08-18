@@ -13,6 +13,12 @@ Make the active harness follow this repository's shared framework without copyin
 - Hermes Agent: `SOUL.md` (the global identity file in the Hermes home /
   profile dir; per-project `CLAUDE.md`/`AGENTS.md`/`SOUL.md` files are auto-discovered
   from the working directory and compose with it)
+- Cursor: `AGENTS.md` (discovered from a project root and its nested subdirs;
+  the build also renders a global copy in the Cursor config home, and whether
+  that user-level copy is auto-loaded is an open item in the Cursor adapter —
+  so a project-root `AGENTS.md` pointing at this checkout is the reliable
+  channel. Cursor's CLI additionally reads a project-root `CLAUDE.md` as rules,
+  so do not restate the same instructions in both files)
 
 These files are front doors into the framework. Keep them thin. Shared operating rules belong in `core/`, proof patterns in `verification/`, workflows in `playbooks/`, and tool guidance in `skills/`.
 
