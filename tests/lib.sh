@@ -168,6 +168,33 @@ stub_host_is_windows() {
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac
 }
 
+# native_path_fwd <posix-path> — the host-native spelling of a bash path with
+# FORWARD slashes. On a Windows host, bash's mktemp yields the MSYS spelling
+# (/tmp/tmp.X) while pwsh prints the same location Windows-spelled
+# (C:\Users\...\Temp\tmp.X) — a literal contains-assert can never match across
+# that boundary. cygpath -m converts to C:/Users/... (forward slashes); pair
+# with fwdslash on the pwsh-output side so both sides compare in ONE spelling.
+# POSIX hosts return the input byte-unchanged, keeping those lanes identical.
+native_path_fwd() {
+  if stub_host_is_windows && command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# fwdslash <text> — normalize backslashes to forward slashes (pwsh-printed
+# Windows paths -> the native_path_fwd spelling). POSIX shell paths carry no
+# backslashes, so on those hosts this is the identity for path assertions.
+fwdslash() { printf '%s' "$1" | tr '\\' '/'; }
+
+# windows_profile_fwd — the REAL user-profile dir, forward-slashed, on a
+# Windows host. bootstrap.ps1 resolves its scattered home via
+# [Environment]::GetFolderPath('UserProfile'), which reads the OS known-folder
+# and CANNOT be redirected by HOME/USERPROFILE env — a test that injects
+# HOME=<tmp> must therefore assert against the real profile on Windows.
+windows_profile_fwd() { cygpath -m "$USERPROFILE" 2>/dev/null || printf '%s' "$HOME"; }
+
 # make_stub_cli_ps <dir> <name> <version-output>
 make_stub_cli_ps() {
   local dir="$1" name="$2" ver="$3"

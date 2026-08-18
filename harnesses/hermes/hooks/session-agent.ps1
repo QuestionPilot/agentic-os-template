@@ -60,7 +60,19 @@ if (Test-Path -LiteralPath $stateDir) {
 if ($tool -eq 'write_file') {
     $wpath = [string]$evt.tool_input.path
     $wcontent = [string]$evt.tool_input.content
-    if ($wpath -eq $gateFile) {
+    # Spelling-robust equality: on Windows the model may legitimately spell the
+    # gate path with forward slashes (the deny message prints the backslash
+    # form, but write_file accepts either), and a bare -eq would bounce that
+    # write. GetFullPath normalizes separators/relative segments; -eq stays
+    # case-insensitive per PS string semantics — matching NTFS. Fall back to
+    # the plain compare on malformed paths. (The bash twin needs no
+    # equivalent: POSIX paths have a single separator spelling.)
+    $wpathEq = $false
+    if ($wpath) {
+        try { $wpathEq = ([IO.Path]::GetFullPath($wpath) -eq [IO.Path]::GetFullPath($gateFile)) }
+        catch { $wpathEq = ($wpath -eq $gateFile) }
+    }
+    if ($wpathEq) {
         if (($wcontent -cmatch '(?m)^\s*Linear gate:[ \t]*\S') -and
             ($wcontent -cmatch '(?m)^\s*Lessons:[ \t]*\S')) { exit 0 }
         Block 'The gate file must carry the routing declaration — include the full `Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted` line AND the `Lessons: <matched lesson names> | none match | index unreachable | skipped — <reason>` line in its content.'

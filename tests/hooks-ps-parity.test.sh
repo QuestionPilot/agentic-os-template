@@ -136,7 +136,7 @@ if command -v pwsh >/dev/null 2>&1; then
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}
 HKPS_SA_FWD
-  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
+  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$(native_path_fwd "$hkps_trans")\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: codex session-agent.ps1 ALLOWS forward-slash marker"
   else
@@ -153,7 +153,7 @@ HKPS_SA_FWD
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills\\\\session-agent\\\\SKILL.md\"}","call_id":"c1"}}
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nLinear gate: PROJ-1"}]}}
 HKPS_SA_BS
-  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
+  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$(native_path_fwd "$hkps_trans")\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: codex session-agent.ps1 ALLOWS backslash marker"
   else
@@ -170,7 +170,7 @@ HKPS_SA_BS
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/session-agent/SKILL.md\"}","call_id":"c1"}}
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"Routing: x\nLessons: none match\nlinear gate: PROJ-1"}]}}
 HKPS_SA_LC
-  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$hkps_trans\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
+  hkps_out="$(printf '%s\n' "{\"transcript_path\":\"$(native_path_fwd "$hkps_trans")\"}" | pwsh -NoProfile -File "$hkps_codex_sa" 2>/dev/null)"
   case "$hkps_out" in
     *'"deny"'*|*'"block"'*)
       _pass "hooks-ps-parity: codex session-agent.ps1 DENIES lowercase declaration (case parity)" ;;
@@ -295,7 +295,7 @@ HKPS_CLAUDE_STUB
   hkps_sa365_gate="$hkps_sa365/agentic-os/gate-$hkps_sa365_sid"
 
   # no marker → DENY, and the deny must name the recovery path.
-  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$hkps_sa365_fix" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$(native_path_fwd "$hkps_sa365_fix")" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
   case "$hkps_out" in
     *'"permissionDecision":"deny"'*"gate-$hkps_sa365_sid"*)
       _pass "hooks-ps-parity: claude session-agent.ps1 DENIES desktop transcript w/o marker, naming the marker path" ;;
@@ -304,7 +304,7 @@ HKPS_CLAUDE_STUB
   esac
 
   # the marker Write itself (exact path + line-anchored declaration) → ALLOW.
-  hkps_wpayload="$(jq -nc --arg t "$hkps_sa365_fix" --arg sid "$hkps_sa365_sid" --arg p "$hkps_sa365_gate" \
+  hkps_wpayload="$(jq -nc --arg t "$(native_path_fwd "$hkps_sa365_fix")" --arg sid "$hkps_sa365_sid" --arg p "$(native_path_fwd "$hkps_sa365_gate")" \
     '{transcript_path: $t, session_id: $sid, tool_name: "Write", tool_input: {file_path: $p, content: "Routing: fix\nLessons: none match\nLinear gate: none — single-step\n"}}')"
   hkps_out="$(printf '%s' "$hkps_wpayload" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
@@ -316,7 +316,7 @@ HKPS_CLAUDE_STUB
   # marker on disk with the declaration → ALLOW subsequent edits.
   mkdir -p "$hkps_sa365/agentic-os"
   printf 'Routing: fix\nLessons: none match\nLinear gate: none — single-step\n' > "$hkps_sa365_gate"
-  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$hkps_sa365_fix" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$(native_path_fwd "$hkps_sa365_fix")" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
   if [ -z "$hkps_out" ]; then
     _pass "hooks-ps-parity: claude session-agent.ps1 ALLOWS once marker is on disk"
   else
@@ -324,7 +324,7 @@ HKPS_CLAUDE_STUB
   fi
 
   # marker NEVER substitutes for the Skill invocation (empty transcript) → DENY.
-  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$REPO_ROOT/tests/fixtures/transcript-empty.jsonl" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  hkps_out="$(printf '{"transcript_path":"%s","session_id":"%s","tool_name":"Edit","tool_input":null}' "$(native_path_fwd "$REPO_ROOT/tests/fixtures/transcript-empty.jsonl")" "$hkps_sa365_sid" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
   case "$hkps_out" in
     *'"permissionDecision":"deny"'*)
       _pass "hooks-ps-parity: claude session-agent.ps1 DENIES marker w/o skill invocation" ;;
@@ -344,7 +344,7 @@ HKPS_CLAUDE_STUB
   hkps_hm_gate="$hkps_hm/agentic-os/gate-$hkps_hm_sid"
   hkps_hm_payload() { # <content-json-escaped-string> -> a write_file event to the gate path
     printf '{"hook_event_name":"pre_tool_call","tool_name":"write_file","tool_input":{"path":"%s","content":"%s"},"session_id":"%s","cwd":"/tmp"}' \
-      "$hkps_hm_gate" "$1" "$hkps_hm_sid"
+      "$(native_path_fwd "$hkps_hm_gate")" "$1" "$hkps_hm_sid"
   }
   # (a) marker write with both proper lines → ALLOW (silent).
   hkps_out="$(hkps_hm_payload 'Routing: x\nLessons: none match\nLinear gate: none — single-step' | pwsh -NoProfile -File "$hkps_hm/hooks/session-agent.ps1" 2>/dev/null)"
@@ -526,7 +526,9 @@ assert_contains "hooks-ps-parity: skill-gate.ps1 consumes stdin without inspecti
 if command -v pwsh >/dev/null 2>&1; then
   hkdn_tmp="$(mktemp -d)"
   mkdir -p "$hkdn_tmp/hooks" "$hkdn_tmp/cfg/projects/x/memory" "$hkdn_tmp/vault/04-Lessons"
-  sed "s|@@AI_CONFIG_DIR@@|$REPO_ROOT|g" "$REPO_ROOT/harnesses/claude/hooks/framework-surface.ps1" \
+  # Substitute the NATIVE spelling (real install.ps1 renders Windows paths;
+  # an MSYS-spelled repo root makes the pwsh hook miss the checker silently).
+  sed "s|@@AI_CONFIG_DIR@@|$(native_path_fwd "$REPO_ROOT")|g" "$REPO_ROOT/harnesses/claude/hooks/framework-surface.ps1" \
     > "$hkdn_tmp/hooks/framework-surface.ps1"
   # In-scope note: kebab slug + frontmatter `metadata:`-nested `type: feedback`
   # (the shape the checker's frontmatter scan recognizes).
@@ -544,7 +546,7 @@ HKDN_NOTE
 
   # lapse -> header names the count, list names the note.
   hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" \
-    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/vault" \
+    CLAUDE_CONFIG_DIR="$(native_path_fwd "$hkdn_tmp/cfg")" OBSIDIAN_VAULT_PATH="$(native_path_fwd "$hkdn_tmp/vault")" \
     pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
   hkdn_rc=$?
   if [ "$hkdn_rc" -ne 0 ]; then
@@ -567,7 +569,7 @@ HKDN_NOTE
   # distilled (name recorded in a lessons note) -> nudge absent.
   printf '# Thematic lesson\n\n## Source Notes\n\n- feedback-test-lapse-note\n' > "$hkdn_tmp/vault/04-Lessons/thematic-lesson.md"
   hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" \
-    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/vault" \
+    CLAUDE_CONFIG_DIR="$(native_path_fwd "$hkdn_tmp/cfg")" OBSIDIAN_VAULT_PATH="$(native_path_fwd "$hkdn_tmp/vault")" \
     pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
   case "$hkdn_out" in
     *"Distillation lag"*)
@@ -579,7 +581,7 @@ HKDN_NOTE
   # kill switch (lapse restored) -> nudge absent.
   rm -f "$hkdn_tmp/vault/04-Lessons/thematic-lesson.md"
   hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" CLAUDE_SKIP_DISTILLATION_NUDGE=1 \
-    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/vault" \
+    CLAUDE_CONFIG_DIR="$(native_path_fwd "$hkdn_tmp/cfg")" OBSIDIAN_VAULT_PATH="$(native_path_fwd "$hkdn_tmp/vault")" \
     pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
   case "$hkdn_out" in
     *"Distillation lag"*)
@@ -590,7 +592,7 @@ HKDN_NOTE
 
   # unresolvable vault (nonexistent dir) -> checker exit 2 -> fail-open silent.
   hkdn_out="$(printf '%s' '{"source":"startup"}' | env "${hkdn_env[@]}" \
-    CLAUDE_CONFIG_DIR="$hkdn_tmp/cfg" OBSIDIAN_VAULT_PATH="$hkdn_tmp/nope" \
+    CLAUDE_CONFIG_DIR="$(native_path_fwd "$hkdn_tmp/cfg")" OBSIDIAN_VAULT_PATH="$(native_path_fwd "$hkdn_tmp/nope")" \
     pwsh -NoProfile -File "$hkdn_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
   hkdn_rc=$?
   if [ "$hkdn_rc" -eq 0 ]; then
