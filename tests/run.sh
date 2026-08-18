@@ -28,17 +28,17 @@ filter="${1:-}"
 
 # Isolate the harness config-dir env vars for the WHOLE suite. A test that renders
 # a harness (scripts/install.sh) resolves its build target from CLAUDE_CONFIG_DIR /
-# CODEX_HOME / HERMES_HOME whenever its fixture local.env does not set them. When
+# CODEX_HOME / HERMES_HOME / CURSOR_CONFIG_DIR whenever its fixture local.env does not set them. When
 # the suite runs from the operator's live co-located folder, the shell exports
 # those to <repo>/.claude, <repo>/.codex, <repo>/.hermes — so an un-set fixture var
 # leaks the LIVE config dir into a throwaway build and overwrites the operator's
 # real entrypoint with test content (a temp OBSIDIAN_VAULT_PATH). Unsetting them
 # here makes a live-folder run behave EXACTLY like a clean clone: the canonical CI
-# gate already runs `env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME`; baking
+# gate already runs `env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u HERMES_HOME -u CURSOR_CONFIG_DIR`; baking
 # it into the runner makes that isolation intrinsic for every entry point (make
 # test, CI, a direct `bash tests/run.sh`). Tests that need a config dir set it
 # themselves per-invocation (env VAR=… / a fixture local.env), so this is safe.
-unset CLAUDE_CONFIG_DIR CODEX_HOME HERMES_HOME
+unset CLAUDE_CONFIG_DIR CODEX_HOME HERMES_HOME CURSOR_CONFIG_DIR
 
 # shellcheck source=tests/lib.sh
 . "$tests_dir/lib.sh"

@@ -26,6 +26,9 @@
 #   -VaultDir <d>          override OBSIDIAN_VAULT_PATH
 #   -CodexHome <d>         override CODEX_HOME (used when -Harness codex builds on
 #                          Windows — <TEAM>-296)
+#   -CursorConfigDir <d>   override CURSOR_CONFIG_DIR (required to build the cursor
+#                          harness; normally ~/.cursor — a live app home, so it is
+#                          never co-located and never exported to the user env)
 #   -HermesHome <d>        override HERMES_HOME (used when -Harness hermes builds on
 #                          Windows — <TEAM>-296; required to build the hermes harness)
 
@@ -38,7 +41,8 @@ param(
   [string]$ClaudeConfigDir = "",
   [string]$VaultDir = "",
   [string]$CodexHome = "",
-  [string]$HermesHome = ""
+  [string]$HermesHome = "",
+  [string]$CursorConfigDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,8 +76,8 @@ function would_mutate([string]$desc) {
 # deep in install.ps1.
 function Confirm-HarnessNames {
   foreach ($h in $Harness) {
-    if ($h.ToLower() -notin @('claude','codex','hermes')) {
-      bs_die "unknown harness '$h' (known: claude, codex, hermes)"
+    if ($h.ToLower() -notin @('claude','codex','hermes','cursor')) {
+      bs_die "unknown harness '$h' (known: claude, codex, hermes, cursor)"
     }
   }
 }
@@ -353,6 +357,7 @@ function Invoke-RunInstall {
       'claude' { $env:CLAUDE_CONFIG_DIR }
       'codex'  { $env:CODEX_HOME }
       'hermes' { $env:HERMES_HOME }
+      'cursor' { $env:CURSOR_CONFIG_DIR }
       default  { $null }
     }
     $outDesc = if ($target) { " --out $target" } else { "" }
@@ -482,6 +487,7 @@ if ($ClaudeConfigDir) { $env:CLAUDE_CONFIG_DIR  = $ClaudeConfigDir }
 if ($VaultDir)        { $env:OBSIDIAN_VAULT_PATH = $VaultDir }
 if ($CodexHome)       { $env:CODEX_HOME          = $CodexHome }
 if ($HermesHome)      { $env:HERMES_HOME         = $HermesHome }
+if ($CursorConfigDir) { $env:CURSOR_CONFIG_DIR   = $CursorConfigDir }
 
 # Co-located-by-default (<TEAM>-297) — resolve the stateless claude+codex config
 # targets (see Resolve-ConfigTargets). Called here so Persist-LocalEnvValues writes
@@ -514,6 +520,7 @@ if ($ClaudeConfigDir) { $env:CLAUDE_CONFIG_DIR  = $ClaudeConfigDir }
 if ($VaultDir)        { $env:OBSIDIAN_VAULT_PATH = $VaultDir }
 if ($CodexHome)       { $env:CODEX_HOME          = $CodexHome }
 if ($HermesHome)      { $env:HERMES_HOME         = $HermesHome }
+if ($CursorConfigDir) { $env:CURSOR_CONFIG_DIR   = $CursorConfigDir }
 # Re-resolve after the reload (<TEAM>-297): in -DryRun the reload re-imports an
 # existing local.env's empty values, so re-apply the co-located default here too.
 Resolve-ConfigTargets

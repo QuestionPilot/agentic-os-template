@@ -97,7 +97,7 @@ Assert-Contains "self-audit.sh header pillar count matches PILLAR_KEYS ($pillarC
 # summary to that source. Bump an adapter without the README (or vice-versa) and
 # this goes RED.
 $readmeLines = @(Get-Content -LiteralPath (Join-Path $repo 'README.md'))
-foreach ($h in @('claude', 'codex', 'hermes')) {
+foreach ($h in @('claude', 'codex', 'hermes', 'cursor')) {
     $adapterTxt = Get-Content -LiteralPath (Join-Path $repo "harnesses/$h/adapter.md") -Raw
     # Extract BOTH the display name and the version from the adapter's
     # "Verified against **<Display Name> vX.Y.Z**" so the README check binds the

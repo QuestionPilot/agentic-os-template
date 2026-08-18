@@ -52,7 +52,7 @@ count_token() {
 MARKER_TOKEN='@@CAPABILITY_CATALOG@@'
 
 # Every entrypoint template that legitimately carries the marker.
-MARKER_TEMPLATES="harnesses/claude/CLAUDE.template.md harnesses/codex/AGENTS.template.md harnesses/claude/SKILLS.template.md"
+MARKER_TEMPLATES="harnesses/claude/CLAUDE.template.md harnesses/codex/AGENTS.template.md harnesses/cursor/AGENTS.template.md harnesses/claude/SKILLS.template.md"
 
 for tpl in $MARKER_TEMPLATES; do
   path="$REPO_ROOT/$tpl"

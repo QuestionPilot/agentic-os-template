@@ -12,7 +12,7 @@
        and (optionally) the <TEAM>-106 cure-soft-drift opt-in auto-cure.
 
     1b. -Auto (<TEAM>-394): resolve every harness render home (CLAUDE_CONFIG_DIR
-       / CODEX_HOME / HERMES_HOME; env first, then local.env read as data) and
+       / CODEX_HOME / HERMES_HOME / CURSOR_CONFIG_DIR; env first, then local.env read as data) and
        run mode 1 against each home with a rendered manifest. `make drift`
        uses the bash twin of this mode so the gate covers all three harnesses.
 
@@ -123,7 +123,7 @@ Modes:
                     user-preference keys only).
 
   -Auto             Resolve every harness render home (CLAUDE_CONFIG_DIR /
-                    CODEX_HOME / HERMES_HOME; env var first, then local.env
+                    CODEX_HOME / HERMES_HOME / CURSOR_CONFIG_DIR; env var first, then local.env
                     read as data) and run the -Manifest gate against each home
                     that has a rendered manifest. Unresolvable / unrendered
                     homes are skipped with a notice; exit 1 iff any checked
@@ -289,7 +289,7 @@ if ($Auto.IsPresent) {
     # "agents" is the codex pass's .agents co-render (install corender), not a
     # harness of its own — but it has a manifest and hand-edits to it are drift
     # like any other render, so it runs the same gate.
-    $autoVars = [ordered]@{ claude = 'CLAUDE_CONFIG_DIR'; codex = 'CODEX_HOME'; hermes = 'HERMES_HOME'; agents = 'AGENTS_DIR' }
+    $autoVars = [ordered]@{ claude = 'CLAUDE_CONFIG_DIR'; codex = 'CODEX_HOME'; hermes = 'HERMES_HOME'; cursor = 'CURSOR_CONFIG_DIR'; agents = 'AGENTS_DIR' }
     $autoFailed = 0
     foreach ($autoHarness in $autoVars.Keys) {
         $autoVar = $autoVars[$autoHarness]
@@ -1089,13 +1089,16 @@ Assert-Absent `
 
 # ---------------------------------------------------------------------------
 # Harness-agnostic guard: shared dirs may not carry single-harness tokens.
-# The trailing alternation group is the Hermes token set (hook event names, the
-# Hermes home dir, Hermes-specific tool names) — harnesses/hermes/ is the only
-# home for those, same rule as the Claude/Codex tokens before it.
+# The trailing alternation groups are the Hermes token set (hook event names, the
+# Hermes home dir, Hermes-specific tool names) and then the Cursor token set (its
+# config dir, its camelCase hook event names, and its CLI config filename) —
+# harnesses/hermes/ and harnesses/cursor/ are the only homes for those, same rule
+# as the Claude/Codex tokens before them. Cursor's camelCase event spellings are
+# distinct literals from the PascalCase Claude/Codex ones already denied above.
 # ---------------------------------------------------------------------------
 Assert-Absent `
     -Label 'single-harness token found in shared framework content' `
-    -Pattern 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/|on_session_start|on_session_end|pre_tool_call|post_tool_call|pre_llm_call|\.hermes/|SOUL\.md|skill_manage|delegate_task' `
+    -Pattern 'WebFetch|WebSearch|TodoWrite|NotebookEdit|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|[Ss]uperpowers|\.claude/|\.codex/|\.agents/|on_session_start|on_session_end|pre_tool_call|post_tool_call|pre_llm_call|\.hermes/|SOUL\.md|skill_manage|delegate_task|\.cursor/|preToolUse|postToolUse|sessionStart|sessionEnd|beforeShellExecution|afterFileEdit|cli-config\.json' `
     -ExcludeFiles @('harness-entrypoints.md') `
     -Roots @(
         (Join-Path $repoRoot 'core'),

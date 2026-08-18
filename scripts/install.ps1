@@ -337,7 +337,8 @@ $targetEnvVar = switch ($Harness) {
     'claude' { 'CLAUDE_CONFIG_DIR' }
     'codex'  { 'CODEX_HOME' }
     'hermes' { 'HERMES_HOME' }
-    default  { Die "unknown harness '$Harness' (known on Windows: claude, codex, hermes)" }
+    'cursor' { 'CURSOR_CONFIG_DIR' }
+    default  { Die "unknown harness '$Harness' (known on Windows: claude, codex, hermes, cursor)" }
 }
 
 # Read the target env var by NAME. [Environment]::GetEnvironmentVariable returns
@@ -386,7 +387,7 @@ if ((-not $DryRun) -and ($env:AI_CONFIG_ALLOW_LIVE_TARGET -ne '1') -and (-not $i
     $tgtCmp = if (Test-Path -LiteralPath $TARGET -PathType Container) { (Resolve-Path -LiteralPath $TARGET).Path } else { [System.IO.Path]::GetFullPath($TARGET) }
     $tgtCmp = $tgtCmp.TrimEnd($sepTrim)
     $forbiddenTargets = [System.Collections.Generic.List[string]]::new()
-    foreach ($sub in @('.claude', '.codex', '.hermes')) { $forbiddenTargets.Add((Join-Path $repoRoot $sub)) }
+    foreach ($sub in @('.claude', '.codex', '.hermes', '.cursor')) { $forbiddenTargets.Add((Join-Path $repoRoot $sub)) }
     if ($env:AI_CONFIG_FORBID_TARGETS) {
         foreach ($ft in ($env:AI_CONFIG_FORBID_TARGETS -split [IO.Path]::PathSeparator)) {
             if ($ft) { $forbiddenTargets.Add($ft) }
@@ -549,6 +550,13 @@ function Resolve-HookForClass {
         'claude:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'Write|Edit|NotebookEdit' }
         'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'apply_patch' }
         'hermes:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'pre_tool_call'; matcher = 'write_file|patch|terminal' }
+        # cursor: preToolUse matchers filter by TOOL TYPE. A file edit reports
+        # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`), so
+        # `Write` is the whole matcher. `Shell` is deliberately excluded (same
+        # posture as claude/codex) and `Delete` is unconfirmed — both gaps are
+        # recorded in harnesses/cursor/adapter.md Fact 2. Mirrors install.sh
+        # hook_for_class (cursor:pre-edit-gate).
+        'cursor:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'preToolUse'; matcher = 'Write' }
     }
     $key = "${Harness}:${Class}"
     if (-not $rows.ContainsKey($key)) {
@@ -915,6 +923,64 @@ function New-CodexHooks {
 
     $outHooks = Join-Path $BUILD 'hooks.json'
     $wrappedOut = & $script:JqBin -n --argjson hooks $hooksJson '{hooks: $hooks}'
+    if ($LASTEXITCODE -ne 0) { Die "failed to generate hooks.json" }
+    $wrapped = if ($wrappedOut -is [array]) { $wrappedOut -join "`n" } else { $wrappedOut }
+    Write-LfFile -Path $outHooks -Content $wrapped
+}
+
+# ---------------------------------------------------------------------------
+# generate_cursor_hooks — emits the standalone cursor hooks.json in Cursor's
+# native v1 shape:
+#   {"version":1,"hooks":{"<event>":[{"command":…,"matcher":…,"timeout":…}]}}
+#
+# Mirrors install.sh generate_cursor_hooks. Differences from New-CodexHooks:
+#   * a top-level "version": 1;
+#   * a FLAT per-entry shape — Cursor's entry IS {command,...}; there is no
+#     nested `hooks` array and no `type` field;
+#   * `command` is ONE string (Cursor's schema has no args array), so the pwsh
+#     launcher is spelled as a shell string. A bare .ps1 path in `command` is
+#     non-executable on Windows, hence the explicit `pwsh -NoProfile -File`
+#     prefix; the hook path is double-quoted so a space in CURSOR_CONFIG_DIR
+#     (e.g. a home under "Agentic OS") stays ONE argument;
+#   * the matcher key is OMITTED when the event has none (an empty-string
+#     matcher would be a meaningless regex);
+#   * `failClosed: true` on the enforcement gate — Cursor's default for a hook
+#     that crashes, times out, or emits invalid JSON is to let the action THROUGH
+#     (fail-open), the opposite of what a gate needs. Keyed on the EVENT, not the
+#     script name, so a future gate on another event is added deliberately rather
+#     than inherited by filename coincidence. The gate script also denies on its
+#     own error paths — see the adapter's two-layer contract.
+# ---------------------------------------------------------------------------
+
+function New-CursorHooks {
+    $hooksJson = '{}'
+    foreach ($rec in $Script:HookBlocks) {
+        # Absolute path in the FINAL target (not the temp build dir).
+        $hookAbs = Join-Path $TARGET 'hooks' $rec.script
+        # A double-quote inside a Windows path is impossible (illegal filename
+        # char), so quoting the path is sufficient — no escape layer needed.
+        $commandStr = 'pwsh -NoProfile -File "' + $hookAbs + '"'
+        $failClosed = if ($rec.event -eq 'preToolUse') { 'true' } else { 'false' }
+        $entryOut = & $script:JqBin -nc `
+            --arg matcher $rec.matcher `
+            --arg command $commandStr `
+            --argjson failClosed $failClosed `
+            '{command: $command}
+             + (if ($matcher | length) > 0 then {matcher: $matcher} else {} end)
+             + {timeout: 10}
+             + (if $failClosed then {failClosed: true} else {} end)'
+        if ($LASTEXITCODE -ne 0) { Die "jq failed to construct cursor hook entry" }
+        $entryJson = if ($entryOut -is [array]) { $entryOut -join '' } else { $entryOut }
+        $appendOut = $hooksJson | & $script:JqBin -c `
+            --arg event $rec.event `
+            --argjson entry $entryJson `
+            '.[$event] = ((.[$event] // []) + [$entry])'
+        if ($LASTEXITCODE -ne 0) { Die "jq failed to append cursor hook entry" }
+        $hooksJson = if ($appendOut -is [array]) { $appendOut -join '' } else { $appendOut }
+    }
+
+    $outHooks = Join-Path $BUILD 'hooks.json'
+    $wrappedOut = & $script:JqBin -n --argjson hooks $hooksJson '{version: 1, hooks: $hooks}'
     if ($LASTEXITCODE -ne 0) { Die "failed to generate hooks.json" }
     $wrapped = if ($wrappedOut -is [array]) { $wrappedOut -join "`n" } else { $wrappedOut }
     Write-LfFile -Path $outHooks -Content $wrapped
@@ -1865,7 +1931,17 @@ switch ($Harness) {
             [pscustomobject]@{ tmpl = 'SOUL.template.md'; out = 'SOUL.md' }
         )
     }
-    default { Die "harness '$Harness' not implemented on Windows (known: claude, codex, hermes)" }
+    'cursor' {
+        # Mirrors install.sh — cursor manages a standalone hooks.json (fully
+        # generated, hot-reloaded by Cursor) plus an AGENTS.md entrypoint. Every
+        # OTHER file in the config home (cli-config.json, permissions.json,
+        # sandbox.json, mcp.json, commands/, agents/, rules/) is user-owned and
+        # is never touched — see harnesses/cursor/adapter.md Fact 5. plugins/ is
+        # absent from ManagedPaths, so the per-subdir path stays dormant here.
+        $ManagedPaths = @('skills', 'hooks', 'hooks.json', 'AGENTS.md', '.build-manifest.json')
+        $EntryPoints  = @(@{ tmpl = 'AGENTS.template.md'; out = 'AGENTS.md' })
+    }
+    default { Die "harness '$Harness' not implemented on Windows (known: claude, codex, hermes, cursor)" }
 }
 
 try {
@@ -1902,6 +1978,12 @@ try {
             Add-Hook -Script 'skill-gate.ps1'        -Event 'pre_tool_call'  -Matcher 'skill_manage'
             Add-HookScriptOnly -Script 'steward.ps1'
         }
+        'cursor' {
+            # Cursor's sessionStart carries no documented matcher field
+            # (matchers are per-event; sessionStart has none), so the hook is
+            # wired unmatched. Mirrors install.sh.
+            Add-Hook -Script 'framework-surface.ps1' -Event 'sessionStart' -Matcher ''
+        }
         default {
             Add-Hook -Script 'framework-surface.ps1' -Event 'SessionStart' -Matcher 'startup|clear|compact'
         }
@@ -1928,6 +2010,7 @@ try {
         'claude' { New-Settings }
         'codex'  { New-CodexHooks }
         'hermes' { New-HermesHooks }
+        'cursor' { New-CursorHooks }
         default  { Die "harness '$Harness' has no settings generator" }
     }
 
@@ -2059,6 +2142,16 @@ try {
     # the user-owned config.yaml and consents to the hooks (first-use allowlist).
     # Re-renders rewrite the hook scripts, invalidating prior consent — re-approve
     # after every install. Mirrors install.sh:1210-1217.
+    # Cursor hot-reloads hooks.json, so there is no trust/merge step like codex or
+    # hermes — but two real caveats decide whether the render does anything, and
+    # both are invisible from the build. Surface them. Mirrors install.sh.
+    if ($Harness -eq 'cursor') {
+        [Console]::Error.WriteLine("install.ps1: NOTE - Cursor hot-reloads $TARGET/hooks.json; no trust step is needed.")
+        [Console]::Error.WriteLine('            Cloud Agents run NEITHER user-level hooks NOR sessionStart, so the')
+        [Console]::Error.WriteLine('            spine is instruction-only there. Hook firing in the Cursor IDE and')
+        [Console]::Error.WriteLine('            the interactive CLI is UNVERIFIED - see harnesses/cursor/adapter.md.')
+    }
+
     if ($Harness -eq 'hermes') {
         [Console]::Error.WriteLine("install.ps1: NEXT STEP — merge $TARGET\hooks\hooks.yaml into $TARGET\config.yaml")
         [Console]::Error.WriteLine('            (hooks: block + plugins.enabled), then approve the hooks on first')

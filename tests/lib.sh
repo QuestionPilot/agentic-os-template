@@ -125,6 +125,17 @@ make_hermes_env() {
   } > "$1"
 }
 
+# make_cursor_env <env-file> <cursor-config-dir> [vault-dir]
+# Writes a minimal local.env for `install.sh --harness cursor` test builds.
+# install.sh resolves the cursor build target from CURSOR_CONFIG_DIR; the
+# generated AGENTS.md references OBSIDIAN_VAULT_PATH, so a fixture must supply
+# it or the build fails on the empty-placeholder gate.
+make_cursor_env() {
+  { printf 'CURSOR_CONFIG_DIR=%q\n' "$2"
+    printf 'OBSIDIAN_VAULT_PATH=%q\n' "${3:-/tmp/test-vault}"
+  } > "$1"
+}
+
 # _skip <label> [<reason>]
 _skip() { TESTS_RUN=$((TESTS_RUN + 1)); printf '  SKIP %s (%s)\n' "$1" "${2:-not applicable}"; }
 

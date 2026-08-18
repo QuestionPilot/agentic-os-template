@@ -280,6 +280,27 @@ function Write-HermesEnvFixture {
     [System.IO.File]::WriteAllText($EnvFile, $content, $utf8NoBom)
 }
 
+# Write-CursorEnvFixture <env-file> <cursor-config-dir> [vault-dir]
+#
+# Mirrors `make_cursor_env` in tests/lib.sh. install.ps1 resolves the cursor
+# build target from CURSOR_CONFIG_DIR; the generated AGENTS.md references
+# OBSIDIAN_VAULT_PATH, so a fixture must supply it or the build fails on the
+# empty-placeholder gate.
+function Write-CursorEnvFixture {
+    param(
+        [Parameter(Mandatory)][string]$EnvFile,
+        [Parameter(Mandatory)][string]$CursorConfigDir,
+        [string]$VaultDir = '/tmp/test-vault'
+    )
+    $lines = @(
+        "CURSOR_CONFIG_DIR=`"$CursorConfigDir`"",
+        "OBSIDIAN_VAULT_PATH=`"$VaultDir`""
+    )
+    $content = ($lines -join "`n") + "`n"
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($EnvFile, $content, $utf8NoBom)
+}
+
 # ---------------------------------------------------------------------------
 # Test tiering — mirrors tests/lib.sh _test_tier_of / _tier_should_run.
 #

@@ -75,6 +75,7 @@ harness_target_env() {
     claude) printf 'CLAUDE_CONFIG_DIR\n' ;;
     codex)  printf 'CODEX_HOME\n' ;;
     hermes) printf 'HERMES_HOME\n' ;;
+    cursor) printf 'CURSOR_CONFIG_DIR\n' ;;
     *) return 1 ;;
   esac
 }
@@ -151,7 +152,7 @@ if [ "${#HARNESSES[@]}" -gt 1 ]; then
   [ "$BUILD_ONLY" -eq 0 ] || die "--build-only cannot be combined with multiple --harness values (it prints a single build dir); run install.sh once per harness with --build-only"
   [ "$DRY_RUN" -eq 0 ] || die "--dry-run cannot be combined with multiple --harness values (it reports a single target); run install.sh once per harness with --dry-run"
   for h in "${HARNESSES[@]}"; do
-    tenv="$(harness_target_env "$h")" || die "unknown harness '$h' (known: claude, codex, hermes)"
+    tenv="$(harness_target_env "$h")" || die "unknown harness '$h' (known: claude, codex, hermes, cursor)"
     [ -f "$repo_root/harnesses/$h/adapter.md" ] || die "no adapter for harness '$h' (expected $repo_root/harnesses/$h/adapter.md)"
     [ -n "${!tenv:-}" ] || die "$tenv is not set in $LOCAL_ENV (required to build harness '$h')"
   done
@@ -165,7 +166,7 @@ HARNESS="${HARNESSES[0]}"
 # Each harness names its build target via a different env var. Resolve it
 # per-harness; an unknown harness is rejected here, before anything else.
 target_env="$(harness_target_env "$HARNESS")" \
-  || die "unknown harness '$HARNESS' (known: claude, codex, hermes)"
+  || die "unknown harness '$HARNESS' (known: claude, codex, hermes, cursor)"
 # --out takes precedence; the per-harness env var is only the fallback target,
 # so --out must be applied before the requirement check — otherwise --out is
 # unusable on a machine where the env var is not set.
@@ -203,7 +204,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ "${AI_CONFIG_ALLOW_LIVE_TARGET:-}" != 1 ] \
   else
     _tgt_cmp="${TARGET%/}"
   fi
-  forbidden_targets=("$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes")
+  forbidden_targets=("$repo_root/.claude" "$repo_root/.codex" "$repo_root/.hermes" "$repo_root/.cursor")
   if [ -n "${AI_CONFIG_FORBID_TARGETS:-}" ]; then
     _ft_oifs="$IFS"; IFS=':'
     for _ft in $AI_CONFIG_FORBID_TARGETS; do [ -n "$_ft" ] && forbidden_targets+=("$_ft"); done
@@ -279,6 +280,14 @@ case "$HARNESS" in
     # has always had.
     MANAGED_PATHS="skills hooks plugins SOUL.md .build-manifest.json"
     ENTRYPOINTS="SOUL.template.md:SOUL.md" ;;
+  cursor)
+    # Same output map as codex: a standalone, fully-generated hooks.json plus an
+    # AGENTS.md entrypoint. Cursor's other config files (cli-config.json,
+    # permissions.json, sandbox.json, mcp.json, commands/, agents/, rules/) are
+    # user-owned and are NOT managed here — see harnesses/cursor/adapter.md
+    # Fact 5.
+    MANAGED_PATHS="skills hooks hooks.json AGENTS.md .build-manifest.json"
+    ENTRYPOINTS="AGENTS.template.md:AGENTS.md" ;;
 esac
 
 # Managed paths swapped PER-SUBDIR (one mv per <base> subdir) instead of as a
@@ -603,6 +612,13 @@ hook_for_class() {
     claude:pre-edit-gate)    echo "session-agent.sh PreToolUse Write|Edit|NotebookEdit" ;;
     codex:pre-edit-gate)     echo "session-agent.sh PreToolUse apply_patch" ;;
     hermes:pre-edit-gate)    echo "session-agent.sh pre_tool_call write_file|patch|terminal" ;;
+    # Cursor preToolUse matchers filter by TOOL TYPE. A file edit reports
+    # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`), which is
+    # the whole matcher: `Delete` appears in the docs' matcher list but its real
+    # tool_name is unconfirmed, and `Shell` is deliberately excluded (same posture
+    # as claude/codex) because gating every shell command would block the orient
+    # itself. Both gaps are recorded in harnesses/cursor/adapter.md Fact 2.
+    cursor:pre-edit-gate)    echo "session-agent.sh preToolUse Write" ;;
     *) return 1 ;;
   esac
 }
@@ -695,6 +711,50 @@ generate_codex_hooks() {
   done <<< "$HOOK_BLOCKS"
 
   jq -n --argjson hooks "$hooks_json" '{hooks: $hooks}' \
+    > "$BUILD/hooks.json" || die "failed to generate hooks.json"
+}
+
+# generate_cursor_hooks — emits a fully-generated $BUILD/hooks.json from the
+# HOOK_BLOCKS accumulator, in Cursor's native v1 shape:
+#   {"version":1,"hooks":{"<event>":[{"command":…,"matcher":…,"timeout":…}]}}
+# Cursor auto-loads (and hot-reloads) <config>/hooks.json. Differences from the
+# codex generator: a top-level "version": 1, a FLAT per-entry shape (no nested
+# `hooks` array, no `type` field — `command` is the entry), an OMITTED matcher
+# key when the event has none (an empty-string matcher would be a regex that
+# matches nothing meaningful), and `failClosed: true` on the enforcement gate.
+#
+# failClosed is adapter-critical: Cursor's default for a hook that crashes,
+# times out, or emits invalid JSON is to let the action THROUGH (fail-open).
+# Every hook whose role is to BLOCK must therefore carry failClosed; surfacing
+# hooks must not (a failed context injection must never break a session).
+# The gate script also denies on its own error paths — see the adapter's
+# two-layer contract.
+generate_cursor_hooks() {
+  local hooks_json='{}' event matcher script entry fail_closed
+  while IFS="$HOOK_REC_SEP" read -r event matcher script; do
+    [ -n "$event" ] || continue
+    # Enforcement (blocking) hooks fail closed; surfacing hooks fail open.
+    # Keyed on the EVENT, not the script name: preToolUse is the only blocking
+    # event this harness wires, and a future gate on another event would be
+    # added here deliberately rather than inherited by filename coincidence.
+    case "$event" in
+      preToolUse) fail_closed=true ;;
+      *)          fail_closed=false ;;
+    esac
+    entry="$(jq -n \
+      --arg matcher "$matcher" \
+      --arg command "$TARGET/hooks/$script" \
+      --argjson failClosed "$fail_closed" \
+      '{command: $command}
+       + (if ($matcher | length) > 0 then {matcher: $matcher} else {} end)
+       + {timeout: 10}
+       + (if $failClosed then {failClosed: true} else {} end)')"
+    hooks_json="$(printf '%s' "$hooks_json" | jq \
+      --arg event "$event" --argjson entry "$entry" \
+      '.[$event] = ((.[$event] // []) + [$entry])')"
+  done <<< "$HOOK_BLOCKS"
+
+  jq -n --argjson hooks "$hooks_json" '{version: 1, hooks: $hooks}' \
     > "$BUILD/hooks.json" || die "failed to generate hooks.json"
 }
 
@@ -1517,6 +1577,10 @@ main() {
       install_hook "skill-gate.sh" "pre_tool_call" "skill_manage"
       install_hook_script_only "steward.sh"
       ;;
+    cursor)
+      # Cursor's sessionStart carries no documented matcher field (matchers are
+      # per-event; sessionStart has none), so the hook is wired unmatched.
+      install_hook "framework-surface.sh" "sessionStart" "" ;;
     *)      install_hook "framework-surface.sh" "SessionStart" "startup|clear|compact" ;;
   esac
 
@@ -1545,6 +1609,7 @@ main() {
     claude) generate_settings ;;
     codex)  generate_codex_hooks ;;
     hermes) generate_hermes_hooks ;;
+    cursor) generate_cursor_hooks ;;
   esac
   write_manifest
   validate_build
@@ -1660,6 +1725,16 @@ main() {
     printf 'install.sh: NEXT STEP — run the interactive `/hooks` command in codex once\n' >&2
     printf '            to review and trust %s/hooks.json; until trusted, the\n' "$TARGET" >&2
     printf '            enforcement hooks will not run. (codex exec runs no hooks at all.)\n' >&2
+  fi
+
+  # Cursor hot-reloads hooks.json, so there is no trust/merge step like codex or
+  # hermes — but two real caveats decide whether the render does anything, and
+  # both are invisible from the build. Surface them.
+  if [ "$HARNESS" = cursor ]; then
+    printf 'install.sh: NOTE — Cursor hot-reloads %s/hooks.json; no trust step is needed.\n' "$TARGET" >&2
+    printf '            Cloud Agents run NEITHER user-level hooks NOR sessionStart, so the\n' >&2
+    printf '            spine is instruction-only there. Hook firing in the Cursor IDE and\n' >&2
+    printf '            the interactive CLI is UNVERIFIED — see harnesses/cursor/adapter.md.\n' >&2
   fi
 
   # The hermes build is inert until the operator merges the generated wiring

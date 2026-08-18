@@ -3,9 +3,10 @@
 #
 # Usage: bootstrap.sh [--harness <name>] [--check] [--dry-run]
 #                     [--claude-config-dir <dir>] [--vault-dir <dir>]
-#                     [--codex-home <dir>] [--hermes-home <dir>] [-h|--help]
+#                     [--codex-home <dir>] [--hermes-home <dir>]
+#                     [--cursor-config-dir <dir>] [-h|--help]
 #
-#   --harness <name>         target harness: claude, codex, hermes (repeatable; default: claude)
+#   --harness <name>         target harness: claude, codex, hermes, cursor (repeatable; default: claude)
 #   --check                  read-only — detect requirements, report, exit non-zero on failures
 #   --dry-run                print mutations without executing them
 #   --scattered              opt out of the co-located default: put claude/codex config
@@ -15,6 +16,8 @@
 #   --vault-dir <dir>          override OBSIDIAN_VAULT_PATH
 #   --codex-home <dir>         override CODEX_HOME
 #   --hermes-home <dir>        override HERMES_HOME (required to build --harness hermes)
+#   --cursor-config-dir <dir>  override CURSOR_CONFIG_DIR (required to build --harness cursor;
+#                              normally ~/.cursor — a live app home, so not co-located)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,6 +30,7 @@ OPT_CLAUDE_CONFIG_DIR=""
 OPT_VAULT_DIR=""
 OPT_CODEX_HOME=""
 OPT_HERMES_HOME=""
+OPT_CURSOR_CONFIG_DIR=""
 
 die()  { printf 'bootstrap.sh: ERROR: %s\n' "$1" >&2; exit 1; }
 warn() { printf 'bootstrap.sh: WARNING: %s\n' "$1" >&2; }
@@ -57,6 +61,7 @@ while [ $# -gt 0 ]; do
     --vault-dir)         OPT_VAULT_DIR="${2:?--vault-dir needs a value}"; shift 2 ;;
     --codex-home)        OPT_CODEX_HOME="${2:?--codex-home needs a value}"; shift 2 ;;
     --hermes-home)       OPT_HERMES_HOME="${2:?--hermes-home needs a value}"; shift 2 ;;
+    --cursor-config-dir) OPT_CURSOR_CONFIG_DIR="${2:?--cursor-config-dir needs a value}"; shift 2 ;;
     -h|--help)           sed -n '2,/^set -euo/{/^#/p;}' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'bootstrap.sh: unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
@@ -66,7 +71,7 @@ done
 
 # validate_harnesses — reject unknown harness names up front, in EVERY mode
 # (including --check). The known set mirrors install.sh's harness_target_env
-# (claude, codex, hermes); keep the two in lockstep per the inventory-coupling
+# (claude, codex, hermes, cursor); keep the two in lockstep per the inventory-coupling
 # rule. Names are lowercased at accumulation (the --harness case above), so this
 # fold is defensive — it also covers an env-injected or future-call-site value
 # that skipped that path. Without this guard, `--harness typo --check` passes —
@@ -78,8 +83,8 @@ validate_harnesses() {
   for h in ${HARNESSES[@]+"${HARNESSES[@]}"}; do
     folded="$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')"
     case "$folded" in
-      claude|codex|hermes) ;;
-      *) die "unknown harness '$h' (known: claude, codex, hermes)" ;;
+      claude|codex|hermes|cursor) ;;
+      *) die "unknown harness '$h' (known: claude, codex, hermes, cursor)" ;;
     esac
   done
 }
@@ -355,6 +360,7 @@ run_install() {
       claude) target="${CLAUDE_CONFIG_DIR:-}" ;;
       codex)  target="${CODEX_HOME:-}" ;;
       hermes) target="${HERMES_HOME:-}" ;;
+      cursor) target="${CURSOR_CONFIG_DIR:-}" ;;
       *)      target="" ;;
     esac
     local out_args=()
@@ -377,11 +383,13 @@ smoke_test() {
     # Resolve the target dir AND the harness's canonical entrypoint together. The
     # `*)` default zeroes both so an unmatched harness never silently reuses the
     # PRIOR iteration's target (the pre-fix bug: no default case → stale reuse),
-    # and hermes is checked against SOUL.md rather than CLAUDE.md/AGENTS.md.
+    # hermes is checked against SOUL.md rather than CLAUDE.md/AGENTS.md, and
+    # cursor against its own AGENTS.md in the cursor config home.
     case "$h" in
       claude) target="${CLAUDE_CONFIG_DIR:-}"; entry="CLAUDE.md" ;;
       codex)  target="${CODEX_HOME:-}";        entry="AGENTS.md" ;;
       hermes) target="${HERMES_HOME:-}";       entry="SOUL.md" ;;
+      cursor) target="${CURSOR_CONFIG_DIR:-}";  entry="AGENTS.md" ;;
       *)      target="";                        entry="" ;;
     esac
     if [ -z "$target" ]; then
@@ -473,6 +481,7 @@ main() {
   [ -n "$OPT_VAULT_DIR" ]         && OBSIDIAN_VAULT_PATH="$OPT_VAULT_DIR"
   [ -n "$OPT_CODEX_HOME" ]        && CODEX_HOME="$OPT_CODEX_HOME"
   [ -n "$OPT_HERMES_HOME" ]       && HERMES_HOME="$OPT_HERMES_HOME"
+  [ -n "$OPT_CURSOR_CONFIG_DIR" ] && CURSOR_CONFIG_DIR="$OPT_CURSOR_CONFIG_DIR"
 
   # Co-located-by-default (<TEAM>-297) — resolve the stateless claude+codex config
   # targets (see resolve_config_targets). Called here so persist materialises the
@@ -505,6 +514,7 @@ main() {
   [ -n "$OPT_VAULT_DIR" ]         && OBSIDIAN_VAULT_PATH="$OPT_VAULT_DIR"
   [ -n "$OPT_CODEX_HOME" ]        && CODEX_HOME="$OPT_CODEX_HOME"
   [ -n "$OPT_HERMES_HOME" ]       && HERMES_HOME="$OPT_HERMES_HOME"
+  [ -n "$OPT_CURSOR_CONFIG_DIR" ] && CURSOR_CONFIG_DIR="$OPT_CURSOR_CONFIG_DIR"
   # Re-resolve the co-located targets after the reload (<TEAM>-297): in --dry-run the
   # reload re-sources an existing local.env's empty value lines, so the co-located
   # default must be re-applied here too (persist was skipped, nothing wrote it back).
@@ -513,7 +523,10 @@ main() {
   # reloaded, so a value that exists only in the freshly seeded local.env still
   # reaches ~/.zshenv. CODEX_HOME is exported too (<TEAM>-297) so a co-located codex
   # dir is picked up by the codex CLI in a fresh shell, not merely built into the
-  # folder. Hermes has no ~/.zshenv export — the app reads its own ~/.hermes home.
+  # folder. Hermes and Cursor get no ~/.zshenv export — each app reads its own
+  # default home (~/.hermes, ~/.cursor), which is exactly why neither is
+  # co-located; exporting CURSOR_CONFIG_DIR would also relocate the Cursor CLI's
+  # own cli-config.json, a side effect the build must not cause.
   set_config_dir_env "${CLAUDE_CONFIG_DIR:-}"
   set_zshenv_export CODEX_HOME "${CODEX_HOME:-}"
   run_install

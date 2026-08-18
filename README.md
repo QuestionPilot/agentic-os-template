@@ -46,10 +46,11 @@ line) is the source of truth; this table summarizes them:
 | Claude Code | v2.1.207 | presence (default harness; assumed current) |
 | Codex CLI | v0.144.1 | **v0.132.0** — `bootstrap.sh` hard-floors it when `--harness codex` is targeted |
 | Hermes Agent | v0.18.2 | presence |
+| Cursor | v3.16.17 | presence (Agent CLI `2026.08.11-e8db854`; the CLI auto-updates, so pin nothing) |
 
 Only the Codex CLI floor is version-gated (it is a required CLI for that harness —
-see `bootstrap.sh` `cli_min_version`); Claude Code and Hermes are presence-checked
-with the tested version documented rather than gated. Running a **newer** harness
+see `bootstrap.sh` `cli_min_version`); Claude Code, Hermes, and Cursor are
+presence-checked with the tested version documented rather than gated. Running a **newer** harness
 than the table lists will almost certainly still work, but it is unverified: re-run
 `make verify` after upgrading a harness, and if a hook or capability misbehaves,
 compare against the adapter's "Verified against" baseline and bump it in the same

@@ -613,7 +613,7 @@ Assert-File 'self-audit.test: capabilities/self-audit.md exists' $SA_PATH
 $SA_CONTENT = if (Test-Path -LiteralPath $SA_PATH) { Get-Content -LiteralPath $SA_PATH -Raw } else { '' }
 Assert-Contains 'self-audit.test: capability declares name: self-audit' $SA_CONTENT 'name: self-audit'
 Assert-Contains 'self-audit.test: capability declares kind: native' $SA_CONTENT 'kind: native'
-Assert-Contains 'self-audit.test: capability ships to every spine harness' $SA_CONTENT 'harnesses: [claude, codex, hermes]'
+Assert-Contains 'self-audit.test: capability ships to every spine harness' $SA_CONTENT 'harnesses: [claude, codex, hermes, cursor]'
 Assert-Contains 'self-audit.test: capability declares verification: self-audit' $SA_CONTENT 'verification: self-audit'
 
 # Both harness realizations exist.
@@ -1826,7 +1826,7 @@ Assert-Eq 'self-audit.test: orientation surface no resolvable home → measured 
 Assert-Contains 'self-audit.test: orientation surface no resolvable home → total_bytes null (distinct from 0)' `
     $oriNoneRaw '"total_bytes": null'
 Assert-Eq 'self-audit.test: orientation surface every unresolved home is named in skipped' `
-    4 @($oriNone.orientation_surface.skipped).Count
+    5 @($oriNone.orientation_surface.skipped).Count
 Assert-Contains 'self-audit.test: orientation surface markdown still carries the section when unmeasured' `
     $oriNoneMd '## Orientation surface'
 Assert-Contains 'self-audit.test: orientation surface markdown names the unmeasured state' `
@@ -1843,20 +1843,23 @@ $oriC = Join-Path $oriFixture4 'claude'
 $oriX = Join-Path $oriFixture4 'codex'
 $oriH = Join-Path $oriFixture4 'hermes'
 $oriA = Join-Path $oriFixture4 'agents'
+$oriU = Join-Path $oriFixture4 'cursor'
 New-SaOrientHome $oriC 'CLAUDE.md'
 New-SaOrientHome $oriX 'AGENTS.md'
 New-SaOrientHome $oriH 'SOUL.md'
+New-SaOrientHome $oriU 'AGENTS.md'
 New-SaOrientHome $oriA 'unused.md'
 
 # Non-isolated (so the env fallbacks run) with an empty fixture repo root, and
 # every operator env var pinned per-invocation — no ambient leak.
 $oriSaved = @{}
-foreach ($k in @('CODEX_HOME', 'HERMES_HOME', 'AGENTS_DIR', 'OBSIDIAN_VAULT_PATH', 'CLAUDE_PRIMARY_MEMORY_DIR')) {
+foreach ($k in @('CODEX_HOME', 'HERMES_HOME', 'CURSOR_CONFIG_DIR', 'AGENTS_DIR', 'OBSIDIAN_VAULT_PATH', 'CLAUDE_PRIMARY_MEMORY_DIR')) {
     $oriSaved[$k] = [Environment]::GetEnvironmentVariable($k)
 }
 try {
     $env:CODEX_HOME = $oriX
     $env:HERMES_HOME = $oriH
+    $env:CURSOR_CONFIG_DIR = $oriU
     $env:AGENTS_DIR = $oriA
     Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
     Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
@@ -1868,17 +1871,19 @@ try {
         else { Set-Item ("Env:" + $k) $oriSaved[$k] }
     }
 }
-Assert-Eq 'self-audit.test: orientation surface all four render homes get a row' `
-    'claude|codex|hermes|agents' ((@($oriMulti.orientation_surface.harnesses | ForEach-Object { $_.harness })) -join '|')
+Assert-Eq 'self-audit.test: orientation surface all five render homes get a row' `
+    'claude|codex|hermes|cursor|agents' ((@($oriMulti.orientation_surface.harnesses | ForEach-Object { $_.harness })) -join '|')
 Assert-Eq 'self-audit.test: orientation surface the codex row names AGENTS.md' `
     'AGENTS.md' $oriMulti.orientation_surface.harnesses[1].entrypoint
 Assert-Eq 'self-audit.test: orientation surface the hermes row names SOUL.md' `
     'SOUL.md' $oriMulti.orientation_surface.harnesses[2].entrypoint
+Assert-Eq 'self-audit.test: orientation surface the cursor row names AGENTS.md' `
+    'AGENTS.md' $oriMulti.orientation_surface.harnesses[3].entrypoint
 Assert-Eq 'self-audit.test: orientation surface the .agents co-render reports no entrypoint of its own' `
-    'True' ([string]($null -eq $oriMulti.orientation_surface.harnesses[3].entrypoint))
+    'True' ([string]($null -eq $oriMulti.orientation_surface.harnesses[4].entrypoint))
 Assert-Eq 'self-audit.test: orientation surface the .agents co-render still measures its spine bodies' `
-    'True' ([string]([int]$oriMulti.orientation_surface.harnesses[3].spine_bytes -gt 0))
-Assert-Eq 'self-audit.test: orientation surface nothing is skipped when all four resolve' `
+    'True' ([string]([int]$oriMulti.orientation_surface.harnesses[4].spine_bytes -gt 0))
+Assert-Eq 'self-audit.test: orientation surface nothing is skipped when all five resolve' `
     0 @($oriMulti.orientation_surface.skipped).Count
 Remove-Item -LiteralPath $oriFixture4 -Recurse -Force -ErrorAction SilentlyContinue
 
