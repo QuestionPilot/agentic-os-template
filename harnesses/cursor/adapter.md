@@ -266,16 +266,17 @@ degrades **per surface**:
 | --- | --- | --- |
 | Agent CLI headless (`agent -p --trust`) | **fires — live-verified** | **fires and blocks — live-verified** |
 | Agent CLI (`agent`, interactive) | expected — **UNVERIFIED** | expected — **UNVERIFIED** |
-| Desktop IDE / Agent Chat | expected — **UNVERIFIED** (U3) | expected — **UNVERIFIED** (U3) |
+| Desktop IDE / Agent Chat | **fires — live-verified** (U3) | **fires and blocks — live-verified** (U3) |
 | **Cloud Agents** | **never fires** (documented) | project hooks only |
 
 Note the shape of that table: it is the **inverse** of the Codex situation. On
 Codex the interactive TUI is the documented-but-unproven surface and
-`codex exec` provably runs no hooks at all; on Cursor the **headless lane is the
-proven one** and the interactive/IDE surfaces are the ones still to confirm. A
-Cursor automation lane therefore has full enforcement parity today — the
-opposite of the caveat a reader carrying Codex habits would expect. Do not
-copy the Codex "headless runs no hooks" warning onto this harness.
+`codex exec` provably runs no hooks at all; on Cursor the **headless lane and
+the desktop IDE are both proven** and only the interactive TUI (same binary as
+the proven headless lane) remains unexercised. A Cursor automation lane
+therefore has full enforcement parity today — the opposite of the caveat a
+reader carrying Codex habits would expect. Do not copy the Codex "headless
+runs no hooks" warning onto this harness.
 
 Cloud Agents are the documented hard gap: they run **project**
 (`.cursor/hooks.json`, in-repo) command hooks plus team/enterprise-managed hooks
@@ -427,13 +428,15 @@ What it proved:
 | V7 | `failClosed: true` on a crashed `preToolUse` hook | **Blocks** — marker-proven crash (empty stdout, exit 1) stopped the `Write`; see U1 |
 | V8 | Same-name skill in `.cursor/skills/` vs `.claude/skills/` | Deterministic — the `.claude` copy shadows; one catalog entry; swapped-body re-run followed the directory; see U5 |
 | V9 | `Delete` fires on `preToolUse` | **Yes** — `tool_name: "Delete"`, `tool_input.file_path` sometimes bare-relative; headless deletes additionally need the CLI's own `-f/--force`; see U6 |
+| V10 | Hooks fire in the desktop IDE Agent chat | **Yes** — gate deny observed on a real `Write` (probe file never created) and the sessionStart declaration landed at the interpolated marker path; see U3 |
 
 Two consequences worth stating plainly, because they invert the intuition a
 reader carrying Codex habits would bring:
 
 - **The headless lane has full enforcement parity today.** Do not write, or
   copy over, a Codex-style "non-interactive runs no hooks" caveat here. On this
-  harness the *interactive* surfaces are the unproven ones (U3).
+  harness the desktop IDE is now proven too and only the *interactive TUI*
+  remains unexercised (U3).
 - **Compat skill discovery is real, which makes coexistence the concern, not
   availability.** V5 shows a project `.claude/skills/` is loaded by Cursor. The
   build still renders a **native** `<config>/skills/` target — it is
@@ -483,23 +486,23 @@ first-class for repos that opt in. The template's own framing states this.
 Re-probe on major Cursor releases — an IDE-side or future build could change
 discovery.
 
-### U3 — Hook firing in the IDE and the interactive CLI
+### U3 — Hook firing in the IDE and the interactive CLI — **RESOLVED for the IDE: fires and blocks**
 
-**Claim.** The enforcement-parity table lists the desktop IDE / Agent Chat and
-the interactive `agent` TUI as hook-firing surfaces.
+**Verdict (live-verified 2026-08-18, Cursor desktop IDE Agent chat, operator
+session).** With the user-level render active, the gate marker was removed and
+a `Write` attempted from an IDE Agent-chat conversation: the `preToolUse` gate
+**denied it** with the gate's own message and the probe file was never created
+— the definitive proof, since the deny can only come from the hook pipeline.
+The same conversation opened with the session-agent kickoff and wrote a full
+routing declaration to the correctly interpolated `gate-<conversation_id>`
+path, so the `sessionStart` directive demonstrably reached the IDE model too.
+The desktop IDE was the surface whose silent failure would have been worst;
+it runs the same user-level hook wiring as the headless lane.
 
-**Why it is open.** V1 proved the **headless** lane. The IDE runs a different
-process with its own workspace-trust flow and its own settings toggles, and the
-interactive TUI was not exercised. A surface that silently skips hooks would
-disable the spine with no visible signal — the worst failure mode this adapter
-has, and the reason this stays an explicit gap rather than an assumption.
-
-**Reproduction recipe.** With the sandbox render active, append
-`date >> /tmp/cursor-hook-fired` to the rendered
-`hooks/framework-surface.sh`. (a) Open a workspace in the Cursor desktop app and
-start a conversation; (b) run `agent` interactively in the same repo. Check the
-marker after each. Then attempt a file edit before invoking `/session-agent` and
-confirm the gate denies on each surface.
+**Still open (minor).** The interactive `agent` TUI was not separately
+exercised. It is the same binary and pipeline as the proven headless lane, so
+the residual risk is small; confirm opportunistically by running `agent`
+interactively in a repo and attempting a pre-declaration edit.
 
 ### U4 — Workspace trust without `--trust`, and user-level hooks
 
@@ -515,7 +518,7 @@ silence.
 
 **Reproduction recipe.** Open a freshly-cloned, never-trusted directory in
 Cursor with the sandbox render active, decline the trust prompt, and start a
-conversation; check whether the `sessionStart` marker (U3 step) is written.
+conversation; check whether the `sessionStart` hook fires (marker-file probe).
 Separately, run `agent -p` **without** `--trust` in an untrusted repo and record
 what it prompts for and whether hooks fire. Written/fires → user hooks are
 trust-independent. Otherwise the framework needs a loud "trust this workspace"
@@ -594,9 +597,10 @@ Not gaps in knowledge — decisions deliberately left for review:
 2. **DECIDED (U2 resolved negative, 2026-08-18).** User-level `AGENTS.md` is
    not discovered, so the authoritative global channel is the `sessionStart`
    `additional_context` injection (verified working); the rendered
-   `<config>/AGENTS.md` stays as a reference document. A `.cursor/rules/*.mdc`
-   `alwaysApply` render remains a possible future addition for IDE sessions if
-   U3 verification shows the IDE needs a hook-independent channel.
+   `<config>/AGENTS.md` stays as a reference document. U3 has since shown the
+   IDE runs the same hook pipeline (sessionStart directive reached the IDE
+   model, gate deny observed), so no hook-independent `.cursor/rules/*.mdc`
+   channel is needed.
 3. **Should the build offer a project-level render?** Cloud Agents and the
    workspace-trust story both point at `.cursor/hooks.json` committed in-repo as
    the only channel that reaches every surface. That is a different product —
