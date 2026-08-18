@@ -337,6 +337,99 @@ else
   assert_eq "commit-identity: unborn repo passes with the no-commits note" "0" "$cc_idunborn_rc"
   assert_contains "commit-identity: unborn repo names the no-commits path" "$cc_idunborn_out" "no commits to check"
 
+  # --- Commit-MESSAGE scan ----------------------------------------------------
+  # The live incident: a lowercase tracker-ID fragment in a commit MESSAGE body
+  # passed the guard (tree scan sees files at HEAD; identity check sees
+  # author/committer fields) and was stopped only by a manual format-patch
+  # sweep. The scan walks the same ahead-of-default range as the identity check.
+  # Sentinels are runtime-built like every other trip-shape in this file.
+
+  # RED: a lowercase hyphenated ID in the message BODY fails, naming the commit.
+  cc_msg="$CC_TMP/msg-red"; mkdir -p "$cc_msg"
+  ( cd "$cc_msg" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "fix path" -m "moved the ${_CC_QUE_LC}-123 fragment out of docs" ) >/dev/null 2>&1
+  cc_msg_out="$(bash "$CC_SUT" "$cc_msg" 2>&1)"; cc_msg_rc=$?
+  assert_eq "commit-message: lowercase ID in a message body FAILS" "1" "$cc_msg_rc"
+  assert_contains "commit-message: the report names the class and the commit" \
+    "$cc_msg_out" "tracker issue ID found in commit message"
+  assert_contains "commit-message: the hit line carries the commit" "$cc_msg_out" "commit "
+
+  # Separator tolerance: a spaced reference in the SUBJECT fails too.
+  cc_msgsp="$CC_TMP/msg-space"; mkdir -p "$cc_msgsp"
+  ( cd "$cc_msgsp" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "see ${_CC_QUE} 77 for context" ) >/dev/null 2>&1
+  assert_exit "commit-message: space-separated ID (PREFIX 77) FAILS" 1 -- bash "$CC_SUT" "$cc_msgsp"
+  cc_msgus="$CC_TMP/msg-underscore"; mkdir -p "$cc_msgus"
+  ( cd "$cc_msgus" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "rename ${_CC_QUE_LC}_9 helper" ) >/dev/null 2>&1
+  assert_exit "commit-message: underscore-separated lowercase ID FAILS" 1 -- bash "$CC_SUT" "$cc_msgus"
+
+  # RESTRAINT: prose words ending in the lowercase prefix + digits stay clean —
+  # and the PASS line proves the scan RAN (a quiet scan that never executed
+  # would make this assertion vacuous).
+  cc_msgok="$CC_TMP/msg-ok"; mkdir -p "$cc_msgok"
+  ( cd "$cc_msgok" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "restraint check" \
+      -m "a question 42 about the queue 7 and an anti${_CC_QUE_LC} 55 remain" ) >/dev/null 2>&1
+  cc_msgok_out="$(bash "$CC_SUT" "$cc_msgok" 2>&1)"; cc_msgok_rc=$?
+  assert_eq "commit-message: benign question/queue/antique prose PASSES (restraint)" "0" "$cc_msgok_rc"
+  assert_contains "commit-message: the PASS line proves the scan ran (count reported)" \
+    "$cc_msgok_out" "1 branch commit(s) message-scanned"
+
+  # Range scoping: a leaky message BELOW the default-branch ref is published
+  # history; only ahead-of-base commits are scanned, so the branch passes and
+  # the count says 1.
+  cc_msgrange="$CC_TMP/msg-range"; mkdir -p "$cc_msgrange"
+  ( cd "$cc_msgrange" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "old ${_CC_QUE_LC}-500 reference" &&
+    git update-ref refs/remotes/origin/main HEAD &&
+    printf 'more clean prose\n' > b.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" commit -qm "new clean work" ) >/dev/null 2>&1
+  cc_msgrange_out="$(bash "$CC_SUT" "$cc_msgrange" 2>&1)"; cc_msgrange_rc=$?
+  assert_eq "commit-message: only ahead-of-default messages are scanned" "0" "$cc_msgrange_rc"
+  assert_contains "commit-message: range-scoped run reports 1 scanned" \
+    "$cc_msgrange_out" "1 branch commit(s) message-scanned"
+
+  # Operator tokens are scanned in messages too (case-insensitive), same opt-in
+  # as the tree scan.
+  cc_msgtok="$CC_TMP/msg-tok"; mkdir -p "$cc_msgtok"
+  ( cd "$cc_msgtok" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "tested on zubble's machine" ) >/dev/null 2>&1
+  assert_exit "commit-message: operator token in a message FAILS when configured" 1 -- \
+    env OPERATOR_PII_TOKENS="Zubble" bash "$CC_SUT" "$cc_msgtok"
+  assert_exit "commit-message: token-only message PASSES when no tokens configured (CI case)" 0 -- \
+    env -u OPERATOR_PII_TOKENS bash "$CC_SUT" "$cc_msgtok"
+
+  # RESTRAINT (panel-confirmed false positive, fixture-pinned): ALL-CAPS prose
+  # carries uppercase prefix letters mid-word ("UNIQUE 1 constraint"), so the
+  # whitespace arm must be left-boundary anchored on BOTH prefix arms — an
+  # unanchored arm1 + space tail flagged this exact message before the fix.
+  cc_msgcaps="$CC_TMP/msg-caps"; mkdir -p "$cc_msgcaps"
+  ( cd "$cc_msgcaps" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "enforce UNI${_CC_QUE} 1 constraint and TECHNI${_CC_QUE} 2 pass" ) >/dev/null 2>&1
+  assert_exit "commit-message: ALL-CAPS prose (UNIQUE 1 / TECHNIQUE 2) PASSES (restraint)" 0 -- \
+    bash "$CC_SUT" "$cc_msgcaps"
+
+  # Bypass hardening (panel-confirmed): 2+ blanks or a tab between prefix and
+  # digits is the same leak — the whitespace arm accepts 1+ blanks.
+  cc_msgdbl="$CC_TMP/msg-dblspace"; mkdir -p "$cc_msgdbl"
+  ( cd "$cc_msgdbl" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "see ${_CC_QUE}  548 double-space ref" ) >/dev/null 2>&1
+  assert_exit "commit-message: double-space-separated ID still FAILS" 1 -- bash "$CC_SUT" "$cc_msgdbl"
+  cc_msgtab="$CC_TMP/msg-tab"; mkdir -p "$cc_msgtab"
+  ( cd "$cc_msgtab" && git init -q && printf 'clean prose\n' > a.md && git add -A &&
+    git -c user.name="$_CC_BOT_NAME" -c user.email="$_CC_BOT_MAIL" \
+      commit -qm "$(printf 'ref %s\t548 tab sep' "$_CC_QUE_LC")" ) >/dev/null 2>&1
+  assert_exit "commit-message: tab-separated lowercase ID still FAILS" 1 -- bash "$CC_SUT" "$cc_msgtab"
+
   # --- Tracker-prefix configurability (TRACKER_ISSUE_PREFIX) ------------------
   # The issue-ID scan derives from the configured prefix set; unset keeps the
   # historical QUE default (proven by the fixtures above). Prefix sentinels are

@@ -22,6 +22,15 @@
 #                              $COMMIT_IDENTITY_ALLOWLIST set, every ahead-of-default
 #                              branch commit must carry an allowlisted author AND
 #                              committer — content scans cannot see commit metadata
+#   - commit-MESSAGE leaks     (git mode, always on): every ahead-of-default
+#                              branch commit's message (subject + body) is scanned
+#                              for tracker-ID variants — case-insensitive AND
+#                              separator-tolerant (QUE-548 / que-548 / que 548 /
+#                              que_548) — and for operator identity tokens. The
+#                              tree scan sees files at HEAD, the identity check
+#                              sees author/committer fields; a leak in a commit
+#                              MESSAGE body was visible to neither (caught live
+#                              only by a manual format-patch sweep before a push)
 #
 # Enumeration (hardened): in a git work tree the scan walks `git ls-files` and
 # inspects each TRACKED file. This closes four bypasses a recursive,
@@ -103,11 +112,26 @@ fail=0
 # historical pattern byte-for-byte. This file is self-excluded by exact path, so
 # the derivation cannot self-match either way.
 
-# build_issue_re <prefix> — derive the boundary-aware tracker-ID ERE for ONE
-# prefix. Letters expand to case-classes per the rationale above; digits inside
-# a key (e.g. AB2) pass through literally.
+# build_issue_re <prefix> [<tail>] [space] — derive the boundary-aware
+# tracker-ID ERE for ONE prefix. Letters expand to case-classes per the
+# rationale above; digits inside a key (e.g. AB2) pass through literally.
+# <tail> defaults to the tree pattern (hyphen or 2+ bare digits); the
+# commit-message scan passes a separator-tolerant tail instead. A literal
+# third arg `space` appends a whitespace-separated arm that is LEFT-BOUNDARY
+# ANCHORED on BOTH prefix arms: the uppercase arm1 is deliberately unanchored
+# for the other tails (CamelCase mid-word is a deliberate token), but ALL-CAPS
+# prose carries uppercase prefix letters mid-word too ("UNIQUE 1 constraint",
+# "TECHNIQUE 2"), so an unanchored arm1 + space tail false-trips this
+# fail-closed gate — panel-confirmed by fixture. The space arm accepts 1+
+# blanks (a double space or tab between prefix and digits is the same leak).
+# One builder for every scan keeps the boundary logic identical by
+# construction (a validator/strip-pair rule: shared pattern, no drift).
 build_issue_re() {
-  local p="$1" i c up low arm1="" core=""
+  # The default tail is assigned in a separate statement: inside a ${2:-...}
+  # default the pattern's own `}` would terminate the expansion early and
+  # silently corrupt the regex (grep exit 2 on every file).
+  local p="$1" tail="${2:-}" space_arm="${3:-}" i c up low arm1="" core=""
+  [ -n "$tail" ] || tail='(-[0-9]+|[0-9]{2,})'
   for ((i = 0; i < ${#p}; i++)); do
     c="${p:$i:1}"
     case "$c" in
@@ -121,7 +145,12 @@ build_issue_re() {
         core="${core}${c}"; arm1="${arm1}${c}" ;;
     esac
   done
-  printf '(%s|(^|[^A-Za-z])%s)(-[0-9]+|[0-9]{2,})' "$arm1" "$core"
+  if [ "$space_arm" = "space" ]; then
+    printf '(%s|(^|[^A-Za-z])%s)%s|(^|[^A-Za-z])%s[[:blank:]]+[0-9]+' \
+      "$arm1" "$core" "$tail" "$core"
+  else
+    printf '(%s|(^|[^A-Za-z])%s)%s' "$arm1" "$core" "$tail"
+  fi
 }
 
 # Parse + validate the prefix list. A key must be a letter followed by letters/
@@ -146,6 +175,20 @@ fi
 _ISSUE_RES=()
 for _p in "${_PREFIXES[@]}"; do
   _ISSUE_RES+=("$(build_issue_re "$_p")")
+done
+# Commit-MESSAGE variant: same boundary-aware prefix arms, separator-tolerant
+# tail — hyphen/underscore with 1+ digits or no separator with 2+ digits on
+# the tree arms, plus the anchored whitespace arm (`space` mode above) for
+# hand-typed references like "see QUE 548". Prose that merely ENDS in the
+# prefix ("question 42", "queue 7", "UNIQUE 1") stays clean: the whitespace
+# arm requires a left boundary, so a letter before the prefix blocks it in
+# every case. Accepted residual under-reporting (documented restraint bias):
+# colon/hash separators ("QUE: 548", "QUE#548") and CamelCase+space
+# ("fixQUE 548") are not matched — a missed variant costs one manual sweep, a
+# false accusation costs trust in the whole fail-closed gate.
+_MSG_ISSUE_RES=()
+for _p in "${_PREFIXES[@]}"; do
+  _MSG_ISSUE_RES+=("$(build_issue_re "$_p" '([-_][0-9]+|[0-9]{2,})' space)")
 done
 # Home paths carrying a REAL username segment. The username class begins with an
 # alphanumeric / dot / underscore, so angle-bracket or $-variable placeholders do
@@ -482,9 +525,74 @@ if [ "$is_git" -eq 1 ]; then
   fi
 fi
 
+# --- Commit-message scan -----------------------------------------------------
+# The tree scan reads files at HEAD and the identity check reads author/
+# committer fields; a leak in a commit MESSAGE (subject or body) is visible to
+# neither — the live catch was a lowercase tracker-ID path fragment sitting in a
+# message body that passed this guard and was stopped only by a manual
+# case-insensitive sweep over format-patch files. Scope: the same ahead-of-
+# default range the identity check walks (the commit set a push/PR would
+# publish), so a synced main scans zero commits and a private living history
+# never trips it. Always on in git mode — the tracker-ID patterns need no
+# operator configuration (prefix defaults to QUE), and operator tokens join the
+# scan when configured. Fail-closed: a git failure is a FAIL, never a pass.
+msg_note=""
+if [ "$is_git" -eq 1 ]; then
+  if ! git -C "$target" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    # Same unborn-repo carve-out as the identity check: zero commits anywhere
+    # is benign; any other unresolvable-HEAD state fails closed.
+    if _all_tip="$(git -C "$target" rev-list -n 1 --all 2>/dev/null)" && [ -z "$_all_tip" ]; then
+      msg_note="; commit-message: no commits to scan"
+    else
+      printf 'FAIL commit-message: HEAD does not resolve but the repo is not empty (fail-closed)\n' >&2
+      fail=1
+    fi
+  else
+    # Base resolution mirrors the identity check: FULL refnames only (a bare
+    # `origin/main` resolves through refs/tags/ first and could be shadowed);
+    # no resolvable base (fixture repo with no remote) => every commit from HEAD.
+    _mbase=""
+    for _ref in refs/remotes/origin/HEAD refs/remotes/origin/main refs/remotes/origin/master; do
+      if git -C "$target" rev-parse --verify --quiet "$_ref" >/dev/null 2>&1; then _mbase="$_ref"; break; fi
+    done
+    if [ -n "$_mbase" ]; then _mrange="$_mbase..HEAD"; else _mrange="HEAD"; fi
+    _mlist="$(git -C "$target" rev-list "$_mrange" 2>/dev/null)"; _mrc=$?
+    if [ "$_mrc" -ne 0 ]; then
+      printf 'FAIL commit-message: git rev-list failed over %s (fail-closed)\n' "$_mrange" >&2
+      fail=1
+    else
+      _mcount=0
+      while IFS= read -r _mc; do
+        [ -z "$_mc" ] && continue
+        _mcount=$(( _mcount + 1 ))
+        _mh="$(git -C "$target" rev-parse --short "$_mc" 2>/dev/null)" || _mh="$_mc"
+        _mbody="$(git -C "$target" log -1 --format=%B "$_mc" 2>/dev/null)"; _mbrc=$?
+        if [ "$_mbrc" -ne 0 ]; then
+          printf 'FAIL commit-message: could not read the message of %s (fail-closed)\n' "$_mc" >&2
+          fail=1; continue
+        fi
+        # Reuse the per-file scanners verbatim (shared patterns, no drift): the
+        # "rel" slot carries the commit, so every hit line NAMES the commit.
+        _mjoined="$(printf '%s' "$_mbody" | hard_unwrap)"
+        for _pi in "${!_PREFIXES[@]}"; do
+          scan_class "commit $_mh" "$_mbody" "$_mjoined" \
+            "tracker issue ID found in commit message (${_PREFIXES[$_pi]}, commit $_mh)" \
+            "${_MSG_ISSUE_RES[$_pi]}"
+        done
+        if [ "${#_TOKENS[@]}" -gt 0 ]; then
+          for _tok in "${_TOKENS[@]}"; do
+            scan_token_class "commit $_mh" "$_mbody" "$_mjoined" "$_tok"
+          done
+        fi
+      done <<< "$_mlist"
+      msg_note="; $_mcount branch commit(s) message-scanned"
+    fi
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   printf 'FAIL check-clean: leaks found in %s\n' "$target" >&2
   exit 1
 fi
-printf 'PASS check-clean: %s is clean (no issue IDs / home paths / emails / operator tokens)%s\n' "$target" "$identity_note"
+printf 'PASS check-clean: %s is clean (no issue IDs / home paths / emails / operator tokens)%s%s\n' "$target" "$identity_note" "$msg_note"
 exit 0

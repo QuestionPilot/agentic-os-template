@@ -365,6 +365,112 @@ try {
     Remove-Item Env:\COMMIT_IDENTITY_ALLOWLIST -ErrorAction SilentlyContinue
 }
 
+# --- Commit-MESSAGE scan -------------------------------------------------------
+# Twin of the bash commit-message block. The live incident: a lowercase
+# tracker-ID fragment in a commit MESSAGE body passed the guard (tree scan sees
+# files at HEAD; identity check sees author/committer fields) and was stopped
+# only by a manual format-patch sweep. Same ahead-of-default range as the
+# identity check. Sentinels are runtime-built like every other trip-shape here.
+$ccQueUp = 'QU' + 'E'
+
+# RED: a lowercase hyphenated ID in the message BODY fails, naming the commit.
+$ccMsg = Join-Path $CC_TMP 'msg-red'; New-Item -ItemType Directory -Path $ccMsg -Force | Out-Null
+& git -C $ccMsg init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsg 'a.md') -Value 'clean prose'
+& git -C $ccMsg add -A *>$null
+& git -C $ccMsg -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm 'fix path' -m "moved the ${ccQueLc}-123 fragment out of docs" *>$null
+$ccMsgOut = (& pwsh -NoProfile -File $CC_SUT $ccMsg 2>&1 | Out-String)
+$ccMsgRc = $LASTEXITCODE
+Assert-Eq 'commit-message: lowercase ID in a message body FAILS' '1' "$ccMsgRc"
+Assert-Contains 'commit-message: the report names the class and the commit' `
+    $ccMsgOut 'tracker issue ID found in commit message'
+Assert-Contains 'commit-message: the hit line carries the commit' $ccMsgOut 'commit '
+
+# Separator tolerance: a spaced reference in the SUBJECT fails too.
+$ccMsgSp = Join-Path $CC_TMP 'msg-space'; New-Item -ItemType Directory -Path $ccMsgSp -Force | Out-Null
+& git -C $ccMsgSp init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgSp 'a.md') -Value 'clean prose'
+& git -C $ccMsgSp add -A *>$null
+& git -C $ccMsgSp -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "see $ccQueUp 77 for context" *>$null
+Assert-Exit 'commit-message: space-separated ID (PREFIX 77) FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccMsgSp
+$ccMsgUs = Join-Path $CC_TMP 'msg-underscore'; New-Item -ItemType Directory -Path $ccMsgUs -Force | Out-Null
+& git -C $ccMsgUs init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgUs 'a.md') -Value 'clean prose'
+& git -C $ccMsgUs add -A *>$null
+& git -C $ccMsgUs -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "rename ${ccQueLc}_9 helper" *>$null
+Assert-Exit 'commit-message: underscore-separated lowercase ID FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccMsgUs
+
+# RESTRAINT: prose words ending in the lowercase prefix + digits stay clean —
+# and the PASS line proves the scan RAN (a quiet scan that never executed would
+# make this assertion vacuous).
+$ccMsgOk = Join-Path $CC_TMP 'msg-ok'; New-Item -ItemType Directory -Path $ccMsgOk -Force | Out-Null
+& git -C $ccMsgOk init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgOk 'a.md') -Value 'clean prose'
+& git -C $ccMsgOk add -A *>$null
+& git -C $ccMsgOk -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm 'restraint check' -m "a question 42 about the queue 7 and an anti${ccQueLc} 55 remain" *>$null
+$ccMsgOkOut = (& pwsh -NoProfile -File $CC_SUT $ccMsgOk 2>&1 | Out-String)
+$ccMsgOkRc = $LASTEXITCODE
+Assert-Eq 'commit-message: benign question/queue/antique prose PASSES (restraint)' '0' "$ccMsgOkRc"
+Assert-Contains 'commit-message: the PASS line proves the scan ran (count reported)' `
+    $ccMsgOkOut '1 branch commit(s) message-scanned'
+
+# Range scoping: a leaky message BELOW the default-branch ref is published
+# history; only ahead-of-base commits are scanned.
+$ccMsgRange = Join-Path $CC_TMP 'msg-range'; New-Item -ItemType Directory -Path $ccMsgRange -Force | Out-Null
+& git -C $ccMsgRange init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgRange 'a.md') -Value 'clean prose'
+& git -C $ccMsgRange add -A *>$null
+& git -C $ccMsgRange -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "old ${ccQueLc}-500 reference" *>$null
+& git -C $ccMsgRange update-ref refs/remotes/origin/main HEAD *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgRange 'b.md') -Value 'more clean prose'
+& git -C $ccMsgRange add -A *>$null
+& git -C $ccMsgRange -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm 'new clean work' *>$null
+$ccMsgRangeOut = (& pwsh -NoProfile -File $CC_SUT $ccMsgRange 2>&1 | Out-String)
+$ccMsgRangeRc = $LASTEXITCODE
+Assert-Eq 'commit-message: only ahead-of-default messages are scanned' '0' "$ccMsgRangeRc"
+Assert-Contains 'commit-message: range-scoped run reports 1 scanned' `
+    $ccMsgRangeOut '1 branch commit(s) message-scanned'
+
+# Operator tokens are scanned in messages too (case-insensitive), same opt-in
+# as the tree scan.
+$ccMsgTok = Join-Path $CC_TMP 'msg-tok'; New-Item -ItemType Directory -Path $ccMsgTok -Force | Out-Null
+& git -C $ccMsgTok init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgTok 'a.md') -Value 'clean prose'
+& git -C $ccMsgTok add -A *>$null
+& git -C $ccMsgTok -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "tested on zubble's machine" *>$null
+$env:OPERATOR_PII_TOKENS = 'Zubble'
+try {
+    Assert-Exit 'commit-message: operator token in a message FAILS when configured' 1 -- pwsh -NoProfile -File $CC_SUT $ccMsgTok
+} finally {
+    Remove-Item Env:\OPERATOR_PII_TOKENS -ErrorAction SilentlyContinue
+}
+Assert-Exit 'commit-message: token-only message PASSES when no tokens configured (CI case)' 0 -- pwsh -NoProfile -File $CC_SUT $ccMsgTok
+
+# RESTRAINT (panel-confirmed false positive, fixture-pinned): ALL-CAPS prose
+# carries uppercase prefix letters mid-word ("UNIQUE 1 constraint"), so the
+# whitespace arm must be left-boundary anchored on BOTH prefix arms.
+$ccMsgCaps = Join-Path $CC_TMP 'msg-caps'; New-Item -ItemType Directory -Path $ccMsgCaps -Force | Out-Null
+& git -C $ccMsgCaps init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgCaps 'a.md') -Value 'clean prose'
+& git -C $ccMsgCaps add -A *>$null
+& git -C $ccMsgCaps -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "enforce UNI$ccQueUp 1 constraint and TECHNI$ccQueUp 2 pass" *>$null
+Assert-Exit 'commit-message: ALL-CAPS prose (UNIQUE 1 / TECHNIQUE 2) PASSES (restraint)' 0 -- pwsh -NoProfile -File $CC_SUT $ccMsgCaps
+
+# Bypass hardening (panel-confirmed): 2+ blanks or a tab between prefix and
+# digits is the same leak — the whitespace arm accepts 1+ blanks.
+$ccMsgDbl = Join-Path $CC_TMP 'msg-dblspace'; New-Item -ItemType Directory -Path $ccMsgDbl -Force | Out-Null
+& git -C $ccMsgDbl init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgDbl 'a.md') -Value 'clean prose'
+& git -C $ccMsgDbl add -A *>$null
+& git -C $ccMsgDbl -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "see $ccQueUp  548 double-space ref" *>$null
+Assert-Exit 'commit-message: double-space-separated ID still FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccMsgDbl
+$ccMsgTab = Join-Path $CC_TMP 'msg-tab'; New-Item -ItemType Directory -Path $ccMsgTab -Force | Out-Null
+& git -C $ccMsgTab init -q *>$null
+Set-Content -LiteralPath (Join-Path $ccMsgTab 'a.md') -Value 'clean prose'
+& git -C $ccMsgTab add -A *>$null
+& git -C $ccMsgTab -c user.name="$CC_BOT_NAME" -c user.email="$CC_BOT_MAIL" commit -qm "ref ${ccQueLc}`t548 tab sep" *>$null
+Assert-Exit 'commit-message: tab-separated lowercase ID still FAILS' 1 -- pwsh -NoProfile -File $CC_SUT $ccMsgTab
+
 # --- Tracker-prefix configurability (TRACKER_ISSUE_PREFIX) ---------------------
 # The issue-ID scan derives from the configured prefix set; unset keeps the
 # historical QUE default (proven by the fixtures above). Prefix sentinels are
