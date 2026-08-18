@@ -5,7 +5,8 @@
 #   --harness <name>  target harness (default: claude). Repeatable — pass it more
 #                     than once to build several harnesses in one pass, e.g.
 #                     --harness claude --harness codex. Each harness builds into
-#                     its own target dir (CLAUDE_CONFIG_DIR / CODEX_HOME).
+#                     its own target dir (CLAUDE_CONFIG_DIR / CODEX_HOME /
+#                     HERMES_HOME / CURSOR_CONFIG_DIR).
 #   --out <dir>       override build target (default: $CLAUDE_CONFIG_DIR from
 #                     local.env). Single-harness only — cannot be combined with
 #                     more than one --harness.

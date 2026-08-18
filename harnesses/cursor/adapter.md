@@ -292,8 +292,10 @@ repository — deliberately out of scope for a user-level render.)
 standard workspace-trust prompt; the CLI takes `--trust`). There is no
 per-hook trust review step like Codex's `/hooks`. User-level `hooks.json` — what
 this build writes — sits outside the workspace-trust question per the docs.
-Whether opening an untrusted workspace suppresses user hooks too is
-**UNVERIFIED** (see below).
+The live run passed `--trust` explicitly and used a **project** hooks file, so
+it settled neither the prompting behavior without `--trust` nor whether an
+untrusted workspace suppresses user-level hooks too — both stay **UNVERIFIED**
+(U4).
 
 ## Fact 3 — Capability invocation convention and the gate marker
 
@@ -559,7 +561,7 @@ exactly that, the gate is currently missing a mutation path.
 **Reproduction recipe.** Add `cat >> /tmp/cursor-pretooluse.log` to the top of
 the rendered `hooks/session-agent.sh`, ask the agent to delete a file, and read
 the `tool_name` it reports. Then widen the matcher in
-`scripts/install.{sh,ps1}` (`hook_for_class` / `Get-HookForClass`) and record
+`scripts/install.{sh,ps1}` (`hook_for_class` / `Resolve-HookForClass`) and record
 the payload shape in Fact 2.
 
 ## Open design questions
@@ -583,7 +585,15 @@ Not gaps in knowledge — decisions deliberately left for review:
    the only channel that reaches every surface. That is a different product —
    per-repo, version-controlled, team-visible — and out of scope for a
    user-level install, but it is the natural next target if Cloud Agents matter.
+4. **How should the cursor and claude renders coexist in one project?** V5 makes
+   this concrete rather than theoretical: Cursor loads a project
+   `.claude/skills/` too, so both renders' spine skills can be in the catalog at
+   once. Options are (a) leave it, once U5 shows precedence is deterministic;
+   (b) byte-identical spine skills across the two renders, the way the codex
+   build already mirrors into `.agents`; or (c) teach the cursor render to
+   detect and warn. Nothing is shipped for it yet.
 
+---
 
 ## Build path placeholders
 

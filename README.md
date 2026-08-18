@@ -2,7 +2,7 @@
 
 **One operating framework that compiles itself into every AI coding agent you use.**
 
-Write a capability once — how the agent should orient, work, verify, or learn — and the framework's compiler emits it as *harness-native* config for each agent you run: a skill plus hooks for Claude Code, the matching artifacts for Codex, an entrypoint overlay for Hermes. Author once, run everywhere — no per-harness hand-wiring, no copy-paste drift.
+Write a capability once — how the agent should orient, work, verify, or learn — and the framework's compiler emits it as *harness-native* config for each agent you run: a skill plus hooks for Claude Code, the matching artifacts for Codex, an entrypoint overlay for Hermes, a native skills + `hooks.json` render for Cursor. Author once, run everywhere — no per-harness hand-wiring, no copy-paste drift.
 
 The framework also **hosts its own operating spine**. The loop every session runs — orient → work → close out → learn — isn't baked into any one tool; it's three compiled capabilities (`session-agent`, `closeout`, `self-audit`) built from the very same specs you author. The OS is self-hosting: it improves itself through the loop it gives your agents.
 
@@ -11,7 +11,7 @@ New here? [**Quickstart**](#quickstart) is a first win in 10 minutes. [**A worke
 ## Quickstart
 
 **Who this is for:** operators who want to run an AI agent — Claude Code
-(this quickstart), Codex (adapt `--harness codex` and use `AGENTS.md`), or Hermes Agent (`--harness hermes`, `SOUL.md` entrypoint) —
+(this quickstart), Codex (adapt `--harness codex` and use `AGENTS.md`), Hermes Agent (`--harness hermes`, `SOUL.md` entrypoint), or Cursor (`--harness cursor`, `AGENTS.md` entrypoint) —
 with structured memory, active-work tracking, and a self-improvement loop,
 without hand-wiring each session from scratch.
 
@@ -77,8 +77,8 @@ By default config is **co-located**: a fresh clone renders into gitignored dirs
 *inside the repo* (`<repo>/.claude`, plus `<repo>/.codex` for the codex harness)
 and exports those paths to your shell, so everything runs self-contained from one
 folder. Prefer your home dir (`~/.claude`, `~/.codex`)? Run with `--scattered`.
-Hermes is never co-located (it's a live desktop-app home), and macOS GUI sessions
-have a documented limit — see `playbooks/personal-fork.md`.
+Hermes and Cursor are never co-located (both are live app homes), and macOS GUI
+sessions have a documented limit — see `playbooks/personal-fork.md`.
 
 On Windows (PowerShell 7+, no bash required):
 
@@ -188,7 +188,7 @@ Do not modify shared framework content unless the user explicitly asks for it. R
 Shared content stays harness-neutral — it carries no single-harness assumptions, tool names, hook names, plugin names, or harness-specific paths. Symmetric references to harness entrypoint conventions (`AGENTS.md` and `CLAUDE.md` named together) are fine, since naming both privileges neither. Single-harness details belong only in the matching root entrypoint file.
 
 - Shared framework: `core/`, `capabilities/`, `playbooks/`, `verification/`, `linear/`, `obsidian/`, `skills/`, `templates/`, and `scripts/`.
-- Harness entrypoints: `AGENTS.md` for Codex, `CLAUDE.md` for Claude Code, and `SOUL.md` (generated into the Hermes home) for Hermes Agent.
+- Harness entrypoints: `AGENTS.md` for Codex, `CLAUDE.md` for Claude Code, `SOUL.md` (generated into the Hermes home) for Hermes Agent, and `AGENTS.md` (generated into the Cursor config home) for Cursor.
 - Per-harness adapters: `harnesses/<h>/adapter.md` (contract) + `harnesses/<h>/capabilities/` (harness-native realizations emitted by the compiler). Edits here are scoped to a single harness and do not cross into shared content.
 
 ## Layout
@@ -220,7 +220,7 @@ Shared content stays harness-neutral — it carries no single-harness assumption
 1. **Capability specs** in `capabilities/*.md` — each spec declares its `kind` (`native` or `vendored`), `triggers`, target `harnesses`, and `verification` gate.
 2. **Harness realizations** in `harnesses/<h>/capabilities/` — emit the harness-native artifacts (skills, hooks, settings) for the capabilities that target `<h>`.
 
-The compiler enforces capability ↔ harness consistency (every listed harness has an `adapter.md`; every required capability key is present) before writing into the target dir (e.g. `$CLAUDE_CONFIG_DIR` for Claude Code, `$CODEX_HOME` for Codex, `$HERMES_HOME` for Hermes). A drift gate (`scripts/check-drift.sh --manifest`) detects hand-edits to compiled output.
+The compiler enforces capability ↔ harness consistency (every listed harness has an `adapter.md`; every required capability key is present) before writing into the target dir (e.g. `$CLAUDE_CONFIG_DIR` for Claude Code, `$CODEX_HOME` for Codex, `$HERMES_HOME` for Hermes, `$CURSOR_CONFIG_DIR` for Cursor). A drift gate (`scripts/check-drift.sh --manifest`) detects hand-edits to compiled output.
 
 ## Security model
 
@@ -241,7 +241,7 @@ Framework scripts run with your shell's permissions. They read `local.env` (whic
 
 - `scripts/bootstrap.sh` appends `export CLAUDE_CONFIG_DIR=<dir>` and `export CODEX_HOME=<dir>` to `~/.zshenv` (idempotent — any existing line is replaced). By default `<dir>` is co-located under the repo (`<repo>/.claude`, `<repo>/.codex`); `--scattered` uses `~/.claude` / `~/.codex`.
 - `scripts/bootstrap.ps1` writes `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to the User-scope Windows environment via `[System.Environment]::SetEnvironmentVariable(..., "User")`. This persists across reboots, applies to every shell, and — unlike the macOS shell export — is also read by Finder/Start-launched GUI apps.
-- Hermes is never co-located: `HERMES_HOME` stays at `~/.hermes` (a live desktop-app home the app discovers on its own), and bootstrap writes no env export for it.
+- Hermes and Cursor are never co-located: `HERMES_HOME` stays at `~/.hermes` and `CURSOR_CONFIG_DIR` at `~/.cursor` (live app homes each app discovers on its own), and bootstrap writes no env export for either. Exporting `CURSOR_CONFIG_DIR` would additionally relocate the Cursor CLI's own `cli-config.json` — the variable name is shared with Cursor by design, so the build reads it but never exports it.
 - Both writes are intentional, idempotent, and visible. Pass `--dry-run` (macOS) / `-DryRun` (Windows) to print the mutations without executing them.
 
 **Windows operators:**
