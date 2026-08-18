@@ -55,6 +55,15 @@ $CG_VAULT = Join-Path $CG_TMP 'vault'
 Write-CgFile (Join-Path $CG_VAULT 'START.md') "---`ntitle: START`n---`n"
 Write-CgFile (Join-Path $CG_VAULT '10-Wiki' 'Concepts' 'Foo.md') "---`ntitle: Foo`n---`n"
 
+# The wrapper now falls back to OBSIDIAN_VAULT_PATH from repo-root local.env,
+# and these tests run INSIDE the living repo — an operator's real local.env
+# would leak a real vault into every "no vault configured" fixture. Every
+# invocation that must see NO vault therefore pins $env:AI_CONFIG_LOCAL_ENV to
+# a synthetic local.env (present but key-less — the fresh-clone shape); the
+# fallback tests below point it at their own fixtures instead.
+$CG_LENV_NONE = Join-Path $CG_TMP 'local-env-none.env'
+Write-CgFile $CG_LENV_NONE "# synthetic local.env with no vault key`nCLAUDE_CONFIG_DIR=/tmp/x`n"
+
 # === 1. --list shows the whole check set and runs nothing (exit 0).
 $cgList = Invoke-CgGate @('--list', '--vault', $CG_VAULT)
 Assert-Eq 'closeout-gate.test: --list exits 0' 0 $cgList.Rc
@@ -193,10 +202,12 @@ Assert-Contains 'closeout-gate.test: --list flags the missing gate script too' `
 # === 8. An INAPPLICABLE surface is a named SKIP that does NOT fail the gate.
 $cgSavedVault = [Environment]::GetEnvironmentVariable('OBSIDIAN_VAULT_PATH')
 Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+$env:AI_CONFIG_LOCAL_ENV = $CG_LENV_NONE
 try {
     $cgNoVault = Invoke-CgGate @('--draft', $CG_OK)
 } finally {
     if ($null -ne $cgSavedVault) { $env:OBSIDIAN_VAULT_PATH = $cgSavedVault }
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
 }
 Assert-Eq 'closeout-gate.test: no vault configured → the gate still passes (inapplicable ≠ failed)' 0 $cgNoVault.Rc
 Assert-Contains 'closeout-gate.test: the inapplicable check is a NAMED skip' $cgNoVault.Out 'SKIP wikilinks'
@@ -250,6 +261,7 @@ Copy-Item (Join-Path $env:REPO_ROOT 'scripts' 'check-machine-paths.ps1') $CG_NOW
 $CG_NOWL_GHOST = Join-Path $CG_TMP 'no-such-vault-nowl'
 $env:CLOSEOUT_GATE_SCRIPTS_DIR = $CG_NOWL
 Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+$env:AI_CONFIG_LOCAL_ENV = $CG_LENV_NONE
 try {
     $cgNoWl = Invoke-CgGate @('--draft', $CG_OK)
     $cgNoWlList = Invoke-CgGate @('--list')
@@ -257,6 +269,7 @@ try {
 } finally {
     Remove-Item Env:CLOSEOUT_GATE_SCRIPTS_DIR -ErrorAction SilentlyContinue
     if ($null -ne $cgSavedVault) { $env:OBSIDIAN_VAULT_PATH = $cgSavedVault }
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
 }
 Assert-Eq 'closeout-gate.test: a missing gate script with NO vault configured still fails the gate' 1 $cgNoWl.Rc
 Assert-Contains 'closeout-gate.test: the missing wikilink gate is named as a FAILURE, not skipped away' `
@@ -310,5 +323,69 @@ try {
 }
 Assert-Contains 'closeout-gate.test: $OBSIDIAN_VAULT_PATH supplies the vault when --vault is absent' `
     $cgEnv.Out 'GATE PASS — 3 check(s) passed, 0 skipped'
+
+# === 11. local.env is the LAST-RESORT vault source — the recurring live miss
+# this fallback fixes: agent shells do not inherit local.env, so a machine with
+# a configured vault SKIPped the wikilink check on every closeout. The value on
+# real machines contains spaces, so both local.env spellings (quoted and
+# backslash-escaped) are pinned. The fixture vault path itself carries a space.
+$CG_LE_VAULT = Join-Path $CG_TMP 'le vault'
+Write-CgFile (Join-Path $CG_LE_VAULT 'START.md') "---`ntitle: START`n---`n"
+Write-CgFile (Join-Path $CG_LE_VAULT '10-Wiki' 'Concepts' 'Foo.md') "---`ntitle: Foo`n---`n"
+
+# Quoted spelling.
+$CG_LENV_Q = Join-Path $CG_TMP 'local-env-quoted.env'
+Write-CgFile $CG_LENV_Q ('OBSIDIAN_VAULT_PATH="' + $CG_LE_VAULT + '"' + "`n")
+# Backslash-escaped spelling (`export` prefix too — both are legitimate). On
+# Windows the value contains literal `\` path separators, which the parser's
+# escape-collapse would destroy — so the backslash-escape fixture only makes
+# sense for the SPACE escapes; build it by escaping spaces only.
+$CG_LENV_B = Join-Path $CG_TMP 'local-env-backslash.env'
+Write-CgFile $CG_LENV_B ('export OBSIDIAN_VAULT_PATH=' + ($CG_LE_VAULT -replace ' ', '\ ') + "`n")
+# A local.env whose vault does not exist — the broken-surface fixture.
+$CG_LENV_GHOST = Join-Path $CG_TMP 'local-env-ghost.env'
+$CG_LE_GHOST_VAULT = Join-Path $CG_TMP 'no-such-le-vault'
+Write-CgFile $CG_LENV_GHOST ('OBSIDIAN_VAULT_PATH="' + $CG_LE_GHOST_VAULT + '"' + "`n")
+
+Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+try {
+    $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_Q
+    $cgLeQ = Invoke-CgGate @('--draft', $CG_OK)
+    $cgLeBad = Invoke-CgGate @('--draft', $CG_WL)
+    $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_B
+    $cgLeB = Invoke-CgGate @('--draft', $CG_OK)
+    $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_GHOST
+    $cgLeFlag = Invoke-CgGate @('--draft', $CG_OK, '--vault', $CG_VAULT)
+    $cgLeGhost = Invoke-CgGate @('--draft', $CG_OK)
+    $env:OBSIDIAN_VAULT_PATH = $CG_VAULT
+    $cgLeEnv = Invoke-CgGate @('--draft', $CG_OK)
+} finally {
+    Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
+    if ($null -ne $cgSavedVault) { $env:OBSIDIAN_VAULT_PATH = $cgSavedVault }
+    else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
+}
+Assert-Eq 'closeout-gate.test: local.env fallback (quoted, spaces) resolves the vault → exit 0' 0 $cgLeQ.Rc
+Assert-Contains 'closeout-gate.test: local.env fallback RUNS the wikilink check (no skip)' `
+    $cgLeQ.Out 'GATE PASS — 3 check(s) passed, 0 skipped'
+Assert-NotContains 'closeout-gate.test: local.env fallback never reports SKIP wikilinks' `
+    $cgLeQ.Out 'SKIP wikilinks'
+Assert-Eq 'closeout-gate.test: local.env fallback (export + backslash-escape) resolves the vault → exit 0' 0 $cgLeB.Rc
+Assert-Contains 'closeout-gate.test: backslash-escaped local.env value runs all three checks' `
+    $cgLeB.Out 'GATE PASS — 3 check(s) passed, 0 skipped'
+# The wikilink check really runs against the fallback-resolved vault — a bad
+# link FAILS, proving the fallback wired a real surface, not a cosmetic PASS.
+Assert-Eq 'closeout-gate.test: a bad wikilink FAILS against the local.env-resolved vault' 1 $cgLeBad.Rc
+Assert-Contains 'closeout-gate.test: the local.env-resolved run names the wikilink failure' `
+    $cgLeBad.Out 'GATE FAIL — 1 check(s) failed (wikilinks)'
+# Precedence: the --vault flag and the env var both beat local.env. The
+# local.env fixture points at a BROKEN vault, so a precedence inversion would
+# flip these from PASS to FAIL — the assertion cannot pass vacuously.
+Assert-Eq 'closeout-gate.test: --vault beats a (broken) local.env value' 0 $cgLeFlag.Rc
+Assert-Eq 'closeout-gate.test: $OBSIDIAN_VAULT_PATH beats a (broken) local.env value' 0 $cgLeEnv.Rc
+# A local.env-configured vault that does not exist is a CONFIGURED-but-broken
+# surface — it FAILS like any other misspelled destination, never skips.
+Assert-Eq 'closeout-gate.test: a nonexistent local.env vault FAILS the gate (broken, not absent)' 1 $cgLeGhost.Rc
+Assert-Contains 'closeout-gate.test: the broken local.env vault path is named' `
+    $cgLeGhost.Out "configured vault does not exist: $CG_LE_GHOST_VAULT"
 
 Remove-Item -LiteralPath $CG_TMP -Recurse -Force -ErrorAction SilentlyContinue

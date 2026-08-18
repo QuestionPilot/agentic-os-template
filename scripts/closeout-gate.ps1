@@ -28,6 +28,13 @@
                       this is a NAMED SKIP (an inapplicable surface, not a
                       missing gate). A vault that IS configured but whose
                       directory does not exist is a FAILURE — see the contract.
+                      Vault resolution precedence: -Vault flag, then
+                      $env:OBSIDIAN_VAULT_PATH, then OBSIDIAN_VAULT_PATH read
+                      from repo-root local.env as DATA (never imported) — the
+                      same last-resort chain check-drift.ps1 -Auto uses for
+                      render homes. Agent shells do not inherit local.env, so
+                      without the file fallback the check silently SKIPped
+                      every closeout on a machine whose vault IS configured.
       machine-paths   check-machine-paths.ps1 -Draft <draft>
                       No machine-specific absolute home path in the durable file.
 
@@ -39,8 +46,8 @@
         hole this wrapper exists to close.
       - A check whose TARGET SURFACE IS ABSENT   -> SKIP, named, exit unaffected.
         Only the wikilink check has such a surface (the vault), and the skip is
-        narrow: NO vault configured at all (no -Vault AND
-        $env:OBSIDIAN_VAULT_PATH unset/empty).
+        narrow: NO vault configured at all (no -Vault, $env:OBSIDIAN_VAULT_PATH
+        unset/empty, AND no OBSIDIAN_VAULT_PATH in repo-root local.env).
       - A check whose surface IS CONFIGURED but BROKEN -> FAIL (exit 1), naming
         the path. A configured vault directory that does not exist is a
         misspelled or unsynced destination, not "no vault": the durable write it
@@ -54,8 +61,11 @@
       2. SURFACE BROKEN (configured vault that does not exist) -> FAIL.
       3. SURFACE ABSENT (nothing configured) -> SKIP.
 
-    -Vault defaults to $env:OBSIDIAN_VAULT_PATH. Nothing else is configurable:
-    the check set IS the contract, so it is not caller-selectable.
+    -Vault defaults to $env:OBSIDIAN_VAULT_PATH, then to OBSIDIAN_VAULT_PATH
+    from repo-root local.env ($env:AI_CONFIG_LOCAL_ENV overrides the file path
+    — the same fixture convention as check-drift.ps1 / install). Nothing else
+    is configurable: the check set IS the contract, so it is not
+    caller-selectable.
 
     Test override: $env:CLOSEOUT_GATE_SCRIPTS_DIR points the wrapper at a fixture
     scripts/ dir (same convention as $env:SELF_AUDIT_CURRENTNESS_BIN in
@@ -125,6 +135,52 @@ if ([string]::IsNullOrEmpty($Vault)) {
 }
 
 $selfDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+
+# Get-CgLocalEnvValue -Path -Key — read ONE KEY=VALUE from local.env as DATA,
+# never imported into the process environment. Same parser as check-drift.ps1's
+# Get-CdLocalEnvValue: strips an optional `export `, one matching outer quote
+# pair, backslash escapes (the vault value carries spaces on real machines, in
+# both the quoted and backslash-escaped spellings); last assignment wins; no
+# $VAR expansion.
+function Get-CgLocalEnvValue {
+    param([string]$Path, [string]$Key)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    # An unreadable (locked / access-denied) file must degrade to "no value"
+    # like the bash twin's failed open — not crash the gate with an uncaught
+    # exception (panel finding: ReadAllLines throws under $ErrorActionPreference
+    # = 'Stop', turning a last-resort convenience read into a hard stop).
+    try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return '' }
+    $result = ''
+    foreach ($line in $lines) {
+        $t = $line.Trim()
+        if ($t.Length -eq 0 -or $t.StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        if ($t -match '^export\s+(.+)$') { $t = $matches[1] }
+        if (-not $t.StartsWith("$Key=", [StringComparison]::Ordinal)) { continue }
+        $v = $t.Substring($Key.Length + 1)
+        if ($v.Length -ge 2) {
+            $f = $v[0]; $l = $v[$v.Length - 1]
+            if (($f -eq '"' -and $l -eq '"') -or ($f -eq "'" -and $l -eq "'")) {
+                $v = $v.Substring(1, $v.Length - 2)
+            } elseif ($v.Contains('\')) {
+                $v = [regex]::Replace($v, '\\(.)', '$1')
+            }
+        }
+        $result = $v
+    }
+    return $result
+}
+
+# Last-resort vault resolution: OBSIDIAN_VAULT_PATH from repo-root local.env,
+# read as data (see Get-CgLocalEnvValue). Agent shells do not inherit
+# local.env, so on a configured machine the env var is typically unset —
+# without this the wikilink check SKIPped every closeout while the operator
+# believed it ran. $env:AI_CONFIG_LOCAL_ENV points tests at a synthetic
+# local.env (same convention as check-drift.ps1 -Auto); the flag and the env
+# var still win.
+if ([string]::IsNullOrEmpty($Vault)) {
+    $cgLocalEnv = if ($env:AI_CONFIG_LOCAL_ENV) { $env:AI_CONFIG_LOCAL_ENV } else { Join-Path (Split-Path -Parent $selfDir) 'local.env' }
+    $Vault = Get-CgLocalEnvValue -Path $cgLocalEnv -Key 'OBSIDIAN_VAULT_PATH'
+}
 $scriptsDir = $selfDir
 $envScripts = [Environment]::GetEnvironmentVariable('CLOSEOUT_GATE_SCRIPTS_DIR')
 if (-not [string]::IsNullOrEmpty($envScripts)) { $scriptsDir = $envScripts }
@@ -144,7 +200,7 @@ function Get-GateSkipReason {
     param([string]$Name)
     if ($Name -eq 'wikilinks') {
         if ([string]::IsNullOrEmpty($Vault)) {
-            return 'no vault configured (--vault / $OBSIDIAN_VAULT_PATH unset) — no wikilink target surface to resolve against'
+            return 'no vault configured (--vault / $OBSIDIAN_VAULT_PATH / local.env OBSIDIAN_VAULT_PATH all unset) — no wikilink target surface to resolve against'
         }
     }
     return ''

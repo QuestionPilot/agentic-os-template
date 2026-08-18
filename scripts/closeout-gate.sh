@@ -23,6 +23,13 @@
 #                   NAMED SKIP (an inapplicable surface, not a missing gate). A
 #                   vault that IS configured but whose directory does not exist
 #                   is a FAILURE — see the contract below.
+#                   Vault resolution precedence: --vault flag, then
+#                   $OBSIDIAN_VAULT_PATH, then OBSIDIAN_VAULT_PATH read from
+#                   repo-root local.env as DATA (never sourced) — the same
+#                   last-resort chain check-drift.sh --auto uses for render
+#                   homes. Agent shells do not inherit local.env, so without the
+#                   file fallback the check silently SKIPped every closeout on a
+#                   machine whose vault IS configured.
 #   machine-paths   scripts/check-machine-paths.sh --draft <draft>
 #                   No machine-specific absolute home path in the durable file.
 #
@@ -34,8 +41,9 @@
 #     this wrapper exists to close.
 #   - A check whose TARGET SURFACE IS ABSENT   -> SKIP, named, exit unaffected.
 #     Only the wikilink check has such a surface (the vault), and the skip is
-#     narrow: NO vault configured at all (no --vault AND $OBSIDIAN_VAULT_PATH
-#     unset/empty). That is a real, benign configuration, not a broken gate.
+#     narrow: NO vault configured at all (no --vault, $OBSIDIAN_VAULT_PATH
+#     unset/empty, AND no OBSIDIAN_VAULT_PATH in repo-root local.env). That is
+#     a real, benign configuration (a fresh public clone), not a broken gate.
 #   - A check whose surface IS CONFIGURED but BROKEN -> FAIL (exit 1), naming
 #     the path. A configured vault directory that does not exist is a misspelled
 #     or unsynced destination, not "no vault": the durable write it gates would
@@ -54,8 +62,10 @@
 #   closeout-gate.sh --list [--vault <path>]     (show what would run; runs nothing)
 #   closeout-gate.sh --help
 #
-# --vault defaults to $OBSIDIAN_VAULT_PATH. Nothing else is configurable: the
-# check set IS the contract, so it is not caller-selectable.
+# --vault defaults to $OBSIDIAN_VAULT_PATH, then to OBSIDIAN_VAULT_PATH from
+# repo-root local.env ($AI_CONFIG_LOCAL_ENV overrides the file path — the same
+# fixture convention as check-drift.sh / install.sh). Nothing else is
+# configurable: the check set IS the contract, so it is not caller-selectable.
 #
 # Exit codes:
 #   0 — every applicable check passed (skips do not fail the gate)
@@ -77,6 +87,42 @@ usage() {
   sed -nE 's|^# ?||p' "$0" | awk '/^closeout-gate\.sh/,/^Tests:/'
 }
 
+# _cg_localenv_get <path> <key> — read one KEY=VALUE from local.env as DATA
+# (never sourced; a hostile or malformed local.env cannot execute). Same parser
+# as scripts/check-drift.sh::_cd_localenv_get: strips an optional `export `, one
+# matching outer quote pair, backslash escapes (the vault value carries spaces
+# on real machines, in both the quoted and backslash-escaped spellings); last
+# assignment wins. No $VAR expansion.
+_cg_localenv_get() {
+  local path="$1" key="$2" line t v f l inner result=""
+  [ -f "$path" ] || { printf '%s' ""; return 0; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    t="${line#"${line%%[![:space:]]*}"}"
+    t="${t%"${t##*[![:space:]]}"}"
+    [ -z "$t" ] && continue
+    case "$t" in '#'*) continue ;; esac
+    case "$t" in
+      export[[:space:]]*) t="${t#export}"; t="${t#"${t%%[![:space:]]*}"}" ;;
+    esac
+    case "$t" in
+      "$key="*) v="${t#"$key="}" ;;
+      *) continue ;;
+    esac
+    if [ "${#v}" -ge 2 ]; then
+      f="${v:0:1}"; l="${v:$(( ${#v} - 1 )):1}"
+      if { [ "$f" = '"' ] && [ "$l" = '"' ]; } || { [ "$f" = "'" ] && [ "$l" = "'" ]; }; then
+        inner=$(( ${#v} - 2 )); v="${v:1:$inner}"
+      else
+        case "$v" in
+          *'\'*) v="$(printf '%s' "$v" | sed -E 's/\\(.)/\1/g')" ;;
+        esac
+      fi
+    fi
+    result="$v"
+  done < "$path"
+  printf '%s' "$result"
+}
+
 draft=""
 vault="${OBSIDIAN_VAULT_PATH:-}"
 list_only=0
@@ -95,6 +141,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Last-resort vault resolution: OBSIDIAN_VAULT_PATH from repo-root local.env,
+# read as data (see _cg_localenv_get). Agent shells do not inherit local.env,
+# so on a configured machine the env var is typically unset — without this the
+# wikilink check SKIPped every closeout while the operator believed it ran.
+# $AI_CONFIG_LOCAL_ENV points tests at a synthetic local.env (same convention
+# as check-drift.sh --auto / install.sh); the flag and the env var still win.
+if [ -z "$vault" ]; then
+  vault="$(_cg_localenv_get "${AI_CONFIG_LOCAL_ENV:-$SELF_DIR/../local.env}" OBSIDIAN_VAULT_PATH)"
+fi
+
 # The check set, in closeout.md §6 order. One record per line:
 #   <name>|<script-basename>|<mode-flag>
 # The draft path is always the mode flag's value; the wikilink check appends
@@ -111,7 +167,7 @@ _gate_skip_reason() {
   case "$1" in
     wikilinks)
       if [ -z "$vault" ]; then
-        printf 'no vault configured (--vault / $OBSIDIAN_VAULT_PATH unset) — no wikilink target surface to resolve against'
+        printf 'no vault configured (--vault / $OBSIDIAN_VAULT_PATH / local.env OBSIDIAN_VAULT_PATH all unset) — no wikilink target surface to resolve against'
       fi
       ;;
   esac
