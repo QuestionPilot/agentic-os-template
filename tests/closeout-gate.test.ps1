@@ -336,10 +336,15 @@ Write-CgFile (Join-Path $CG_LE_VAULT '10-Wiki' 'Concepts' 'Foo.md') "---`ntitle:
 # Quoted spelling.
 $CG_LENV_Q = Join-Path $CG_TMP 'local-env-quoted.env'
 Write-CgFile $CG_LENV_Q ('OBSIDIAN_VAULT_PATH="' + $CG_LE_VAULT + '"' + "`n")
-# Backslash-escaped spelling (`export` prefix too — both are legitimate). On
-# Windows the value contains literal `\` path separators, which the parser's
-# escape-collapse would destroy — so the backslash-escape fixture only makes
-# sense for the SPACE escapes; build it by escaping spaces only.
+# Backslash-escaped spelling (`export` prefix too — both are legitimate on
+# POSIX). This spelling is inherently POSIX-only: on Windows the raw value
+# carries literal `\` path separators, which the parser's escape-collapse
+# destroys by contract (values with backslash separators must be QUOTED — the
+# documented local.env parser rule), and a forward-slash respelling then
+# trips path-spelling equality inside the wikilink checker (the recorded
+# bare-string-compare class). The quoted fixture above is the Windows-valid
+# coverage, so this one runs POSIX-only with a named skip — both proven on
+# the Windows CI lane before this gate was added.
 $CG_LENV_B = Join-Path $CG_TMP 'local-env-backslash.env'
 Write-CgFile $CG_LENV_B ('export OBSIDIAN_VAULT_PATH=' + ($CG_LE_VAULT -replace ' ', '\ ') + "`n")
 # A local.env whose vault does not exist — the broken-surface fixture.
@@ -352,8 +357,10 @@ try {
     $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_Q
     $cgLeQ = Invoke-CgGate @('--draft', $CG_OK)
     $cgLeBad = Invoke-CgGate @('--draft', $CG_WL)
-    $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_B
-    $cgLeB = Invoke-CgGate @('--draft', $CG_OK)
+    if (-not $IsWindows) {
+        $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_B
+        $cgLeB = Invoke-CgGate @('--draft', $CG_OK)
+    }
     $env:AI_CONFIG_LOCAL_ENV = $CG_LENV_GHOST
     $cgLeFlag = Invoke-CgGate @('--draft', $CG_OK, '--vault', $CG_VAULT)
     $cgLeGhost = Invoke-CgGate @('--draft', $CG_OK)
@@ -369,9 +376,14 @@ Assert-Contains 'closeout-gate.test: local.env fallback RUNS the wikilink check 
     $cgLeQ.Out 'GATE PASS — 3 check(s) passed, 0 skipped'
 Assert-NotContains 'closeout-gate.test: local.env fallback never reports SKIP wikilinks' `
     $cgLeQ.Out 'SKIP wikilinks'
-Assert-Eq 'closeout-gate.test: local.env fallback (export + backslash-escape) resolves the vault → exit 0' 0 $cgLeB.Rc
-Assert-Contains 'closeout-gate.test: backslash-escaped local.env value runs all three checks' `
-    $cgLeB.Out 'GATE PASS — 3 check(s) passed, 0 skipped'
+if ($IsWindows) {
+    _Skip 'closeout-gate.test: local.env fallback (export + backslash-escape) resolves the vault → exit 0' 'unquoted backslash-escape spelling is POSIX-only (Windows values with separators must be quoted)'
+    _Skip 'closeout-gate.test: backslash-escaped local.env value runs all three checks' 'unquoted backslash-escape spelling is POSIX-only'
+} else {
+    Assert-Eq 'closeout-gate.test: local.env fallback (export + backslash-escape) resolves the vault → exit 0' 0 $cgLeB.Rc
+    Assert-Contains 'closeout-gate.test: backslash-escaped local.env value runs all three checks' `
+        $cgLeB.Out 'GATE PASS — 3 check(s) passed, 0 skipped'
+}
 # The wikilink check really runs against the fallback-resolved vault — a bad
 # link FAILS, proving the fallback wired a real surface, not a cosmetic PASS.
 Assert-Eq 'closeout-gate.test: a bad wikilink FAILS against the local.env-resolved vault' 1 $cgLeBad.Rc
