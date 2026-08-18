@@ -60,6 +60,11 @@ if (-not $jq) { exit 0 }
 $aiConfigDir = '@@AI_CONFIG_DIR@@'
 $days = if ($env:CLAUDE_FRAMEWORK_SINCE_DAYS) { $env:CLAUDE_FRAMEWORK_SINCE_DAYS } else { '10' }
 
+# The Cursor config home is this hook's own parent (hooks are installed at
+# <config>\hooks\). Resolved at run time rather than templated so the directive
+# below can print the REAL absolute gate path the model must write.
+$chome = Split-Path -Parent $PSScriptRoot
+
 # Drain stdin and read composer_mode. An `ask`-mode composer cannot invoke a
 # skill or edit files, so the kickoff directive would be noise there. Absent /
 # unknown mode → treat as agent (the safe default). PowerShell's -eq is
@@ -99,7 +104,7 @@ Override window: env ``CLAUDE_FRAMEWORK_SINCE_DAYS=N``. Disable: env ``CLAUDE_SK
 # result stays silent. exit 1 = stale, 0 = fresh, 2 = indeterminate.
 $freshBlock = ''
 if ($env:CLAUDE_SKIP_FRESHNESS_CHECK -ne '1') {
-    $installDir = Split-Path -Parent $PSScriptRoot
+    $installDir = $chome
     $freshnessScript = Join-Path (Join-Path $aiConfigDir 'scripts') 'check-freshness.ps1'
     if ($installDir -and
         (Test-Path -LiteralPath (Join-Path $installDir '.build-manifest.json')) -and
@@ -151,9 +156,8 @@ route only — Mode 1's orient outputs are still live in context).
 
 Before your first file-modifying tool use, open the edit gate: write your R5
 routing declaration (including the ``Linear gate:`` and ``Lessons:`` lines) to
-``<config>/agentic-os/gate-<conversation_id>``, where ``<config>`` is the dir
-holding this hook's parent. The realization body in the capability spells out
-the contract.
+``$chome/agentic-os/gate-<conversation_id>`` — substituting this conversation's
+id. The realization body in the capability spells out the contract.
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.

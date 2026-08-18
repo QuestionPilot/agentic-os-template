@@ -46,6 +46,12 @@ command -v jq >/dev/null 2>&1 || exit 0
 AI_CONFIG_DIR="@@AI_CONFIG_DIR@@"
 DAYS="${CLAUDE_FRAMEWORK_SINCE_DAYS:-10}"
 
+# The Cursor config home is this hook's own parent (hooks are installed at
+# <config>/hooks/). Resolved at run time rather than templated so the directive
+# below can print the REAL absolute gate path the model must write — a hook that
+# says "<config>/agentic-os/..." is asking the model to guess.
+CHOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+
 # Capture the sessionStart payload. `composer_mode` is "agent" | "ask" | "edit"
 # (optional). An `ask`-mode composer cannot invoke a skill or edit files, so the
 # session-agent kickoff directive would be noise there — surface the framework
@@ -86,8 +92,9 @@ fi
 # indeterminate result → silent.
 FRESH_BLOCK=""
 if [[ "${CLAUDE_SKIP_FRESHNESS_CHECK:-0}" != "1" ]]; then
-  # The install dir is this hook's own parent (hooks live at <install>/hooks/).
-  INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+  # The install dir IS the config home resolved above (hooks live at
+  # <install>/hooks/).
+  INSTALL_DIR="$CHOME"
   FRESHNESS_SCRIPT="$AI_CONFIG_DIR/scripts/check-freshness.sh"
   if [[ -n "$INSTALL_DIR" && -f "$INSTALL_DIR/.build-manifest.json" && -f "$FRESHNESS_SCRIPT" ]]; then
     # Bound the check so a pathological manifest (huge/slow source set) can't
@@ -152,9 +159,9 @@ route only — Mode 1's orient outputs are still live in context).
 
 Before your first file-modifying tool use, open the edit gate: write your R5
 routing declaration (including the \`Linear gate:\` and \`Lessons:\` lines) to
-\`<config>/agentic-os/gate-<conversation_id>\`, where \`<config>\` is the dir
-holding this hook's parent. The realization body in the capability spells out
-the contract.
+\`${CHOME}/agentic-os/gate-<conversation_id>\` — substituting this
+conversation's id. The realization body in the capability spells out the
+contract.
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
