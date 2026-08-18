@@ -20,6 +20,14 @@
 #                              $COMMIT_IDENTITY_ALLOWLIST set, every ahead-of-default
 #                              branch commit must carry an allowlisted author AND
 #                              committer — content scans cannot see commit metadata
+#   - commit-MESSAGE leaks     (git mode, always on): every ahead-of-default
+#                              branch commit's message (subject + body) is scanned
+#                              for tracker-ID variants — case-insensitive AND
+#                              separator-tolerant (QUE-548 / que-548 / que 548 /
+#                              que_548) — and for operator identity tokens. The
+#                              tree scan sees files at HEAD, the identity check
+#                              sees author/committer fields; a leak in a commit
+#                              MESSAGE body was visible to neither
 #
 # Enumeration (hardened): in a git work tree the scan walks `git ls-files` and
 # inspects each TRACKED file. This closes four bypasses a recursive,
@@ -110,7 +118,14 @@ $script:fail = 0
 # Build-IssueRe <prefix> — derive the boundary-aware tracker-ID ERE for ONE
 # prefix. Letters expand to case-classes per the rationale above; digits inside
 # a key (e.g. AB2) pass through literally. Mirrors the bash twin's build_issue_re.
-function Build-IssueRe([string]$p) {
+# $SpaceArm appends a whitespace-separated arm LEFT-BOUNDARY ANCHORED on both
+# prefix arms: arm1 is deliberately unanchored for the other tails (CamelCase
+# mid-word is a deliberate token), but ALL-CAPS prose carries uppercase prefix
+# letters mid-word too ("UNIQUE 1 constraint"), so an unanchored arm1 + space
+# tail false-trips this fail-closed gate — panel-confirmed by fixture. The
+# space arm accepts 1+ blanks (double space / tab is the same leak). Mirrors
+# the bash twin's `space` mode.
+function Build-IssueRe([string]$p, [string]$tail = '(-[0-9]+|[0-9]{2,})', [switch]$SpaceArm) {
     $arm1 = ''
     $core = ''
     for ($i = 0; $i -lt $p.Length; $i++) {
@@ -125,7 +140,10 @@ function Build-IssueRe([string]$p) {
             $arm1 += "$c"
         }
     }
-    return "($arm1|(^|[^A-Za-z])$core)(-[0-9]+|[0-9]{2,})"
+    if ($SpaceArm) {
+        return "($arm1|(^|[^A-Za-z])$core)$tail|(^|[^A-Za-z])$core[ `t]+[0-9]+"
+    }
+    return "($arm1|(^|[^A-Za-z])$core)$tail"
 }
 
 # Parse + validate the prefix list. A key must be a letter followed by letters/
@@ -147,6 +165,13 @@ if ($script:issuePrefixes.Count -eq 0) {
     exit 2
 }
 $script:issueRes = @($script:issuePrefixes | ForEach-Object { Build-IssueRe $_ })
+# Commit-MESSAGE variant: tree arms with hyphen/underscore or bare 2+ digits,
+# plus the anchored whitespace arm for hand-typed references ("see QUE 548").
+# Prose that merely ENDS in the prefix ("question 42", "UNIQUE 1") stays
+# clean: the whitespace arm requires a left boundary. Accepted residual
+# under-reporting (restraint bias): colon/hash separators and CamelCase+space
+# are not matched. Mirrors the bash twin.
+$script:msgIssueRes = @($script:issuePrefixes | ForEach-Object { Build-IssueRe $_ '([-_][0-9]+|[0-9]{2,})' -SpaceArm })
 # Home paths carrying a REAL username segment (angle-bracket or $-variable
 # placeholders do not match). The Windows arm accepts ONE OR MORE backslashes, so
 # simple, JSON-escaped, and nested source-of-JSON profile paths (one, two, or
@@ -465,9 +490,75 @@ if ($script:isGit) {
     }
 }
 
+# --- Commit-message scan -----------------------------------------------------
+# Twin of the bash commit-message scan. The tree scan reads files at HEAD and
+# the identity check reads author/committer fields; a leak in a commit MESSAGE
+# (subject or body) is visible to neither — the live catch was a lowercase
+# tracker-ID fragment in a message body, stopped only by a manual sweep over
+# format-patch files. Scope: the same ahead-of-default range the identity check
+# walks (the commit set a push/PR would publish). Always on in git mode; the
+# tracker-ID patterns need no operator configuration, and operator tokens join
+# the scan when configured. Fail-closed: a git failure is a FAIL, never a pass.
+$msgNote = ''
+if ($script:isGit) {
+    & git -C $Target rev-parse --verify --quiet HEAD *> $null
+    if ($LASTEXITCODE -ne 0) {
+        # Same unborn-repo carve-out as the identity check: zero commits
+        # anywhere is benign; any other unresolvable-HEAD state fails closed.
+        $allTip = & git -C $Target rev-list -n 1 --all 2>$null
+        if ($LASTEXITCODE -eq 0 -and [string]::IsNullOrEmpty(($allTip -join ''))) {
+            $msgNote = '; commit-message: no commits to scan'
+        } else {
+            [Console]::Error.WriteLine('FAIL commit-message: HEAD does not resolve but the repo is not empty (fail-closed)')
+            $script:fail = 1
+        }
+    } else {
+        # Base resolution mirrors the identity check: FULL refnames only (a
+        # bare `origin/main` resolves through refs/tags/ first and could be
+        # shadowed); no resolvable base => every commit reachable from HEAD.
+        $mBase = ''
+        foreach ($ref in @('refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/master')) {
+            & git -C $Target rev-parse --verify --quiet $ref *> $null
+            if ($LASTEXITCODE -eq 0) { $mBase = $ref; break }
+        }
+        $mRange = if ($mBase) { "$mBase..HEAD" } else { 'HEAD' }
+        $mList = & git -C $Target rev-list $mRange 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            [Console]::Error.WriteLine("FAIL commit-message: git rev-list failed over $mRange (fail-closed)")
+            $script:fail = 1
+        } else {
+            $mCount = 0
+            foreach ($mc in @($mList)) {
+                if ([string]::IsNullOrEmpty($mc)) { continue }
+                $mCount++
+                $mh = (& git -C $Target rev-parse --short $mc 2>$null)
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($mh)) { $mh = $mc }
+                $mBodyLines = & git -C $Target log -1 --format=%B $mc 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    [Console]::Error.WriteLine("FAIL commit-message: could not read the message of ${mc} (fail-closed)")
+                    $script:fail = 1
+                    continue
+                }
+                $mBody = (@($mBodyLines) -join "`n")
+                # Reuse the per-file scanners verbatim (shared patterns, no
+                # drift): the "rel" slot carries the commit, so every hit line
+                # NAMES the commit.
+                $mJoined = Hard-Unwrap $mBody
+                for ($pi = 0; $pi -lt $script:issuePrefixes.Count; $pi++) {
+                    Scan-Class "commit $mh" $mBody $mJoined `
+                        "tracker issue ID found in commit message ($($script:issuePrefixes[$pi]), commit $mh)" `
+                        $script:msgIssueRes[$pi]
+                }
+                foreach ($tok in $script:tokenList) { Scan-TokenClass "commit $mh" $mBody $mJoined $tok }
+            }
+            $msgNote = "; $mCount branch commit(s) message-scanned"
+        }
+    }
+}
+
 if ($script:fail -ne 0) {
     [Console]::Error.WriteLine("FAIL check-clean: leaks found in $Target")
     exit 1
 }
-Write-Output "PASS check-clean: $Target is clean (no issue IDs / home paths / emails / operator tokens)$identityNote"
+Write-Output "PASS check-clean: $Target is clean (no issue IDs / home paths / emails / operator tokens)$identityNote$msgNote"
 exit 0

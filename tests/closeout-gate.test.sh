@@ -56,6 +56,15 @@ CG_TMP="$(mktemp -d)"
 CG_VAULT="$CG_TMP/vault"
 _cg_vault "$CG_VAULT"
 
+# The wrapper now falls back to OBSIDIAN_VAULT_PATH from repo-root local.env,
+# and these tests run INSIDE the living repo — an operator's real local.env
+# would leak a real vault into every "no vault configured" fixture. Every
+# invocation that must see NO vault therefore pins $AI_CONFIG_LOCAL_ENV to a
+# synthetic local.env (present but key-less — the fresh-clone shape); the
+# fallback tests below point it at their own fixtures instead.
+CG_LENV_NONE="$CG_TMP/local-env-none.env"
+printf '# synthetic local.env with no vault key\nCLAUDE_CONFIG_DIR=/tmp/x\n' > "$CG_LENV_NONE"
+
 # === 1. --list shows the whole check set and runs nothing (exit 0).
 CG_LIST="$(bash "$CG_SCRIPT" --list --vault "$CG_VAULT" 2>&1)"; CG_LIST_RC=$?
 assert_eq "closeout-gate: --list exits 0" "0" "$CG_LIST_RC"
@@ -188,7 +197,8 @@ assert_contains "closeout-gate: --list flags the missing gate script too" \
   "$CG_MISS_LIST" "FAIL  gate script missing"
 
 # === 8. An INAPPLICABLE surface is a named SKIP that does NOT fail the gate.
-CG_NOVAULT_OUT="$(env -u OBSIDIAN_VAULT_PATH bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_NOVAULT_RC=$?
+CG_NOVAULT_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_NONE" \
+  bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_NOVAULT_RC=$?
 assert_eq "closeout-gate: no vault configured → the gate still passes (inapplicable ≠ failed)" \
   "0" "$CG_NOVAULT_RC"
 assert_contains "closeout-gate: the inapplicable check is a NAMED skip" \
@@ -234,7 +244,8 @@ cp "$REPO_ROOT/scripts/check-memory-drift.sh" "$CG_NOWL/"
 cp "$REPO_ROOT/scripts/check-machine-paths.sh" "$CG_NOWL/"
 # check-wikilinks.sh deliberately absent — AND no vault configured, so the old
 # order would have skipped it.
-CG_NOWL_OUT="$(env -u OBSIDIAN_VAULT_PATH CLOSEOUT_GATE_SCRIPTS_DIR="$CG_NOWL" \
+CG_NOWL_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_NONE" \
+  CLOSEOUT_GATE_SCRIPTS_DIR="$CG_NOWL" \
   bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_NOWL_RC=$?
 assert_eq "closeout-gate: a missing gate script with NO vault configured still fails the gate" \
   "1" "$CG_NOWL_RC"
@@ -248,7 +259,8 @@ assert_not_contains "closeout-gate: the gate cannot PASS while a gate script is 
   "$CG_NOWL_OUT" "GATE PASS"
 # --list must apply the SAME precedence, or the preflight would tell an operator
 # the set is fine while the runner fails.
-CG_NOWL_LIST="$(env -u OBSIDIAN_VAULT_PATH CLOSEOUT_GATE_SCRIPTS_DIR="$CG_NOWL" \
+CG_NOWL_LIST="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_NONE" \
+  CLOSEOUT_GATE_SCRIPTS_DIR="$CG_NOWL" \
   bash "$CG_SCRIPT" --list 2>&1)"
 assert_contains "closeout-gate: --list applies the same precedence (missing beats inapplicable)" \
   "$CG_NOWL_LIST" "wikilinks      FAIL  gate script missing"
@@ -278,5 +290,65 @@ assert_exit "closeout-gate: --help exits 0" 0 -- bash "$CG_SCRIPT" --help
 CG_ENV_OUT="$(OBSIDIAN_VAULT_PATH="$CG_VAULT" bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"
 assert_contains "closeout-gate: \$OBSIDIAN_VAULT_PATH supplies the vault when --vault is absent" \
   "$CG_ENV_OUT" "GATE PASS — 3 check(s) passed, 0 skipped"
+
+# === 11. local.env is the LAST-RESORT vault source — the recurring live miss
+# this fallback fixes: agent shells do not inherit local.env, so a machine with
+# a configured vault SKIPped the wikilink check on every closeout. The value on
+# real machines contains spaces, so both local.env spellings (quoted and
+# backslash-escaped) are pinned. The fixture vault path itself carries a space.
+CG_LE_VAULT="$CG_TMP/le vault"
+_cg_vault "$CG_LE_VAULT"
+
+# Quoted spelling.
+CG_LENV_Q="$CG_TMP/local-env-quoted.env"
+printf 'OBSIDIAN_VAULT_PATH="%s"\n' "$CG_LE_VAULT" > "$CG_LENV_Q"
+CG_LE_Q_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_Q" \
+  bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_LE_Q_RC=$?
+assert_eq "closeout-gate: local.env fallback (quoted, spaces) resolves the vault → exit 0" \
+  "0" "$CG_LE_Q_RC"
+assert_contains "closeout-gate: local.env fallback RUNS the wikilink check (no skip)" \
+  "$CG_LE_Q_OUT" "GATE PASS — 3 check(s) passed, 0 skipped"
+assert_not_contains "closeout-gate: local.env fallback never reports SKIP wikilinks" \
+  "$CG_LE_Q_OUT" "SKIP wikilinks"
+
+# Backslash-escaped spelling (`export` prefix too — both are legitimate).
+CG_LENV_B="$CG_TMP/local-env-backslash.env"
+printf 'export OBSIDIAN_VAULT_PATH=%s\n' "$(printf '%s' "$CG_LE_VAULT" | sed 's/ /\\ /g')" > "$CG_LENV_B"
+CG_LE_B_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_B" \
+  bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_LE_B_RC=$?
+assert_eq "closeout-gate: local.env fallback (export + backslash-escape) resolves the vault → exit 0" \
+  "0" "$CG_LE_B_RC"
+assert_contains "closeout-gate: backslash-escaped local.env value runs all three checks" \
+  "$CG_LE_B_OUT" "GATE PASS — 3 check(s) passed, 0 skipped"
+
+# The wikilink check really runs against the fallback-resolved vault — a bad
+# link FAILS, proving the fallback wired a real surface, not a cosmetic PASS.
+CG_LE_BAD_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_Q" \
+  bash "$CG_SCRIPT" --draft "$CG_WL" 2>&1)"; CG_LE_BAD_RC=$?
+assert_eq "closeout-gate: a bad wikilink FAILS against the local.env-resolved vault" \
+  "1" "$CG_LE_BAD_RC"
+assert_contains "closeout-gate: the local.env-resolved run names the wikilink failure" \
+  "$CG_LE_BAD_OUT" "GATE FAIL — 1 check(s) failed (wikilinks)"
+
+# Precedence: the --vault flag and the env var both beat local.env. The
+# local.env fixture points at a BROKEN vault, so a precedence inversion would
+# flip these from PASS to FAIL — the assertion cannot pass vacuously.
+CG_LENV_GHOST="$CG_TMP/local-env-ghost.env"
+printf 'OBSIDIAN_VAULT_PATH="%s"\n' "$CG_TMP/no-such-le-vault" > "$CG_LENV_GHOST"
+CG_LE_FLAG_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_GHOST" \
+  bash "$CG_SCRIPT" --draft "$CG_OK" --vault "$CG_VAULT" 2>&1)"; CG_LE_FLAG_RC=$?
+assert_eq "closeout-gate: --vault beats a (broken) local.env value" "0" "$CG_LE_FLAG_RC"
+CG_LE_ENV_OUT="$(OBSIDIAN_VAULT_PATH="$CG_VAULT" AI_CONFIG_LOCAL_ENV="$CG_LENV_GHOST" \
+  bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_LE_ENV_RC=$?
+assert_eq "closeout-gate: \$OBSIDIAN_VAULT_PATH beats a (broken) local.env value" "0" "$CG_LE_ENV_RC"
+
+# A local.env-configured vault that does not exist is a CONFIGURED-but-broken
+# surface — it FAILS like any other misspelled destination, never skips.
+CG_LE_GHOST_OUT="$(env -u OBSIDIAN_VAULT_PATH AI_CONFIG_LOCAL_ENV="$CG_LENV_GHOST" \
+  bash "$CG_SCRIPT" --draft "$CG_OK" 2>&1)"; CG_LE_GHOST_RC=$?
+assert_eq "closeout-gate: a nonexistent local.env vault FAILS the gate (broken, not absent)" \
+  "1" "$CG_LE_GHOST_RC"
+assert_contains "closeout-gate: the broken local.env vault path is named" \
+  "$CG_LE_GHOST_OUT" "configured vault does not exist: $CG_TMP/no-such-le-vault"
 
 rm -rf "$CG_TMP"
