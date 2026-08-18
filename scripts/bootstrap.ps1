@@ -415,6 +415,26 @@ function Resolve-ConfigTargets {
   if (-not $env:AI_CONFIG_DIR) { $env:AI_CONFIG_DIR = $repoRoot }
   $coLocClaude = Join-Path $env:AI_CONFIG_DIR '.claude'
   $coLocCodex  = Join-Path $env:AI_CONFIG_DIR '.codex'
+  # Path equality must be spelling-robust (slash direction, trailing dots,
+  # relative segments) — the same path-EQUALITY-site class as validate.ps1's
+  # co-location compare. GetFullPath normalizes separators; -eq stays
+  # case-insensitive per PowerShell string semantics. An MSYS-spelled value
+  # (/tmp/...) from a bash-seeded local.env is not resolvable natively and
+  # stays unequal by design — the bash twin recognizes its own seeding.
+  function Test-BsPathEq([string]$a, [string]$b) {
+    if (-not $a -or -not $b) { return $false }
+    # Only FULLY-QUALIFIED paths are normalized: GetFullPath resolves a
+    # relative value against the PROCESS cwd, which is not a meaningful base
+    # for a config value (panel finding) — relative values keep the plain
+    # compare. Trailing separators are trimmed after normalization:
+    # GetFullPath preserves them, and "<dir>\" names the same dir as "<dir>".
+    if (-not ([IO.Path]::IsPathFullyQualified($a) -and [IO.Path]::IsPathFullyQualified($b))) {
+      return ($a -eq $b)
+    }
+    try {
+      return ([IO.Path]::GetFullPath($a).TrimEnd('\', '/')) -eq ([IO.Path]::GetFullPath($b).TrimEnd('\', '/'))
+    } catch { return ($a -eq $b) }
+  }
   if ($Scattered) {
     $bsHome = [Environment]::GetFolderPath('UserProfile')
     $claudeDefault = Join-Path $bsHome '.claude'
@@ -426,14 +446,14 @@ function Resolve-ConfigTargets {
   if (-not $ClaudeConfigDir) {
     if (-not $env:CLAUDE_CONFIG_DIR) {
       $env:CLAUDE_CONFIG_DIR = $claudeDefault
-    } elseif ($Scattered -and $env:CLAUDE_CONFIG_DIR -eq $coLocClaude) {
+    } elseif ($Scattered -and (Test-BsPathEq $env:CLAUDE_CONFIG_DIR $coLocClaude)) {
       $env:CLAUDE_CONFIG_DIR = $claudeDefault   # un-do a prior co-located default
     }
   }
   if (-not $CodexHome) {
     if (-not $env:CODEX_HOME) {
       $env:CODEX_HOME = $codexDefault
-    } elseif ($Scattered -and $env:CODEX_HOME -eq $coLocCodex) {
+    } elseif ($Scattered -and (Test-BsPathEq $env:CODEX_HOME $coLocCodex)) {
       $env:CODEX_HOME = $codexDefault
     }
   }

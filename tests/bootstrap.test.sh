@@ -509,8 +509,10 @@ PSSTUB
     -ClaudeConfigDir "$PS133_CFG" -VaultDir /tmp/ps133-vault </dev/null >/dev/null 2>&1 || ps133_exit=$?
   assert_eq "bootstrap.ps1 first-run (flag) exits 0" "0" "$ps133_exit"
   assert_file "bootstrap.ps1 first-run produced the entrypoint" "$PS133_CFG/CLAUDE.md"
+  # Spelling-agnostic: bootstrap.ps1 seeds the Windows spelling of the bash
+  # mktemp path on a Windows host (see tests/lib.sh native_path_fwd).
   assert_contains "bootstrap.ps1 seeded local.env carries the config dir" \
-    "$(cat "$PS133_REPO/local.env" 2>/dev/null)" "$PS133_CFG"
+    "$(fwdslash "$(cat "$PS133_REPO/local.env" 2>/dev/null)")" "$(native_path_fwd "$PS133_CFG")"
   rm -rf "$PS133_HOME" "$PS133_REPO"
 
   # --- firecrawl is OPTIONAL in bootstrap.ps1 too ---
@@ -602,41 +604,56 @@ PSSTUB
   CLPS_UNSET="env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH"
   clps_default="$($CLPS_UNSET HOME="$CLPS_HOME" "$PWSH_BIN" -NoProfile -File \
     "$CLPS_REPO/scripts/bootstrap.ps1" -DryRun 2>&1 || true)"
+  # Spelling-agnostic compares (tests/lib.sh native_path_fwd/fwdslash): pwsh
+  # prints Windows-spelled paths for bash's MSYS-spelled mktemp dirs.
   assert_contains "bootstrap.ps1 co-located: CLAUDE_CONFIG_DIR defaults to <repo>/.claude" \
-    "$clps_default" "setenv User CLAUDE_CONFIG_DIR=$CLPS_REPO/.claude"
+    "$(fwdslash "$clps_default")" "setenv User CLAUDE_CONFIG_DIR=$(native_path_fwd "$CLPS_REPO")/.claude"
   assert_contains "bootstrap.ps1 co-located: CODEX_HOME defaults to <repo>/.codex" \
-    "$clps_default" "setenv User CODEX_HOME=$CLPS_REPO/.codex"
+    "$(fwdslash "$clps_default")" "setenv User CODEX_HOME=$(native_path_fwd "$CLPS_REPO")/.codex"
   clps_scatter="$($CLPS_UNSET HOME="$CLPS_HOME" "$PWSH_BIN" -NoProfile -File \
     "$CLPS_REPO/scripts/bootstrap.ps1" -DryRun -Scattered 2>&1 || true)"
+  # Scattered home: bootstrap.ps1 resolves [Environment]::GetFolderPath('UserProfile'),
+  # which env cannot redirect on Windows — assert against the REAL profile there;
+  # POSIX keeps the injected HOME (byte-identical to the old assertion).
+  if stub_host_is_windows; then clps_scatter_home="$(windows_profile_fwd)"; else clps_scatter_home="$CLPS_HOME"; fi
   assert_contains "bootstrap.ps1 -Scattered: targets resolve under the home dir" \
-    "$clps_scatter" "setenv User CLAUDE_CONFIG_DIR=$CLPS_HOME/.claude"
+    "$(fwdslash "$clps_scatter")" "setenv User CLAUDE_CONFIG_DIR=$clps_scatter_home/.claude"
   rm -rf "$CLPS_REPO" "$CLPS_HOME" 2>/dev/null || true
 
   # --- <TEAM>-297: co-located value-flow edge cases (cross-model panel), PS twin ---
   CLEP_HOME="$(mktemp -d)"
   clep_setup() { copy_repo_tracked "$1"; }
-  clep_run() {  # <repo> <expect-substr> <label> [extra -flags...]
-    local repo="$1" want="$2" label="$3"; shift 3
+  clep_run() {  # <repo> <expect-base-dir> <label> [extra -flags...]
+    # The expectation is built here from the base dir so both sides of the
+    # contains-assert land in ONE path spelling (tests/lib.sh native_path_fwd).
+    local repo="$1" want_base="$2" label="$3"; shift 3
     local out
     out="$(env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u AI_CONFIG_DIR -u HERMES_HOME -u OBSIDIAN_VAULT_PATH \
       HOME="$CLEP_HOME" "$PWSH_BIN" -NoProfile -File "$repo/scripts/bootstrap.ps1" -DryRun "$@" 2>&1 || true)"
-    assert_contains "$label" "$out" "$want"
+    assert_contains "$label" "$(fwdslash "$out")" \
+      "setenv User CLAUDE_CONFIG_DIR=$(native_path_fwd "$want_base")/.claude"
   }
   # (A) existing empty local.env + -DryRun -> co-located.
   CLEP_A="$(mktemp -d)"; clep_setup "$CLEP_A"
   printf 'CLAUDE_CONFIG_DIR=\nCODEX_HOME=\nOBSIDIAN_VAULT_PATH=\n' > "$CLEP_A/local.env"
-  clep_run "$CLEP_A" "setenv User CLAUDE_CONFIG_DIR=$CLEP_A/.claude" \
+  clep_run "$CLEP_A" "$CLEP_A" \
     "bootstrap.ps1 co-located: -DryRun with an existing empty local.env still resolves co-located"
   rm -rf "$CLEP_A"
-  # (B) prior co-located default + -Scattered -> home.
+  # (B) prior co-located default + -Scattered -> home. On Windows the scattered
+  # home is the REAL user profile (GetFolderPath, not env-redirectable).
   CLEP_B="$(mktemp -d)"; clep_setup "$CLEP_B"
-  printf 'CLAUDE_CONFIG_DIR=%s/.claude\nOBSIDIAN_VAULT_PATH=\n' "$CLEP_B" > "$CLEP_B/local.env"
-  clep_run "$CLEP_B" "setenv User CLAUDE_CONFIG_DIR=$CLEP_HOME/.claude" \
+  # The prior value is written in the spelling the PS twin itself seeds
+  # (native forward-slash on Windows; identity on POSIX) — bootstrap.ps1's
+  # co-located-default recognition normalizes separators but cannot resolve an
+  # MSYS /tmp spelling natively (that mixed-shell case is bash bootstrap's).
+  printf 'CLAUDE_CONFIG_DIR=%s/.claude\nOBSIDIAN_VAULT_PATH=\n' "$(native_path_fwd "$CLEP_B")" > "$CLEP_B/local.env"
+  if stub_host_is_windows; then clep_b_home="$(windows_profile_fwd)"; else clep_b_home="$CLEP_HOME"; fi
+  clep_run "$CLEP_B" "$clep_b_home" \
     "bootstrap.ps1 -Scattered un-does a prior co-located default in local.env" -Scattered
   rm -rf "$CLEP_B"
   # (spaces) co-located resolves under a repo path with a space.
   CLEP_SPP="$(mktemp -d)"; CLEP_SP="$CLEP_SPP/repo with space"; mkdir -p "$CLEP_SP"; clep_setup "$CLEP_SP"
-  clep_run "$CLEP_SP" "setenv User CLAUDE_CONFIG_DIR=$CLEP_SP/.claude" \
+  clep_run "$CLEP_SP" "$CLEP_SP" \
     "bootstrap.ps1 co-located resolves under a repo path containing a space"
   rm -rf "$CLEP_SPP"
   rm -rf "$CLEP_HOME" 2>/dev/null || true
