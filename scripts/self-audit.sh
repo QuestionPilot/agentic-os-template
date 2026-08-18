@@ -742,8 +742,23 @@ score_memory_hygiene() {
   # sub-checks below run PER STORE and each gap names the store it fired in.
   # A hygiene failure in a small secondary store is a real failure (its notes
   # are just as invisible at orient); the old picker never saw it.
-  local md_dir missing_index=0
+  local md_dir missing_index=0 scored_stores=0 store_md_count
   for md_dir in "${MEMORY_DIRS[@]}"; do
+
+    # An EMPTY store — zero *.md files, e.g. a harness-auto-created
+    # projects/<cwd-slug>/memory dir left behind by a session run out of a
+    # temp working dir — is not a hygiene gap: there is nothing to index, so
+    # the missing MEMORY.md cannot run any orient blind. Name it
+    # informationally and skip it. A store that HAS notes but no MEMORY.md
+    # keeps the full missing-index deduction below (teeth kept), and a store
+    # holding only a MEMORY.md counts as non-empty (the index is an .md file)
+    # so it still walks the scored path.
+    store_md_count="$(find "$md_dir" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "${store_md_count:-0}" -eq 0 ]; then
+      skip_surface "empty memory store (0 notes) not scored: $md_dir"
+      continue
+    fi
+    scored_stores=$((scored_stores+1))
 
     if [ ! -f "$md_dir/MEMORY.md" ]; then
       # MEMORY.md missing entirely is a 20pt hit — the index is the spine of
@@ -842,6 +857,15 @@ score_memory_hygiene() {
       fi
     done < <(find "$md_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
   done
+
+  # Every resolved store was empty: nothing was measured, so the pillar must
+  # report UNSCORED (a cannot-run check fails loudly, never passes clean) —
+  # the same posture as the zero-stores early return above. The per-store
+  # informational lines above already name each empty store.
+  if [ "$scored_stores" -eq 0 ]; then
+    mark_unscored "$key" "all resolved memory stores are empty (0 notes)"
+    return 0
+  fi
 
   # ONE aggregate warn for sub-check 2.6, fired after every store is scanned —
   # so the deduction cannot compound per note or per store (the same

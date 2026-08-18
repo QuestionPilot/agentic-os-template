@@ -916,6 +916,49 @@ EOF
 }
 _test_d1_explicit_primary_override
 
+# --- D1d: an EMPTY auto-created store (zero *.md files — e.g. a
+# projects/<tmp-cwd-slug>/memory dir a harness auto-creates for a session run
+# out of a temp dir) must NOT floor Pillar 2: it is named informationally in
+# skipped[] and excluded from scoring, while the healthy sibling store keeps
+# its clean 20/20. Teeth kept: a store WITH notes but no MEMORY.md still
+# deducts (D1 above pins that case).
+_test_d1d_empty_store_not_scored() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1d empty-store test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config"
+  mkdir -p "$cfg/projects/-private-tmp/memory" "$cfg/projects/zzz-primary/memory"
+  cat > "$cfg/projects/zzz-primary/memory/MEMORY.md" <<'EOF'
+# Memory Index
+
+- [Proj](project_real.md) — the operator's active project
+EOF
+  cat > "$cfg/projects/zzz-primary/memory/project_real.md" <<'EOF'
+---
+name: project_real
+metadata:
+  type: project
+---
+real project body
+EOF
+  local out p2 empty_note
+  out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR -u CODEX_HOME \
+          bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --config-dir "$cfg" --json 2>/dev/null)"
+  p2="$(_sa_pillar_score "$out" "memory-hygiene")"
+  empty_note="$(printf '%s' "$out" | jq -r \
+    '.skipped[] | select(contains("empty memory store"))' | head -1)"
+  rm -rf "$fixture"
+  if [ "$p2" = "20" ] && [ -n "$empty_note" ] \
+     && [ -z "${empty_note##*-private-tmp*}" ]; then
+    _pass "D1d: an empty memory store is named informationally and does not floor pillar 2"
+  else
+    _fail "D1d: an empty memory store is named informationally and does not floor pillar 2" \
+          "expected pillar 2 == 20 + an empty-store skipped line naming -private-tmp, got score=[$p2] note=[$empty_note]"
+  fi
+}
+_test_d1d_empty_store_not_scored
+
 # --- D2: local.env is sourced so the no-flag run reads operator config from
 # local.env (reproducible across shells), not the ambient environment only. The
 # old script read $OBSIDIAN_VAULT_PATH from env ONLY, so a shell that had not

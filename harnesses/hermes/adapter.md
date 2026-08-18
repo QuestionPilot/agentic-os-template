@@ -65,6 +65,23 @@ plus an `extra` object of event-specific kwargs (e.g. `pre_llm_call` passes
 `pre_tool_call` blocks; `matcher:` (a tool-name regex) applies to
 `pre/post_tool_call` only.
 
+**Hook entry wire shape (re-verified against the bundled desktop source,
+build 2026-08-18).** Each `hooks:` entry is parsed into `ShellHookSpec`
+(`agent/shell_hooks.py`) whose fields are `command` / `matcher` / `timeout` /
+`fail_closed` — `command` is **ONE string**, split into argv via
+`shlex.split(os.path.expanduser(command))` with `shell=False`. There is **no
+`args:` key**: an `args:` list in a hook entry is silently ignored, leaving
+only the bare `command` value as the whole argv — the hook then never runs
+(`hermes hooks doctor`: "script missing or not executable"). Interpreter
+prefixes inside the single string are fine (the script itself needs only read
+permission), which is how the Windows render wires `.ps1` hooks:
+`command: "pwsh -NoProfile -File '<abs>/hooks/<x>.ps1'"`. Because the string is
+shlex-split, any path segment containing a space or apostrophe must be
+POSIX-single-quoted inside the YAML double-quoted scalar — both generators do
+this (`hermes_hook_command_yaml` in install.sh, `Get-HermesHookCommandYaml` in
+install.ps1). An earlier revision of this adapter assumed the Claude-Code
+`command` + `args:` shape; that was never valid.
+
 **Hook decision formats (verified v0.16.0).** A `pre_tool_call` block emits the
 legacy Claude-Code shape `{"decision":"block","reason":"…"}` — Hermes parses it
 natively into its wire shape (`{"action":"block","message":"…"}`).

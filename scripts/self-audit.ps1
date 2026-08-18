@@ -892,8 +892,24 @@ function Invoke-Pillar2 {
     # A hygiene failure in a small secondary store is a real failure (its notes
     # are just as invisible at orient); the old picker never saw it.
     $missingIndex = $false
+    $scoredStores = 0
     foreach ($mdDir in $MemoryDirs) {
         $memIndex = Join-Path $mdDir 'MEMORY.md'
+
+        # An EMPTY store — zero *.md files, e.g. a harness-auto-created
+        # projects/<cwd-slug>/memory dir left behind by a session run out of a
+        # temp working dir — is not a hygiene gap: there is nothing to index,
+        # so the missing MEMORY.md cannot run any orient blind. Name it
+        # informationally and skip it. A store that HAS notes but no MEMORY.md
+        # keeps the full missing-index deduction below (teeth kept), and a
+        # store holding only a MEMORY.md counts as non-empty (the index is an
+        # .md file) so it still walks the scored path.
+        $storeMdCount = @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue).Count
+        if ($storeMdCount -eq 0) {
+            Add-Skip "empty memory store (0 notes) not scored: $mdDir"
+            continue
+        }
+        $scoredStores++
 
         if (-not (Test-Path -LiteralPath $memIndex -PathType Leaf)) {
             # MEMORY.md missing entirely is a 20pt hit — the index is the spine of
@@ -976,6 +992,15 @@ function Invoke-Pillar2 {
                 [void]$pnbOver.Add([pscustomobject]@{ path = $pnbPath; bytes = $pnbBytes })
             }
         }
+    }
+
+    # Every resolved store was empty: nothing was measured, so the pillar must
+    # report UNSCORED (a cannot-run check fails loudly, never passes clean) —
+    # the same posture as the zero-stores early return above. The per-store
+    # informational lines above already name each empty store.
+    if ($scoredStores -eq 0) {
+        Set-Unscored $key 'all resolved memory stores are empty (0 notes)'
+        return
     }
 
     # ONE aggregate warn for sub-check 2.6, fired after every store is scanned —
