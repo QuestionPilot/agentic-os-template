@@ -83,12 +83,26 @@ make_codex_env "$XH_WORK/cx.env" "$XH_CX"
 AI_CONFIG_LOCAL_ENV="$XH_WORK/cx.env" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>&1
 
 XH_HM="$XH_WORK/hermes-home"; mkdir -p "$XH_HM"
-make_hermes_env "$XH_WORK/hm.env" "$XH_HM"
-AI_CONFIG_LOCAL_ENV="$XH_WORK/hm.env" bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>&1
+XH_HAVE_HERMES=1
+if stub_host_is_windows; then
+  # install.sh REFUSES --harness hermes on a Windows host: its render would
+  # wire MSYS-spelled .sh hook paths a native Windows Hermes cannot execute.
+  # The Windows-native hermes surface is covered by install.ps1's twin lanes
+  # (tests/install-hermes.test.ps1 + tests/hooks-ps-parity.test.ps1); the
+  # hermes leg of this matrix skips with that reason.
+  XH_HAVE_HERMES=0
+else
+  make_hermes_env "$XH_WORK/hm.env" "$XH_HM"
+  AI_CONFIG_LOCAL_ENV="$XH_WORK/hm.env" bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>&1
+fi
 
 assert_file "xh: rendered claude session-agent.sh" "$XH_CL/hooks/session-agent.sh"
 assert_file "xh: rendered codex session-agent.sh"  "$XH_CX/hooks/session-agent.sh"
-assert_file "xh: rendered hermes session-agent.sh" "$XH_HM/hooks/session-agent.sh"
+if [ "$XH_HAVE_HERMES" = "1" ]; then
+  assert_file "xh: rendered hermes session-agent.sh" "$XH_HM/hooks/session-agent.sh"
+else
+  _skip "xh: rendered hermes session-agent.sh" "install.sh refuses hermes on a Windows host - covered by the install.ps1 twin lanes"
+fi
 
 # install.sh compiles only the .sh hooks (install.ps1 owns the .ps1 surface);
 # stage each .ps1 twin into the SAME rendered home — the copy-into-throwaway-
@@ -268,7 +282,12 @@ xh_scenario() {
   # Hermes S1-S3 model session state in state.db; without sqlite3 the scenario
   # cannot be rendered faithfully, so those lanes skip with the reason. S4
   # short-circuits on the kill switch before any state read, so it always runs.
-  if [ "$XH_HAVE_SQLITE" = "1" ] || [ "$id" = "S4" ]; then
+  # On a Windows host there is no install.sh-rendered hermes home at all
+  # (XH_HAVE_HERMES=0) — every hermes lane skips.
+  if [ "$XH_HAVE_HERMES" != "1" ]; then
+    _skip "xh[$eng] $id $name: hermes decision"      "install.sh refuses hermes on a Windows host - covered by the install.ps1 twin lanes"
+    _skip "xh[$eng] $id $name: parity codex==hermes" "install.sh refuses hermes on a Windows host - covered by the install.ps1 twin lanes"
+  elif [ "$XH_HAVE_SQLITE" = "1" ] || [ "$id" = "S4" ]; then
     d_hm="$(xh_decision hermes "$XH_HM/hooks/session-agent.$ext" "$(xh_hermes_payload "$sid")" "$@")"
     assert_eq "xh[$eng] $id $name: hermes decision"      "$want" "$d_hm"
     assert_eq "xh[$eng] $id $name: parity codex==hermes" "$d_cx" "$d_hm"
@@ -302,7 +321,7 @@ fi
 # Cleanup — tests/run.sh dot-sources every test file into one shell, so scrub
 # the helpers and variables to avoid leaking into later files.
 rm -rf "$XH_WORK"
-unset XH_FIX XH_WORK XH_CL XH_CX XH_HM XH_DB XH_HAVE_SQLITE xh_s3_noise
+unset XH_FIX XH_WORK XH_CL XH_CX XH_HM XH_DB XH_HAVE_SQLITE XH_HAVE_HERMES xh_s3_noise
 unset -f xh_claude_payload xh_codex_payload xh_hermes_payload
 unset -f xh_classify_claude xh_classify_codex xh_classify_hermes
 unset -f xh_decision xh_scenario

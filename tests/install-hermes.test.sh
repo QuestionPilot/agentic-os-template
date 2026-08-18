@@ -15,6 +15,30 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 # Never call `exit` — failures bubble through assertion counters.
 # slow
 
+# On a Windows host (MSYS/MINGW bash), install.sh REFUSES the hermes harness:
+# its render would wire MSYS-spelled paths to .sh hook scripts a native Windows
+# Hermes can neither resolve nor execute — the spine hooks would silently never
+# fire. The refusal is the behavior under test on this host; the full hermes
+# build/behavior surface runs on install.ps1's Windows-native twin
+# (tests/install-hermes.test.ps1). Assert the guard, then bail out of this file.
+if stub_host_is_windows; then
+  IH_WG_DIR="$(mktemp -d)"
+  IH_WG_OUT="$IH_WG_DIR/hermes-home"; mkdir -p "$IH_WG_OUT"
+  IH_WG_VAULT="$IH_WG_DIR/vault"
+  cp -R "$REPO_ROOT/obsidian/vault-scaffolding" "$IH_WG_VAULT"
+  IH_WG_ENV="$IH_WG_DIR/local.env"
+  make_hermes_env "$IH_WG_ENV" "$IH_WG_OUT" "$IH_WG_VAULT"
+  IH_WG_RC=0
+  env AI_CONFIG_LOCAL_ENV="$IH_WG_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes \
+    >/dev/null 2>"$IH_WG_DIR/err.txt" || IH_WG_RC=$?
+  assert_eq "install.sh --harness hermes refuses a Windows host" "1" "$IH_WG_RC"
+  assert_contains "the Windows refusal names install.ps1 as the supported path" \
+    "$(cat "$IH_WG_DIR/err.txt" 2>/dev/null)" "install.ps1 --harness hermes"
+  rm -rf "$IH_WG_DIR"
+  unset IH_WG_DIR IH_WG_OUT IH_WG_VAULT IH_WG_ENV IH_WG_RC
+  return 0 2>/dev/null || exit 0
+fi
+
 IH_OUT="$(mktemp -d)/hermes-home"; mkdir -p "$IH_OUT"
 IH_ENV="$(mktemp -d)/local.env"
 IH_VAULT="$(mktemp -d)/vault"
@@ -92,6 +116,29 @@ PY
 )"
 assert_eq "every hook command in a space+apostrophe path shlex-splits to exactly its hook script" "OK" "$sp_check"
 rm -rf "$IH_SP_ROOT"
+
+# --- T2c: the Windows-host refusal, exercised on EVERY host via a stubbed
+# `uname` ahead of install.sh's PATH (same pattern as install-lineark E), so
+# the guard is never a dead branch on the macOS/Linux lanes. A real Windows
+# host exercises the guard live in the branch at the top of this file.
+IH_WG_STUB="$(mktemp -d)"
+cat > "$IH_WG_STUB/uname" <<'IHUNAME'
+#!/bin/sh
+printf 'MINGW64_NT-10.0-26100\n'
+IHUNAME
+chmod +x "$IH_WG_STUB/uname"
+IH_WG_OUT2="$IH_WG_STUB/hermes-home"; mkdir -p "$IH_WG_OUT2"
+IH_WG_ENV2="$IH_WG_STUB/local.env"
+make_hermes_env "$IH_WG_ENV2" "$IH_WG_OUT2" "$IH_VAULT"
+IH_WG_RC2=0
+env PATH="$IH_WG_STUB:$PATH" AI_CONFIG_LOCAL_ENV="$IH_WG_ENV2" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes \
+  >/dev/null 2>"$IH_WG_STUB/err.txt" || IH_WG_RC2=$?
+assert_eq "install.sh --harness hermes refuses a (stubbed) Windows host" "1" "$IH_WG_RC2"
+assert_contains "the stubbed-Windows refusal names install.ps1 as the supported path" \
+  "$(cat "$IH_WG_STUB/err.txt" 2>/dev/null)" "install.ps1 --harness hermes"
+rm -rf "$IH_WG_STUB"
+unset IH_WG_STUB IH_WG_OUT2 IH_WG_ENV2 IH_WG_RC2
 
 # --- T3: drift gate passes a fresh build ---
 assert_exit "check-drift passes the fresh hermes build" 0 -- \

@@ -71,10 +71,13 @@ try {
     Assert-Contains 'install-hermes.test: hooks.yaml wires the pre_tool_call edit-gate matcher' $ih_yaml 'matcher: "write_file|patch|terminal"'
     Assert-Contains 'install-hermes.test: hooks.yaml wires pre_llm_call to framework-surface' $ih_yaml 'pre_llm_call'
     Assert-Contains 'install-hermes.test: hooks.yaml enables the agentic-os-hook-bridge plugin' $ih_yaml 'agentic-os-hook-bridge'
-    # PS-twin: every hooks.yaml entry uses the pwsh launcher (a bare .ps1 path is
-    # non-executable on Windows). Pin it so an install.sh bare-path regression fails.
-    Assert-Contains 'install-hermes.test: hooks.yaml uses the pwsh launcher command' $ih_yaml 'command: "pwsh"'
-    Assert-Contains 'install-hermes.test: hooks.yaml launches the .ps1 hooks via -File' $ih_yaml '"-File"'
+    # PS-twin: every hooks.yaml entry is a SINGLE `command:` string using the
+    # pwsh launcher (a bare .ps1 path is non-executable on Windows). Hermes's
+    # ShellHookSpec (agent/shell_hooks.py) has NO `args:` key — an emitted args
+    # list is silently ignored, leaving a bare `pwsh` command that never runs
+    # the hook. Pin the single-string launcher AND the absence of args:.
+    Assert-Contains 'install-hermes.test: hooks.yaml wires a single-string pwsh launcher command' $ih_yaml 'command: "pwsh -NoProfile -File '
+    Assert-NotContains 'install-hermes.test: hooks.yaml carries no args: key (ShellHookSpec has none)' $ih_yaml 'args:'
 
     # --- T3: drift gate passes a fresh build + app-written exemption ----------
     Assert-Exit 'install-hermes.test: check-drift passes the fresh hermes build' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $IH_OUT
@@ -117,7 +120,10 @@ try {
     # Windows usernames like O'Brien produce HERMES_HOME paths with a single quote,
     # which must NOT break the generated hooks.yaml (the hook paths are double-quoted
     # YAML, so an apostrophe is literal; a single-quoted scalar would break on it).
-    $IH_OUT2  = Join-Path $IH_ROOT "hermes-home2'apos"
+    # Space AND apostrophe (matching the bash twin's T2b fixture): the space
+    # exercises the POSIX single-quote wrap in the emitted command string, the
+    # apostrophe exercises the '\'' idiom + its YAML backslash-doubling.
+    $IH_OUT2  = Join-Path $IH_ROOT "hermes home2'apos"
     $IH_ENV2  = Join-Path $IH_ROOT 'local2.env'
     $IH_IDENT = Join-Path $IH_ROOT 'local.soul-identity.md'
     New-Item -ItemType Directory -Path $IH_OUT2 -Force | Out-Null
@@ -144,11 +150,59 @@ try {
     Assert-Contains 'install-hermes.test: an inline overlay marker is stripped to empty' $ih_soul2 'Overlay marker  inline.'
     Assert-Contains 'install-hermes.test: shell metacharacters in the identity render verbatim (not executed)' $ih_soul2 'echo SUBSHELL) verbatim.'
     Assert-Contains 'install-hermes.test: the operating-section spine directive still renders' $ih_soul2 '/session-agent'
-    # F1: the apostrophe-containing hook path is wrapped in DOUBLE quotes (a closing
-    # `"` right after the .ps1 path), so the apostrophe is literal and the YAML stays
-    # valid — a single-quoted scalar would have closed early on the apostrophe.
+    # F1: the apostrophe in the hook path rides inside a POSIX-single-quoted
+    # token in the YAML double-quoted `command:` scalar — the embedded
+    # apostrophe becomes the '\'' idiom, whose backslash is then YAML-doubled.
+    # Compute the expected scalar through the same two layers and pin the whole
+    # command line; the shlex round-trip below proves the layering is CORRECT,
+    # this pins that it is present.
     $ih_yaml2 = if (Test-Path -LiteralPath (Join-Path $IH_OUT2 'hooks/hooks.yaml')) { Get-Content -Raw -LiteralPath (Join-Path $IH_OUT2 'hooks/hooks.yaml') } else { '' }
-    Assert-Contains 'install-hermes.test: hooks.yaml double-quotes an apostrophe-containing hook path (valid YAML)' $ih_yaml2 (($IH_OUT2 -replace '\\', '/') + '/hooks/session-agent.ps1"')
+    $ih2Hook = ((($IH_OUT2 -replace '\\', '/')) + '/hooks/session-agent.ps1')
+    $ih2Tok  = ("'" + $ih2Hook.Replace("'", "'\''") + "'").Replace('\', '\\').Replace('"', '\"')
+    Assert-Contains 'install-hermes.test: hooks.yaml single-string command shlex-quotes an apostrophe-containing hook path (valid YAML)' $ih_yaml2 ('command: "pwsh -NoProfile -File ' + $ih2Tok + '"')
+    # Shlex round-trip (twin of the bash T2b python3 check): YAML-unescape each
+    # command scalar, shlex-split it, and require exactly the launcher argv
+    # [pwsh, -NoProfile, -File, <real hook script under the apostrophe path>].
+    # Probe python defensively: the MS-Store WindowsApps alias stub and
+    # extensionless PATH hits are not runnable interpreters (the same class
+    # bootstrap.ps1's Resolve-ExecutableCommand guards against).
+    $ih2Py = @(Get-Command python3, python -ErrorAction SilentlyContinue | Where-Object {
+        $_.CommandType -eq 'Application' -and $_.Source -and ($_.Source -notmatch 'WindowsApps') -and
+        ((-not $IsWindows) -or ([System.IO.Path]::GetExtension($_.Source) -in @('.exe', '.cmd', '.bat', '.com')))
+    } | Select-Object -First 1)
+    $ih2ShlexLabel = 'install-hermes.test: every hook command in an apostrophe path shlex-splits to the pwsh launcher + its hook script'
+    if ($ih2Py.Count -gt 0) {
+        $ih2PyLines = @(
+            'import os, re, shlex, sys',
+            'hdir = os.path.join(os.environ["IH_OUT2"], "hooks").replace("\\", "/")',
+            'txt = open(sys.argv[1], encoding="utf-8").read()',
+            'cmds = re.findall(r''^\s*command:\s*"(.*)"\s*$'', txt, re.M)',
+            'def yaml_dq_unescape(s):',
+            '    return s.replace("\\\\", "\x00").replace(''\\"'', ''"'').replace("\x00", "\\")',
+            'if not cmds:',
+            '    print("NO-COMMANDS"); sys.exit()',
+            'bad = []',
+            'for c in cmds:',
+            '    try:',
+            '        toks = shlex.split(yaml_dq_unescape(c))',
+            '    except ValueError as e:',
+            '        bad.append("shlex-error:%s on %r" % (e, c)); continue',
+            '    if (len(toks) != 4 or toks[:3] != ["pwsh", "-NoProfile", "-File"]',
+            '            or os.path.dirname(toks[3]) != hdir or not os.path.isfile(toks[3])):',
+            '        bad.append("tok=%r" % toks)',
+            'print("OK" if not bad else "FAIL " + "; ".join(bad))'
+        )
+        $ih2PyFile = Join-Path $IH_ROOT 'shlex-check.py'
+        [System.IO.File]::WriteAllText($ih2PyFile, (($ih2PyLines -join "`n") + "`n"), $utf8NoBom)
+        $ih2SavedOut2 = $env:IH_OUT2
+        $env:IH_OUT2 = $IH_OUT2
+        $ih2Sp = (& $ih2Py[0].Source $ih2PyFile (Join-Path $IH_OUT2 'hooks/hooks.yaml') 2>$null) -join "`n"
+        $env:IH_OUT2 = $ih2SavedOut2
+        Assert-Eq $ih2ShlexLabel 'OK' "$ih2Sp"
+        Remove-Item -LiteralPath $ih2PyFile -Force -ErrorAction SilentlyContinue
+    } else {
+        _Skip $ih2ShlexLabel 'no runnable python interpreter on PATH'
+    }
     Remove-Item -LiteralPath $IH_OUT2, $IH_ENV2, $IH_IDENT -Recurse -Force -ErrorAction SilentlyContinue
 
     # --- T5/T6/T7: hermes hook behaviour — _Skip on the Windows lane ----------

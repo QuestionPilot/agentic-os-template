@@ -821,6 +821,83 @@ if ($jqAvail) {
     _Skip 'self-audit.test: D1b explicit-override test' 'jq not installed'
 }
 
+# --- D1h: an EMPTY auto-created store (zero *.md files) must NOT floor
+# Pillar 2: it is named informationally in skipped[] and excluded from
+# scoring, while the healthy sibling store keeps its clean 20/20. Teeth kept:
+# a store WITH notes but no MEMORY.md still deducts (D1 above pins that case).
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $cfg = Join-Path $fixture 'config'
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' '-private-tmp' 'memory') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'zzz-primary' 'memory') -Force | Out-Null
+    Write-LfFile (Join-Path $cfg 'projects' 'zzz-primary' 'memory' 'MEMORY.md') "# Memory Index`n`n- [Proj](project_real.md) — the operator's active project`n"
+    Write-LfFile (Join-Path $cfg 'projects' 'zzz-primary' 'memory' 'project_real.md') "---`nname: project_real`nmetadata:`n  type: project`n---`nreal project body`n"
+    $savedOvp = $env:OBSIDIAN_VAULT_PATH
+    $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR
+    $savedCxh = $env:CODEX_HOME
+    try {
+        Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+        $out = Invoke-SelfAudit @('--repo-root', $fixture, '--config-dir', $cfg, '--json')
+        $p2 = Get-SaPillarScore $out 'memory-hygiene'
+        $emptyNote = ''
+        try { $obj = $out | ConvertFrom-Json; foreach ($s in $obj.skipped) { if ($s -and $s.Contains('empty memory store')) { $emptyNote = $s; break } } } catch { }
+    } finally {
+        if ($null -ne $savedOvp) { $env:OBSIDIAN_VAULT_PATH = $savedOvp } else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
+        if ($null -ne $savedPmd) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $savedPmd } else { Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue }
+        if ($null -ne $savedCxh) { $env:CODEX_HOME = $savedCxh } else { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    if (("$p2" -eq '20') -and $emptyNote -and $emptyNote.Contains('-private-tmp')) {
+        _Pass 'self-audit.test: D1h an empty memory store is named informationally and does not floor pillar 2'
+    } else {
+        _Fail 'self-audit.test: D1h an empty memory store is named informationally and does not floor pillar 2' "expected pillar 2 == 20 + an empty-store skipped line naming -private-tmp, got score=[$p2] note=[$emptyNote]"
+    }
+} else {
+    _Skip 'self-audit.test: D1h empty-store test' 'jq not installed'
+}
+
+# --- D1i: when EVERY resolved store is empty, the pillar must report
+# UNSCORED (a cannot-run check fails loudly), never a clean 20/20 and never
+# a spurious missing-index 0/20.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $cfg = Join-Path $fixture 'config'
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'aaa-empty' 'memory') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $cfg 'projects' 'bbb-empty' 'memory') -Force | Out-Null
+    $savedOvp = $env:OBSIDIAN_VAULT_PATH
+    $savedPmd = $env:CLAUDE_PRIMARY_MEMORY_DIR
+    $savedCxh = $env:CODEX_HOME
+    try {
+        Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+        $out = Invoke-SelfAudit @('--repo-root', $fixture, '--config-dir', $cfg, '--json')
+        $unscored = ''
+        $note = ''
+        try {
+            $obj = $out | ConvertFrom-Json
+            $p2obj = $obj.pillars.'memory-hygiene'
+            if ($null -ne $p2obj) { $unscored = "$($p2obj.unscored)"; $note = "$($p2obj.notes)" }
+        } catch { }
+    } finally {
+        if ($null -ne $savedOvp) { $env:OBSIDIAN_VAULT_PATH = $savedOvp } else { Remove-Item Env:OBSIDIAN_VAULT_PATH -ErrorAction SilentlyContinue }
+        if ($null -ne $savedPmd) { $env:CLAUDE_PRIMARY_MEMORY_DIR = $savedPmd } else { Remove-Item Env:CLAUDE_PRIMARY_MEMORY_DIR -ErrorAction SilentlyContinue }
+        if ($null -ne $savedCxh) { $env:CODEX_HOME = $savedCxh } else { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
+    }
+    Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    if (($unscored -eq 'True' -or $unscored -eq 'true') -and $note.Contains('all resolved memory stores are empty')) {
+        _Pass 'self-audit.test: D1i all-empty stores report pillar 2 UNSCORED with the named reason'
+    } else {
+        _Fail 'self-audit.test: D1i all-empty stores report pillar 2 UNSCORED with the named reason' "expected unscored=true + all-empty note, got unscored=[$unscored] note=[$note]"
+    }
+} else {
+    _Skip 'self-audit.test: D1i all-empty-stores test' 'jq not installed'
+}
+
 # --- D2: local.env is read for config so the no-flag run resolves the vault
 # (reproducible across shells), not from the ambient env only. Run A (no ambient
 # vault) and run B (bogus ambient vault) must BOTH resolve the vault from

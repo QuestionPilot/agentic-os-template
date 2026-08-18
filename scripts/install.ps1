@@ -925,22 +925,40 @@ function New-CodexHooks {
 # since config.yaml is user-owned) + copies the agentic-os-hook-bridge plugin.
 #
 # Mirrors install.sh:596-630, with two PS-twin divergences:
-#  - Command shape: each entry uses the pwsh launcher (command 'pwsh' + args
-#    [-NoProfile, -File, <abs>.ps1]) instead of bash's bare `command: "<abs>.sh"`,
-#    since a .ps1 path is non-executable on Windows. Hermes's config.yaml hooks are
-#    Claude-Code-compatible (adapter Fact 2), so the same command/args shape the
-#    claude New-Settings ships applies.
+#  - Command shape: each entry is a SINGLE `command:` string using the pwsh
+#    launcher — `pwsh -NoProfile -File '<abs>.ps1'` — instead of bash's bare
+#    `command: "'<abs>.sh'"`, since a .ps1 path is non-executable on Windows.
+#    Hermes's ShellHookSpec (agent/shell_hooks.py) has fields
+#    command/matcher/timeout/fail_closed ONLY — there is NO `args:` key. An
+#    emitted `args:` list is silently ignored, leaving a bare `pwsh` command
+#    that never runs the hook (hooks doctor: "script missing or not
+#    executable"; the spine silently never fires). Verified against the
+#    desktop build 2026-08-18.
 #  - The hook path is forward-slashed: pwsh -File accepts '/' on Windows, and
-#    forward slashes mean the baked path carries NO backslashes — so command/args
-#    use DOUBLE-quoted YAML scalars. (A backslash would be a YAML escape; an
-#    apostrophe in the path — common in Windows usernames like O'Brien — is literal
-#    in double-quotes but would PREMATURELY CLOSE a single-quoted scalar unless
-#    doubled. Windows forbids '"' in path names, so double-quotes are fully safe.)
-#    The matcher is double-quoted too (regex, no backslashes), matching the bash
-#    snippet's quoting.
+#    forward slashes mean the baked path carries NO backslashes of its own.
+#    Get-HermesHookCommandYaml then shlex-quotes the path (Hermes splits the
+#    command string with shlex) and YAML-escapes the result for the
+#    double-quoted `command:` scalar. The matcher is double-quoted too
+#    (regex, no backslashes), matching the bash snippet's quoting.
 # Events are grouped (YAML forbids duplicate mapping keys) in first-seen order,
 # identical to the bash double-loop, so the snippet structure stays in parity.
 # ---------------------------------------------------------------------------
+
+# Get-HermesHookCommandYaml — render the pwsh launcher for one absolute hook
+# path as the inner text of a YAML double-quoted `command:` scalar that Hermes
+# shlex-splits back to exactly [pwsh, -NoProfile, -File, <path>]. Twin of
+# install.sh's hermes_hook_command_yaml: POSIX-single-quote the path so a
+# space (HERMES_HOME under ".../Agentic OS/...") or apostrophe (O'Brien) stays
+# ONE argv token — an embedded apostrophe becomes the '\'' idiom — then escape
+# backslash FIRST and double-quote for the surrounding YAML double-quoted
+# scalar (the only backslash present comes from the idiom; Windows forbids '"'
+# in paths, so the quote escape is purely defensive).
+function Get-HermesHookCommandYaml {
+    param([string]$HookAbs)
+    $q = "'" + $HookAbs.Replace("'", "'\''") + "'"
+    $q = $q.Replace('\', '\\').Replace('"', '\"')
+    return "pwsh -NoProfile -File $q"
+}
 
 function New-HermesHooks {
     $lines = [System.Collections.Generic.List[string]]::new()
@@ -954,18 +972,16 @@ function New-HermesHooks {
         $lines.Add("  $($rec.event):")
         foreach ($e in $Script:HookBlocks) {
             if ($e.event -ne $rec.event) { continue }
-            # Absolute path in the FINAL target, forward-slashed (no YAML escaping).
+            # Absolute path in the FINAL target, forward-slashed; the launcher is
+            # ONE shlex-safe command string (ShellHookSpec has no args key).
             $hookAbs = (Join-Path $TARGET 'hooks' $e.script) -replace '\\', '/'
+            $cmd = Get-HermesHookCommandYaml -HookAbs $hookAbs
             if ($e.matcher) {
                 $lines.Add("    - matcher: `"$($e.matcher)`"")
-                $lines.Add("      command: `"pwsh`"")
+                $lines.Add("      command: `"$cmd`"")
             } else {
-                $lines.Add("    - command: `"pwsh`"")
+                $lines.Add("    - command: `"$cmd`"")
             }
-            $lines.Add('      args:')
-            $lines.Add("        - `"-NoProfile`"")
-            $lines.Add("        - `"-File`"")
-            $lines.Add("        - `"$hookAbs`"")
         }
     }
     $lines.Add('plugins:')
