@@ -753,7 +753,7 @@ score_memory_hygiene() {
     # keeps the full missing-index deduction below (teeth kept), and a store
     # holding only a MEMORY.md counts as non-empty (the index is an .md file)
     # so it still walks the scored path.
-    store_md_count="$(find "$md_dir" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+    store_md_count="$(find "$md_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
     if [ "${store_md_count:-0}" -eq 0 ]; then
       skip_surface "empty memory store (0 notes) not scored: $md_dir"
       continue

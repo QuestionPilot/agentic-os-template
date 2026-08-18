@@ -916,14 +916,14 @@ EOF
 }
 _test_d1_explicit_primary_override
 
-# --- D1d: an EMPTY auto-created store (zero *.md files — e.g. a
+# --- D1h: an EMPTY auto-created store (zero *.md files — e.g. a
 # projects/<tmp-cwd-slug>/memory dir a harness auto-creates for a session run
 # out of a temp dir) must NOT floor Pillar 2: it is named informationally in
 # skipped[] and excluded from scoring, while the healthy sibling store keeps
 # its clean 20/20. Teeth kept: a store WITH notes but no MEMORY.md still
 # deducts (D1 above pins that case).
-_test_d1d_empty_store_not_scored() {
-  command -v jq >/dev/null 2>&1 || { _skip "D1d empty-store test" "jq not installed"; return 0; }
+_test_d1h_empty_store_not_scored() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1h empty-store test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
   local cfg="$fixture/config"
@@ -951,13 +951,38 @@ EOF
   rm -rf "$fixture"
   if [ "$p2" = "20" ] && [ -n "$empty_note" ] \
      && [ -z "${empty_note##*-private-tmp*}" ]; then
-    _pass "D1d: an empty memory store is named informationally and does not floor pillar 2"
+    _pass "D1h: an empty memory store is named informationally and does not floor pillar 2"
   else
-    _fail "D1d: an empty memory store is named informationally and does not floor pillar 2" \
+    _fail "D1h: an empty memory store is named informationally and does not floor pillar 2" \
           "expected pillar 2 == 20 + an empty-store skipped line naming -private-tmp, got score=[$p2] note=[$empty_note]"
   fi
 }
-_test_d1d_empty_store_not_scored
+_test_d1h_empty_store_not_scored
+
+# --- D1i: when EVERY resolved store is empty, the pillar must report
+# UNSCORED (a cannot-run check fails loudly), never a clean 20/20 and never
+# a spurious missing-index 0/20.
+_test_d1i_all_empty_stores_unscored() {
+  command -v jq >/dev/null 2>&1 || { _skip "D1i all-empty-stores test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local cfg="$fixture/config"
+  mkdir -p "$cfg/projects/aaa-empty/memory" "$cfg/projects/bbb-empty/memory"
+  local out unscored note
+  out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR -u CODEX_HOME \
+          bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --config-dir "$cfg" --json 2>/dev/null)"
+  unscored="$(printf '%s' "$out" | jq -r '.pillars["memory-hygiene"].unscored')"
+  note="$(printf '%s' "$out" | jq -r '.pillars["memory-hygiene"].notes')"
+  rm -rf "$fixture"
+  if [ "$unscored" = "true" ] && [ -z "${note##*all resolved memory stores are empty*}" ]; then
+    _pass "D1i: all-empty stores report pillar 2 UNSCORED with the named reason"
+  else
+    _fail "D1i: all-empty stores report pillar 2 UNSCORED with the named reason" \
+          "expected unscored=true + all-empty note, got unscored=[$unscored] note=[$note]"
+  fi
+}
+_test_d1i_all_empty_stores_unscored
 
 # --- D2: local.env is sourced so the no-flag run reads operator config from
 # local.env (reproducible across shells), not the ambient environment only. The

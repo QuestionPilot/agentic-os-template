@@ -120,7 +120,10 @@ try {
     # Windows usernames like O'Brien produce HERMES_HOME paths with a single quote,
     # which must NOT break the generated hooks.yaml (the hook paths are double-quoted
     # YAML, so an apostrophe is literal; a single-quoted scalar would break on it).
-    $IH_OUT2  = Join-Path $IH_ROOT "hermes-home2'apos"
+    # Space AND apostrophe (matching the bash twin's T2b fixture): the space
+    # exercises the POSIX single-quote wrap in the emitted command string, the
+    # apostrophe exercises the '\'' idiom + its YAML backslash-doubling.
+    $IH_OUT2  = Join-Path $IH_ROOT "hermes home2'apos"
     $IH_ENV2  = Join-Path $IH_ROOT 'local2.env'
     $IH_IDENT = Join-Path $IH_ROOT 'local.soul-identity.md'
     New-Item -ItemType Directory -Path $IH_OUT2 -Force | Out-Null
