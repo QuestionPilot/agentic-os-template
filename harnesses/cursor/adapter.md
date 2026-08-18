@@ -99,10 +99,11 @@ literal home paths, so an operator whose Claude config dir is relocated via
 `CLAUDE_CONFIG_DIR` gets nothing from `~/.claude/skills/`.
 
 The consequence to plan around: on a machine with both renders visible in one
-project, Cursor sees the same-named spine skills **twice**. Precedence between
-the copies is unverified (U5). Until it is settled, keep the two renders' spine
-skills byte-identical, or keep the `.claude` render out of projects driven with
-Cursor.
+project, Cursor sees the same-named spine skills only **once** — precedence is
+deterministic and the project `.claude/skills/` copy **shadows** the
+`.cursor/skills/` copy (U5, live-verified). Keep the two renders' spine skills
+rendered from the same source (the drift gate already enforces this) so the
+shadowing is harmless.
 
 ## Fact 2 — Hook events, enforcement classes, and the hooks.json block
 
@@ -140,17 +141,17 @@ script in `harnesses/cursor/hooks/`:
 
 | Enforcement class | Hook event | `matcher` | Hook script | Behavior |
 | --- | --- | --- | --- | --- |
-| `pre-edit-gate` | `preToolUse` | `Write` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and a complete routing declaration (`Linear gate:` + `Lessons:` lines) exists for this conversation. Safety net; primary auto-fire is the `sessionStart` directive in `framework-surface.sh`. |
+| `pre-edit-gate` | `preToolUse` | `Write\|Delete` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and a complete routing declaration (`Linear gate:` + `Lessons:` lines) exists for this conversation. Safety net; primary auto-fire is the `sessionStart` directive in `framework-surface.sh`. |
 
 `preToolUse` matchers filter by **tool type**; the documented values are
 `Shell`, `Read`, `Write`, `Grep`, `Delete`, `Task`, and `MCP:<tool_name>`
-(docs 2026-08-18). A file edit reports `tool_name: "Write"` (**live-verified
-2026-08-18** — headless run, observed payload), so `Write` is the whole matcher.
+(docs 2026-08-18). A file edit reports `tool_name: "Write"` and a file
+deletion reports `tool_name: "Delete"` (**both live-verified 2026-08-18** —
+headless runs, observed payloads; see U6 for the `Delete` payload's
+relative-path caveat), so `Write|Delete` is the generated matcher.
 
-Two deliberate omissions:
+One deliberate omission:
 
-- **`Delete`** is in the docs' matcher list but no observed call has reported
-  it, so wiring it would be a guess. Recorded as an open item (U6 below).
 - **`Shell`** is excluded on purpose, matching the Claude and Codex gates:
   gating every shell command would block the orient itself (the capability's own
   `git`/tracker/vault reads). The consequence is a known **shell-write
@@ -196,9 +197,9 @@ gate is hardened on both sides:
    payload, or an absent conversation id emits an explicit `deny`, never a
    silent exit.
 
-Belt and braces: layer 1 alone would depend on Cursor honoring `failClosed` on
-`preToolUse` (documented but unverified here — see below); layer 2 alone would
-depend on the script always reaching its own deny path.
+Belt and braces: layer 1 is **live-verified** — Cursor honors `failClosed` on
+`preToolUse` (a marker-proven crash blocked the write; see U1/V7); layer 2
+alone would depend on the script always reaching its own deny path.
 
 **Context injection.** `sessionStart` fires when a new composer conversation is
 created and returns `{"additional_context": "…"}` (it may also return
@@ -423,6 +424,9 @@ What it proved:
 | V4 | `sessionStart` `additional_context` reaches the model | **Yes** — magic token round-tripped; input is `{session_id, is_background_agent, composer_mode}`, fire-and-forget |
 | V5 | Skill discovery, headless | Project `.cursor/skills/` **and** project `.claude/skills/` both discovered; negative control passed (a non-existent skill was NOT loaded, and the model enumerated exactly the planted set) |
 | V6 | Transcripts exist on disk | JSONL under `<config>/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` |
+| V7 | `failClosed: true` on a crashed `preToolUse` hook | **Blocks** — marker-proven crash (empty stdout, exit 1) stopped the `Write`; see U1 |
+| V8 | Same-name skill in `.cursor/skills/` vs `.claude/skills/` | Deterministic — the `.claude` copy shadows; one catalog entry; swapped-body re-run followed the directory; see U5 |
+| V9 | `Delete` fires on `preToolUse` | **Yes** — `tool_name: "Delete"`, `tool_input.file_path` sometimes bare-relative; headless deletes additionally need the CLI's own `-f/--force`; see U6 |
 
 Two consequences worth stating plainly, because they invert the intuition a
 reader carrying Codex habits would bring:
@@ -434,11 +438,11 @@ reader carrying Codex habits would bring:
   availability.** V5 shows a project `.claude/skills/` is loaded by Cursor. The
   build still renders a **native** `<config>/skills/` target — it is
   deterministic, manifest-tracked, and independent of a settings toggle — but if
-  a project also carries a `.claude` render, the same-named spine skills are
-  visible to Cursor twice. Which copy wins, and whether the duplicate is merely
-  noisy or actually ambiguous, is **unverified** (U5). The safe operating rule
-  until then: keep the two renders' spine skills byte-identical, or keep the
-  `.claude` render out of projects you drive with Cursor.
+  a project also carries a `.claude` render, only one copy is cataloged: the
+  project `.claude/skills/` copy deterministically **shadows** the
+  `.cursor/skills/` copy (U5, live-verified with swapped-body probes). The
+  operating rule: keep the two renders' spine skills rendered from the same
+  source — the drift gate already enforces this — so the shadowing is harmless.
 
 ## UNVERIFIED (documented gap)
 
@@ -447,25 +451,19 @@ Everything below is documented or expected behavior that the live run did
 to close it. Until an item is closed, do not report the corresponding claim as
 proven.
 
-### U1 — `failClosed: true` actually blocking on `preToolUse`
+### U1 — `failClosed: true` actually blocking on `preToolUse` — **RESOLVED: honored**
 
-**Claim.** `failClosed` is documented as a per-script option that turns hook
-failures (crash, timeout, invalid JSON) into a block, and the build sets it on
-the gate entry.
-
-**Why it is open.** The docs illustrate `failClosed` for
-`beforeShellExecution` / `beforeMCPExecution` / `beforeReadFile` and describe it
-generically in the per-script options table, but the `preToolUse` reference
-section never restates it. So honoring it on `preToolUse` is an inference from
-the generic table, not a stated fact — and the live run exercised the *deny*
-path (V2), not the *failure* path. The in-script deny-on-error branch (Fact 2,
-layer 2) is what demonstrably carries the gate today.
-
-**Reproduction recipe.** `bash scripts/install.sh --harness cursor --out
-/tmp/cursor-verify`, then replace the rendered `hooks/session-agent.sh` with a
-script that exits 1 after printing nothing, and attempt a file edit. Blocked →
-`failClosed` is honored on `preToolUse`. Allowed → the entry's `failClosed` is
-inert there and the in-script deny path is the sole guard; record that here.
+**Verdict (live-verified 2026-08-18, CLI 2026.08.11-e8db854, headless).** A
+project-level `preToolUse` entry (`matcher: Write|Delete`,
+`failClosed: true`) pointing at a script that appends a marker, prints
+nothing, and exits 1 was exercised against a file-write request. The marker
+proves the hook fired; the write was **blocked** and the agent reported the
+rejection; the file was never created. A crash with empty stdout fails
+closed on `preToolUse` when the entry sets `failClosed: true` — the generic
+per-script option is honored on this event, not just on the
+`beforeShellExecution`-family events the docs illustrate. The in-script
+deny-on-error branch (Fact 2, layer 2) remains as defense in depth.
+Re-probe on major Cursor releases.
 
 ### U2 — User-level `<config>/AGENTS.md` auto-discovery — **RESOLVED: NOT discovered**
 
@@ -524,43 +522,47 @@ trust-independent. Otherwise the framework needs a loud "trust this workspace"
 surfaced step, the same shape as the Codex `/hooks`-trust step `install.sh`
 already prints.
 
-### U5 — Skill precedence when a `.claude` render is also visible
+### U5 — Skill precedence when a `.claude` render is also visible — **RESOLVED: deterministic; `.claude` shadows `.cursor`**
 
-**Claim.** The native `<config>/skills/` render is the framework's channel; the
-compat dirs are a convenience.
+**Verdict (live-verified 2026-08-18, CLI 2026.08.11-e8db854, headless).** Two
+same-named skills with distinguishable body tokens were planted under a
+project's `.cursor/skills/` and `.claude/skills/`. The agent's catalog listed
+the skill **once**, and the body it quoted was the **`.claude/skills/` copy**
+— on both the original run and a token-swapped re-run, so the choice follows
+the directory, not the content. Precedence is deterministic, and (counter to
+intuition) the compat dir outranks the native dir at project level. This is
+harmless as long as both renders come from the same source; the drift gate
+enforces exactly that.
 
-**Why it is open.** V5 proved Cursor loads project `.claude/skills/` alongside
-`.cursor/skills/`, so on a machine carrying both renders the same-named spine
-skills exist twice in Cursor's catalog. Which copy wins — and whether a
-divergence between them is resolved deterministically or arbitrarily — is
-unverified. Separately unverified: whether **user-level** `~/.claude/skills/`
-compat honors a relocated `CLAUDE_CONFIG_DIR` (the docs' phrasing implies the
-literal home path, which would make a relocated claude render invisible to
-Cursor — the reason the framework does not route through compat).
+**User-level half.** On a machine whose Claude config dir is relocated via
+`CLAUDE_CONFIG_DIR`, none of the relocated render's skills appeared in
+Cursor's catalog, while the native `<config>/skills/` spine skills appeared
+in the same listing (the positive control). A relocated claude render is
+**invisible** to Cursor — confirming the reason the framework routes through
+the native render, never through compat. Whether a *literal* `~/.claude/skills/`
+would be compat-discovered at user level stays unprobed (no such dir on the
+probe machine), and does not matter to the framework's channel choice.
 
-**Reproduction recipe.** Plant two same-named skills with distinguishable
-bodies, one under a project `.cursor/skills/` and one under a project
-`.claude/skills/`, and ask the agent to quote the body it loaded. Repeat with
-`CLAUDE_CONFIG_DIR` pointed at a relocated dir containing a third variant to
-settle the user-level half.
+### U6 — `Delete` as a `preToolUse` matcher value — **RESOLVED: fires; payload recorded**
 
-### U6 — `Delete` as a `preToolUse` matcher value
+**Verdict (live-verified 2026-08-18, CLI 2026.08.11-e8db854, headless).** A
+logging pass-through hook on `matcher: Write|Delete` captured real `Delete`
+events: `tool_name` is exactly `Delete`, and `tool_input` carries a
+`file_path` — which was **absolute on some calls and bare-relative
+(`victim.txt`) on others**, so the gate must never assume an absolute path
+(the marker-path allow compares against an absolute path, so a relative
+`file_path` can only fall through to deny — the safe direction). The payload
+carries the same envelope fields as `Write` (`conversation_id`,
+`hook_event_name`, `workspace_roots`, `cursor_version`, plus a `user_email`
+field worth knowing about before shipping hook logs anywhere). The
+`Write|Delete` matcher (panel fix A4) is therefore live coverage, not inert
+breadth.
 
-**Claim.** File deletion is a file-modifying action the gate would want to
-intercept.
-
-**Why it is open.** `Delete` appears in the docs' list of `preToolUse` matcher
-values, but no observed call has reported it and the tool's input shape is
-undocumented. The generated matcher is `Write|Delete` (panel fix A4 —
-cheap-breadth: inert if Cursor names the deletion tool differently, coverage if
-it names it exactly that). What stays unverified is whether `Delete` ever
-actually fires and what its payload looks like.
-
-**Reproduction recipe.** Add `cat >> /tmp/cursor-pretooluse.log` to the top of
-the rendered `hooks/session-agent.sh`, ask the agent to delete a file, and read
-the `tool_name` it reports. Then widen the matcher in
-`scripts/install.{sh,ps1}` (`hook_for_class` / `Resolve-HookForClass`) and record
-the payload shape in Fact 2.
+**Separate layer discovered.** In headless runs the CLI's own permission
+layer rejects deletions (`File deletion rejected`) even when every hook
+allows; `agent -p -f/--force` permits them. A hook allow does not override
+that native layer — deny-wins composition across the hook layer and the
+CLI's own permission config.
 
 ## Accepted limitations (documented, not fixed)
 
@@ -603,10 +605,11 @@ Not gaps in knowledge — decisions deliberately left for review:
 4. **How should the cursor and claude renders coexist in one project?** V5 makes
    this concrete rather than theoretical: Cursor loads a project
    `.claude/skills/` too, so both renders' spine skills can be in the catalog at
-   once. Options are (a) leave it, once U5 shows precedence is deterministic;
-   (b) byte-identical spine skills across the two renders, the way the codex
-   build already mirrors into `.agents`; or (c) teach the cursor render to
-   detect and warn. Nothing is shipped for it yet.
+   once. U5 has since shown precedence IS deterministic (the `.claude` copy
+   shadows, only one is cataloged), which makes option (a) — leave it, with
+   both renders built from the same source under the drift gate — the settled
+   answer; (c) teach the cursor render to detect and warn remains a possible
+   refinement. Nothing extra is shipped for it.
 
 ---
 
