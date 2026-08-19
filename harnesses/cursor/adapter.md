@@ -429,6 +429,8 @@ What it proved:
 | V8 | Same-name skill in `.cursor/skills/` vs `.claude/skills/` | Deterministic — the `.claude` copy shadows; one catalog entry; swapped-body re-run followed the directory; see U5 |
 | V9 | `Delete` fires on `preToolUse` | **Yes** — `tool_name: "Delete"`, `tool_input.file_path` sometimes bare-relative; headless deletes additionally need the CLI's own `-f/--force`; see U6 |
 | V10 | Hooks fire in the desktop IDE Agent chat | **Yes** — gate deny observed on a real `Write` (probe file never created) and the sessionStart declaration landed at the interpolated marker path; see U3 |
+| V11 | User-level hooks in an **untrusted** workspace | **Fire** — trust prompt declined, `preToolUse` gate still blocked the edit; operator-reported, not machine-captured; see U4 |
+| V12 | Operator-skill catalog outside the framework repo | **Visible** — a repo carrying no `.claude/skills/` lists the operator skills from `<config>/skills/`; operator-reported 2026-08-18, after operator skills were copied into the render alongside the spine |
 
 Two consequences worth stating plainly, because they invert the intuition a
 reader carrying Codex habits would bring:
@@ -504,26 +506,33 @@ exercised. It is the same binary and pipeline as the proven headless lane, so
 the residual risk is small; confirm opportunistically by running `agent`
 interactively in a repo and attempting a pre-declaration edit.
 
-### U4 — Workspace trust without `--trust`, and user-level hooks
+### U4 — Workspace trust without `--trust`, and user-level hooks — **RESOLVED: user-level hooks are trust-independent**
 
 **Claim.** Fact 2 states user-level `hooks.json` is outside the workspace-trust
 question; only project hooks require a trusted workspace.
 
-**Why it is open.** The live run passed `--trust` explicitly and used a
-**project** `.cursor/hooks.json`, so it settled neither half: not the prompting
-behavior without `--trust`, and not whether an untrusted workspace also
-suppresses **user-level** hooks. The docs say project hooks "require the
-workspace to be trusted to run" and never say user hooks do — an argument from
-silence.
+**Verdict (operator-reported 2026-08-18, Cursor desktop IDE).** The recipe below
+was run against a freshly-opened, never-trusted directory with the trust prompt
+**declined**: the `preToolUse` gate still fired and blocked the edit. User-level
+`hooks.json` is therefore **not** suppressed by an untrusted workspace, and the
+framework needs no "trust this workspace" install step of the shape the Codex
+`/hooks`-trust step prints. The claim in Fact 2 stands as written.
 
-**Reproduction recipe.** Open a freshly-cloned, never-trusted directory in
-Cursor with the sandbox render active, decline the trust prompt, and start a
-conversation; check whether the `sessionStart` hook fires (marker-file probe).
-Separately, run `agent -p` **without** `--trust` in an untrusted repo and record
-what it prompts for and whether hooks fire. Written/fires → user hooks are
-trust-independent. Otherwise the framework needs a loud "trust this workspace"
-surfaced step, the same shape as the Codex `/hooks`-trust step `install.sh`
-already prints.
+**Evidence grade — read this before quoting the verdict.** This one is
+**operator-reported, not machine-captured**: unlike U1/U3/U5/U6 there is no
+marker file, transcript, or captured payload in the run directory. It is the
+weakest evidence in this document. Treat it as settled for planning and re-probe
+with a captured marker on the next major Cursor release, or before any change
+that would rely on it (for example, dropping a redundant enforcement layer).
+
+**Reproduction recipe (unchanged, for the re-probe).** Open a freshly-cloned,
+never-trusted directory in Cursor with the render active, decline the trust
+prompt, and start a conversation; check whether the `sessionStart` hook fires
+(marker-file probe). Separately, run `agent -p` **without** `--trust` in an
+untrusted repo and record what it prompts for and whether hooks fire.
+
+**Still open (minor).** The `agent -p`-without-`--trust` half was not exercised
+separately; only the IDE path was.
 
 ### U5 — Skill precedence when a `.claude` render is also visible — **RESOLVED: deterministic; `.claude` shadows `.cursor`**
 
