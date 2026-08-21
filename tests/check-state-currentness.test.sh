@@ -170,6 +170,56 @@ assert_contains     "check-state-currentness: read cap 2 = two projects checked,
 assert_not_contains "check-state-currentness: the capped project is not evaluated" \
   "$o" 'WARN project-active-with-no-open-children'
 
+# --- CRLF-emitting jq: reads stay comparison-clean ----------------------------
+# A Windows-built jq emits \r\n line endings, and command substitution strips
+# only the TRAILING \r — every INTERIOR row of the multi-line STATE_MAP capture
+# keeps its \r, so the awk state lookup returns "In Progress\r" != the claimed
+# "In Progress" and a TRUE claim flips into a phantom stale-claim (ABC-3 below
+# is deliberately an interior row). Captured counts ("4\r") also error integer
+# tests. Pin both directions through a CRLF jq wrapper on PATH: a true claim
+# still PASSes, a real contradiction still fires with the CLEAN state string,
+# and the project-status case match still fires.
+DCR="$(mktemp -d)"; MCR="$DCR/mem"; mkdir -p "$MCR"; csc_stub "$DCR"; csc_states "$DCR"
+mk_crlf_jq "$DCR"
+cat > "$MCR/true-claim.md" <<'EOF'
+---
+name: true-claim
+---
+
+ABC-3 is In Progress and gating the rest of the wave.
+EOF
+o="$(PATH="$DCR:$PATH" run_csc "$DCR" "$MCR" --no-projects)"; rc=$?
+assert_eq "check-state-currentness: CRLF jq — a true claim still passes (exit 0)" 0 "$rc"
+cat > "$MCR/stale-claim.md" <<'EOF'
+---
+name: stale-claim
+---
+
+ABC-1 is In Progress and gating the rest of the wave.
+EOF
+o="$(PATH="$DCR:$PATH" run_csc "$DCR" "$MCR" --no-projects)"; rc=$?
+assert_eq       "check-state-currentness: CRLF jq — a stale claim still exits 1" 1 "$rc"
+assert_contains "check-state-currentness: CRLF jq — live state compares clean (no trailing \\r)" \
+  "$o" 'WARN stale-claim ABC-1: note says "In Progress", tracker says "Done"'
+rm -f "$MCR/stale-claim.md" "$MCR/true-claim.md"
+cat > "$MCR/quiet.md" <<'EOF'
+---
+name: quiet
+---
+
+Nothing asserted here about any identifier.
+EOF
+cat > "$DCR/projects.json" <<'EOF'
+{"nodes": [
+ {"id": "p-closed", "name": "Shipped Thing", "status": {"name": "Completed", "type": "completed"}}
+]}
+EOF
+printf '{"nodes":[{"identifier":"ABC-4","state":{"name":"Backlog"}}]}\n' > "$DCR/projissues-p-closed.json"
+o="$(PATH="$DCR:$PATH" run_csc "$DCR" "$MCR")"; rc=$?
+assert_eq       "check-state-currentness: CRLF jq — project contradiction still exits 1" 1 "$rc"
+assert_contains "check-state-currentness: CRLF jq — project status compares clean in the case match" \
+  "$o" 'WARN project-closed-with-open-children "Shipped Thing": status "Completed" with 1 open child'
+
 # --- --list machine mode: stable TSV shape -----------------------------------
 o="$(run_csc "$D1" "$M1" --no-projects --list)"; rc=$?
 assert_eq "check-state-currentness: --list exits 1" 1 "$rc"
@@ -485,4 +535,4 @@ assert_eq "check-state-currentness: non-numeric --max-reads skips (2)" 2 "$rc"
 o="$(LINEAR_CLI_BIN="$D1/stub" bash "$CSC" --isolated --prefix 'A.*' --memory-dir "$M1" 2>&1)"; rc=$?
 assert_eq "check-state-currentness: non-alphanumeric prefix skips (2)" 2 "$rc"
 
-rm -rf "$D1" "$D2" "$D3" "$D4" "$D5" "$D6" "$D7" "$D8" "$D9"
+rm -rf "$D1" "$D2" "$D3" "$D4" "$D5" "$D6" "$D7" "$D8" "$D9" "$DCR"

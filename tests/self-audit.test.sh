@@ -692,6 +692,81 @@ _test_isolated_blocks_env_leakage() {
 }
 _test_isolated_blocks_env_leakage
 
+# --- CRLF-emitting jq: Pillar 1 name-matching survives a Windows-built jq.
+# winget jq emits \r\n line endings, and the here-string @tsv read loop keeps
+# each row's trailing \r on the LAST field: grep -lF matched "Widget Arc\r"
+# against note bodies (never hits — live Windows run scored Pillar 1 at 0/20
+# while the PS twin scored 12/20 on identical state), and the open-count
+# filter compared "0\r" != "0" (closed projects kept deducting). Hermetic: a
+# `linear` CLI stub + the CRLF jq wrapper on PATH; env -u keeps the operator's
+# config/vault out of the non-isolated run (the linear-CLI detection only runs
+# non-isolated).
+_test_crlf_jq_pillar1() {
+  command -v jq >/dev/null 2>&1 || { _skip "CRLF jq Pillar 1 test" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local bin="$fixture/bin" mem="$fixture/mem" mem_miss="$fixture/mem-miss"
+  mkdir -p "$bin" "$mem" "$mem_miss"
+  mk_crlf_jq "$bin"
+  cat > "$bin/linear" <<'STUB'
+#!/usr/bin/env bash
+proj=""; prev=""
+for a in "$@"; do [ "$prev" = "--project" ] && proj="$a"; prev="$a"; done
+if [ "${1:-}" = "project" ] && [ "${2:-}" = "list" ]; then
+  printf '{"nodes":[{"id":"p1","name":"Widget Arc"},{"id":"p2","name":"Closed Arc"}]}\n'; exit 0
+fi
+if [ "${1:-}" = "issue" ] && [ "${2:-}" = "query" ]; then
+  if [ "$proj" = "p1" ]; then printf '{"nodes":[{"identifier":"ABC-1","state":{"name":"Backlog"}}]}\n'; exit 0; fi
+  printf '{"nodes":[]}\n'; exit 0
+fi
+exit 1
+STUB
+  chmod +x "$bin/linear"
+  cat > "$mem/project-widget.md" <<'EOF'
+---
+name: project-widget
+description: Widget Arc active work
+metadata:
+  type: project
+---
+
+Widget Arc is live; ABC-1 in flight.
+EOF
+  cat > "$mem_miss/project-other.md" <<'EOF'
+---
+name: project-other
+description: unrelated note
+metadata:
+  type: project
+---
+
+Something else entirely.
+EOF
+
+  local out
+  # Matching note: the active project's name must be FOUND despite CRLF jq.
+  out="$(env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME \
+          PATH="$bin:$PATH" bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --memory-dir "$mem" --json 2>/dev/null)"
+  assert_not_contains "self-audit: CRLF jq — active project with a matching note raises no handshake gap" \
+    "$out" "No memory note for active Linear project"
+
+  # Detection control (vacuous-ALLOW guard): with no matching note the gap MUST
+  # still fire and name the CLEAN project string — proving the Linear lane ran.
+  # The zero-open project stays filtered even under CRLF ("0" compare survives).
+  out="$(env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME \
+          PATH="$bin:$PATH" bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --memory-dir "$mem_miss" --json 2>/dev/null)"
+  assert_contains "self-audit: CRLF jq — the handshake gap still fires without a matching note" \
+    "$out" "No memory note for active Linear project"
+  assert_contains "self-audit: CRLF jq — the gap names the project with no embedded carriage return" \
+    "$out" 'Active project \"Widget Arc\" has no project-type memory note'
+  assert_not_contains "self-audit: CRLF jq — a zero-open-issue project is still filtered out" \
+    "$out" "Closed Arc"
+  rm -rf "$fixture"
+}
+_test_crlf_jq_pillar1
+
 # --- Codex missing-test: a kind: vendored capability does not require harness
 # realizations. The spine-symmetry check (pillar 5 sub-check 5.1) walks ONLY
 # `kind: native` capabilities. A vendored entry without realizations must

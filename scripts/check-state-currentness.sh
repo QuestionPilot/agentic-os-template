@@ -209,6 +209,14 @@ case "$PREFIX" in
 esac
 
 command -v jq   >/dev/null 2>&1 || skip "jq unavailable; cannot parse tracker payloads"
+
+# jqr — jq -r with CRLF normalization (parity with check-drift.sh): a
+# Windows-built jq emits \r\n line endings, and command substitution strips
+# only TRAILING \r — every interior line of a multi-line capture keeps its \r.
+# Unstripped, STATE_MAP's interior rows ride the awk exact-key lookup as
+# "Done\r" != "Done" (phantom stale-claims), and captured counts fail integer
+# tests. jq's exit status survives the tr stage: set -o pipefail is active.
+jqr() { jq -r "$@" | tr -d '\r'; }
 command -v awk  >/dev/null 2>&1 || skip "awk unavailable; cannot scan notes for claims"
 command -v "$LINEAR_CLI_BIN" >/dev/null 2>&1 || skip "linear CLI not found (\$LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2"
 
@@ -251,7 +259,7 @@ bulk_json="$(printf '%s' "$bulk_raw" | jq -c 'if type == "object" then (.nodes /
 printf '%s' "$bulk_json" | jq -e 'type == "array"' >/dev/null 2>&1 \
   || skip "unexpected issue-query payload (neither {nodes:[...]} nor a JSON array)"
 
-bulk_count="$(printf '%s' "$bulk_json" | jq 'length')"
+bulk_count="$(printf '%s' "$bulk_json" | jqr 'length')"
 # A payload returned AT the ceiling may be truncated — record it so unmatched
 # identifiers fall back to a per-issue read instead of being reported unknown.
 possibly_truncated=0
@@ -259,7 +267,7 @@ possibly_truncated=0
 
 # bash 3.2 has no associative arrays: the map is a newline-delimited
 # "IDENT<TAB>STATE" table looked up with a fixed-string grep.
-STATE_MAP="$(printf '%s' "$bulk_json" | jq -r '
+STATE_MAP="$(printf '%s' "$bulk_json" | jqr '
   def s(f): (f // ""
     | if type == "object" then (.name // tostring) else tostring end);
   .[] | select((.identifier // "") != "") | [ s(.identifier), s(.state) ] | @tsv')"
@@ -297,7 +305,7 @@ live_state() {
     # object {name,type,...} which the jq below flattens to the name.
     if rj="$("$LINEAR_CLI_BIN" issue view "$ident" --json 2>/dev/null)" \
        && printf '%s' "$rj" | jq -e 'type == "object"' >/dev/null 2>&1; then
-      printf '%s' "$(printf '%s' "$rj" | jq -r '(.state // "") | if type == "object" then (.name // "") else tostring end')"
+      printf '%s' "$(printf '%s' "$rj" | jqr '(.state // "") | if type == "object" then (.name // "") else tostring end')"
       return 0
     fi
   fi
@@ -578,7 +586,7 @@ if [ "$DO_PROJECTS" -eq 1 ]; then
       pij_raw="$("$LINEAR_CLI_BIN" issue query --all-teams --project "$pid" -s triage -s backlog -s unstarted -s started --limit "$LIMIT" --json 2>/dev/null || true)"
       pij="$(printf '%s' "$pij_raw" | jq -c 'if type == "object" then (.nodes // null) elif type == "array" then . else null end' 2>/dev/null)"
       printf '%s' "$pij" | jq -e 'type == "array"' >/dev/null 2>&1 || { projects_skipped="$projects_skipped $pname;"; continue; }
-      open_n="$(printf '%s' "$pij" | jq 'length')"
+      open_n="$(printf '%s' "$pij" | jqr 'length')"
       # A child list returned AT the ceiling may be truncated, and every class
       # below is a statement about the WHOLE child set — an active child on page
       # two would silently produce "PASS ... projects agree". Unknown evidence is
@@ -587,7 +595,7 @@ if [ "$DO_PROJECTS" -eq 1 ]; then
         projects_skipped="$projects_skipped $pname (child list may be truncated at --limit=$LIMIT);"
         continue
       fi
-      active_n="$(printf '%s' "$pij" | jq '[ .[] | ((.state // "") | if type == "object" then (.name // "") else tostring end) | select(. == "In Progress" or . == "In Review") ] | length')"
+      active_n="$(printf '%s' "$pij" | jqr '[ .[] | ((.state // "") | if type == "object" then (.name // "") else tostring end) | select(. == "In Progress" or . == "In Review") ] | length')"
       projects_checked=$((projects_checked + 1))
 
       pclass=""

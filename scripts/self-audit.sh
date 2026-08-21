@@ -100,6 +100,12 @@
 # lives in parallel indexed arrays accessed via pillar_idx/pillar_score/etc.
 set -uo pipefail
 
+# jqr — jq -r with CRLF normalization (parity with check-drift.sh): a
+# Windows-built jq emits \r\n line endings, so a value read from a jq pipe
+# carries a trailing \r that silently fails every downstream string
+# comparison (grep -lF project-name matching, [ "$_oc" = "0" ] filters).
+jqr() { jq -r "$@" | tr -d '\r'; }
+
 # --- argv ---------------------------------------------------------------------
 FORMAT="markdown"
 SAVE_PATH=""
@@ -595,12 +601,12 @@ score_cross_layer_handoffs() {
         if [ -n "$_pid" ]; then
           _ij="$(linear issue query --all-teams --project "$_pid" -s triage -s backlog -s unstarted -s started --limit 250 --json 2>/dev/null || true)"
           if [ -n "$_ij" ]; then
-            _oc="$(printf '%s' "$_ij" | jq '(.nodes // .) | length' 2>/dev/null || printf -- '-1')"
+            _oc="$(printf '%s' "$_ij" | jqr '(.nodes // .) | length' 2>/dev/null || printf -- '-1')"
             [ "$_oc" = "0" ] && continue
           fi
         fi
         active_projects+=("$_pname")
-      done <<< "$(printf '%s' "$_pj" | jq -r '(.nodes // .)[]? | [.id, .name] | @tsv' 2>/dev/null || true)"
+      done <<< "$(printf '%s' "$_pj" | jqr '(.nodes // .)[]? | [.id, .name] | @tsv' 2>/dev/null || true)"
     fi
   fi
 
