@@ -127,6 +127,28 @@ assert_contains "check-linear-hygiene: --list appends unchecked to gappy issue t
   "$o" "$(printf 'ABC-9\tno-priority,no-labels,no-assignee,unchecked')"
 rm -rf "$D1"
 
+# --- CRLF-emitting jq: sentinels and counts stay comparison-clean -------------
+# A Windows-built jq emits \r\n line endings. The @tsv loop already guards its
+# fields (tr -d '\r'); this pins that end-to-end under a CRLF jq wrapper the
+# mixed verdict is unchanged, the --list line is byte-identical (no \r reached
+# output), and — the count path — an EMPTY workspace still takes the
+# [ "$total" -eq 0 ] branch to PASS/exit 0 instead of erroring on "0\r".
+DCR="$(mktemp -d)"; clh_fixture_mixed "$DCR"
+mk_crlf_jq "$DCR"
+o="$(PATH="$DCR:$PATH" LINEAR_CLI_BIN="$DCR/stub" bash "$CLH" 2>/dev/null)"; rc=$?
+assert_eq       "check-linear-hygiene: CRLF jq — mixed still exits 1" 1 "$rc"
+assert_contains "check-linear-hygiene: CRLF jq — all five gaps still fire (no-assignee included)" \
+  "$o" "WARN ABC-9: $ALL_GAPS"
+o="$(PATH="$DCR:$PATH" LINEAR_CLI_BIN="$DCR/stub" bash "$CLH" --list 2>/dev/null)"
+assert_eq "check-linear-hygiene: CRLF jq — --list line is byte-identical (no trailing \\r)" \
+  "$(printf 'ABC-9\t%s' "$ALL_GAPS")" "$o"
+printf '{"nodes": []}\n' > "$DCR/list.json"
+o="$(PATH="$DCR:$PATH" LINEAR_CLI_BIN="$DCR/stub" bash "$CLH" 2>/dev/null)"; rc=$?
+assert_eq       "check-linear-hygiene: CRLF jq — empty workspace still exits 0" 0 "$rc"
+assert_contains "check-linear-hygiene: CRLF jq — empty workspace still prints PASS" \
+  "$o" "PASS no open issues"
+rm -rf "$DCR"
+
 # --- clean workspace: PASS, exit 0, empty --list. Deliberately keeps the OLD
 # --- bare-array + flat-string fixture shape — the script tolerates both, and
 # --- this case pins that tolerance ------------------------------------------

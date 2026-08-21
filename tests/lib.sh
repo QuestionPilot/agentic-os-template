@@ -136,6 +136,25 @@ make_cursor_env() {
   } > "$1"
 }
 
+# mk_crlf_jq <dir>
+# Write a jq wrapper into <dir>/jq that delegates to the real jq but re-emits
+# every output line with \r\n endings — the behavior of a Windows-built jq
+# (winget jq 1.8.2 measured: `printf '{"a":"x"}' | jq -r .a` ends 0d 0a). A
+# test prepends <dir> to PATH so the script under test resolves this wrapper,
+# pinning that its jq reads strip the \r (the scripts' jqr/tr guards). pipefail
+# keeps jq's own exit status (jq -e's false/1 included) visible through the
+# awk stage. Skip-guard: callers must skip when jq is not installed.
+mk_crlf_jq() {
+  local d="$1" real_jq
+  real_jq="$(command -v jq)" || return 1
+  cat > "$d/jq" <<SHIM
+#!/usr/bin/env bash
+set -o pipefail
+"$real_jq" "\$@" | awk '{ printf "%s\r\n", \$0 }'
+SHIM
+  chmod +x "$d/jq"
+}
+
 # _skip <label> [<reason>]
 _skip() { TESTS_RUN=$((TESTS_RUN + 1)); printf '  SKIP %s (%s)\n' "$1" "${2:-not applicable}"; }
 

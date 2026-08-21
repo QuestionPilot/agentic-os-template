@@ -129,6 +129,43 @@ _test_trend_table() {
 }
 _test_trend_table
 
+# --- CRLF-emitting jq: store records and trend output stay CR-free ------------
+# A Windows-built jq emits \r\n line endings. Unstripped, appended records end
+# "\r\n" in the JSONL store and the trend table diverges byte-wise from the PS
+# twin. Pin, under a CRLF jq wrapper on PATH: (a) a valid append writes a
+# CR-free record, (b) a malformed scorecard is still REFUSED (jq's non-zero
+# status survives the tr stage — set -o pipefail), (c) trend output carries no
+# CR byte.
+_test_crlf_jq_history() {
+  command -v jq >/dev/null 2>&1 || { _skip "CRLF jq history" "jq not installed"; return 0; }
+  local d; d="$(mktemp -d)" || return 1
+  mk_crlf_jq "$d"
+  local store="$d/hist.jsonl"
+  local sc='{"date":"2026-05-30","total":95,"pillars":{"a":{"score":20},"b":{"score":15}},"gaps":[],"skipped":[]}'
+  printf '%s' "$sc" | PATH="$d:$PATH" bash "$HIST_SH" append "$store" 2>/dev/null
+  local rc_append=$?
+  if [ "$rc_append" -eq 0 ] && ! LC_ALL=C grep -q "$(printf '\r')" "$store"; then
+    _pass "CRLF jq: append writes a CR-free record"
+  else
+    _fail "CRLF jq: append writes a CR-free record" \
+          "rc=[$rc_append] cr_lines=[$(LC_ALL=C grep -c "$(printf '\r')" "$store" 2>/dev/null)]"
+  fi
+  local rc_bad
+  printf '%s' '{"error":"jq required for --json"}' | PATH="$d:$PATH" bash "$HIST_SH" append "$store" >/dev/null 2>&1
+  rc_bad=$?
+  assert_eq "CRLF jq: a malformed scorecard is still refused (jq status survives tr)" "4" "$rc_bad"
+  _sa_seed_store "$store"
+  local out; out="$(PATH="$d:$PATH" bash "$HIST_SH" trend "$store" 5 2>/dev/null)"
+  assert_contains "CRLF jq: trend still renders the delta column" "$out" "| 94 | 100 | +6 |"
+  if printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\r')"; then
+    _fail "CRLF jq: trend output carries no CR byte" "found 0x0D in trend output"
+  else
+    _pass "CRLF jq: trend output carries no CR byte"
+  fi
+  rm -rf "$d"
+}
+_test_crlf_jq_history
+
 # --- trend: N caps the window to the most recent records ---------------------
 _test_trend_respects_N() {
   command -v jq >/dev/null 2>&1 || { _skip "trend respects N" "jq not installed"; return 0; }

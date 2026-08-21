@@ -62,6 +62,13 @@ resolve_store() {
 
 command -v jq >/dev/null 2>&1 || die "jq is required (the history store is JSONL)" 3
 
+# jqr — jq with CRLF normalization (parity with check-drift.sh): a
+# Windows-built jq emits \r\n line endings. Unstripped, appended records end
+# "\r\n" in the store and the trend table diverges byte-wise from the PS twin
+# (whose output the parity test LF-normalizes — the bash side must be clean).
+# jq's exit status survives the tr stage: set -o pipefail is active above.
+jqr() { jq "$@" | tr -d '\r'; }
+
 case "$SUB" in
   append)
     STORE="$(resolve_store "${1:-}")" \
@@ -72,7 +79,7 @@ case "$SUB" in
     # Validate + project to a compact record. A malformed scorecard (e.g. the
     # {"error":...} jq emits when jq is missing on the producer side) has no
     # .total, so this jq fails and we refuse to append a junk line.
-    record="$(printf '%s' "$scorecard" | jq -c '
+    record="$(printf '%s' "$scorecard" | jqr -c '
       if (.total | type) != "number" then error("scorecard has no numeric .total")
       else {
         timestamp: (.date // (now | todateiso8601)),
@@ -84,7 +91,7 @@ case "$SUB" in
       || die "stdin is not a valid self-audit --json scorecard" 4
     # A scorecard's .date is a YYYY-MM-DD day stamp; promote to a full ISO-8601
     # UTC timestamp so multiple same-day runs sort + dedupe by instant, not day.
-    record="$(printf '%s' "$record" | jq -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.timestamp = $ts')" \
+    record="$(printf '%s' "$record" | jqr -c --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.timestamp = $ts')" \
       || die "could not stamp record timestamp" 4
     mkdir -p "$(dirname "$STORE")" || die "could not create store dir for $STORE"
     printf '%s\n' "$record" >> "$STORE" || die "could not append to $STORE"
@@ -117,7 +124,7 @@ case "$SUB" in
     # per pillar (+ a Total row). The final column shows the newest-vs-prior
     # delta. jq does the shaping; the slurped array preserves file order.
     printf '# self-audit trend — last %s run(s)\n\n' "$count"
-    printf '%s\n' "$records" | jq -rs '
+    printf '%s\n' "$records" | jqr -rs '
       # Stable pillar order from the newest record (falls back to sorted keys).
       (.[-1].pillars | keys) as $pkeys
       | (map(.timestamp)) as $stamps

@@ -106,7 +106,10 @@ rows_json="$(printf '%s' "$list_json" | jq -c '
 { [ -n "$rows_json" ] && [ "$rows_json" != "null" ]; } \
   || skip "unexpected issue-query payload (no rows array)"
 
-total="$(printf '%s' "$rows_json" | jq 'length')"
+# tr guard (parity with the @tsv loop below): Git Bash strips a single-line
+# capture's trailing \r, but other Windows shells do not — an unstripped
+# "0\r" errors the -eq test and the empty-workspace PASS path never fires.
+total="$(printf '%s' "$rows_json" | jq 'length' | tr -d '\r')"
 if [ "$total" -eq 0 ]; then
   [ "$MODE_LIST" -eq 1 ] || printf 'PASS no open issues to check\n'
   exit 0

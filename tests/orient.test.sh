@@ -640,6 +640,35 @@ assert_eq "orient: safety + telemetry are appended LAST, after every pre-existin
   "schema,surfaces,projects,projectless_open_issues,mine_in_progress,anomalies,memory_pointers,degraded,safety,telemetry" \
   "$(printf '%s' "$o" | jq -r 'keys_unsorted | join(",")')"
 
+# ============================ CRLF-EMITTING JQ ===============================
+# A Windows-built jq emits \r\n line endings, and command substitution strips
+# only the TRAILING \r — interior lines of multi-line captures and every line
+# of file-redirected output keep theirs. Unstripped, the \r rides the last
+# @tsv field into the emitted JSON (slug_id), errors the p_total integer test
+# (silencing the backlog anomaly), and poisons the id files whose lines feed
+# the --rawfile membership test — the projectless reconciliation silently
+# comes out empty. Serve the nominal fixtures through a CRLF jq wrapper and
+# require the same document the clean-jq nominal run produced.
+OCR="$(mktemp -d)"; orient_stub "$OCR"; orient_fixtures "$OCR"
+mk_crlf_jq "$OCR"
+o="$(PATH="$OCR:$PATH" run_orient "$OCR" --memory-dir "$ORIENT_FIX/memory")"; rc=$?
+assert_eq "orient: CRLF jq run exits 0" 0 "$rc"
+assert_eq "orient: CRLF jq document still satisfies the schema" "ok" "$(_orient_schema_ok "$o")"
+assert_eq "orient: CRLF jq leaves slug ids clean (no embedded carriage return)" \
+  "p-alpha:Alpha Arc:alpha-1 p-beta:Beta Arc:beta-2" \
+  "$(printf '%s' "$o" | jq -r '[ .projects[] | "\(.id):\(.name):\(.slug_id)" ] | join(" ")')"
+assert_eq "orient: CRLF jq still reconciles the projectless issue" \
+  "ABC-9" "$(printf '%s' "$o" | jq -r '[ .projectless_open_issues[].identifier ] | join(" ")')"
+assert_eq "orient: CRLF jq still raises the all-backlog anomaly (integer tests survive \\r)" \
+  "all-issues-backlog-no-assignee:Beta Arc" \
+  "$(printf '%s' "$o" | jq -r '[ .anomalies[] | "\(.type):\(.subject)" ] | join(" ")')"
+# The needle is the TWO-CHARACTER sequence backslash+r: jq escapes an embedded
+# CR inside a JSON string value as \r, so this is exactly how a poisoned value
+# surfaces in the emitted document text (raw 0x0D bytes appear only as the
+# wrapper's own line endings, which are legitimate JSON whitespace).
+assert_not_contains "orient: CRLF jq embeds no carriage return in any JSON string" \
+  "$o" '\r'
+
 # ============================ ARGUMENT CONTRACT ==============================
 # A non-zero exit means the SCRIPT could not run — never that a surface was down.
 o="$(bash "$ORIENT" --nope 2>&1)"; rc=$?
@@ -652,6 +681,6 @@ assert_eq "orient: value-less --linear-cli exits 2 (no self-loop)" 2 "$rc"
 o="$(bash "$ORIENT" --lineark 2>&1)"; rc=$?
 assert_eq "orient: value-less --lineark exits 2 (no self-loop)" 2 "$rc"
 
-rm -rf "$O1" "$O2" "$O2N" "$O3" "$O4" "$O5" "$O6" "$O7" "$O8" "$O9" \
+rm -rf "$O1" "$O2" "$O2N" "$O3" "$O4" "$O5" "$O6" "$O7" "$O8" "$O9" "$OCR" \
        "$OW" "$OM" "$OS1" "$OSF" "$OT" "$OT2"
 fi
