@@ -9,9 +9,9 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # cut, global-open reconciliation, project anomalies, memory pointers, named
 # degraded surfaces) into ONE `orient/v1` JSON document.
 #
-# Hermetic: --lineark is pointed at a stub .ps1 serving the JSON fixtures under
-# tests/fixtures/orient/ — no live tracker, no token. Both twins read the SAME
-# fixture files, so a shape disagreement between them cannot hide behind
+# Hermetic: --linear-cli is pointed at a stub .ps1 serving the JSON fixtures
+# under tests/fixtures/orient/ — no live tracker, no token. Both twins read the
+# SAME fixture files, so a shape disagreement between them cannot hide behind
 # differently-worded inline heredocs.
 #
 # Three things are pinned, and the second and third matter as much as the first:
@@ -19,11 +19,15 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 #   right TYPE (a structural assertion over the parsed object, not a prose
 #   match). A caller parses one shape or none; a key that vanishes under a
 #   degraded surface is the bug this suite exists to prevent.
-#   PAYLOAD SHAPE TOLERANCE — lineark's `issues list` returns `.state` as a BARE
-#   STRING while `issues read` returns it as an OBJECT {id,name}. One normalizer
-#   must accept both.
-#   DEGRADATION — lineark absent, lineark erroring, memory dir absent: each must
-#   still emit a valid document on exit 0 with a NAMED `degraded` entry.
+#   PAYLOAD SHAPE TOLERANCE — schpet/linear-cli wraps every list in an OBJECT
+#   {"nodes":[...]}; the helper unwraps `.nodes` AND still accepts a bare array.
+#   Issue rows carry `state` as an OBJECT {name,type}, `assignee` as an object
+#   or null, and a numeric `priority` beside a human `priorityLabel` — one
+#   normalizer flattens all of it, so nothing ever reads `.state.name` unguarded
+#   and the normalized row reads "Medium", not "3".
+#   DEGRADATION — CLI absent, CLI erroring, whoami unparseable, memory dir
+#   absent: each must still emit a valid document on exit 0 with a NAMED
+#   `degraded` entry.
 #
 # (The bash twin's "jq not installed" whole-suite skip has no PS analogue — the
 # .ps1 emits with ConvertTo-Json and this file parses with ConvertFrom-Json — so
@@ -41,12 +45,16 @@ function New-OrientTmp {
     return $p
 }
 
-# New-OrientStub <dir> — lineark stub .ps1. Serves, from its own directory:
-#   projects list              -> projects.json
-#   issues list                -> issues-global.json
-#   issues list --mine         -> issues-mine.json
-#   issues list --project P    -> projissues-P.json
-#   issues read ID             -> read-ID.json
+# New-OrientStub <dir> — linear-cli stub .ps1. It emulates the schpet/linear-cli
+# argv surface orient.ps1 issues (each list call arrives with `--json` appended;
+# `auth whoami` arrives plain), matching on the STABLE discriminators — the
+# first two tokens plus the presence of --project / --assignee — rather than the
+# full argv string. It serves, from its own directory:
+#   project list ...                  -> projects.json
+#   issue query ... (no filter)       -> issues-global.json    (global sweep)
+#   issue query ... --assignee <name> -> issues-mine.json      (mine cut)
+#   issue query ... --project <id>    -> projissues-<id>.json  (per project)
+#   auth whoami                       -> whoami.txt            (plain text)
 # A missing file exits 1, so a fixture set can make any single cut fail.
 function New-OrientStub([string]$d) {
     $stub = Join-Path $d 'stub.ps1'
@@ -55,25 +63,25 @@ param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList = @())
 $d = Split-Path -Parent $MyInvocation.MyCommand.Path
 Add-Content -LiteralPath (Join-Path $d 'calls.log') -Value ("CALL " + ($ArgList -join ' '))
 $proj = ''
-$mine = $false
+$assignee = $false
 for ($i = 0; $i -lt $ArgList.Count; $i++) {
     if ($ArgList[$i] -eq '--project' -and $i + 1 -lt $ArgList.Count) { $proj = $ArgList[$i + 1] }
-    if ($ArgList[$i] -eq '--mine') { $mine = $true }
+    if ($ArgList[$i] -eq '--assignee') { $assignee = $true }
 }
-if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'projects' -and $ArgList[1] -eq 'list') {
+if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'project' -and $ArgList[1] -eq 'list') {
     $f = Join-Path $d 'projects.json'
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
 }
-if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'list') {
-    if ($proj -ne '') { $f = Join-Path $d ("projissues-{0}.json" -f $proj) }
-    elseif ($mine) { $f = Join-Path $d 'issues-mine.json' }
-    else { $f = Join-Path $d 'issues-global.json' }
+if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'auth' -and $ArgList[1] -eq 'whoami') {
+    $f = Join-Path $d 'whoami.txt'
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
 }
-if ($ArgList.Count -ge 3 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'read') {
-    $f = Join-Path $d ("read-{0}.json" -f $ArgList[2])
+if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issue' -and $ArgList[1] -eq 'query') {
+    if ($proj -ne '') { $f = Join-Path $d ("projissues-{0}.json" -f $proj) }
+    elseif ($assignee) { $f = Join-Path $d 'issues-mine.json' }
+    else { $f = Join-Path $d 'issues-global.json' }
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
 }
@@ -87,7 +95,7 @@ exit 1
 function Copy-OrientFixtures([string]$d, [string[]]$Names = @()) {
     if ($Names.Count -eq 0) {
         $Names = @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json',
-                   'issues-global.json', 'issues-mine.json', 'read-ABC-5.json')
+                   'issues-global.json', 'issues-mine.json', 'whoami.txt')
     }
     foreach ($n in $Names) {
         Copy-Item -LiteralPath (Join-Path $ORIENT_FIX $n) -Destination (Join-Path $d $n) -Force
@@ -96,7 +104,7 @@ function Copy-OrientFixtures([string]$d, [string[]]$Names = @()) {
 
 # Invoke-Orient <stub> [flags] — stdout only, exit code captured, parsed doc.
 function Invoke-Orient([string]$stub, [string[]]$flags = @()) {
-    $argv = @('--lineark', $stub) + $flags
+    $argv = @('--linear-cli', $stub) + $flags
     $out = (& pwsh -NoProfile -File $ORIENT @argv 2>$null | Out-String)
     $rc = $LASTEXITCODE
     $doc = $null
@@ -191,16 +199,34 @@ $r = Invoke-Orient $stub1 @('--memory-dir', $MEMFIX)
 
 Assert-Eq 'orient: nominal run exits 0' 0 $r.Rc
 Assert-Eq 'orient: nominal document satisfies the orient/v1 schema' 'ok' (Test-OrientSchema $r.Doc)
+Assert-Eq 'orient: a healthy tracker surface reports the ok detail with its counts' `
+    'linear CLI ok: 2 project(s), 5 open issue(s) in the global sweep' `
+    $r.Doc.surfaces.linear.detail
 
 # --- project-first Linear cut -------------------------------------------------
-Assert-Eq 'orient: projects are emitted in tracker order with slug ids' `
+# p-alpha's fixture row carries schpet's camelCase `slugId`; p-beta's carries the
+# legacy `slug_id` — the fallback the normalizer keeps for fixture/twin parity.
+Assert-Eq 'orient: projects are emitted in tracker order with slug ids (slugId + slug_id fallback)' `
     'p-alpha:Alpha Arc:alpha-1 p-beta:Beta Arc:beta-2' `
     ((@($r.Doc.projects | ForEach-Object { "$($_.id):$($_.name):$($_.slug_id)" })) -join ' ')
-Assert-Eq 'orient: per-project open issues carry the bare-string state verbatim' `
+Assert-Eq 'orient: an OBJECT-shaped state flattens to its name' `
     'ABC-1=In Progress ABC-2=Backlog' `
     ((@($r.Doc.projects[0].open_issues | ForEach-Object { "$($_.identifier)=$($_.state)" })) -join ' ')
-Assert-Eq 'orient: a null priority normalizes to an empty string, not null' `
+# schpet rows carry priority as a NUMBER (3) beside priorityLabel ("Medium");
+# the normalized row must read the label, never the number.
+Assert-Eq 'orient: a numeric priority defers to priorityLabel in the normalized row' `
+    'Medium' $r.Doc.projects[0].open_issues[1].priority
+Assert-Eq 'orient: a null priority with no label normalizes to an empty string, not null' `
     '' $r.Doc.projects[1].open_issues[1].priority
+Assert-Eq 'orient: a null assignee normalizes to an empty string' `
+    '' $r.Doc.projects[1].open_issues[0].assignee
+
+# --- mine cut plumbing --------------------------------------------------------
+# The mine cut's --assignee value must be the display name whoami served — the
+# whoami parse feeding the query is the seam this pins.
+Assert-Contains 'orient: the mine cut queries by the whoami-served display name' `
+    ((Get-Content -LiteralPath (Join-Path $O1 'calls.log')) -join "`n") `
+    'issue query --all-teams --assignee Sample Assignee'
 
 # --- global-open reconciliation ----------------------------------------------
 # ABC-9 is in the global sweep and in NO project's list. A projects-only orient
@@ -211,7 +237,7 @@ Assert-Eq 'orient: issues that DO belong to a project are not projectless' `
     '0' (@($r.Doc.projectless_open_issues | Where-Object { @('ABC-1','ABC-2','ABC-3','ABC-4') -contains $_.identifier }).Count).ToString()
 
 # --- mine + In Progress -------------------------------------------------------
-# The --mine fixture also contains ABC-9 (Todo); only the In Progress row counts.
+# The mine fixture also contains ABC-9 (Todo); only the In Progress row counts.
 Assert-Eq 'orient: mine_in_progress is assigned AND In Progress, nothing else' `
     'ABC-1' ((@($r.Doc.mine_in_progress | ForEach-Object { $_.identifier })) -join ' ')
 
@@ -234,6 +260,16 @@ Assert-Eq 'orient: a memory pointer carries name + description from frontmatter'
 Assert-Eq 'orient: a healthy run names no degraded surface' `
     '0' (@($r.Doc.degraded).Count).ToString()
 
+# --- deprecated alias ---------------------------------------------------------
+# --lineark is kept as a deprecated alias for ONE transition release (
+# lineark -> schpet/linear-cli migration) so in-flight callers keep working;
+# drop this test with the alias.
+$outAlias = (& pwsh -NoProfile -File $ORIENT '--lineark' $stub1 2>$null | Out-String)
+$docAlias = $null
+try { $docAlias = $outAlias | ConvertFrom-Json } catch { $docAlias = $null }
+Assert-Eq 'orient: the deprecated --lineark alias still reaches the same seam' `
+    'ok' $docAlias.surfaces.linear.status
+
 # --- output modes -------------------------------------------------------------
 Assert-Eq 'orient: default output is ONE compact JSON line' `
     '1' (@($r.Out -split "`n" | Where-Object { $_.Trim() -ne '' }).Count).ToString()
@@ -247,19 +283,19 @@ if ($prettyLines -gt 1) {
 }
 
 # ============================ PAYLOAD SHAPE TOLERANCE ========================
-# `issues list` returns `.state` as a BARE STRING; `issues read` returns it as an
-# OBJECT {id,name}. One normalizer must accept both — reading `.state.name` on
-# list output would emit null, and stringifying read output would emit the whole
-# object. Serve the OBJECT-shaped payload through the issue path and require the
-# state name back as a plain string.
+# schpet wraps every list in an OBJECT {"nodes":[...]} — that is what every
+# primary fixture serves. A BARE ARRAY is accepted too (fixture simplicity, and
+# a shape the unwrap must not reject). Serve a bare-array payload through the
+# per-project path and require the same normalized rows back.
 $O2 = New-OrientTmp; $stub2 = New-OrientStub $O2
-Copy-OrientFixtures $O2 @('projects.json', 'issues-global.json', 'issues-mine.json', 'read-ABC-5.json')
-Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-objstate.json') -Destination (Join-Path $O2 'projissues-p-alpha.json') -Force
-Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-objstate.json') -Destination (Join-Path $O2 'projissues-p-beta.json') -Force
+Copy-OrientFixtures $O2 @('projects.json', 'issues-global.json', 'issues-mine.json', 'whoami.txt')
+Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-bare-array.json') -Destination (Join-Path $O2 'projissues-p-alpha.json') -Force
+Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-bare-array.json') -Destination (Join-Path $O2 'projissues-p-beta.json') -Force
 $r = Invoke-Orient $stub2
-Assert-Eq 'orient: an OBJECT-shaped state (the issues-read shape) flattens to its name' `
-    'In Progress' $r.Doc.projects[0].open_issues[0].state
-Assert-Eq 'orient: object-state payloads still satisfy the schema' 'ok' (Test-OrientSchema $r.Doc)
+Assert-Eq 'orient: a bare-array payload (no nodes wrapper) is accepted and normalized' `
+    'ABC-7=In Progress' `
+    ((@($r.Doc.projects[0].open_issues | ForEach-Object { "$($_.identifier)=$($_.state)" })) -join ' ')
+Assert-Eq 'orient: bare-array payloads still satisfy the schema' 'ok' (Test-OrientSchema $r.Doc)
 
 # An object-shaped field with NO `name` (e.g. `assignee: {"id": "usr_123"}`)
 # flattens to the EMPTY STRING, never to a stringified object. Get-Flat fell
@@ -267,7 +303,7 @@ Assert-Eq 'orient: object-state payloads still satisfy the schema' 'ok' (Test-Or
 # (`@{id=usr_123}`) where the bash twin's `.name // ""` yields "". See the bash
 # control in tests/orient.test.sh.
 $O2N = New-OrientTmp; $stub2n = New-OrientStub $O2N
-Copy-OrientFixtures $O2N @('projects.json', 'issues-global.json', 'issues-mine.json')
+Copy-OrientFixtures $O2N @('projects.json', 'issues-global.json', 'issues-mine.json', 'whoami.txt')
 Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-nameless-object.json') -Destination (Join-Path $O2N 'projissues-p-alpha.json') -Force
 Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-nameless-object.json') -Destination (Join-Path $O2N 'projissues-p-beta.json') -Force
 $r = Invoke-Orient $stub2n
@@ -282,7 +318,7 @@ Assert-Eq 'orient: nameless-object payloads still satisfy the schema' 'ok' (Test
 # cuts disagree about what is open (a truncated sweep, or a scope filter that
 # dropped rows). Reported as an anomaly rather than silently reconciled away.
 $O3 = New-OrientTmp; $stub3 = New-OrientStub $O3
-Copy-OrientFixtures $O3 @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json', 'issues-mine.json')
+Copy-OrientFixtures $O3 @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json', 'issues-mine.json', 'whoami.txt')
 Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-global-short.json') -Destination (Join-Path $O3 'issues-global.json') -Force
 $r = Invoke-Orient $stub3
 Assert-Eq 'orient: a disagreeing sweep still exits 0' 0 $r.Rc
@@ -294,42 +330,80 @@ Assert-Eq 'orient: the short sweep leaves nothing projectless' `
 
 # ============================ DEGRADATION ====================================
 
-# --- lineark not on PATH ------------------------------------------------------
+# --- linear CLI not on PATH ---------------------------------------------------
 $r = Invoke-Orient (Join-Path $O1 'definitely-absent.ps1') @('--memory-dir', $MEMFIX)
-Assert-Eq 'orient: absent lineark still exits 0' 0 $r.Rc
-Assert-Eq 'orient: absent lineark still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
-Assert-Eq 'orient: absent lineark marks the surface absent' 'absent' $r.Doc.surfaces.linear.status
-Assert-Contains 'orient: absent lineark is NAMED in degraded' `
-    ((@($r.Doc.degraded)) -join "`n") 'linear: lineark not on PATH'
-Assert-Eq 'orient: absent lineark yields empty Linear arrays, not missing keys' `
+Assert-Eq 'orient: absent linear CLI still exits 0' 0 $r.Rc
+Assert-Eq 'orient: absent linear CLI still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
+Assert-Eq 'orient: absent linear CLI marks the surface absent' 'absent' $r.Doc.surfaces.linear.status
+Assert-Contains 'orient: absent linear CLI is NAMED in degraded' `
+    ((@($r.Doc.degraded)) -join "`n") 'linear: linear CLI not on PATH'
+Assert-Contains 'orient: the absent detail points at the injection seam and setup doc' `
+    $r.Doc.surfaces.linear.detail 'linear CLI not found (--linear-cli or PATH):'
+Assert-Eq 'orient: absent linear CLI yields empty Linear arrays, not missing keys' `
     '0 0 0' (@(@($r.Doc.projects).Count, @($r.Doc.projectless_open_issues).Count, @($r.Doc.mine_in_progress).Count) -join ' ')
 Assert-Eq 'orient: the memory surface still reports when Linear is absent' `
     '2' (@($r.Doc.memory_pointers).Count).ToString()
 
-# --- lineark on PATH but every call fails -------------------------------------
+# --- linear CLI on PATH but every call fails ----------------------------------
 # The stub exits 1 when its fixture file is missing, so an empty stub dir is a
 # tracker that answers with failures rather than one that is not installed —
 # a DIFFERENT surface status, and the distinction is the operator's next action.
+# whoami fails too, so the mine cut degrades via the whoami path (no display
+# name means no --assignee query is even attempted).
 $O4 = New-OrientTmp; $stub4 = New-OrientStub $O4   # no fixtures copied
 $r = Invoke-Orient $stub4
-Assert-Eq 'orient: an erroring lineark still exits 0' 0 $r.Rc
-Assert-Eq 'orient: an erroring lineark still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
-Assert-Eq "orient: an erroring lineark is 'error', distinct from 'absent'" 'error' $r.Doc.surfaces.linear.status
-Assert-Eq 'orient: every failed lineark cut is named separately in degraded' `
-    'linear: projects list failed|linear: global issues list failed|linear: issues list --mine failed|linear: reconciliation unavailable — incomplete project cut' `
+Assert-Eq 'orient: an erroring linear CLI still exits 0' 0 $r.Rc
+Assert-Eq 'orient: an erroring linear CLI still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
+Assert-Eq "orient: an erroring linear CLI is 'error', distinct from 'absent'" 'error' $r.Doc.surfaces.linear.status
+Assert-Eq 'orient: the error detail points at degraded' `
+    'one or more linear CLI calls failed — see degraded' $r.Doc.surfaces.linear.detail
+Assert-Eq 'orient: every failed linear CLI cut is named separately in degraded' `
+    'linear: project list failed|linear: global issue query failed|linear: whoami display name unavailable — mine cut skipped|linear: reconciliation unavailable — incomplete project cut' `
     ((@($r.Doc.degraded | Where-Object { $_.StartsWith('linear:', [StringComparison]::Ordinal) })) -join '|')
+
+# --- whoami missing/unparseable: ONLY the mine cut degrades -------------------
+# Everything else answers; whoami does not. The mine cut is skipped (it cannot
+# even form its --assignee query), the surface is error — but the project cut,
+# the global sweep, and the reconciliation are UNAFFECTED: a broken identity
+# lookup must not blind the whole kickoff.
+$OW = New-OrientTmp; $stubW = New-OrientStub $OW
+Copy-OrientFixtures $OW @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json', 'issues-global.json', 'issues-mine.json')
+$r = Invoke-Orient $stubW
+Assert-Eq 'orient: a whoami failure still exits 0' 0 $r.Rc
+Assert-Eq 'orient: a whoami failure still emits a schema-valid document' 'ok' (Test-OrientSchema $r.Doc)
+Assert-Contains 'orient: the skipped mine cut is NAMED in degraded' `
+    ((@($r.Doc.degraded)) -join "`n") 'linear: whoami display name unavailable — mine cut skipped'
+Assert-Eq 'orient: a whoami failure marks the surface error with an empty mine cut' `
+    'error 0' "$($r.Doc.surfaces.linear.status) $(@($r.Doc.mine_in_progress).Count)"
+Assert-Eq 'orient: the project cut survives a whoami failure' `
+    'Alpha Arc=2 Beta Arc=2' `
+    ((@($r.Doc.projects | ForEach-Object { "$($_.name)=$(@($_.open_issues).Count)" })) -join ' ')
+Assert-Eq 'orient: the reconciliation survives a whoami failure' `
+    'ABC-9' ((@($r.Doc.projectless_open_issues | ForEach-Object { $_.identifier })) -join ' ')
+Assert-NotContains 'orient: a whoami failure does not suppress the reconciliation' `
+    ((@($r.Doc.degraded)) -join "`n") 'reconciliation unavailable'
+
+# --- whoami parses but the mine query itself fails ----------------------------
+$OM = New-OrientTmp; $stubM = New-OrientStub $OM
+Copy-OrientFixtures $OM @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json', 'issues-global.json', 'whoami.txt')
+$r = Invoke-Orient $stubM
+Assert-Contains 'orient: a failed mine query is named distinctly from a failed whoami' `
+    ((@($r.Doc.degraded)) -join "`n") 'linear: issue query --assignee (mine) failed'
+Assert-Eq 'orient: a failed mine query leaves the other cuts intact' `
+    'error 2 ABC-9' `
+    "$($r.Doc.surfaces.linear.status) $(@($r.Doc.projects).Count) $((@($r.Doc.projectless_open_issues | ForEach-Object { $_.identifier })) -join ',')"
 
 # --- one project's issue list fails -------------------------------------------
 # The project must still appear (with an empty open set) and the failure must be
 # named against that project, not collapsed into a generic tracker outage.
 $O5 = New-OrientTmp; $stub5 = New-OrientStub $O5
-Copy-OrientFixtures $O5 @('projects.json', 'projissues-p-alpha.json', 'issues-global.json', 'issues-mine.json')
+Copy-OrientFixtures $O5 @('projects.json', 'projissues-p-alpha.json', 'issues-global.json', 'issues-mine.json', 'whoami.txt')
 $r = Invoke-Orient $stub5
 Assert-Eq 'orient: a project whose issue list fails still appears with an empty open set' `
     'Alpha Arc=2 Beta Arc=0' `
     ((@($r.Doc.projects | ForEach-Object { "$($_.name)=$(@($_.open_issues).Count)" })) -join ' ')
 Assert-Contains 'orient: the failing project is named in degraded' `
-    ((@($r.Doc.degraded)) -join "`n") 'linear: issues list failed for project Beta Arc'
+    ((@($r.Doc.degraded)) -join "`n") 'linear: issue query failed for project Beta Arc'
 # RECONCILIATION INTEGRITY. The projectless cut is a set difference against the
 # project union, and Beta's rows (ABC-3, ABC-4) are missing from that union only
 # because Beta's CALL failed. Computing the difference anyway would report two
@@ -366,17 +440,18 @@ Assert-Contains 'orient: omitting --memory-dir is a named degraded surface, not 
 
 # ============================ VALID EMPTY TRACKER ============================
 # An empty tracker is a legitimate ANSWER, not a failure: a fresh workspace, a
-# project with nothing open, a --mine cut with nothing assigned. `[]` back from
-# every cut must read as `ok` with ZERO degraded entries and empty arrays.
+# project with nothing open, a mine cut with nothing assigned. `{"nodes":[]}`
+# back from every cut must read as `ok` with ZERO degraded entries and empty
+# arrays.
 #
 # This is the PS-side regression the bash twin never had: PowerShell UNWRAPS a
 # returned collection into the pipeline, so the tracker wrapper's plain
-# `return @(… | ConvertFrom-Json)` turned a valid `[]` into $null — the same
-# value the wrapper uses for "the call failed". Every empty cut was counted as
-# an outage: surfaces.linear.status = 'error' plus three degraded entries, while
+# `return @(… | ConvertFrom-Json)` turned a valid empty list into $null — the
+# same value the wrapper uses for "the call failed". Every empty cut was counted
+# as an outage: surfaces.linear.status = 'error' plus degraded entries, while
 # bash reported 'ok' on the identical fixtures.
 $O6 = New-OrientTmp; $stub6 = New-OrientStub $O6
-Copy-OrientFixtures $O6 @('projects.json')
+Copy-OrientFixtures $O6 @('projects.json', 'whoami.txt')
 foreach ($n in @('issues-global.json', 'issues-mine.json', 'projissues-p-alpha.json', 'projissues-p-beta.json')) {
     Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-empty.json') -Destination (Join-Path $O6 $n) -Force
 }
@@ -398,6 +473,7 @@ Assert-Eq 'orient: an all-empty tracker raises no anomalies' '0' (@($r.Doc.anoma
 
 # The same with an empty PROJECTS list too — all six array keys empty at once.
 $O7 = New-OrientTmp; $stub7 = New-OrientStub $O7
+Copy-OrientFixtures $O7 @('whoami.txt')
 foreach ($n in @('projects.json', 'issues-global.json', 'issues-mine.json')) {
     Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-empty.json') -Destination (Join-Path $O7 $n) -Force
 }
@@ -413,13 +489,13 @@ $o7bad = @($O7_ARRAYS | Where-Object { -not ($r.Doc.$_ -is [System.Array] -or $r
 Assert-Eq 'orient: every array-typed key is an empty ARRAY, never null' '' ($o7bad -join ',')
 
 # ============================ MALFORMED PAYLOAD ==============================
-# The tracker wrapper validates only that the payload is a top-level ARRAY. A
-# well-formed-but-wrong body (`["unexpected"]` — a CLI version change, an error
-# envelope, a truncated write) therefore reaches the normalizers. Non-object
-# elements are DROPPED; every array key must survive as an ARRAY and the
-# document must stay a valid orient/v1 on exit 0.
+# The tracker wrapper validates only that the payload unwraps to a top-level
+# ARRAY. A well-formed-but-wrong body (`["unexpected"]` — a CLI version change,
+# an error envelope, a truncated write) therefore reaches the normalizers.
+# Non-object elements are DROPPED; every array key must survive as an ARRAY and
+# the document must stay a valid orient/v1 on exit 0.
 $O8 = New-OrientTmp; $stub8 = New-OrientStub $O8
-Copy-OrientFixtures $O8 @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json', 'issues-mine.json')
+Copy-OrientFixtures $O8 @('projects.json', 'projissues-p-alpha.json', 'projissues-p-beta.json', 'issues-mine.json', 'whoami.txt')
 Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-nonobject.json') -Destination (Join-Path $O8 'issues-global.json') -Force
 $r = Invoke-Orient $stub8 @('--memory-dir', $MEMFIX)
 Assert-Eq 'orient: a non-object payload element still exits 0' 0 $r.Rc
@@ -440,7 +516,7 @@ Assert-Eq 'orient: a malformed global sweep does not erase the memory surface' `
 
 # A non-object element in the PROJECTS payload is the same class of defect.
 $O9 = New-OrientTmp; $stub9 = New-OrientStub $O9
-Copy-OrientFixtures $O9 @('issues-global.json', 'issues-mine.json')
+Copy-OrientFixtures $O9 @('issues-global.json', 'issues-mine.json', 'whoami.txt')
 Copy-Item -LiteralPath (Join-Path $ORIENT_FIX 'issues-nonobject.json') -Destination (Join-Path $O9 'projects.json') -Force
 $r = Invoke-Orient $stub9
 Assert-Eq 'orient: a non-object projects element still exits 0' 0 $r.Rc
@@ -667,10 +743,12 @@ Assert-Eq 'orient: unknown argument exits 2' 2 $LASTEXITCODE
 Assert-Contains 'orient: unknown argument names itself' $bad 'unknown argument: --nope'
 & pwsh -NoProfile -File $ORIENT '--memory-dir' 2>&1 | Out-Null
 Assert-Eq 'orient: value-less --memory-dir exits 2 (no self-loop)' 2 $LASTEXITCODE
+& pwsh -NoProfile -File $ORIENT '--linear-cli' 2>&1 | Out-Null
+Assert-Eq 'orient: value-less --linear-cli exits 2 (no self-loop)' 2 $LASTEXITCODE
 & pwsh -NoProfile -File $ORIENT '--lineark' 2>&1 | Out-Null
 Assert-Eq 'orient: value-less --lineark exits 2 (no self-loop)' 2 $LASTEXITCODE
 
 foreach ($d in @($O1, $O2, $O2N, $O3, $O4, $O5, $O6, $O7, $O8, $O9,
-                 $OS1, $OSF, $OT, $OT2)) {
+                 $OW, $OM, $OS1, $OSF, $OT, $OT2)) {
     Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
 }

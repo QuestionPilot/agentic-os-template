@@ -94,11 +94,11 @@ From the emitted JSON: `projects[]` (with each project's open issues),
 
 **When `surfaces.linear` is absent or errored, tracker collection is still
 MANDATORY:** perform the same projects-first cut BY HAND via the installed surface
-(MCP surface, or direct `lineark` calls) per `$AI_CONFIG_DIR/linear/linear-setup.md`
+(MCP surface, or direct `linear` CLI calls) per `$AI_CONFIG_DIR/linear/linear-setup.md`
 §4. A degraded surface downgrades the METHOD of collection, never the requirement —
 "the helper reported the surface down" is not a licence to skip O3.
 
-Per-surface command shapes (and the MCP alternative when `lineark` is not the
+Per-surface command shapes (and the MCP alternative when the `linear` CLI is not the
 installed surface) are in `$AI_CONFIG_DIR/linear/linear-setup.md` §4.
 
 ### O4. Vault orient — entrypoint, operator-identity master, AND lesson index

@@ -49,7 +49,7 @@ foreach ($render in @('claude', 'codex', 'agents', 'hermes', 'source')) {
     }
 }
 
-foreach ($field in @('harness', 'tool_calls', 'fixed_reads', 'lineark_calls', 'wall_time')) {
+foreach ($field in @('harness', 'tool_calls', 'fixed_reads', 'tracker_calls', 'wall_time')) {
     $v = $null
     if ($ssBase -and $ssBase.live_mode1_sample) { $v = $ssBase.live_mode1_sample.$field }
     Assert-Eq "spine-size.test: baseline live_mode1_sample records $field" 'yes' `

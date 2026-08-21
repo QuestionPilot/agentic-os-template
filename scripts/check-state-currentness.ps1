@@ -79,8 +79,8 @@
     are implemented. Same reasoning for IssueLimit vs `--limit`.
 
 .PARAMETER IssueLimit
-    Max issues pulled in the bulk state-map call (default 250, lineark's
-    documented ceiling). A payload that comes back AT the limit is treated as
+    Max issues pulled in the bulk state-map call (default 250). A payload
+    that comes back AT the limit is treated as
     possibly truncated: unmatched identifiers fall back to per-issue reads
     rather than being silently reported as unknown.
 
@@ -107,15 +107,17 @@
     Exit codes (BOTH modes), parity with the bash twin:
       0  clean — no mismatch found among the evidence that could be checked
       1  findings — at least one mismatch or contradiction (advisory WARN)
-      2  skip — could not determine (no lineark / prefix, bulk call failed,
+      2  skip — could not determine (no linear CLI / prefix, bulk call failed,
                 unparseable payload, no sources to scan, bad argument).
                 Callers preserve their own score; the reason is named on
                 STDERR in BOTH modes as `SKIP <reason>` so the skip is never
                 anonymous.
 
-    Requires the lineark CLI (linear/linear-setup.md §3.2). Override the
-    binary with $env:LINEARK_BIN — the hermetic tests inject a stub .ps1 that
-    serves fixture JSON, so this check is testable without live credentials.
+    Requires the schpet/linear-cli `linear` binary (linear/linear-setup.md
+    §3.2). Override the binary with $env:LINEAR_CLI_BIN — the hermetic tests
+    inject a stub .ps1 that serves fixture JSON, so this check is testable
+    without live credentials. $env:LINEARK_BIN is still accepted as a
+    deprecated fallback.
 
     The bash twin's `jq`/`awk` skip cases have no PS analogue — this port
     parses with ConvertFrom-Json and scans with .NET regex — so those two
@@ -233,7 +235,7 @@ if ($MaxReads -lt 0) {
 #
 # The reason goes to STDERR in BOTH modes, so `--list` stdout stays pure TSV
 # while the caller can still report a NAMED skip rather than a bare exit 2. That
-# naming is the point: "lineark not found" and "no comparable evidence found"
+# naming is the point: "linear CLI not found" and "no comparable evidence found"
 # are different operator actions, and an unnamed skip collapses them.
 function Skip-Currentness([string]$reason) {
     [Console]::Error.WriteLine("SKIP $reason")
@@ -243,7 +245,7 @@ function Skip-Currentness([string]$reason) {
 # Get-LocalEnvValue — read ONE key from local.env WITHOUT importing the whole
 # file. Verbatim-equivalent to self-audit.ps1's Get-SaLocalEnvValue and the bash
 # twin's _localenv_get: importing would push EVERY key (incl. a hostile PATH=)
-# into the process env, and this script resolves lineark via Get-Command AFTER
+# into the process env, and this script resolves the linear CLI via Get-Command AFTER
 # this point. Reads config as DATA only. Mirrors bash sourcing semantics for a
 # key: a later assignment of the same key wins; one matching surrounding quote
 # pair is stripped; an unquoted backslash-escape collapses (\<c> -> <c>).
@@ -311,9 +313,13 @@ if ($IssuePrefix -notmatch '^[A-Za-z0-9_]+$') {
     Skip-Currentness "tracker prefix '$IssuePrefix' is not alphanumeric — refusing to build a scan pattern from it"
 }
 
-$lineark = if ($env:LINEARK_BIN) { $env:LINEARK_BIN } else { 'lineark' }
-if (-not (Get-Command $lineark -ErrorAction SilentlyContinue)) {
-    Skip-Currentness 'lineark not found ($env:LINEARK_BIN or PATH) — see linear/linear-setup.md §3.2'
+# Binary seam. Precedence: $env:LINEAR_CLI_BIN, then $env:LINEARK_BIN
+# (deprecated — accepted for one transition release), then `linear`.
+$linearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN }
+             elseif ($env:LINEARK_BIN) { $env:LINEARK_BIN }
+             else { 'linear' }
+if (-not (Get-Command $linearCli -ErrorAction SilentlyContinue)) {
+    Skip-Currentness 'linear CLI not found ($env:LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2'
 }
 
 # --- collect the files to scan ------------------------------------------------
@@ -363,8 +369,10 @@ if ($scanFiles.Count -eq 0) {
 # costs a single request no matter how many claims are scanned.
 
 # Get-Field <obj> <name> — flatten a payload field to a display string: '' for
-# missing/null, the `name` property for Linear-MCP-shaped objects where lineark
-# returns flat strings (parity with the bash twin's jq s() helper).
+# missing/null, the `name` property for object-shaped fields (schpet/linear-cli
+# returns nested objects — state {name,type,...}, status {name,type,...} — which
+# this flattens to the flat strings the downstream logic expects; parity with
+# the bash twin's jq s() helper).
 function Get-Field($obj, [string]$name) {
     if ($null -eq $obj) { return '' }
     $p = $obj.PSObject.Properties[$name]
@@ -378,32 +386,49 @@ function Get-Field($obj, [string]$name) {
     return "$v"
 }
 
-# Invoke-Lineark — run the tracker CLI and return @{ Ok; Raw }. $ErrorActionPreference
+# Invoke-LinearCli — run the tracker CLI and return @{ Ok; Raw }. $ErrorActionPreference
 # is 'Stop', so a binary that fails to EXECUTE (wrong arch, not executable, missing
 # loader) throws a terminating error rather than setting $LASTEXITCODE — which would
 # crash out with PowerShell's own exit code and be read by self-audit as "findings"
 # instead of a skip. Every call site goes through here so the fail-soft contract
 # holds for exec failures too, not just non-zero exits.
-function Invoke-Lineark([string[]]$LinearkArgs) {
+function Invoke-LinearCli([string[]]$CliArgs) {
     try {
-        $raw = (& $lineark @LinearkArgs 2>$null | Out-String)
+        $raw = (& $linearCli @CliArgs 2>$null | Out-String)
         return @{ Ok = ($LASTEXITCODE -eq 0); Raw = $raw }
     } catch {
         return @{ Ok = $false; Raw = '' }
     }
 }
 
-$bulk = Invoke-Lineark @('issues', 'list', '--show-done', '--limit', "$IssueLimit", '--format', 'json')
+# ConvertTo-NodesArray — schpet/linear-cli list payloads are OBJECTS
+# {nodes:[...]}; unwrap .nodes. A bare array is accepted too; any other shape
+# returns $null (= the call failed). Parity with the bash twin's jq unwrap.
+function ConvertTo-NodesArray([string]$raw) {
+    $t = $raw.TrimStart()
+    if ($t.StartsWith('[')) {
+        try { return , @($raw | ConvertFrom-Json) } catch { return $null }
+    }
+    if ($t.StartsWith('{')) {
+        $obj = $null
+        try { $obj = $raw | ConvertFrom-Json } catch { return $null }
+        if ($null -eq $obj) { return $null }
+        $np = $obj.PSObject.Properties['nodes']
+        if ($null -ne $np -and $np.Value -is [System.Array]) { return , @($np.Value) }
+    }
+    return $null
+}
+
+# schpet/linear-cli returns ALL states (incl. Done/Canceled) by DEFAULT — there
+# is no --show-done analogue and none is needed; do NOT add open-state filters
+# here or the state map loses exactly the closed issues stale claims point at.
+$bulk = Invoke-LinearCli @('issue', 'query', '--all-teams', '--limit', "$IssueLimit", '--json')
 if (-not $bulk.Ok) {
-    Skip-Currentness 'lineark issues list failed — tracker unreachable or unauthenticated'
+    Skip-Currentness 'linear CLI issue query failed — tracker unreachable or unauthenticated'
 }
-$bulkRaw = $bulk.Raw
-if (-not $bulkRaw.TrimStart().StartsWith('[')) {
-    Skip-Currentness 'unexpected issues-list payload (not a JSON array)'
-}
-$bulkIssues = $null
-try { $bulkIssues = @($bulkRaw | ConvertFrom-Json) } catch {
-    Skip-Currentness 'unexpected issues-list payload (not valid JSON)'
+$bulkIssues = ConvertTo-NodesArray $bulk.Raw
+if ($null -eq $bulkIssues) {
+    Skip-Currentness 'unexpected issue-query payload (neither {nodes:[...]} nor a JSON array)'
 }
 
 $bulkCount = $bulkIssues.Count
@@ -426,7 +451,9 @@ function Get-LiveState([string]$ident) {
     # read; otherwise the identifier genuinely does not exist in the workspace.
     if ($possiblyTruncated -and $script:Reads -lt $MaxReads) {
         $script:Reads++
-        $r = Invoke-Lineark @('issues', 'read', $ident, '--format', 'json')
+        # `issue view` returns a single OBJECT (not nodes-wrapped); its state is
+        # an object {name,type,...} which Get-Field flattens to the name.
+        $r = Invoke-LinearCli @('issue', 'view', $ident, '--json')
         if ($r.Ok) {
             $robj = $null
             try { $robj = $r.Raw | ConvertFrom-Json } catch { $robj = $null }
@@ -671,11 +698,9 @@ foreach ($sf in $scanFiles) {
 $projectsChecked = 0
 $projectsSkipped = ''
 if (-not $NoProjects) {
-    $pl = Invoke-Lineark @('projects', 'list', '--format', 'json')
+    $pl = Invoke-LinearCli @('project', 'list', '--json')
     $projects = $null
-    if ($pl.Ok -and $pl.Raw.TrimStart().StartsWith('[')) {
-        try { $projects = @($pl.Raw | ConvertFrom-Json) } catch { $projects = $null }
-    }
+    if ($pl.Ok) { $projects = ConvertTo-NodesArray $pl.Raw }
     if ($null -eq $projects) {
         $projectsSkipped = ' (projects list failed);'
     } else {
@@ -685,23 +710,21 @@ if (-not $NoProjects) {
             $pname = Get-Field $p 'name'
             if ($pname -eq '') { $pname = '-' }
 
-            if ($script:Reads -ge $MaxReads) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
-            $script:Reads++
-            $pr = Invoke-Lineark @('projects', 'read', $projId, '--format', 'json')
-            $pobj = $null
-            if ($pr.Ok) { try { $pobj = $pr.Raw | ConvertFrom-Json } catch { $pobj = $null } }
-            if ($null -eq $pobj -or -not ($pobj -is [PSCustomObject])) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
-            $pstatus = Get-Field $pobj 'status'
+            # Project state rides the list payload in schpet/linear-cli (each
+            # row carries a status object) — the per-project read lineark
+            # needed is gone.
+            $pstatus = Get-Field $p 'status'
             if ($pstatus -eq '') { $projectsSkipped = "$projectsSkipped $pname;"; continue }
 
             if ($script:Reads -ge $MaxReads) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
             $script:Reads++
-            # Default list scope hides Done/Canceled, so this IS the open-issue cut.
-            $pi = Invoke-Lineark @('issues', 'list', '--project', $projId, '--limit', "$IssueLimit", '--format', 'json')
+            # schpet/linear-cli has no hiding default — the open-issue cut must
+            # be EXPLICIT via the open state types, so this IS the open-issue cut.
+            $pi = Invoke-LinearCli @('issue', 'query', '--all-teams', '--project', $projId,
+                '-s', 'triage', '-s', 'backlog', '-s', 'unstarted', '-s', 'started',
+                '--limit', "$IssueLimit", '--json')
             $pissues = $null
-            if ($pi.Ok -and $pi.Raw.TrimStart().StartsWith('[')) {
-                try { $pissues = @($pi.Raw | ConvertFrom-Json) } catch { $pissues = $null }
-            }
+            if ($pi.Ok) { $pissues = ConvertTo-NodesArray $pi.Raw }
             if ($null -eq $pissues) { $projectsSkipped = "$projectsSkipped $pname;"; continue }
             $openN = $pissues.Count
             # A child list returned AT the ceiling may be truncated, and every

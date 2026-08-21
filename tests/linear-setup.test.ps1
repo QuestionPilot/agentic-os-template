@@ -43,23 +43,23 @@ Assert-Contains 'linear-setup.test: linear-setup §5 labels canonical source wit
     $ls_body '[`capabilities/closeout.md`](../capabilities/closeout.md)'
 
 # --- T4: §3 First-time setup documents BOTH surface options ---
-Assert-Contains 'linear-setup.test: linear-setup §3 names Option A: lineark CLI' $ls_body 'Option A'
+Assert-Contains 'linear-setup.test: linear-setup §3 names Option A: linear CLI' $ls_body 'Option A'
 Assert-Contains 'linear-setup.test: linear-setup §3 names Option B: Linear MCP' $ls_body 'Option B'
-Assert-Contains 'linear-setup.test: linear-setup §3 cites lineark CLI repo URL' $ls_body 'github.com/flipbit03/lineark'
+Assert-Contains 'linear-setup.test: linear-setup §3 cites linear CLI repo URL' $ls_body 'github.com/schpet/linear-cli'
 Assert-Contains 'linear-setup.test: linear-setup §3 cites openai/plugins/linear for Codex MCP' $ls_body 'github.com/openai/plugins/tree/main/plugins/linear'
-Assert-Contains 'linear-setup.test: linear-setup §3 names ~/.linear_api_token with chmod 600' $ls_body 'chmod 600'
+Assert-Contains 'linear-setup.test: linear-setup §3 documents headless auth env var' $ls_body 'LINEAR_API_KEY'
 
 # --- T4.5: §3.5 documents uninstall/migration with teardown for stale stubs ---
 Assert-Contains 'linear-setup.test: linear-setup §3.5 names uninstall/migration sub-section' $ls_body '### 3.5 Uninstalling or migrating between surfaces'
-Assert-Contains 'linear-setup.test: linear-setup §3.5 documents lineark binary removal' $ls_body 'rm -f ~/.local/bin/lineark'
+Assert-Contains 'linear-setup.test: linear-setup §3.5 documents deprecated lineark binary removal' $ls_body 'rm -f ~/.local/bin/lineark'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents API token removal' $ls_body 'rm -f ~/.linear_api_token'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents npm uninstall step' $ls_body 'npm uninstall -g <package-name>'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents per-machine config stub sweep' $ls_body 'rm -rf ~/.<tool-name>'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents cache leftover sweep' $ls_body 'rm -rf ~/.cache/<tool-name>'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents XDG config variant sweep' $ls_body 'rm -rf ~/.config/<tool-name>'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents XDG data variant sweep' $ls_body 'rm -rf ~/.local/share/<tool-name>'
-Assert-Contains 'linear-setup.test: linear-setup §3.5 documents CLI-presence verify (command -v)' $ls_body 'command -v lineark'
-Assert-Contains 'linear-setup.test: linear-setup §3.5 documents CLI-version verify' $ls_body 'lineark --version'
+Assert-Contains 'linear-setup.test: linear-setup §3.5 documents CLI-presence verify (command -v)' $ls_body 'command -v linear'
+Assert-Contains 'linear-setup.test: linear-setup §3.5 documents CLI-version verify' $ls_body 'linear --version'
 
 # --- T5: §6 Templates references the 3 existing linear/ template files ---
 Assert-Contains 'linear-setup.test: linear-setup §6 references linear/issue-template.md' $ls_body 'issue-template.md'

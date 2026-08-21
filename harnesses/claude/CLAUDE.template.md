@@ -31,7 +31,7 @@ The framework itself ships only the spine capabilities (table below). Everything
 | Security-sensitive change | `security-review` (built-in) |
 | Anthropic SDK / Claude API code | `claude-api` (built-in) |
 | Build / update a Claude Code skill | `@@AI_CONFIG_DIR@@/skills/skill-authoring.md`; operator skill-creation tooling if installed |
-| Active work tracking | See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the lineark CLI / Linear MCP setup options |
+| Active work tracking | See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the linear CLI / Linear MCP setup options |
 | Data analysis / document artifacts (deck, doc, sheet, PDF) | operator-installed skills, if present — see the `SKILLS.md` Live Inventory |
 | Engineering workflows (debug, plans, TDD, parallel work, branch closeout) | see `SKILLS.md` Live Inventory |
 | Ambiguous or multi-surface | `/session-agent` (orchestration sub-routine) |
@@ -46,7 +46,7 @@ For portable router patterns (orchestration sub-routine, capability families), s
 
 ## Layer 2 — Active Work (Linear)
 
-Linear holds current tasks, status, blockers, acceptance criteria, and next actions. The framework supports two Linear access surfaces — `lineark` CLI and Linear MCP — both first-class. See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for setup, operating instructions, and the runtime contract. The `session-agent` capability's Mode 1 O3 owns the kickoff query order — see its body for the projects-first ordered cut.
+Linear holds current tasks, status, blockers, acceptance criteria, and next actions. The framework supports two Linear access surfaces — `linear` CLI and Linear MCP — both first-class. See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for setup, operating instructions, and the runtime contract. The `session-agent` capability's Mode 1 O3 owns the kickoff query order — see its body for the projects-first ordered cut.
 
 ## Layer 3 — Durable Knowledge (Obsidian)
 

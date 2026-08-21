@@ -45,9 +45,10 @@
 # state word by proximity (see the awk scanner), skips fenced code, and skips
 # history sections entirely.
 #
-# Requires the lineark CLI (linear/linear-setup.md §3.2), jq, and awk. Override
-# the binary with $LINEARK_BIN — the hermetic tests inject a stub that serves
-# fixture JSON, so this check is testable without live credentials.
+# Requires the schpet/linear-cli `linear` binary (linear/linear-setup.md §3.2),
+# jq, and awk. Override the binary with $LINEAR_CLI_BIN — the hermetic tests
+# inject a stub that serves fixture JSON, so this check is testable without
+# live credentials. $LINEARK_BIN is still accepted as a deprecated fallback.
 #
 # Usage:
 #   check-state-currentness.sh [--memory-dir <d>]... [--vault-dir <d>]
@@ -63,8 +64,8 @@
 #   --prefix <P>      tracker issue prefix (e.g. the team key). Default:
 #                     local.env TRACKER_ISSUE_PREFIX. Without one, claim
 #                     scanning cannot run and the check skips.
-#   --limit <n>       max issues pulled in the bulk state-map call (default 250,
-#                     lineark's documented ceiling). A payload that comes back
+#   --limit <n>       max issues pulled in the bulk state-map call (default
+#                     250). A payload that comes back
 #                     AT the limit is treated as possibly truncated: unmatched
 #                     identifiers fall back to per-issue reads rather than being
 #                     silently reported as unknown.
@@ -82,13 +83,15 @@
 # Exit codes (BOTH modes):
 #   0  clean — no mismatch found among the evidence that could be checked
 #   1  findings — at least one mismatch or contradiction (advisory WARN)
-#   2  skip — could not determine (no lineark / jq / awk / prefix, bulk call
+#   2  skip — could not determine (no linear CLI / jq / awk / prefix, bulk call
 #             failed, unparseable payload, no sources to scan, bad argument).
 #             Callers preserve their own score; the reason is named on STDERR
 #             in BOTH modes as `SKIP <reason>` so the skip is never anonymous.
 set -uo pipefail
 
-LINEARK_BIN="${LINEARK_BIN:-lineark}"
+# Binary seam. Precedence: $LINEAR_CLI_BIN, then $LINEARK_BIN (deprecated —
+# accepted for one transition release), then `linear` on PATH.
+LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -130,7 +133,7 @@ case "$MAX_READS" in ''|*[!0-9]*) printf 'check-state-currentness: --max-reads m
 #
 # The reason goes to STDERR in BOTH modes, so `--list` stdout stays pure TSV
 # while the caller can still report a NAMED skip rather than a bare exit 2. That
-# naming is the point: "lineark not found" and "no comparable evidence found"
+# naming is the point: "linear CLI not found" and "no comparable evidence found"
 # are different operator actions, and an unnamed skip collapses them.
 skip() {
   printf 'SKIP %s\n' "$1" >&2
@@ -207,7 +210,7 @@ esac
 
 command -v jq   >/dev/null 2>&1 || skip "jq unavailable; cannot parse tracker payloads"
 command -v awk  >/dev/null 2>&1 || skip "awk unavailable; cannot scan notes for claims"
-command -v "$LINEARK_BIN" >/dev/null 2>&1 || skip "lineark not found (\$LINEARK_BIN or PATH) — see linear/linear-setup.md §3.2"
+command -v "$LINEAR_CLI_BIN" >/dev/null 2>&1 || skip "linear CLI not found (\$LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2"
 
 # ---- collect the files to scan ----------------------------------------------
 # Memory stores: every note. Vault: active project notes only (frontmatter
@@ -236,10 +239,17 @@ fi
 # ---- live state map ----------------------------------------------------------
 # ONE bulk call carries every issue's identifier + state, so the common case
 # costs a single request no matter how many claims are scanned.
-bulk_json="$("$LINEARK_BIN" issues list --show-done --limit "$LIMIT" --format json 2>/dev/null)" \
-  || skip "lineark issues list failed — tracker unreachable or unauthenticated"
+#
+# schpet/linear-cli returns ALL states (incl. Done/Canceled) by DEFAULT — there
+# is no --show-done analogue and none is needed; do NOT add open-state filters
+# here or the state map loses exactly the closed issues stale claims point at.
+# List payloads are objects {nodes:[...]} — unwrap .nodes; a bare array is
+# accepted too; any other shape means the call failed.
+bulk_raw="$("$LINEAR_CLI_BIN" issue query --all-teams --limit "$LIMIT" --json 2>/dev/null)" \
+  || skip "linear CLI issue query failed — tracker unreachable or unauthenticated"
+bulk_json="$(printf '%s' "$bulk_raw" | jq -c 'if type == "object" then (.nodes // null) elif type == "array" then . else null end' 2>/dev/null)"
 printf '%s' "$bulk_json" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  || skip "unexpected issues-list payload (not a JSON array)"
+  || skip "unexpected issue-query payload (neither {nodes:[...]} nor a JSON array)"
 
 bulk_count="$(printf '%s' "$bulk_json" | jq 'length')"
 # A payload returned AT the ceiling may be truncated — record it so unmatched
@@ -283,7 +293,9 @@ live_state() {
   if [ "$possibly_truncated" -eq 1 ] && [ "$(reads_get)" -lt "$MAX_READS" ]; then
     reads_inc
     local rj
-    if rj="$("$LINEARK_BIN" issues read "$ident" --format json 2>/dev/null)" \
+    # `issue view` returns a single OBJECT (not nodes-wrapped); its state is an
+    # object {name,type,...} which the jq below flattens to the name.
+    if rj="$("$LINEAR_CLI_BIN" issue view "$ident" --json 2>/dev/null)" \
        && printf '%s' "$rj" | jq -e 'type == "object"' >/dev/null 2>&1; then
       printf '%s' "$(printf '%s' "$rj" | jq -r '(.state // "") | if type == "object" then (.name // "") else tostring end')"
       return 0
@@ -542,27 +554,29 @@ done < <(scan_claims "${SCAN_FILES[@]}")
 projects_checked=0
 projects_skipped=""
 if [ "$DO_PROJECTS" -eq 1 ]; then
-  pj="$("$LINEARK_BIN" projects list --format json 2>/dev/null || true)"
+  pj_raw="$("$LINEAR_CLI_BIN" project list --json 2>/dev/null || true)"
+  pj="$(printf '%s' "$pj_raw" | jq -c 'if type == "object" then (.nodes // null) elif type == "array" then . else null end' 2>/dev/null)"
   if printf '%s' "$pj" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    while IFS=$'\t' read -r pid pname; do
+    # Project state rides the list payload in schpet/linear-cli (each row carries
+    # a status object) — the per-project read lineark needed is gone.
+    while IFS=$'\t' read -r pid pname pstatus; do
       [ -n "${pid:-}" ] || continue
-      if [ "$(reads_get)" -ge "$MAX_READS" ]; then
-        projects_skipped="$projects_skipped $pname;"
-        continue
-      fi
-      reads_inc
-      prj="$("$LINEARK_BIN" projects read "$pid" --format json 2>/dev/null || true)"
-      printf '%s' "$prj" | jq -e 'type == "object"' >/dev/null 2>&1 || { projects_skipped="$projects_skipped $pname;"; continue; }
-      pstatus="$(printf '%s' "$prj" | jq -r '(.status // "") | if type == "object" then (.name // "") else tostring end')"
-      [ -n "$pstatus" ] || { projects_skipped="$projects_skipped $pname;"; continue; }
+      # jq on Windows writes CRLF, and `read` leaves the \r on the LAST TSV
+      # field. The lineark-era code took pstatus through a command substitution
+      # (which Git Bash CR-strips); this TSV read must strip it explicitly or
+      # every status silently fails the case match below on Windows.
+      pstatus="${pstatus%$'\r'}"
+      [ -n "${pstatus:-}" ] || { projects_skipped="$projects_skipped $pname;"; continue; }
 
       if [ "$(reads_get)" -ge "$MAX_READS" ]; then
         projects_skipped="$projects_skipped $pname;"
         continue
       fi
       reads_inc
-      # Default list scope hides Done/Canceled, so this IS the open-issue cut.
-      pij="$("$LINEARK_BIN" issues list --project "$pid" --limit "$LIMIT" --format json 2>/dev/null || true)"
+      # schpet/linear-cli has no hiding default — the open-issue cut must be
+      # EXPLICIT via the open state types, so this IS the open-issue cut.
+      pij_raw="$("$LINEAR_CLI_BIN" issue query --all-teams --project "$pid" -s triage -s backlog -s unstarted -s started --limit "$LIMIT" --json 2>/dev/null || true)"
+      pij="$(printf '%s' "$pij_raw" | jq -c 'if type == "object" then (.nodes // null) elif type == "array" then . else null end' 2>/dev/null)"
       printf '%s' "$pij" | jq -e 'type == "array"' >/dev/null 2>&1 || { projects_skipped="$projects_skipped $pname;"; continue; }
       open_n="$(printf '%s' "$pij" | jq 'length')"
       # A child list returned AT the ceiling may be truncated, and every class
@@ -590,7 +604,7 @@ if [ "$DO_PROJECTS" -eq 1 ]; then
         printf 'WARN %s "%s": status "%s" with %s open child issue(s), %s active\n' \
           "$pclass" "$pname" "$pstatus" "$open_n" "$active_n"
       fi
-    done < <(printf '%s' "$pj" | jq -r '.[] | select((.id // "") != "") | [ .id, (.name // "-") ] | @tsv')
+    done < <(printf '%s' "$pj" | jq -r '.[] | select((.id // "") != "") | [ .id, (.name // "-"), ((.status // "") | if type == "object" then (.name // "") else tostring end) ] | @tsv')
   else
     projects_skipped=" (projects list failed);"
   fi

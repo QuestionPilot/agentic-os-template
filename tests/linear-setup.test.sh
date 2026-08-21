@@ -45,19 +45,19 @@ assert_contains "linear-setup §5 labels canonical source with Markdown link to 
   "$ls_body" "[\`capabilities/closeout.md\`](../capabilities/closeout.md)"
 
 # --- T4: §3 First-time setup documents BOTH surface options as first-class ---
-# Per spec §7: Option A (lineark CLI) + Option B (Linear MCP) — Claude Code's
+# Per spec §7: Option A (linear CLI, schpet/linear-cli) + Option B (Linear MCP) — Claude Code's
 # official connector + Codex via openai/plugins/linear. Test pins the
 # concrete URLs + the "first-class" framing.
-assert_contains "linear-setup §3 names Option A: lineark CLI" \
+assert_contains "linear-setup §3 names Option A: linear CLI" \
   "$ls_body" "Option A"
 assert_contains "linear-setup §3 names Option B: Linear MCP" \
   "$ls_body" "Option B"
-assert_contains "linear-setup §3 cites lineark CLI repo URL" \
-  "$ls_body" "github.com/flipbit03/lineark"
+assert_contains "linear-setup §3 cites linear CLI repo URL" \
+  "$ls_body" "github.com/schpet/linear-cli"
 assert_contains "linear-setup §3 cites openai/plugins/linear for Codex MCP" \
   "$ls_body" "github.com/openai/plugins/tree/main/plugins/linear"
-assert_contains "linear-setup §3 names ~/.linear_api_token with chmod 600" \
-  "$ls_body" "chmod 600"
+assert_contains "linear-setup §3 documents headless auth env var" \
+  "$ls_body" "LINEAR_API_KEY"
 
 # --- T4.5: §3.5 documents uninstall/migration with teardown for stale stubs ---
 # Pins the section heading + every canonical teardown command + the verify
@@ -67,7 +67,7 @@ assert_contains "linear-setup §3 names ~/.linear_api_token with chmod 600" \
 # loud, not silent.
 assert_contains "linear-setup §3.5 names uninstall/migration sub-section" \
   "$ls_body" "### 3.5 Uninstalling or migrating between surfaces"
-assert_contains "linear-setup §3.5 documents lineark binary removal" \
+assert_contains "linear-setup §3.5 documents deprecated lineark binary removal" \
   "$ls_body" "rm -f ~/.local/bin/lineark"
 assert_contains "linear-setup §3.5 documents API token removal" \
   "$ls_body" "rm -f ~/.linear_api_token"
@@ -82,9 +82,9 @@ assert_contains "linear-setup §3.5 documents XDG config variant sweep" \
 assert_contains "linear-setup §3.5 documents XDG data variant sweep" \
   "$ls_body" "rm -rf ~/.local/share/<tool-name>"
 assert_contains "linear-setup §3.5 documents CLI-presence verify (command -v)" \
-  "$ls_body" "command -v lineark"
+  "$ls_body" "command -v linear"
 assert_contains "linear-setup §3.5 documents CLI-version verify" \
-  "$ls_body" "lineark --version"
+  "$ls_body" "linear --version"
 
 # --- T5: §6 Templates references the 3 existing linear/ template files ---
 assert_contains "linear-setup §6 references linear/issue-template.md" \

@@ -10,8 +10,10 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 # tracker state, and flags project-status/child contradictions. Advisory, never
 # a gate, and it never edits anything.
 #
-# Hermetic: $LINEARK_BIN is pointed at a stub serving fixture JSON from its own
-# directory — no live tracker access, no token.
+# Hermetic: $LINEAR_CLI_BIN is pointed at a stub serving fixture JSON from its
+# own directory — no live tracker access, no token. One case injects via the
+# deprecated $LINEARK_BIN instead, pinning the transition-release fallback
+# (transition-release fallback).
 #
 # Two halves, and the second matters as much as the first:
 #   DETECTION — the three classes the checker exists to catch (a memory note
@@ -29,17 +31,18 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 
 CSC="$REPO_ROOT/scripts/check-state-currentness.sh"
 
-# csc_stub <dir> — lineark stub. Serves:
-#   issues list [--project P]  -> list.json / projissues-P.json
-#   issues read ID             -> read-ID.json
-#   projects list              -> projects.json
-#   projects read ID           -> proj-ID.json
+# csc_stub <dir> — schpet/linear-cli stub. Matches on the leading subcommand
+# words (flags ignored except --project, whose value routes the child list):
+#   issue query [--project P]  -> list.json / projissues-P.json
+#   issue view ID              -> read-ID.json
+#   project list               -> projects.json  (rows CARRY the status object —
+#                                 the per-project read lineark needed is gone)
 csc_stub() {
   local d="$1"
   cat > "$d/stub" <<'STUB'
 #!/usr/bin/env bash
 d="$(cd "$(dirname "$0")" && pwd)"
-# Call log — the read-budget assertion counts `issues read` invocations, which is
+# Call log — the read-budget assertion counts `issue view` invocations, which is
 # the only way to prove the cap actually held (the exit code cannot show it).
 printf 'CALL %s\n' "$*" >> "$d/calls.log"
 proj=""
@@ -48,20 +51,17 @@ for a in "$@"; do
   [ "$prev" = "--project" ] && proj="$a"
   prev="$a"
 done
-if [ "${1:-}" = "issues" ] && [ "${2:-}" = "list" ]; then
+if [ "${1:-}" = "issue" ] && [ "${2:-}" = "query" ]; then
   if [ -n "$proj" ]; then
     f="$d/projissues-$proj.json"; [ -f "$f" ] && { cat "$f"; exit 0; }; exit 1
   fi
-  cat "$d/list.json"; exit 0
+  [ -f "$d/list.json" ] && { cat "$d/list.json"; exit 0; }; exit 1
 fi
-if [ "${1:-}" = "issues" ] && [ "${2:-}" = "read" ]; then
+if [ "${1:-}" = "issue" ] && [ "${2:-}" = "view" ]; then
   f="$d/read-${3:-}.json"; [ -f "$f" ] && { cat "$f"; exit 0; }; exit 1
 fi
-if [ "${1:-}" = "projects" ] && [ "${2:-}" = "list" ]; then
+if [ "${1:-}" = "project" ] && [ "${2:-}" = "list" ]; then
   [ -f "$d/projects.json" ] && { cat "$d/projects.json"; exit 0; }; exit 1
-fi
-if [ "${1:-}" = "projects" ] && [ "${2:-}" = "read" ]; then
-  f="$d/proj-${3:-}.json"; [ -f "$f" ] && { cat "$f"; exit 0; }; exit 1
 fi
 exit 1
 STUB
@@ -69,21 +69,22 @@ STUB
 }
 
 # Live state used by every fixture below: ABC-1 Done, ABC-2 Done, ABC-3 In
-# Progress, ABC-4 Backlog.
+# Progress, ABC-4 Backlog. Realistic schpet/linear-cli shape: a {nodes:[...]}
+# wrapper with object-valued states the checker flattens to the name.
 csc_states() {
   cat > "$1/list.json" <<'EOF'
-[
-  {"identifier": "ABC-1", "state": "Done"},
-  {"identifier": "ABC-2", "state": "Done"},
-  {"identifier": "ABC-3", "state": "In Progress"},
-  {"identifier": "ABC-4", "state": "Backlog"}
-]
+{"nodes": [
+  {"identifier": "ABC-1", "state": {"name": "Done", "type": "completed"}},
+  {"identifier": "ABC-2", "state": {"name": "Done", "type": "completed"}},
+  {"identifier": "ABC-3", "state": {"name": "In Progress", "type": "started"}},
+  {"identifier": "ABC-4", "state": {"name": "Backlog", "type": "backlog"}}
+]}
 EOF
 }
 
 run_csc() { # run_csc <stubdir> <memdir> [extra args...]
   local sd="$1" md="$2"; shift 2
-  LINEARK_BIN="$sd/stub" bash "$CSC" --isolated --prefix ABC --memory-dir "$md" "$@" 2>/dev/null
+  LINEAR_CLI_BIN="$sd/stub" bash "$CSC" --isolated --prefix ABC --memory-dir "$md" "$@" 2>/dev/null
 }
 
 # ============================ DETECTION ======================================
@@ -127,6 +128,8 @@ assert_contains "check-state-currentness: summary separates the two classes" \
   "$o" "1 stale claim(s), 1 stale snapshot(s)"
 
 # --- class 3: project status vs child states ---------------------------------
+# Project rows carry the status object in the list payload — schpet/linear-cli
+# needs no per-project read, so there are no proj-<pid>.json fixtures.
 D3="$(mktemp -d)"; M3="$D3/mem"; mkdir -p "$M3"; csc_stub "$D3"; csc_states "$D3"
 cat > "$M3/quiet.md" <<'EOF'
 ---
@@ -136,16 +139,15 @@ name: quiet
 Nothing asserted here about any identifier.
 EOF
 cat > "$D3/projects.json" <<'EOF'
-[{"id": "p-closed", "name": "Shipped Thing"},
- {"id": "p-idle", "name": "Sleepy Thing"},
- {"id": "p-active", "name": "Busy Thing"}]
+{"nodes": [
+ {"id": "p-closed", "name": "Shipped Thing", "status": {"name": "Completed", "type": "completed"}},
+ {"id": "p-idle", "name": "Sleepy Thing", "status": {"name": "Backlog", "type": "backlog"}},
+ {"id": "p-active", "name": "Busy Thing", "status": {"name": "In Progress", "type": "started"}}
+]}
 EOF
-printf '{"id":"p-closed","name":"Shipped Thing","status":{"name":"Completed"}}\n'   > "$D3/proj-p-closed.json"
-printf '{"id":"p-idle","name":"Sleepy Thing","status":{"name":"Backlog"}}\n'        > "$D3/proj-p-idle.json"
-printf '{"id":"p-active","name":"Busy Thing","status":{"name":"In Progress"}}\n'    > "$D3/proj-p-active.json"
-printf '[{"identifier":"ABC-4","state":"Backlog"}]\n'                                > "$D3/projissues-p-closed.json"
-printf '[{"identifier":"ABC-3","state":"In Progress"}]\n'                            > "$D3/projissues-p-idle.json"
-printf '[]\n'                                                                        > "$D3/projissues-p-active.json"
+printf '{"nodes":[{"identifier":"ABC-4","state":{"name":"Backlog"}}]}\n'     > "$D3/projissues-p-closed.json"
+printf '{"nodes":[{"identifier":"ABC-3","state":{"name":"In Progress"}}]}\n' > "$D3/projissues-p-idle.json"
+printf '{"nodes":[]}\n'                                                      > "$D3/projissues-p-active.json"
 o="$(run_csc "$D3" "$M3")"; rc=$?
 assert_eq       "check-state-currentness: project contradictions exit 1" 1 "$rc"
 assert_contains "check-state-currentness: Completed project with open children" \
@@ -154,6 +156,19 @@ assert_contains "check-state-currentness: Backlog project with active children" 
   "$o" 'WARN project-idle-with-active-children "Sleepy Thing": status "Backlog" with 1 open child'
 assert_contains "check-state-currentness: In Progress project with no open children" \
   "$o" 'WARN project-active-with-no-open-children "Busy Thing"'
+
+# The project loop spends ONE budgeted read per project (the child list) — the
+# lineark-era second read (project status) rides the list payload now. A cap of
+# 2 therefore evaluates exactly two of the three projects and NAMEs the third
+# as not evaluated.
+o="$(run_csc "$D3" "$M3" --max-reads 2)"; rc=$?
+assert_eq           "check-state-currentness: project read cap still yields findings (exit 1)" 1 "$rc"
+assert_contains     "check-state-currentness: capped project run names the skipped project" \
+  "$o" "not evaluated"
+assert_contains     "check-state-currentness: read cap 2 = two projects checked, third skipped" \
+  "$o" "Busy Thing;"
+assert_not_contains "check-state-currentness: the capped project is not evaluated" \
+  "$o" 'WARN project-active-with-no-open-children'
 
 # --- --list machine mode: stable TSV shape -----------------------------------
 o="$(run_csc "$D1" "$M1" --no-projects --list)"; rc=$?
@@ -355,19 +370,20 @@ rm -rf "$DA"
 # 5 reads under a cap of 1, while the PS twin correctly made 1).
 DB="$(mktemp -d)"; MB="$DB/mem"; mkdir -p "$MB"; csc_stub "$DB"
 # Bulk payload returns exactly --limit rows => treated as possibly truncated,
-# so every unmatched identifier is a per-issue read candidate.
+# so every unmatched identifier is a per-issue read candidate. Bare-array shape
+# with flat string states, deliberately: it pins the tolerance for both.
 printf '[{"identifier":"ABC-90","state":"Done"},{"identifier":"ABC-91","state":"Done"}]\n' > "$DB/list.json"
-for _i in 1 2 3 4 5; do printf '{"identifier":"ABC-%s","state":"Done"}\n' "$_i" > "$DB/read-ABC-$_i.json"; done
+for _i in 1 2 3 4 5; do printf '{"identifier":"ABC-%s","state":{"name":"Done","type":"completed"}}\n' "$_i" > "$DB/read-ABC-$_i.json"; done
 { for _i in 1 2 3 4 5; do printf 'ABC-%s is Backlog.\n' "$_i"; done; } > "$MB/many.md"
 run_csc "$DB" "$MB" --no-projects --limit 2 --max-reads 1 >/dev/null 2>&1
 assert_eq "check-state-currentness: --max-reads caps per-issue reads across the subshell" \
-  1 "$(grep -c 'issues read' "$DB/calls.log" 2>/dev/null || echo 0)"
+  1 "$(grep -c 'issue view' "$DB/calls.log" 2>/dev/null || echo 0)"
 rm -rf "$DB"
 
 # --- state lookup is field-exact, not a substring ------------------------------
 # `grep -F "ABC-1<TAB>"` also matches a row for XABC-1, so an overlapping prefix
 # could compare a claim against a different issue — while the PS twin's hashtable
-# requires an exact key.
+# requires an exact key. (Bare-array bulk payload here too — the tolerance pin.)
 DC="$(mktemp -d)"; MC="$DC/mem"; mkdir -p "$MC"; csc_stub "$DC"
 printf '[{"identifier":"XABC-1","state":"Done"},{"identifier":"ABC-3","state":"In Progress"}]\n' > "$DC/list.json"
 printf 'ABC-1 is Backlog.\nABC-3 is In Progress.\n' > "$MC/x.md"
@@ -381,10 +397,9 @@ rm -rf "$DC"
 # on page two would otherwise produce "PASS ... project(s) agree".
 DD="$(mktemp -d)"; MD="$DD/mem"; mkdir -p "$MD"; csc_stub "$DD"; csc_states "$DD"
 printf 'ABC-3 is In Progress.\n' > "$MD/q.md"
-printf '[{"id": "p-big", "name": "Big Thing"}]\n' > "$DD/projects.json"
-printf '{"id":"p-big","name":"Big Thing","status":{"name":"Backlog"}}\n' > "$DD/proj-p-big.json"
+printf '{"nodes":[{"id":"p-big","name":"Big Thing","status":{"name":"Backlog"}}]}\n' > "$DD/projects.json"
 # Exactly --limit children, none of them active on this page.
-printf '[{"identifier":"ABC-4","state":"Backlog"},{"identifier":"ABC-5","state":"Backlog"}]\n' > "$DD/projissues-p-big.json"
+printf '{"nodes":[{"identifier":"ABC-4","state":{"name":"Backlog"}},{"identifier":"ABC-5","state":{"name":"Backlog"}}]}\n' > "$DD/projissues-p-big.json"
 o="$(run_csc "$DD" "$MD" --limit 2)"; rc=$?
 assert_contains "check-state-currentness: at-limit child list is named as not evaluated" \
   "$o" "child list may be truncated"
@@ -396,6 +411,10 @@ rm -rf "$DD"
 # The vault half of the source set. A completed project note is a historical
 # record by definition, so its claims must not be read as present-tense
 # assertions — the same reason `## State Deltas` sections are skipped.
+#
+# Injected via the DEPRECATED $LINEARK_BIN seam on purpose: this is the one case
+# pinning that the fallback still resolves the binary for the transition release
+# — $LINEAR_CLI_BIN is unset here, so the fallback is what runs.
 D9="$(mktemp -d)"; V9="$D9/vault"; mkdir -p "$V9/01-Projects"; csc_stub "$D9"; csc_states "$D9"
 cat > "$V9/01-Projects/live.md" <<'EOF'
 ---
@@ -412,36 +431,46 @@ status: completed
 ABC-1 is In Progress.
 EOF
 o="$(LINEARK_BIN="$D9/stub" bash "$CSC" --isolated --prefix ABC --vault-dir "$V9" --no-projects 2>/dev/null)"; rc=$?
-assert_eq           "check-state-currentness: active vault note scanned, completed one skipped (exit 0)" 0 "$rc"
+assert_eq           "check-state-currentness: active vault note scanned, completed one skipped (exit 0, via LINEARK_BIN fallback)" 0 "$rc"
 assert_not_contains "check-state-currentness: completed vault project note is not a present claim" "$o" "ABC-1"
 
 # ============================ SKIP CONTRACT ==================================
 
-# --- no lineark on PATH -------------------------------------------------------
-o="$(LINEARK_BIN="$D1/definitely-absent" bash "$CSC" --isolated --prefix ABC --memory-dir "$M1" 2>&1)"; rc=$?
-assert_eq       "check-state-currentness: absent lineark skips (2)" 2 "$rc"
-assert_contains "check-state-currentness: absent lineark names the reason" "$o" "SKIP lineark not found"
+# --- no linear CLI on PATH ----------------------------------------------------
+o="$(LINEAR_CLI_BIN="$D1/definitely-absent" bash "$CSC" --isolated --prefix ABC --memory-dir "$M1" 2>&1)"; rc=$?
+assert_eq       "check-state-currentness: absent linear CLI skips (2)" 2 "$rc"
+assert_contains "check-state-currentness: absent linear CLI names the reason" "$o" "SKIP linear CLI not found"
 
 # The skip reason must reach STDERR in --list mode too — self-audit reports a
 # NAMED skip, and stdout must stay pure TSV so the machine parse is unaffected.
-e="$(LINEARK_BIN="$D1/definitely-absent" bash "$CSC" --isolated --prefix ABC --memory-dir "$M1" --list 2>&1 >/dev/null)"
-o="$(LINEARK_BIN="$D1/definitely-absent" bash "$CSC" --isolated --prefix ABC --memory-dir "$M1" --list 2>/dev/null)"
-assert_contains "check-state-currentness: --list names the skip reason on stderr" "$e" "SKIP lineark not found"
+e="$(LINEAR_CLI_BIN="$D1/definitely-absent" bash "$CSC" --isolated --prefix ABC --memory-dir "$M1" --list 2>&1 >/dev/null)"
+o="$(LINEAR_CLI_BIN="$D1/definitely-absent" bash "$CSC" --isolated --prefix ABC --memory-dir "$M1" --list 2>/dev/null)"
+assert_contains "check-state-currentness: --list names the skip reason on stderr" "$e" "SKIP linear CLI not found"
 assert_eq       "check-state-currentness: --list keeps stdout empty on skip" "" "$o"
 
 # --- bulk list call fails ------------------------------------------------------
 D8="$(mktemp -d)"; M8="$D8/mem"; mkdir -p "$M8"; csc_stub "$D8"   # no list.json written
 cp "$M1/project-thing.md" "$M8/"
-o="$(LINEARK_BIN="$D8/stub" bash "$CSC" --isolated --prefix ABC --memory-dir "$M8" 2>&1)"; rc=$?
-assert_eq "check-state-currentness: failed bulk list skips (2)" 2 "$rc"
+o="$(LINEAR_CLI_BIN="$D8/stub" bash "$CSC" --isolated --prefix ABC --memory-dir "$M8" 2>&1)"; rc=$?
+assert_eq       "check-state-currentness: failed bulk list skips (2)" 2 "$rc"
+assert_contains "check-state-currentness: failed bulk list names the reason" "$o" "linear CLI issue query failed"
+
+# --- unparseable bulk payload --------------------------------------------------
+# An object with no nodes array is neither {nodes:[...]} nor a bare array — the
+# skip must name the shape, not read as "tracker unreachable".
+printf '{"foo": 1}\n' > "$D8/list.json"
+o="$(LINEAR_CLI_BIN="$D8/stub" bash "$CSC" --isolated --prefix ABC --memory-dir "$M8" 2>&1)"; rc=$?
+assert_eq       "check-state-currentness: unparseable bulk payload skips (2)" 2 "$rc"
+assert_contains "check-state-currentness: unparseable bulk payload names the shape" \
+  "$o" "unexpected issue-query payload (neither {nodes:[...]} nor a JSON array)"
 
 # --- no prefix ----------------------------------------------------------------
-o="$(LINEARK_BIN="$D1/stub" bash "$CSC" --isolated --memory-dir "$M1" 2>&1)"; rc=$?
+o="$(LINEAR_CLI_BIN="$D1/stub" bash "$CSC" --isolated --memory-dir "$M1" 2>&1)"; rc=$?
 assert_eq       "check-state-currentness: missing prefix skips (2)" 2 "$rc"
 assert_contains "check-state-currentness: missing prefix names the reason" "$o" "no tracker issue prefix"
 
 # --- no sources ---------------------------------------------------------------
-o="$(LINEARK_BIN="$D1/stub" bash "$CSC" --isolated --prefix ABC 2>&1)"; rc=$?
+o="$(LINEAR_CLI_BIN="$D1/stub" bash "$CSC" --isolated --prefix ABC 2>&1)"; rc=$?
 assert_eq "check-state-currentness: no sources skips (2)" 2 "$rc"
 
 # --- bad arguments -------------------------------------------------------------
@@ -453,7 +482,7 @@ o="$(bash "$CSC" --max-reads abc 2>&1)"; rc=$?
 assert_eq "check-state-currentness: non-numeric --max-reads skips (2)" 2 "$rc"
 
 # --- a prefix that could poison the scan pattern is refused -------------------
-o="$(LINEARK_BIN="$D1/stub" bash "$CSC" --isolated --prefix 'A.*' --memory-dir "$M1" 2>&1)"; rc=$?
+o="$(LINEAR_CLI_BIN="$D1/stub" bash "$CSC" --isolated --prefix 'A.*' --memory-dir "$M1" 2>&1)"; rc=$?
 assert_eq "check-state-currentness: non-alphanumeric prefix skips (2)" 2 "$rc"
 
 rm -rf "$D1" "$D2" "$D3" "$D4" "$D5" "$D6" "$D7" "$D8" "$D9"

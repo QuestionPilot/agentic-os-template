@@ -32,7 +32,7 @@
       anomalies                [{type, subject, detail}] — see below
       memory_pointers          project-type memory notes: [{file, name, description}]
       degraded                 named degraded surfaces, e.g.
-                               "linear: lineark not on PATH (lineark)"
+                               "linear: linear CLI not on PATH (linear)"
       safety                   DETECTED per-run safety posture (see below)
       telemetry                orientation-cost measurement (see below)
 
@@ -70,11 +70,11 @@
 
     An `issue` is normalized to {identifier, title, state, priority, assignee, url}.
 
-    ANOMALY CLASSES. `project-idle-with-active-children` is NOT detectable here:
-    `lineark projects list` carries no project state field (verified — it
-    returns {id, name, slug_id, lead}), and paying a `projects read` per project
-    to get one is check-state-currentness's job, not a kickoff helper's. The two
-    classes a single-pass sweep CAN decide:
+    ANOMALY CLASSES. `project-idle-with-active-children` is deliberately NOT
+    decided here: `linear project list --json` does carry a status object, but
+    cross-checking project state against child issue state is
+    check-state-currentness's job, not a kickoff helper's — this helper stays a
+    single-pass sweep. The two classes it CAN decide:
       all-issues-backlog-no-assignee  every open issue in a project is Backlog
                                       with no assignee — a project nobody is on
       open-issue-count-mismatch       an identifier appears under a project but
@@ -98,35 +98,43 @@
     non-zero exit means the script itself could not run (bad argument), never
     that a surface was unreachable.
 
-    Tracker access is the `lineark` CLI ONLY (linear/linear-setup.md §3.2) — no
-    MCP. Override the binary with --lineark / -TrackerCli / $env:LINEARK_BIN;
-    the hermetic tests inject a stub serving fixture JSON, so this runs without
-    live credentials.
+    Tracker access is the `linear` CLI ONLY (schpet/linear-cli,
+    linear/linear-setup.md §3.2) — no MCP. Override the binary with
+    --linear-cli / -LinearCli / $env:LINEAR_CLI_BIN; the hermetic tests inject
+    a stub serving fixture JSON, so this runs without live credentials.
 
-    Response shapes handled (verified against lineark, not assumed):
-      projects list  -> [{id, name, slug_id, lead}]          NO state field
-      issues list    -> [{identifier, ..., state: "Backlog"}] state is a BARE
-                                                              STRING, Done and
-                                                              Canceled hidden
-      issues read    -> {..., state: {id, name}}              state is an OBJECT
-    Every state read goes through one normalizer that accepts either shape.
+    Response shapes handled (verified against schpet/linear-cli v2.5.0, not
+    assumed):
+      project list --json  -> {nodes:[{id, name, slugId, status:{name,...}, ...}]}
+      issue query  --json  -> {nodes:[{identifier, ..., state:{name,...},
+                               assignee:{name,...}|null, priority: NUMBER,
+                               priorityLabel: "Medium"}]}
+    Payloads are OBJECTS carrying a `nodes` array (Invoke-Tracker unwraps them;
+    a bare array is also accepted for fixture simplicity). `issue query` returns
+    ALL states by default — Done/Canceled included — so every open cut passes
+    the open states explicitly (-s triage -s backlog -s unstarted -s started).
+    Every state/assignee read goes through one normalizer that accepts object,
+    string, or null, so nothing here reads `.state.name` unguarded.
+
+    The mine cut needs the viewer's username: `issue query --assignee` filters
+    by display name, which is parsed from `linear auth whoami`
+    ("Display name: ..."). A whoami parse failure degrades ONLY the mine cut.
 
 .PARAMETER MemoryDir
     Memory store to scan for project-type notes (POSIX form: --memory-dir).
     Omit to skip the memory surface.
 
-.PARAMETER TrackerCli
-    Tracker CLI to invoke (POSIX form: --lineark). Default $env:LINEARK_BIN,
-    else `lineark`.
+.PARAMETER LinearCli
+    Tracker CLI to invoke (POSIX form: --linear-cli; --lineark is accepted as a
+    deprecated alias for one transition release). Default
+    $env:LINEAR_CLI_BIN, else `linear`.
 
-    Named `TrackerCli`, not `Lineark`, on purpose: PowerShell's binder resolves
-    a bare `--lineark` token to any parameter it prefix-matches, which would
-    consume the flag natively and make a repeated `--lineark` hard-error
-    "specified more than once" instead of reaching the parser below.
-    `TrackerCli` is not prefix-matched by `--lineark`, so the flag falls through
-    to $Rest where the twin's semantics live. (`--pretty` DOES prefix-match
-    -Pretty and binds there; that is harmless — identical effect, no value
-    token to swallow.)
+    The hyphenated POSIX token `--linear-cli` is not prefix-matched by the
+    binder against `LinearCli` (the embedded hyphen breaks the match), and a
+    bare `--lineark` token prefix-matches no parameter here either, so both
+    flags fall through to $Rest where the twin's semantics live. (`--pretty`
+    DOES prefix-match -Pretty and binds there; that is harmless — identical
+    effect, no value token to swallow.)
 
 .PARAMETER Pretty
     Indent the JSON (default: one compact line).
@@ -147,7 +155,7 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$MemoryDir = '',
-    [string]$TrackerCli = '',
+    [string]$LinearCli = '',
     [switch]$Pretty,
 
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -158,8 +166,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $global:LASTEXITCODE = 0
 
-# lineark's documented ceiling. Not a flag: a kickoff sweep that needs paging is
-# a different problem than this helper solves, and the count-mismatch anomaly
+# One page's worth. Not a flag: a kickoff sweep that needs paging is a
+# different problem than this helper solves, and the count-mismatch anomaly
 # surfaces the truncation rather than hiding it.
 $Limit = 250
 
@@ -176,11 +184,18 @@ while ($i -lt $Rest.Count) {
             }
             $MemoryDir = $Rest[$i + 1]; $i += 2
         }
+        '--linear-cli' {
+            if ($i + 1 -ge $Rest.Count) {
+                [Console]::Error.WriteLine('orient: --linear-cli needs a path'); exit 2
+            }
+            $LinearCli = $Rest[$i + 1]; $i += 2
+        }
+        # Deprecated alias (one transition release): same seam, old name.
         '--lineark' {
             if ($i + 1 -ge $Rest.Count) {
                 [Console]::Error.WriteLine('orient: --lineark needs a path'); exit 2
             }
-            $TrackerCli = $Rest[$i + 1]; $i += 2
+            $LinearCli = $Rest[$i + 1]; $i += 2
         }
         '--pretty' { $Pretty = [switch]$true; $i += 1 }
         default {
@@ -189,8 +204,8 @@ while ($i -lt $Rest.Count) {
     }
 }
 
-if ($TrackerCli -eq '') {
-    $TrackerCli = if ($env:LINEARK_BIN) { $env:LINEARK_BIN } else { 'lineark' }
+if ($LinearCli -eq '') {
+    $LinearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN } else { 'linear' }
 }
 
 $degraded = [System.Collections.Generic.List[string]]::new()
@@ -203,9 +218,9 @@ function Add-Anomaly([string]$type, [string]$subject, [string]$detail) {
     $anomalies.Add([ordered]@{ type = $type; subject = $subject; detail = $detail })
 }
 
-# The ONE state/field normalizer. `state` arrives as a bare string from
-# `issues list` and as an object from `issues read`; `priority` and `assignee`
-# can be absent or null. Everything downstream consumes this shape only.
+# The ONE state/field normalizer. `state` and `assignee` arrive as OBJECTS
+# ({name, ...}) or null from `issue query`; a bare string is accepted too for
+# fixture simplicity. Everything downstream consumes this shape only.
 function Get-Flat($obj, [string]$name) {
     if ($null -eq $obj) { return '' }
     $p = $obj.PSObject.Properties[$name]
@@ -233,20 +248,35 @@ function Test-OrientObject($it) {
 }
 
 function ConvertTo-OrientIssue($it) {
+    # schpet emits a numeric .priority plus a human .priorityLabel; prefer the
+    # label so the normalized row reads "Medium", falling back to the number as
+    # a string when a fixture omits the label (mirrors the bash twin's
+    # `.priorityLabel // flat(.priority)` — the fallback fires only when the
+    # label is ABSENT or null, not when it is an empty string).
+    $prio = ''
+    $plp = if ($null -ne $it) { $it.PSObject.Properties['priorityLabel'] } else { $null }
+    if ($null -ne $plp -and $null -ne $plp.Value) {
+        $prio = Get-Flat $it 'priorityLabel'
+    } else {
+        $prio = Get-Flat $it 'priority'
+    }
     return [ordered]@{
         identifier = (Get-Flat $it 'identifier')
         title      = (Get-Flat $it 'title')
         state      = (Get-Flat $it 'state')
-        priority   = (Get-Flat $it 'priority')
+        priority   = $prio
         assignee   = (Get-Flat $it 'assignee')
         url        = (Get-Flat $it 'url')
     }
 }
 
-# Invoke-Tracker — run the tracker CLI, require a JSON ARRAY back. A non-zero
-# exit, an exec failure (wrong arch, not executable — $ErrorActionPreference is
-# 'Stop', so those THROW rather than setting $LASTEXITCODE), or a non-array
-# payload are all one thing to the caller: this cut is unavailable ($null).
+# Invoke-Tracker — run the tracker CLI, require a JSON payload carrying rows
+# back. schpet wraps every list in an OBJECT with a `nodes` array; this unwraps
+# that to the bare array every consumer reads (a bare array is accepted too,
+# which keeps fixtures simple). A non-zero exit, an exec failure (wrong arch,
+# not executable — $ErrorActionPreference is 'Stop', so those THROW rather than
+# setting $LASTEXITCODE), or a payload that is neither shape are all one thing
+# to the caller: this cut is unavailable ($null).
 #
 # `return ,@(...)` — the leading comma is load-bearing, NOT style. PowerShell
 # unwraps a returned collection into the pipeline, so a plain `return @(...)` of
@@ -260,10 +290,22 @@ function ConvertTo-OrientIssue($it) {
 # failed".
 function Invoke-Tracker([string[]]$CliArgs) {
     try {
-        $raw = (& $TrackerCli @CliArgs --format json 2>$null | Out-String)
+        $raw = (& $LinearCli @CliArgs --json 2>$null | Out-String)
         if ($LASTEXITCODE -ne 0) { return $null }
-        if (-not $raw.TrimStart().StartsWith('[')) { return $null }
-        return ,@($raw | ConvertFrom-Json)
+        # -NoEnumerate: a top-level array must arrive HERE as one array object,
+        # not enumerated into the pipeline, so the shape checks below can tell
+        # `[]` apart from "nothing parsed".
+        $parsed = ConvertFrom-Json -InputObject $raw -NoEnumerate
+        if ($parsed -is [System.Array] -or $parsed -is [System.Collections.IList]) {
+            return ,@($parsed)
+        }
+        if ($parsed -is [System.Management.Automation.PSCustomObject]) {
+            $np = $parsed.PSObject.Properties['nodes']
+            if ($null -ne $np -and ($np.Value -is [System.Array] -or $np.Value -is [System.Collections.IList])) {
+                return ,@($np.Value)
+            }
+        }
+        return $null
     } catch {
         return $null
     }
@@ -280,26 +322,52 @@ $projIds = [System.Collections.Generic.List[string]]::new()
 # per-project issues call failed. See the reconciliation-integrity note below.
 $projectCutIncomplete = $false
 
-if (-not (Get-Command $TrackerCli -ErrorAction SilentlyContinue)) {
+# The explicit open-state cut. `issue query` returns ALL states by default —
+# Done/Canceled included — so every open sweep names the open states rather
+# than trusting a hiding default that does not exist in this CLI.
+$OpenStates = @('-s', 'triage', '-s', 'backlog', '-s', 'unstarted', '-s', 'started')
+
+if (-not (Get-Command $LinearCli -ErrorAction SilentlyContinue)) {
     $linearStatus = 'absent'
-    $linearDetail = "lineark not found (--lineark or PATH): $TrackerCli — see linear/linear-setup.md §3.2"
-    Add-Degraded "linear: lineark not on PATH ($TrackerCli)"
+    $linearDetail = "linear CLI not found (--linear-cli or PATH): $LinearCli — see linear/linear-setup.md §3.2"
+    Add-Degraded "linear: linear CLI not on PATH ($LinearCli)"
 } else {
     $linearErrs = $false
 
-    $projects = Invoke-Tracker @('projects', 'list')
+    $projects = Invoke-Tracker @('project', 'list')
     if ($null -eq $projects) {
         $projects = @(); $linearErrs = $true; $projectCutIncomplete = $true
-        Add-Degraded 'linear: projects list failed'
+        Add-Degraded 'linear: project list failed'
     }
 
-    $globalIssues = Invoke-Tracker @('issues', 'list', '--limit', "$Limit")
+    $globalIssues = Invoke-Tracker (@('issue', 'query', '--all-teams') + $OpenStates + @('--limit', "$Limit"))
     # A failed GLOBAL sweep breaks reconciliation the same way a failed project
     # cut does (every project-listed id would phantom-mismatch the empty sweep).
-    if ($null -eq $globalIssues) { $globalIssues = @(); $linearErrs = $true; $projectCutIncomplete = $true; Add-Degraded 'linear: global issues list failed' }
+    if ($null -eq $globalIssues) { $globalIssues = @(); $linearErrs = $true; $projectCutIncomplete = $true; Add-Degraded 'linear: global issue query failed' }
 
-    $mineIssues = Invoke-Tracker @('issues', 'list', '--mine', '--limit', "$Limit")
-    if ($null -eq $mineIssues) { $mineIssues = @(); $linearErrs = $true; Add-Degraded 'linear: issues list --mine failed' }
+    # The mine cut filters by the viewer's display name — `issue query` has no
+    # "me" token, so the name is parsed from `auth whoami` ("Display name: ...",
+    # text output, CR stripped). A parse failure degrades ONLY this cut; the
+    # project and global cuts stand on their own.
+    $meName = ''
+    try {
+        $who = (& $LinearCli auth whoami 2>$null | Out-String)
+        if ($LASTEXITCODE -eq 0 -and $who) {
+            foreach ($wl in ($who -split "`n")) {
+                if ($wl -cmatch '^\s*Display name:\s*(.*)$') {
+                    $meName = $matches[1].TrimEnd([char]13)
+                    break
+                }
+            }
+        }
+    } catch { $meName = '' }
+    if ($meName -eq '') {
+        $mineIssues = @(); $linearErrs = $true
+        Add-Degraded 'linear: whoami display name unavailable — mine cut skipped'
+    } else {
+        $mineIssues = Invoke-Tracker (@('issue', 'query', '--all-teams', '--assignee', $meName) + $OpenStates + @('--limit', "$Limit"))
+        if ($null -eq $mineIssues) { $mineIssues = @(); $linearErrs = $true; Add-Degraded 'linear: issue query --assignee (mine) failed' }
+    }
 
     # Project-first cut: one issues-list call per project, in tracker order.
     $pn = 0
@@ -309,13 +377,17 @@ if (-not (Get-Command $TrackerCli -ErrorAction SilentlyContinue)) {
         if ($pid_ -eq '') { continue }
         $pname = Get-Flat $p 'name'
         if ($pname -eq '') { $pname = '-' }
-        $pslug = Get-Flat $p 'slug_id'
+        # schpet rows carry `slugId`; the twin's `slug_id` is accepted as a
+        # fallback for fixture simplicity. (Rows also carry a `status` object —
+        # ignored here; see the anomaly-classes note in the header.)
+        $pslug = Get-Flat $p 'slugId'
+        if ($pslug -eq '') { $pslug = Get-Flat $p 'slug_id' }
         $pn++
 
-        $pissues = Invoke-Tracker @('issues', 'list', '--project', $pid_, '--limit', "$Limit")
+        $pissues = Invoke-Tracker (@('issue', 'query', '--all-teams', '--project', $pid_) + $OpenStates + @('--limit', "$Limit"))
         if ($null -eq $pissues) {
             $pissues = @(); $linearErrs = $true; $projectCutIncomplete = $true
-            Add-Degraded "linear: issues list failed for project $pname"
+            Add-Degraded "linear: issue query failed for project $pname"
         }
 
         $openIssues = [System.Collections.Generic.List[object]]::new()
@@ -346,9 +418,9 @@ if (-not (Get-Command $TrackerCli -ErrorAction SilentlyContinue)) {
 
     if ($linearErrs) {
         $linearStatus = 'error'
-        $linearDetail = 'one or more lineark calls failed — see degraded'
+        $linearDetail = 'one or more linear CLI calls failed — see degraded'
     } else {
-        $linearDetail = "lineark ok: $pn project(s), $(@($globalIssues).Count) open issue(s) in the global sweep"
+        $linearDetail = "linear CLI ok: $pn project(s), $(@($globalIssues).Count) open issue(s) in the global sweep"
     }
 }
 

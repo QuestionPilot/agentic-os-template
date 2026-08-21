@@ -29,7 +29,7 @@ Adapted from the session-agent orchestration sub-routine (`@@AI_CONFIG_DIR@@/cap
 2. Pick **one** primary skill.
 3. Add secondary skills only for evidence, risk, or output format.
 4. Name the verification gate before claiming completion.
-5. Default route: see `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the Linear surface (lineark CLI or Linear MCP); Obsidian (see `@@AI_CONFIG_DIR@@/obsidian/vault-guide.md`) for durable knowledge; agentic-os-template for operating rules.
+5. Default route: see `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the Linear surface (linear CLI or Linear MCP); Obsidian (see `@@AI_CONFIG_DIR@@/obsidian/vault-guide.md`) for durable knowledge; agentic-os-template for operating rules.
 
 ### Routing table
 
@@ -43,14 +43,14 @@ Adapted from the session-agent orchestration sub-routine (`@@AI_CONFIG_DIR@@/cap
 | UI verification (browser-rendered, headless, cross-browser) | operator's browser-automation tool, if installed | `@@AI_CONFIG_DIR@@/verification/ui-browser.md` |
 | Build / update a Claude Code skill | `@@AI_CONFIG_DIR@@/skills/skill-authoring.md` (TDD authoring guidance) | operator skill-creation tooling if installed |
 | Verification before claiming completion | task-specific gate under `@@AI_CONFIG_DIR@@/verification/*.md` | operator accelerant skills if installed |
-| Active work tracking | See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the lineark CLI / Linear MCP setup options | a local TASKS.md for non-Linear tracking |
+| Active work tracking | See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the linear CLI / Linear MCP setup options | a local TASKS.md for non-Linear tracking |
 | Recurring task / interval poll | `loop` (built-in) | `schedule` (built-in) for cron-style remote |
 
 _Routes that need operator-installed plugins/CLIs are listed in the operator overlay below (present only when one is installed)._
 
 ### Top recommendations
 
-- **Active work first:** check Linear before non-trivial work. See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` §4 for the per-surface commands (lineark CLI or Linear MCP).
+- **Active work first:** check Linear before non-trivial work. See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` §4 for the per-surface commands (linear CLI or Linear MCP).
 - **CLI > MCP:** before reaching for an MCP tool, check if `gh`, `curl`, `git`, `rg`, or a project script does the job. Token-cheap and faster.
 - **Built-ins are skills too:** `review`, `security-review`, `simplify`, `init`, `loop`, `schedule`, `claude-api`, `update-config`, `keybindings-help`, `fewer-permission-prompts` are first-class — prefer them over reinventing.
 - **Verification before completion:** every meaningful change ends with a check from `@@AI_CONFIG_DIR@@/verification/` (code-change, ui-browser, deploy-live, high-risk).

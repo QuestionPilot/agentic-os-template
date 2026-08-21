@@ -41,8 +41,8 @@
 #   --no-subgates  skip execution of the operator sub-gate registry; the
 #                  section still renders, as a NAMED skip.
 #
-# `lineark` (the Linear CLI per linear/linear-setup.md) is optional;
-# Linear-side checks degrade with a "skipped: lineark not configured" note.
+# The `linear` CLI (schpet/linear-cli, per linear/linear-setup.md) is optional;
+# Linear-side checks degrade with a "skipped: linear CLI not configured" note.
 #
 # Output: markdown by default. `--json` emits a structured object for tests:
 #   {date, total, pillars{...}, injection_surface, gaps[], skipped[],
@@ -142,7 +142,7 @@ esac
 # worst-case wall clock is SUBGATE_MAX × SUBGATE_TIMEOUT, and entries past the
 # cap are reported as a named drop count rather than silently ignored.
 SUBGATE_MAX=64
-# --isolated turns off all operator-env fallbacks (env vars + lineark detection).
+# --isolated turns off all operator-env fallbacks (env vars + linear CLI detection).
 # Used by tests/self-audit.test.sh so fixtures only see what the test sets up.
 ISOLATED=0
 
@@ -206,7 +206,7 @@ MEMORY_DIRS=()
 # sourcing the file (<TEAM>-180 F1; twin parity with scripts/self-audit.ps1
 # Get-SaLocalEnvValue). The prior `set -a; . local.env` EXECUTED the whole file:
 # a hostile or malformed local.env could run arbitrary code, or export a PATH=
-# that poisons the lineark/jq/git `command -v` lookups below — the very
+# that poisons the linear/jq/git `command -v` lookups below — the very
 # PATH-capture window the PS twin was hardened against. Reading only the 4 config
 # keys as DATA (never PATH) closes that and makes the two twins behave
 # identically. Mirrors bash sourcing semantics for a key: a later assignment of
@@ -256,7 +256,7 @@ if [ "$ISOLATED" -eq 0 ]; then
   # exported them silently skipped the vault layer and scored differently than one
   # that had (observed: 60/100 vs 80/100 for the same repo state). F1 (Codex
   # pre-merge review): the earlier `set -a; . local.env` EXECUTED the whole file —
-  # arbitrary code + a hostile PATH= could poison the lineark/jq/git lookups below
+  # arbitrary code + a hostile PATH= could poison the linear/jq/git lookups below
   # — diverging from the hardened PS twin. We now read ONLY the 4 config keys as
   # DATA via _sa_localenv_get (never PATH). local.env wins over ambient env;
   # explicit CLI flags still win over local.env (they set CONFIG_DIR / VAULT_DIR
@@ -542,17 +542,17 @@ fm_get() {
 # --- Pillar 1: Cross-layer handoffs ------------------------------------------
 score_cross_layer_handoffs() {
   local key="cross-layer-handoffs"
-  local lineark_avail=0 memory_avail=0 vault_avail=0
-  # In --isolated mode (tests) skip lineark detection too — the operator's
+  local linear_cli_avail=0 memory_avail=0 vault_avail=0
+  # In --isolated mode (tests) skip linear CLI detection too — the operator's
   # real Linear surface must not leak into fixture scoring.
   if [ "$ISOLATED" -eq 0 ]; then
-    command -v lineark >/dev/null 2>&1 && lineark_avail=1
+    command -v linear >/dev/null 2>&1 && linear_cli_avail=1
   fi
   [ "${#MEMORY_DIRS[@]}" -gt 0 ] && memory_avail=1
   [ -n "$VAULT_DIR" ] && [ -d "$VAULT_DIR" ] && vault_avail=1
 
-  if [ "$lineark_avail" -eq 0 ]; then
-    skip_surface "lineark not installed — Linear-side cross-layer checks skipped"
+  if [ "$linear_cli_avail" -eq 0 ]; then
+    skip_surface "linear CLI not installed — Linear-side cross-layer checks skipped"
   fi
   if [ "$memory_avail" -eq 0 ]; then
     skip_surface "memory dir not resolved — memory-side cross-layer checks skipped"
@@ -565,7 +565,7 @@ score_cross_layer_handoffs() {
   # sub-checks silently bypass and Pillar 1 scores false-clean. Single notice
   # for both 1.1 and 1.2.
   local need_jq_warned=0
-  if [ "$lineark_avail" -eq 1 ] && ! command -v jq >/dev/null 2>&1; then
+  if [ "$linear_cli_avail" -eq 1 ] && ! command -v jq >/dev/null 2>&1; then
     skip_surface "jq not installed — Linear-side cross-layer checks skipped"
     need_jq_warned=1
   fi
@@ -576,28 +576,31 @@ score_cross_layer_handoffs() {
 
   # Active-project list — Linear projects with >=1 OPEN issue, computed once and
   # shared by sub-checks 1.1 (memory) + 1.2 (vault). A project with zero open
-  # issues (all Done/Canceled — lineark hides those by default) is closed-out and
-  # must NOT demand a memory/vault handshake (<TEAM>-353): self-audit used to flag
-  # EVERY `lineark projects list` entry, so closed Agentic-OS sub-projects (Launch
-  # Gate, Pre-Ship Review Fixes, …) kept deducting forever. If a per-project
-  # issues query errors we KEEP the project (conservative — a transient lineark
-  # error must not hide a real handshake gap). Codex B-2: pin `--format json`.
+  # issues (all Done/Canceled — excluded here by the explicit `-s` open-state
+  # filters, since the linear CLI's issue query returns ALL states by default) is
+  # closed-out and must NOT demand a memory/vault handshake (<TEAM>-353):
+  # self-audit used to flag EVERY `linear project list` entry, so closed
+  # Agentic-OS sub-projects (Launch Gate, Pre-Ship Review Fixes, …) kept
+  # deducting forever. If a per-project issues query errors we KEEP the project
+  # (conservative — a transient linear CLI error must not hide a real handshake
+  # gap). Codex B-2: pin `--json`. schpet/linear-cli wraps list payloads in an
+  # object — unwrap `.nodes`.
   local active_projects=()
-  if [ "$lineark_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
+  if [ "$linear_cli_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
     local _pj _pid _pname _ij _oc
-    _pj="$(lineark projects list --format json 2>/dev/null || true)"
+    _pj="$(linear project list --json 2>/dev/null || true)"
     if [ -n "$_pj" ]; then
       while IFS="$(printf '\t')" read -r _pid _pname; do
         [ -n "$_pname" ] || continue
         if [ -n "$_pid" ]; then
-          _ij="$(lineark issues list --project "$_pid" --format json 2>/dev/null || true)"
+          _ij="$(linear issue query --all-teams --project "$_pid" -s triage -s backlog -s unstarted -s started --limit 250 --json 2>/dev/null || true)"
           if [ -n "$_ij" ]; then
-            _oc="$(printf '%s' "$_ij" | jq 'length' 2>/dev/null || printf -- '-1')"
+            _oc="$(printf '%s' "$_ij" | jq '.nodes | length' 2>/dev/null || printf -- '-1')"
             [ "$_oc" = "0" ] && continue
           fi
         fi
         active_projects+=("$_pname")
-      done <<< "$(printf '%s' "$_pj" | jq -r '.[] | [.id, .name] | @tsv' 2>/dev/null || true)"
+      done <<< "$(printf '%s' "$_pj" | jq -r '.nodes[]? | [.id, .name] | @tsv' 2>/dev/null || true)"
     fi
   fi
 
@@ -616,9 +619,10 @@ score_cross_layer_handoffs() {
   fi
 
   # Sub-check 1.1: For each ACTIVE Linear project (>=1 open issue), a matching
-  # project-type memory note (frontmatter type: project — <TEAM>-353). lineark slug
-  # != memory filename, so match the project NAME in note bodies, not filenames.
-  if [ "$lineark_avail" -eq 1 ] && [ "$memory_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
+  # project-type memory note (frontmatter type: project — <TEAM>-353). The linear
+  # CLI's project slug != memory filename, so match the project NAME in note
+  # bodies, not filenames.
+  if [ "$linear_cli_avail" -eq 1 ] && [ "$memory_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
     ran=1
     if [ "${#active_projects[@]}" -gt 0 ]; then
       local pname
@@ -642,7 +646,7 @@ score_cross_layer_handoffs() {
   # Sub-check 1.2: For each ACTIVE Linear project (>=1 open issue), a matching
   # vault Handshake. Shares the active_projects list from 1.1 (zero-open-issue
   # projects already filtered out — <TEAM>-353).
-  if [ "$lineark_avail" -eq 1 ] && [ "$vault_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
+  if [ "$linear_cli_avail" -eq 1 ] && [ "$vault_avail" -eq 1 ] && command -v jq >/dev/null 2>&1; then
     ran=1
     if [ "${#active_projects[@]}" -gt 0 ]; then
       local pname
@@ -701,7 +705,7 @@ score_cross_layer_handoffs() {
   # Finalize note. A pillar that ran zero sub-checks (no reachable cross-layer
   # surface) is UNSCORED — not a free 20.
   if [ "$ran" -eq 0 ]; then
-    mark_unscored "$key" "no cross-layer surface reachable (lineark/memory/vault)"
+    mark_unscored "$key" "no cross-layer surface reachable (linear/memory/vault)"
     return
   fi
   local s; s="$(pillar_score "$key")"
@@ -1495,7 +1499,7 @@ run_state_currentness() {
        ;;
     *) SC_STATUS="skipped"
        # The checker names its skip on stderr in BOTH modes precisely so this
-       # stays a NAMED skip ("lineark not found") and not a bare exit 2.
+       # stays a NAMED skip (e.g. "linear CLI not found") and not a bare exit 2.
        SC_REASON="$(head -n 1 "$_errf" 2>/dev/null | sed 's/^SKIP //')"
        [ -n "$SC_REASON" ] || SC_REASON="checker returned an indeterminate result (exit $_rc)"
        ;;

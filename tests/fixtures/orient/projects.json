@@ -1,4 +1,6 @@
-[
-  {"id": "p-alpha", "name": "Alpha Arc", "slug_id": "alpha-1", "lead": "Sample Assignee"},
-  {"id": "p-beta", "name": "Beta Arc", "slug_id": "beta-2", "lead": null}
-]
+{
+  "nodes": [
+    {"id": "p-alpha", "name": "Alpha Arc", "slugId": "alpha-1", "status": {"name": "In Progress", "type": "started"}, "lead": {"name": "Sample Assignee", "displayName": "Sample Assignee"}},
+    {"id": "p-beta", "name": "Beta Arc", "slug_id": "beta-2", "status": {"name": "Backlog", "type": "backlog"}, "lead": null}
+  ]
+}

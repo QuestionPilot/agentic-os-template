@@ -53,7 +53,7 @@ for _ss_render in claude codex agents hermes source; do
   done
 done
 
-for _ss_field in harness tool_calls fixed_reads lineark_calls wall_time; do
+for _ss_field in harness tool_calls fixed_reads tracker_calls wall_time; do
   assert_eq "spine-size: baseline live_mode1_sample records $_ss_field" "yes" \
     "$([ -n "$(ss_json ".live_mode1_sample.$_ss_field")" ] && echo yes || echo no)"
 done

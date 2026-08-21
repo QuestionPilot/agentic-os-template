@@ -13,7 +13,7 @@ the script encodes.
   acceptance suite's `tests/self-audit.test.sh` (positive + negative case per
   pillar).
 - Graceful-degradation notes are emitted in the "Skipped surfaces" section
-  when any of `lineark`, `OBSIDIAN_VAULT_PATH`, or `$CLAUDE_CONFIG_DIR/projects`
+  when any of the `linear` CLI, `OBSIDIAN_VAULT_PATH`, or `$CLAUDE_CONFIG_DIR/projects`
   is absent — the script never hard-fails on a missing operator surface.
 - The capability never auto-remediates. The harness realizations'
   `allowed-tools` deliberately exclude `Write`/`Edit` so the model can't

@@ -7,22 +7,27 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # tests/check-linear-hygiene.test.sh.
 #
 # Unit acceptance for scripts/check-linear-hygiene.ps1: clean→0, gappy→1 with
-# the exact ordered gap list, --list machine mode (incl. the `unchecked`
-# token — no silent truncation in machine mode), the --max-reads cap at 0 and
-# at a partial boundary, the standard's deliberately-projectless /
-# deliberately-unassigned escapes, the line-anchored AC-heading match, read
+# the exact ordered gap list, the deprecated $env:LINEARK_BIN fallback and
+# the LINEAR_CLI_BIN-wins precedence, the realistic {nodes:[...]} payload
+# shape plus the bare-array / flat-string fixture tolerance, priorityLabel
+# preference with numeric 0 → "No priority", --list machine mode (incl. the
+# `unchecked` token — no silent truncation in machine mode), the --max-reads
+# cap at 0 and at a partial boundary, the standard's deliberately-projectless
+# / deliberately-unassigned escapes, the line-anchored AC-heading match, read
 # failure and non-object reads → unchecked-not-flagged, null / identifier-less
 # list entries (StrictMode-safe, NOTEd; all-malformed → skip 2), empty
-# workspace→0, and the fail-SOFT skip contract (exit 2) for no-lineark /
-# failed-list / non-array / bad-arg — including the native -MaxReads -1 form,
+# workspace→0, and the fail-SOFT skip contract (exit 2) for no-linear-CLI /
+# failed-query / non-array / bad-arg — including the native -MaxReads -1 form,
 # which bypasses the $Rest regex and must still exit 2.
 #
 # (The bash twin's "no jq" skip case has no PS analogue — the .ps1 parses via
 # ConvertFrom-Json, no jq dependency — so it is not mirrored here; the
 # equivalent fail-soft path is the invalid-JSON payload.)
 #
-# Hermetic: $env:LINEARK_BIN is pointed at a stub .ps1 that serves fixture
-# JSON from its own directory — no live Linear access, no token.
+# Hermetic: $env:LINEAR_CLI_BIN is pointed at a stub .ps1 that serves fixture
+# JSON from its own directory — no live Linear access, no token. The stub
+# answers the schpet/linear-cli surface: `issue query ... --json` (list) and
+# `issue view <IDENT> --json` (per-issue read).
 #
 # Dot-sourced by tests/run.ps1; uses Assert-* from tests/lib.ps1.
 
@@ -37,17 +42,19 @@ function New-ClhTmp {
     return $p
 }
 
-# New-ClhStub <dir> — a stub lineark .ps1 serving <dir>/list.json for
-# `issues list` and <dir>/read-<ID>.json for `issues read`.
+# New-ClhStub <dir> — a stub linear-CLI .ps1 serving <dir>/list.json for
+# `issue query` and <dir>/read-<ID>.json for `issue view <ID>`. Matches on
+# the leading subcommand words only; flags (--all-teams, -s ..., --limit,
+# --json) are ignored. Anything else exits 1.
 function New-ClhStub([string]$d) {
     $stub = Join-Path $d 'stub.ps1'
     @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList = @())
 $d = Split-Path -Parent $MyInvocation.MyCommand.Path
-if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'list') {
+if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issue' -and $ArgList[1] -eq 'query') {
     Get-Content -Raw (Join-Path $d 'list.json'); exit 0
 }
-if ($ArgList.Count -ge 3 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'read') {
+if ($ArgList.Count -ge 3 -and $ArgList[0] -eq 'issue' -and $ArgList[1] -eq 'view') {
     $f = Join-Path $d ("read-{0}.json" -f $ArgList[2])
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
@@ -57,23 +64,34 @@ exit 1
     return $stub
 }
 
-function Invoke-Clh([string]$stub, [string[]]$flags = @()) {
-    $env:LINEARK_BIN = $stub
+# Invoke-Clh <stub> [<flags>] [-EnvVar <name>] — run the check with the stub
+# injected via the named binary-seam env var (LINEAR_CLI_BIN by default;
+# LINEARK_BIN pins the deprecated fallback).
+function Invoke-Clh([string]$stub, [string[]]$flags = @(), [string]$EnvVar = 'LINEAR_CLI_BIN') {
+    Set-Item -Path "Env:$EnvVar" -Value $stub
     try {
         $out = (& pwsh -NoProfile -File $CLH @flags 2>$null | Out-String).Trim()
         return @{ Out = $out; Rc = $LASTEXITCODE }
     } finally {
-        Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue
+        Remove-Item "Env:$EnvVar" -ErrorAction SilentlyContinue
     }
 }
 
-# --- mixed: ABC-1 fully conforming, ABC-9 gappy on all five checks -----------
+# --- mixed: ABC-1 fully conforming, ABC-9 gappy on all five checks. Realistic
+# linear-CLI payload: {nodes:[...]} wrapper, state/assignee objects, priority
+# as NUMBER + priorityLabel string, labels as {nodes:[{name}]}. ABC-9 carries
+# priority 0 with NO priorityLabel to pin the numeric 0 → "No priority"
+# fallback. ------------------------------------------------------------------
 $D1 = New-ClhTmp; $stub1 = New-ClhStub $D1
 @'
-[
-  {"identifier": "ABC-1", "priority": "High", "labels": "Feature", "assignee": "Owner", "state": "Backlog"},
-  {"identifier": "ABC-9", "priority": "No priority", "labels": "", "assignee": "", "state": "Backlog"}
-]
+{"nodes": [
+  {"identifier": "ABC-1", "priority": 2, "priorityLabel": "High",
+   "labels": {"nodes": [{"name": "Feature"}]},
+   "assignee": {"name": "Owner"}, "state": {"name": "Backlog"}},
+  {"identifier": "ABC-9", "priority": 0,
+   "labels": {"nodes": []},
+   "assignee": null, "state": {"name": "Backlog"}}
+]}
 '@ | Set-Content -LiteralPath (Join-Path $D1 'list.json')
 @'
 {"identifier": "ABC-1", "project": {"id": "p1", "name": "Some Project"},
@@ -88,6 +106,22 @@ Assert-Eq          'check-linear-hygiene: mixed exits 1'                 1 $r.Rc
 Assert-Contains    'check-linear-hygiene: gappy issue WARNs all five gaps' $r.Out "WARN ABC-9: $AllGaps"
 Assert-NotContains 'check-linear-hygiene: conforming issue not flagged'  $r.Out 'WARN ABC-1'
 Assert-Contains    'check-linear-hygiene: summary counts 1 of 2'         $r.Out 'SUMMARY 1 of 2'
+
+# --- binary seam: deprecated $env:LINEARK_BIN fallback still honored (one
+# --- transition release: lineark → schpet/linear-cli) ---------------
+$r = Invoke-Clh $stub1 @() -EnvVar 'LINEARK_BIN'
+Assert-Eq       'check-linear-hygiene: deprecated LINEARK_BIN fallback exits 1' 1 $r.Rc
+Assert-Contains 'check-linear-hygiene: deprecated LINEARK_BIN fallback flags gaps' $r.Out "WARN ABC-9: $AllGaps"
+
+# --- binary seam precedence: LINEAR_CLI_BIN wins over LINEARK_BIN ------------
+$env:LINEARK_BIN = (Join-Path $D1 'does-not-exist.ps1')
+try {
+    $r = Invoke-Clh $stub1
+} finally {
+    Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue
+}
+Assert-Eq       'check-linear-hygiene: LINEAR_CLI_BIN wins over LINEARK_BIN' 1 $r.Rc
+Assert-Contains 'check-linear-hygiene: precedence run still flags gaps' $r.Out "WARN ABC-9: $AllGaps"
 
 $r = Invoke-Clh $stub1 @('--list')
 Assert-Eq 'check-linear-hygiene: --list exits 1'    1 $r.Rc
@@ -105,7 +139,9 @@ Assert-Contains 'check-linear-hygiene: --list emits clean-but-unchecked issue' $
 Assert-Contains 'check-linear-hygiene: --list appends unchecked to gappy issue tokens' $r.Out ("ABC-9`tno-priority,no-labels,no-assignee,unchecked")
 Remove-Item -Recurse -Force $D1
 
-# --- clean workspace: PASS, exit 0, empty --list ------------------------------
+# --- clean workspace: PASS, exit 0, empty --list. Deliberately keeps the OLD
+# --- bare-array + flat-string fixture shape — the script tolerates both, and
+# --- this case pins that tolerance -------------------------------------------
 $D2 = New-ClhTmp; $stub2 = New-ClhStub $D2
 @'
 [{"identifier": "ABC-1", "priority": "High", "labels": "Feature", "assignee": "Owner", "state": "Backlog"}]
@@ -115,7 +151,7 @@ $D2 = New-ClhTmp; $stub2 = New-ClhStub $D2
  "description": "## Outcome\n\nx\n\n## Acceptance criteria\n\n- [ ] y\n"}
 '@ | Set-Content -LiteralPath (Join-Path $D2 'read-ABC-1.json')
 $r = Invoke-Clh $stub2
-Assert-Eq       'check-linear-hygiene: clean exits 0'         0 $r.Rc
+Assert-Eq       'check-linear-hygiene: clean exits 0 (bare-array flat fixture tolerated)' 0 $r.Rc
 Assert-Contains 'check-linear-hygiene: clean prints PASS'     $r.Out 'PASS all 1 open issue'
 $r = Invoke-Clh $stub2 @('--list')
 Assert-Eq       'check-linear-hygiene: clean --list exits 0'  0 $r.Rc
@@ -125,7 +161,8 @@ Remove-Item -Recurse -Force $D2
 # --- standard's escapes: deliberately projectless + unassigned conform --------
 $D6 = New-ClhTmp; $stub6 = New-ClhStub $D6
 @'
-[{"identifier": "ABC-3", "priority": "Medium", "labels": "Improvement", "assignee": "", "state": "Backlog"}]
+{"nodes": [{"identifier": "ABC-3", "priority": 3, "priorityLabel": "Medium",
+ "labels": {"nodes": [{"name": "Improvement"}]}, "assignee": null, "state": {"name": "Backlog"}}]}
 '@ | Set-Content -LiteralPath (Join-Path $D6 'list.json')
 @'
 {"identifier": "ABC-3", "project": null,
@@ -140,7 +177,8 @@ Remove-Item -Recurse -Force $D6
 # --- AC heading is line-anchored H2: '###' or prose mention does NOT count ----
 $D7 = New-ClhTmp; $stub7 = New-ClhStub $D7
 @'
-[{"identifier": "ABC-7", "priority": "High", "labels": "Bug", "assignee": "Owner", "state": "Backlog"}]
+{"nodes": [{"identifier": "ABC-7", "priority": 2, "priorityLabel": "High",
+ "labels": {"nodes": [{"name": "Bug"}]}, "assignee": {"name": "Owner"}, "state": {"name": "Backlog"}}]}
 '@ | Set-Content -LiteralPath (Join-Path $D7 'list.json')
 @'
 {"identifier": "ABC-7", "project": {"id": "p1", "name": "Some Project"},
@@ -154,10 +192,12 @@ Remove-Item -Recurse -Force $D7
 # --- partial read cap (--max-reads 1): first read, second NAMED unchecked -----
 $D8 = New-ClhTmp; $stub8 = New-ClhStub $D8
 @'
-[
-  {"identifier": "ABC-1", "priority": "High", "labels": "Feature", "assignee": "Owner", "state": "Backlog"},
-  {"identifier": "ABC-5", "priority": "Low", "labels": "Improvement", "assignee": "Owner", "state": "Backlog"}
-]
+{"nodes": [
+  {"identifier": "ABC-1", "priority": 2, "priorityLabel": "High",
+   "labels": {"nodes": [{"name": "Feature"}]}, "assignee": {"name": "Owner"}, "state": {"name": "Backlog"}},
+  {"identifier": "ABC-5", "priority": 4, "priorityLabel": "Low",
+   "labels": {"nodes": [{"name": "Improvement"}]}, "assignee": {"name": "Owner"}, "state": {"name": "Backlog"}}
+]}
 '@ | Set-Content -LiteralPath (Join-Path $D8 'list.json')
 @'
 {"identifier": "ABC-1", "project": {"id": "p1", "name": "Some Project"},
@@ -173,7 +213,8 @@ Remove-Item -Recurse -Force $D8
 # --- read failure: list-level clean, read fixture missing → unchecked, exit 0 -
 $D3 = New-ClhTmp; $stub3 = New-ClhStub $D3
 @'
-[{"identifier": "ABC-2", "priority": "Medium", "labels": "Improvement", "assignee": "Owner", "state": "Backlog"}]
+{"nodes": [{"identifier": "ABC-2", "priority": 3, "priorityLabel": "Medium",
+ "labels": {"nodes": [{"name": "Improvement"}]}, "assignee": {"name": "Owner"}, "state": {"name": "Backlog"}}]}
 '@ | Set-Content -LiteralPath (Join-Path $D3 'list.json')
 $r = Invoke-Clh $stub3
 Assert-Eq       'check-linear-hygiene: read-failure exits 0 (unknown is not a gap)' 0 $r.Rc
@@ -191,7 +232,8 @@ Remove-Item -Recurse -Force $D3
 # --- null / identifier-less list entries: StrictMode-safe, NOTEd; all-malformed → 2
 $D9 = New-ClhTmp; $stub9 = New-ClhStub $D9
 @'
-[null, {"identifier": "ABC-1", "priority": "High", "labels": ["Feature", null], "assignee": "Owner", "state": "Backlog"}]
+{"nodes": [null, {"identifier": "ABC-1", "priority": 2, "priorityLabel": "High",
+ "labels": {"nodes": [{"name": "Feature"}, null]}, "assignee": {"name": "Owner"}, "state": {"name": "Backlog"}}]}
 '@ | Set-Content -LiteralPath (Join-Path $D9 'list.json')
 @'
 {"identifier": "ABC-1", "project": {"id": "p1", "name": "Some Project"},
@@ -201,7 +243,7 @@ $r = Invoke-Clh $stub9
 Assert-Eq       'check-linear-hygiene: null list entry exits 0 (no StrictMode crash)' 0 $r.Rc
 Assert-Contains 'check-linear-hygiene: null list entry NOTEd as malformed' $r.Out 'NOTE 1 list entr'
 @'
-[{}, null]
+{"nodes": [{}, null]}
 '@ | Set-Content -LiteralPath (Join-Path $D9 'list.json')
 $r = Invoke-Clh $stub9
 Assert-Eq 'check-linear-hygiene: all-malformed payload exits 2 (skip, not false PASS)' 2 $r.Rc
@@ -209,7 +251,7 @@ Remove-Item -Recurse -Force $D9
 
 # --- empty workspace ----------------------------------------------------------
 $D4 = New-ClhTmp; $stub4 = New-ClhStub $D4
-'[]' | Set-Content -LiteralPath (Join-Path $D4 'list.json')
+'{"nodes": []}' | Set-Content -LiteralPath (Join-Path $D4 'list.json')
 $r = Invoke-Clh $stub4
 Assert-Eq       'check-linear-hygiene: empty workspace exits 0' 0 $r.Rc
 Assert-Contains 'check-linear-hygiene: empty workspace prints PASS' $r.Out 'PASS no open issues'
@@ -218,15 +260,15 @@ Remove-Item -Recurse -Force $D4
 # --- skip contract: fail-SOFT exit 2 -------------------------------------------
 $D5 = New-ClhTmp
 $r = Invoke-Clh (Join-Path $D5 'does-not-exist.ps1')
-Assert-Eq 'check-linear-hygiene: missing lineark exits 2 (skip)' 2 $r.Rc
+Assert-Eq 'check-linear-hygiene: missing linear CLI exits 2 (skip)' 2 $r.Rc
 $broken = Join-Path $D5 'broken.ps1'
 'exit 1' | Set-Content -LiteralPath $broken
 $r = Invoke-Clh $broken
-Assert-Eq 'check-linear-hygiene: failed list call exits 2 (skip)' 2 $r.Rc
+Assert-Eq 'check-linear-hygiene: failed query call exits 2 (skip)' 2 $r.Rc
 $notjson = Join-Path $D5 'notjson.ps1'
 "Write-Output 'plain text, not json'`nexit 0" | Set-Content -LiteralPath $notjson
 $r = Invoke-Clh $notjson
-Assert-Eq 'check-linear-hygiene: non-array payload exits 2 (skip)' 2 $r.Rc
+Assert-Eq 'check-linear-hygiene: no-rows-array payload exits 2 (skip)' 2 $r.Rc
 & pwsh -NoProfile -File $CLH --bogus *> $null
 Assert-Eq 'check-linear-hygiene: unknown argument exits 2' 2 $LASTEXITCODE
 & pwsh -NoProfile -File $CLH --max-reads *> $null

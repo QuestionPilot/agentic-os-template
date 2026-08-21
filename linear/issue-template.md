@@ -19,17 +19,17 @@ good: metadata left "for later" is how bare issues are born.
 | Parent / relations | An issue spawned by other tracked work links back: parent for decomposition, `blocks` / `blocked-by` / `related` for sequencing. Mirror hard blockers as real relations, not prose. |
 | Estimate / cycle | Optional — set them when the team plans with them. |
 
-One-shot create with full metadata (lineark CLI shown; MCP equivalent per
+One-shot create with full metadata (`linear` CLI shown; MCP equivalent per
 [`linear-setup.md`](linear-setup.md) §4.2):
 
 ```bash
-lineark issues create "Title" \
+linear issue create -t "Title" \
   --team <TEAM_KEY> --project <PROJECT_NAME_OR_UUID> \
-  --priority <urgent|high|medium|low> --labels "<Type>,<ops-label>" \
+  --priority <1|2|3|4> --label "<Type>" --label "<ops-label>" \
   --assignee <owner> [--parent TEAM-NN] \
-  --description "$(cat issue-body.md)" --format json
+  -d "$(cat issue-body.md)"
 # then, for sequencing constraints:
-lineark relations create TEAM-XX --blocked-by TEAM-YY --format json
+linear issue relation add TEAM-XX blocked-by TEAM-YY
 ```
 
 ## Description body

@@ -1,0 +1,3 @@
+Logged in to Sample Workspace
+  Display name: Sample Assignee
+  Email: sample@example.com

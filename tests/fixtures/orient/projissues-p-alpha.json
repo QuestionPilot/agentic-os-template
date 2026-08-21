@@ -1,4 +1,6 @@
-[
-  {"identifier": "ABC-1", "title": "Alpha one", "priority": "High", "state": "In Progress", "assignee": "Sample Assignee", "team": "ABC", "url": "https://tracker.example/ABC-1", "completedAt": null},
-  {"identifier": "ABC-2", "title": "Alpha two", "priority": "Medium", "state": "Backlog", "assignee": "", "team": "ABC", "url": "https://tracker.example/ABC-2", "completedAt": null}
-]
+{
+  "nodes": [
+    {"identifier": "ABC-1", "title": "Alpha one", "priority": 2, "priorityLabel": "High", "state": {"name": "In Progress", "type": "started"}, "assignee": {"name": "Sample Assignee", "displayName": "Sample Assignee"}, "team": {"key": "ABC"}, "url": "https://tracker.example/ABC-1", "completedAt": null},
+    {"identifier": "ABC-2", "title": "Alpha two", "priority": 3, "priorityLabel": "Medium", "state": {"name": "Backlog", "type": "backlog"}, "assignee": null, "team": {"key": "ABC"}, "url": "https://tracker.example/ABC-2", "completedAt": null}
+  ]
+}

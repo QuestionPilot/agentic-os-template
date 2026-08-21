@@ -36,20 +36,20 @@ script's shape:
   Progress it is invisible to the mine cut too. It surfaces only in the global
   open sweep. `orient.sh` runs that sweep and reports the set difference as
   `projectless_open_issues`.
-- **`.state` shape varies by call (lineark).** `projects list` has no `state`
-  field; `issues list` returns `.state` as a bare **string**; only `issues read`
-  returns a `{id, name}` **object**. A `.state.name` filter over a list throws
-  `Cannot index string with string "name"`. `orient.sh` normalizes both shapes in
-  one place so no caller has to remember this. See
-  `linear/linear-setup.md` §4.3.
+- **Payload shapes have two standing traps (`linear` CLI).** Lists arrive as
+  OBJECTS (`{nodes:[…]}` — unwrap `.nodes` before any array filter), and
+  `issue query` returns ALL states by default, so every open cut passes
+  `-s triage -s backlog -s unstarted -s started` explicitly. `.state` and
+  `.assignee` are objects (`.name`); `orient.sh` normalizes every shape in one
+  place so no caller has to remember this. See `linear/linear-setup.md` §4.3.
 - **Truncation is reported, not hidden.** A projectless issue on page two is
   exactly the one the sweep exists to catch, so a cut that disagrees with the
   project union surfaces as the `open-issue-count-mismatch` anomaly rather than a
   silently short list.
 
-## Tracker surfaces other than `lineark`
+## Tracker surfaces other than the `linear` CLI
 
-`orient.sh` drives the `lineark` CLI only. The Linear MCP remains a first-class
+`orient.sh` drives the `linear` CLI only. The Linear MCP remains a first-class
 operator surface for interactive work (`linear/linear-setup.md` §4 has the
 per-surface command shapes); it is simply not the kickoff collection path, because
 one deterministic collector beats two narrated ones.
@@ -64,8 +64,8 @@ client-side when the surface does not hide them). Filter projects by state TYPE
 **MCP edge case.** If the Linear MCP reports ✓ Connected but `list_projects`
 returns an empty array, treat it as the silent-empty-MCP-tools failure pattern (a
 stale connection returns empty results instead of erroring) — restart the harness's
-MCP connection, or fall back to `lineark`, before accepting "no active work" as the
-answer.
+MCP connection, or fall back to the `linear` CLI, before accepting "no active work"
+as the answer.
 
 **Neither surface installed.** The framework degrades: orient continues with memory
 + vault only and a one-line warning names the gap. Document the install in the next

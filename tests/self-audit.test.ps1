@@ -1217,7 +1217,7 @@ if ($jqAvail) {
     $fixture = New-SaTmp
     New-SaFixtureRepo $fixture
     # --isolated nullifies ambient CLAUDE_CONFIG_DIR + OBSIDIAN_VAULT_PATH and skips
-    # lineark detection → the cross-layer + memory pillars can measure nothing.
+    # linear-CLI detection → the cross-layer + memory pillars can measure nothing.
     $out = Invoke-SelfAudit @('--repo-root', $fixture, '--isolated', '--json')
     $obj = $out | ConvertFrom-Json
     $p1  = Get-SaPillarScore $out 'cross-layer-handoffs'
