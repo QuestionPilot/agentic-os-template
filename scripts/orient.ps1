@@ -205,7 +205,11 @@ while ($i -lt $Rest.Count) {
 }
 
 if ($LinearCli -eq '') {
-    $LinearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN } else { 'linear' }
+    # $env:LINEARK_BIN is the deprecated env seam (one transition release) —
+    # same precedence the hygiene and currentness twins use.
+    $LinearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN }
+                 elseif ($env:LINEARK_BIN) { $env:LINEARK_BIN }
+                 else { 'linear' }
 }
 
 $degraded = [System.Collections.Generic.List[string]]::new()

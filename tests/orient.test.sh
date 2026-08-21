@@ -221,6 +221,16 @@ o_alias="$(bash "$ORIENT" --lineark "$O1/stub" 2>/dev/null)"
 assert_eq "orient: the deprecated --lineark alias still reaches the same seam" \
   "ok" "$(printf '%s' "$o_alias" | jq -r '.surfaces.linear.status')"
 
+# The deprecated ENV seam rides the same transition release: LINEARK_BIN is
+# honored when LINEAR_CLI_BIN is unset (same precedence as the hygiene and
+# currentness twins), and LINEAR_CLI_BIN wins when both are set.
+o_envdep="$(env -u LINEAR_CLI_BIN LINEARK_BIN="$O1/stub" bash "$ORIENT" 2>/dev/null)"
+assert_eq "orient: the deprecated LINEARK_BIN env seam still reaches the same seam" \
+  "ok" "$(printf '%s' "$o_envdep" | jq -r '.surfaces.linear.status')"
+o_envboth="$(LINEAR_CLI_BIN="$O1/stub" LINEARK_BIN="$O1/definitely-absent" bash "$ORIENT" 2>/dev/null)"
+assert_eq "orient: LINEAR_CLI_BIN wins over the deprecated LINEARK_BIN" \
+  "ok" "$(printf '%s' "$o_envboth" | jq -r '.surfaces.linear.status')"
+
 # --- output modes -------------------------------------------------------------
 assert_eq "orient: default output is ONE compact JSON line" \
   "1" "$(printf '%s\n' "$o" | LC_ALL=C grep -c .)"

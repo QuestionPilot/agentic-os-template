@@ -66,6 +66,14 @@ if [ -n "$_lcu_live_version" ] && [ "v$_lcu_live_version" = "$_lcu_pin" ]; then
     assert_contains "pinned binary still exposes issue subcommand: $_lcu_sub" \
       "$_lcu_ihelp" "$_lcu_sub"
   done
+  # orient's mine cut parses "Display name:" out of `auth whoami` TEXT output —
+  # an upstream rewording would silently degrade that cut, so pin the field here
+  # (auth state permitting; an unauthenticated box just prints an error, which
+  # this assertion would catch as drift — acceptable: the fixture's live layer
+  # already assumes a configured operator machine).
+  _lcu_whoami="$(linear auth whoami 2>&1 | LC_ALL=C sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')"
+  assert_contains "pinned binary whoami still prints the Display name field" \
+    "$_lcu_whoami" "Display name:"
 else
   # A named skip, not a silent pass: absence and version-mismatch are both
   # legitimate local states (CI has no binary at all), but they must be

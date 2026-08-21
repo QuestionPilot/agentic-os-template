@@ -133,7 +133,9 @@
 #   2  the script could not run: bad argument, or jq unavailable
 set -uo pipefail
 
-LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-linear}"
+# LINEARK_BIN is the deprecated env seam (one transition release) — same
+# precedence the hygiene and currentness twins use.
+LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
 MEMORY_DIR=""
 PRETTY=0
 # One page's worth. Not a flag: a kickoff sweep that needs paging is a

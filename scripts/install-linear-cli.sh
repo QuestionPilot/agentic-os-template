@@ -13,11 +13,13 @@
 #   1. PIN a release tag (never "whatever latest serves right now").
 #   2. Download the release ARCHIVE to a throwaway dir — never into a shell.
 #   3. VERIFY the archive's sha256 against an operator-reviewed pin file BEFORE
-#      extraction, hash the EXTRACTED binary, move it into place, and RE-VERIFY
-#      the moved binary against that extraction-time hash before it is ever
-#      executed.
-#   4. SMOKE the installed binary and require it to report EXACTLY the pinned
-#      version.
+#      extraction, hash the EXTRACTED binary, STAGE it under a temporary name
+#      inside the install dir, and RE-VERIFY the staged file against that
+#      extraction-time hash before it is ever executed.
+#   4. SMOKE the staged binary and require it to report EXACTLY the pinned
+#      version. Only after both checks pass is the staged file renamed onto the
+#      final path — a same-filesystem atomic rename — so any failure deletes
+#      only the staged file and a previous installation is never disturbed.
 #
 # Upstream publishes a sha256.sum manifest per release; the framework still
 # maintains its OWN reviewed pin file, scripts/linear-cli-checksums.sha256,
@@ -67,7 +69,8 @@
 #   0 — installed and the version smoke matched the pinned tag EXACTLY
 #   1 — install refused or failed (unvetted tag, conflicting pin entries,
 #       checksum mismatch, download/extract failure, smoke mismatch). NOTHING
-#       executable is left behind.
+#       executable is left behind, and a previous installation, if any, is
+#       preserved untouched.
 #   2 — usage or configuration error (unknown argument, malformed
 #       LINEAR_CLI_VERSION, disallowed LINEAR_CLI_BASE_URL scheme)
 #   3 — unsupported platform (upstream ships no binary for it)
@@ -285,8 +288,8 @@ printf 'linear-cli: archive sha256 verified (%s)\n' "$actual"
 # --- 5. Extract inside the throwaway dir -------------------------------------
 # The pin covers the ARCHIVE; the executed object is the binary INSIDE it. Hash
 # the extracted binary here, at the moment it leaves the verified archive — that
-# hash is what the post-move re-verify in §7 compares against, so the
-# verify -> move -> execute window stays closed even though the pin file never
+# hash is what the post-stage re-verify in §7 compares against, so the
+# stage -> verify -> rename flow stays closed even though the pin file never
 # names the inner file.
 extract_dir="$work/extract"
 mkdir -p "$extract_dir"
@@ -322,32 +325,37 @@ if ! extracted_sha="$(_lcli_sha256 "$extracted")"; then
   exit 1
 fi
 
-# --- 6. Install --------------------------------------------------------------
+# --- 6. Stage into the install dir -------------------------------------------
+# The verified binary is staged under a temporary sibling name INSIDE
+# $INSTALL_DIR — same filesystem as $dest, so the final promotion in §8 is an
+# atomic rename. $dest itself (a previous working installation, if any) is not
+# touched until every check below has passed; any failure deletes ONLY the
+# staged file.
 dest="$INSTALL_DIR/$binname"
+staged="$INSTALL_DIR/.staged-$$-$binname"
 mkdir -p "$INSTALL_DIR"
 chmod +x "$extracted"
-mv "$extracted" "$dest"
-printf 'linear-cli: installed %s\n' "$dest"
+mv "$extracted" "$staged"
 
 # --- 7. RE-VERIFY IN PLACE, before the binary is ever executed ---------------
 # The hash in §5 was computed on the file in the temp dir. Between that read and
-# the `--version` call in §8 the bytes at $dest are a DIFFERENT object as far as
-# the security argument goes: `mv` across filesystems is a copy that re-reads
-# the source, the destination directory may be writable by someone else, and
-# $dest may already have existed. Re-hashing what is actually about to be
-# executed closes that verify -> move -> execute window.
-if ! dest_actual="$(_lcli_sha256 "$dest")"; then
-  rm -f "$dest"
-  printf 'FAIL no sha256 tool available to re-verify the installed file — removed %s rather than execute an unverified binary.\n' "$dest" >&2
+# the `--version` call in §8 the bytes at $staged are a DIFFERENT object as far
+# as the security argument goes: `mv` across filesystems is a copy that re-reads
+# the source, and the destination directory may be writable by someone else.
+# Re-hashing what is actually about to be executed closes that
+# stage -> verify -> rename window.
+if ! staged_actual="$(_lcli_sha256 "$staged")"; then
+  rm -f "$staged"
+  printf 'FAIL no sha256 tool available to re-verify the staged file — removed it rather than execute an unverified binary. The previous installation, if any, was left untouched.\n' >&2
   exit 1
 fi
 
-if [ "$extracted_sha" != "$dest_actual" ]; then
-  rm -f "$dest"
-  printf 'FAIL post-install checksum mismatch for %s\n' "$dest" >&2
+if [ "$extracted_sha" != "$staged_actual" ]; then
+  rm -f "$staged"
+  printf 'FAIL post-install checksum mismatch for %s\n' "$staged" >&2
   printf '  expected: %s\n' "$extracted_sha" >&2
-  printf '  actual:   %s\n' "$dest_actual" >&2
-  printf 'The installed file does not match what was extracted from the verified archive — it was removed and NOT executed. Treat the install directory as untrusted until you know why.\n' >&2
+  printf '  actual:   %s\n' "$staged_actual" >&2
+  printf 'The staged file does not match what was extracted from the verified archive — the staged file was removed and NOT executed, and the previous installation, if any, was left untouched. Treat the install directory as untrusted until you know why.\n' >&2
   exit 1
 fi
 
@@ -357,8 +365,9 @@ printf 'linear-cli: post-install sha256 re-verified in place\n'
 # The checksum proves the bytes match the pin; this proves the pin describes the
 # release it claims to. EXACT equality, not a substring: `linear 12.5.0` contains
 # "2.5.0", so a substring test would wave through a completely different release.
-# A mismatch means the pin file and the tag disagree, so the binary is removed
-# again rather than left on PATH masquerading as the tag.
+# A mismatch means the pin file and the tag disagree, so the staged file is
+# removed rather than promoted onto PATH masquerading as the tag — the previous
+# installation, if any, stays in place.
 
 # _lcli_version_token <text> — echo the first whitespace-separated token that
 # starts with a digit ("linear 2.5.0" -> "2.5.0"), or empty. The CLI colors its
@@ -382,18 +391,24 @@ _lcli_version_token() {
 }
 
 want="${VERSION#v}"
-version_out="$("$dest" --version 2>&1 || true)"
+version_out="$("$staged" --version 2>&1 || true)"
 printf 'linear-cli: %s\n' "$version_out"
 version_token="$(_lcli_version_token "$version_out")"
 
 if [ "$version_token" != "$want" ]; then
-  rm -f "$dest"
+  rm -f "$staged"
   printf 'FAIL version smoke failed: installed binary does not report the pinned version %s\n' "$want" >&2
   printf '  --version said: %s\n' "$version_out" >&2
   printf '  parsed version: %s (exact match against %s required)\n' "${version_token:-<none>}" "$want" >&2
-  printf 'The binary was removed. The checksum entry for %s likely describes a different release — re-vet per %s.\n' "$key" "$REVET_POINTER" >&2
+  printf 'The staged file was removed and the previous installation, if any, was left untouched. The checksum entry for %s likely describes a different release — re-vet per %s.\n' "$key" "$REVET_POINTER" >&2
   exit 1
 fi
+
+# Both checks passed: promote the staged file onto the final path. Same
+# filesystem, so this rename is atomic — a previous installation is replaced in
+# one step, never left half-written.
+mv -f "$staged" "$dest"
+printf 'linear-cli: installed %s\n' "$dest"
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;

@@ -269,6 +269,12 @@ $LC_INSTALL_LABELS = @(
     'install-linear-cli.test: the smoke failure shows the parsed token',
     'install-linear-cli.test: the smoke failure names the pinned version',
     'install-linear-cli.test: a version-smoke mismatch removes the installed binary',
+    'install-linear-cli.test: a version-smoke mismatch leaves no staged file behind',
+    'install-linear-cli.test: upgrade fixture: the initial install succeeds',
+    'install-linear-cli.test: a failed-smoke upgrade exits 1',
+    'install-linear-cli.test: a failed-smoke upgrade preserves the previous binary',
+    'install-linear-cli.test: the preserved binary still reports its original version',
+    'install-linear-cli.test: a failed-smoke upgrade leaves no staged file behind',
     'install-linear-cli.test: an archive with TWO candidate binaries is REFUSED',
     'install-linear-cli.test: the two-binary refusal says exactly one is expected',
     'install-linear-cli.test: the two-binary refusal reports the count found',
@@ -455,6 +461,46 @@ if ($LC_SKIP_REASON -ne '') {
     } else {
         _Fail 'install-linear-cli.test: a version-smoke mismatch removes the installed binary' `
             @("still present: $(Join-Path $LC_DIR_WRONG $LC_BIN)")
+    }
+    # With staging, the candidate never reaches $dest on a smoke failure: the
+    # STAGED file must be deleted and no file of ANY name may remain (there was
+    # no prior install here, so $dest simply never appears).
+    $lcWrongLeft = @(Get-ChildItem -LiteralPath $LC_DIR_WRONG -File -Force -Recurse -ErrorAction SilentlyContinue).Count
+    if ($lcWrongLeft -eq 0) {
+        _Pass 'install-linear-cli.test: a version-smoke mismatch leaves no staged file behind'
+    } else {
+        _Fail 'install-linear-cli.test: a version-smoke mismatch leaves no staged file behind' `
+            @("files left under ${LC_DIR_WRONG}: $lcWrongLeft")
+    }
+
+    # === D2c. REGRESSION — a failed upgrade preserves the previous
+    # installation. Install a WORKING binary first, then attempt an upgrade
+    # whose version smoke FAILS (the candidate prints the wrong version). The
+    # staged candidate must be deleted while the ORIGINAL binary survives at
+    # $dest and still executes with its original version output — "nothing is
+    # left installed" means the previous state is preserved, not that a working
+    # install is deleted.
+    $LC_DIR_UPG = Join-Path $LC_TMP 'bin-upgrade'
+    $lcUpgOk = Invoke-LcInstall -Version $LC_VER -SumsFile $LC_SUMS_OK -BaseUrl $LC_MIRROR_URL -InstallDir $LC_DIR_UPG
+    Assert-Eq 'install-linear-cli.test: upgrade fixture: the initial install succeeds' 0 $lcUpgOk.Rc
+    $lcUpgFail = Invoke-LcInstall -Version $LC_VER -SumsFile $LC_SUMS_WRONG `
+        -BaseUrl (Get-LcFileUrl $LC_MIRROR_WRONG) -InstallDir $LC_DIR_UPG
+    Assert-Eq 'install-linear-cli.test: a failed-smoke upgrade exits 1' 1 $lcUpgFail.Rc
+    $lcUpgBin = Join-Path $LC_DIR_UPG $LC_BIN
+    if (Test-Path -LiteralPath $lcUpgBin -PathType Leaf) {
+        _Pass 'install-linear-cli.test: a failed-smoke upgrade preserves the previous binary'
+    } else {
+        _Fail 'install-linear-cli.test: a failed-smoke upgrade preserves the previous binary' @("missing: $lcUpgBin")
+    }
+    $lcUpgOut = ''
+    try { $lcUpgOut = (& $lcUpgBin '--version' 2>&1 | Out-String).Trim() } catch { $lcUpgOut = "$_" }
+    Assert-Contains 'install-linear-cli.test: the preserved binary still reports its original version' $lcUpgOut '9.9.9'
+    $lcUpgLeft = @(Get-ChildItem -LiteralPath $LC_DIR_UPG -File -Force -Recurse -ErrorAction SilentlyContinue).Count
+    if ($lcUpgLeft -eq 1) {
+        _Pass 'install-linear-cli.test: a failed-smoke upgrade leaves no staged file behind'
+    } else {
+        _Fail 'install-linear-cli.test: a failed-smoke upgrade leaves no staged file behind' `
+            @("expected exactly 1 file under ${LC_DIR_UPG}, found $lcUpgLeft")
     }
 
     # === D3. NEGATIVE, archive-specific — TWO candidate binaries inside one

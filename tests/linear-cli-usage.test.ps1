@@ -58,6 +58,11 @@ if ($lcuLiveVersion -and ("v$lcuLiveVersion" -eq $lcuPin)) {
     foreach ($sub in @('query', 'view', 'create', 'update', 'comment', 'relation')) {
         Assert-Contains "linear-cli-usage.test: pinned binary still exposes issue subcommand: $sub" $lcuIssueHelp $sub
     }
+    # orient's mine cut parses "Display name:" out of `auth whoami` TEXT output —
+    # an upstream rewording would silently degrade that cut, so pin the field
+    # here (mirrors the .sh twin's rationale).
+    $lcuWhoami = (& linear auth whoami 2>&1 | Out-String) -replace $ansi, ''
+    Assert-Contains 'linear-cli-usage.test: pinned binary whoami still prints the Display name field' $lcuWhoami 'Display name:'
 } else {
     # Named skip, mirroring the .sh twin: absence and version-mismatch are
     # legitimate local states, but visible ones.

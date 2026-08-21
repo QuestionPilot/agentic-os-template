@@ -17,11 +17,14 @@
       1. PIN a release tag (never "whatever latest serves right now").
       2. Download the release ARCHIVE to a throwaway dir — never into a shell.
       3. VERIFY the archive's sha256 against an operator-reviewed pin file
-         BEFORE extraction, hash the EXTRACTED binary, move it into place, and
-         RE-VERIFY the moved binary against that extraction-time hash before it
-         is ever executed.
-      4. SMOKE the installed binary and require it to report EXACTLY the
-         pinned version.
+         BEFORE extraction, hash the EXTRACTED binary, STAGE it under a
+         temporary name inside the install dir, and RE-VERIFY the staged file
+         against that extraction-time hash before it is ever executed.
+      4. SMOKE the staged binary and require it to report EXACTLY the pinned
+         version. Only after both checks pass is the staged file renamed onto
+         the final path — a same-filesystem atomic rename — so any failure
+         deletes only the staged file and a previous installation is never
+         disturbed.
 
     Upstream publishes a sha256.sum manifest per release; the framework still
     maintains its OWN reviewed pin file, scripts/linear-cli-checksums.sha256,
@@ -74,7 +77,8 @@
         0 — installed and the version smoke matched the pinned tag EXACTLY
         1 — install refused or failed (unvetted tag, conflicting pin entries,
             checksum mismatch, download/extract failure, smoke mismatch).
-            NOTHING executable is left behind.
+            NOTHING executable is left behind, and a previous installation, if
+            any, is preserved untouched.
         2 — usage or configuration error (unknown argument, malformed
             LINEAR_CLI_VERSION, disallowed LINEAR_CLI_BASE_URL scheme)
         3 — unsupported platform (upstream ships no binary for it)
@@ -319,17 +323,21 @@ Write-Host "linear-cli: archive sha256 verified ($actual)"
 # --- 5. Extract inside the throwaway dir -------------------------------------
 # The pin covers the ARCHIVE; the executed object is the binary INSIDE it. Hash
 # the extracted binary here, at the moment it leaves the verified archive — that
-# hash is what the post-move re-verify in §7 compares against, so the
-# verify -> move -> execute window stays closed even though the pin file never
+# hash is what the post-stage re-verify in §7 compares against, so the
+# stage -> verify -> rename flow stays closed even though the pin file never
 # names the inner file.
 $extractDir = Join-Path $work 'extract'
 New-Item -ItemType Directory -Path $extractDir | Out-Null
 if ($asset.EndsWith('.tar.xz')) {
     # Native tar (bsdtar/GNU tar) — the only route to .tar.xz from PowerShell.
     # Unreachable from Windows in practice (the Windows asset is a zip), but the
-    # platform map is kept complete so a macOS/Linux pwsh run works too.
-    & tar -xJf $artifact -C $extractDir 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    # platform map is kept complete so a macOS/Linux pwsh run works too. The
+    # try/catch mirrors the zip branch: a missing tar throws, and both shapes
+    # must fail closed with the same wording as the .sh twin.
+    try {
+        & tar -xJf $artifact -C $extractDir 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "tar exited $LASTEXITCODE" }
+    } catch {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
         [Console]::Error.WriteLine("FAIL could not extract $asset (tar with xz support required). Nothing was installed.")
         exit 1
@@ -367,30 +375,35 @@ $extracted = $found[0].FullName
 
 $extractedSha = Get-LinearCliSha256 -Path $extracted
 
-# --- 6. Install --------------------------------------------------------------
+# --- 6. Stage into the install dir -------------------------------------------
+# The verified binary is staged under a temporary sibling name INSIDE
+# $installDir — same filesystem as $dest, so the final promotion in §8 is an
+# atomic rename. $dest itself (a previous working installation, if any) is not
+# touched until every check below has passed; any failure deletes ONLY the
+# staged file.
 $dest = Join-Path $installDir $binname
+$staged = Join-Path $installDir ('.staged-' + (New-Guid).Guid + '-' + $binname)
 if (-not (Test-Path -LiteralPath $installDir -PathType Container)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 }
 if (-not $IsWindows) { & chmod +x $extracted }
-Move-Item -LiteralPath $extracted -Destination $dest -Force
+Move-Item -LiteralPath $extracted -Destination $staged -Force
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "linear-cli: installed $dest"
 
 # --- 7. RE-VERIFY IN PLACE, before the binary is ever executed ---------------
 # The hash in §5 was computed on the file in the temp dir. Between that read and
-# the `--version` call in §8 the bytes at $dest are a DIFFERENT object as far as
-# the security argument goes: a cross-volume Move-Item is a copy that re-reads
-# the source, the destination directory may be writable by someone else, and
-# $dest may already have existed. Re-hashing what is actually about to be
-# executed closes that verify -> move -> execute window.
-$destActual = Get-LinearCliSha256 -Path $dest
-if ($extractedSha -ne $destActual) {
-    Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
-    [Console]::Error.WriteLine("FAIL post-install checksum mismatch for $dest")
+# the `--version` call in §8 the bytes at $staged are a DIFFERENT object as far
+# as the security argument goes: a cross-volume Move-Item is a copy that
+# re-reads the source, and the destination directory may be writable by someone
+# else. Re-hashing what is actually about to be executed closes that
+# stage -> verify -> rename window.
+$stagedActual = Get-LinearCliSha256 -Path $staged
+if ($extractedSha -ne $stagedActual) {
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+    [Console]::Error.WriteLine("FAIL post-install checksum mismatch for $staged")
     [Console]::Error.WriteLine("  expected: $extractedSha")
-    [Console]::Error.WriteLine("  actual:   $destActual")
-    [Console]::Error.WriteLine('The installed file does not match what was extracted from the verified archive — it was removed and NOT executed. Treat the install directory as untrusted until you know why.')
+    [Console]::Error.WriteLine("  actual:   $stagedActual")
+    [Console]::Error.WriteLine('The staged file does not match what was extracted from the verified archive — the staged file was removed and NOT executed, and the previous installation, if any, was left untouched. Treat the install directory as untrusted until you know why.')
     exit 1
 }
 
@@ -400,8 +413,9 @@ Write-Host 'linear-cli: post-install sha256 re-verified in place'
 # The checksum proves the bytes match the pin; this proves the pin describes the
 # release it claims to. EXACT equality, not a substring: `linear 12.5.0` contains
 # "2.5.0", so a substring test would wave through a completely different release.
-# A mismatch means the pin file and the tag disagree, so the binary is removed
-# again rather than left on PATH masquerading as the tag.
+# A mismatch means the pin file and the tag disagree, so the staged file is
+# removed rather than promoted onto PATH masquerading as the tag — the previous
+# installation, if any, stays in place.
 
 # Get-LinearCliVersionToken — the first whitespace-separated token that starts
 # with a digit ("linear 2.5.0" -> "2.5.0"), or ''. The CLI colors its version
@@ -418,25 +432,36 @@ function Get-LinearCliVersionToken {
 
 $want = $version -replace '^v', ''
 $versionOut = ''
-try { $versionOut = (& $dest '--version' 2>&1 | Out-String).Trim() } catch { $versionOut = "$_" }
+try { $versionOut = (& $staged '--version' 2>&1 | Out-String).Trim() } catch { $versionOut = "$_" }
 Write-Host "linear-cli: $versionOut"
 $versionToken = Get-LinearCliVersionToken -Text $versionOut
 
 if ($versionToken -cne $want) {
-    Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     $shown = if ($versionToken -eq '') { '<none>' } else { $versionToken }
     [Console]::Error.WriteLine("FAIL version smoke failed: installed binary does not report the pinned version $want")
     [Console]::Error.WriteLine("  --version said: $versionOut")
     [Console]::Error.WriteLine("  parsed version: $shown (exact match against $want required)")
-    [Console]::Error.WriteLine("The binary was removed. The checksum entry for $key likely describes a different release — re-vet per $revetPointer.")
+    [Console]::Error.WriteLine("The staged file was removed and the previous installation, if any, was left untouched. The checksum entry for $key likely describes a different release — re-vet per $revetPointer.")
     exit 1
 }
+
+# Both checks passed: promote the staged file onto the final path. Same
+# filesystem, so this rename is atomic — a previous installation is replaced in
+# one step, never left half-written.
+Move-Item -LiteralPath $staged -Destination $dest -Force
+Write-Host "linear-cli: installed $dest"
 
 $pathSep = if ($IsWindows) { ';' } else { ':' }
 $pathParts = ($env:PATH -split [regex]::Escape($pathSep))
 if ($pathParts -notcontains $installDir) {
     [Console]::Error.WriteLine("linear-cli: $installDir is not on PATH. Add it, e.g.:")
-    [Console]::Error.WriteLine('  export PATH="' + $installDir + ':$PATH"')
+    if ($IsWindows) {
+        [Console]::Error.WriteLine('  $env:Path = "' + $installDir + ';$env:Path"')
+        [Console]::Error.WriteLine('  (make it permanent with `setx Path ...` or via System Properties > Environment Variables)')
+    } else {
+        [Console]::Error.WriteLine('  export PATH="' + $installDir + ':$PATH"')
+    }
 }
 
 Write-Host "PASS linear-cli $version installed and verified"

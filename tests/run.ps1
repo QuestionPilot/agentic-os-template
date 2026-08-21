@@ -29,6 +29,18 @@
 # short-circuits below), so the no-argument path is unchanged.
 param([string]$Filter = '')
 
+# Pin console + pipeline encoding to UTF-8 for the WHOLE suite. Several tests
+# capture a child `pwsh -File` process's stdout and compare it against
+# source-literal non-ASCII (em dashes in degraded/detail strings). Under a
+# legacy console codepage (ibm437 was observed live) the child's UTF-8 output
+# is mangled crossing the pipe, and string equality fails on bytes that RENDER
+# identically — five phantom orient failures traced to exactly this. Pinning
+# here makes suite results console-independent; child pwsh processes inherit
+# the console handle's encoding.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 if ($PSScriptRoot) {
     $testsDir = $PSScriptRoot
 } else {

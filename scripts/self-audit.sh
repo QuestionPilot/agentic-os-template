@@ -595,12 +595,12 @@ score_cross_layer_handoffs() {
         if [ -n "$_pid" ]; then
           _ij="$(linear issue query --all-teams --project "$_pid" -s triage -s backlog -s unstarted -s started --limit 250 --json 2>/dev/null || true)"
           if [ -n "$_ij" ]; then
-            _oc="$(printf '%s' "$_ij" | jq '.nodes | length' 2>/dev/null || printf -- '-1')"
+            _oc="$(printf '%s' "$_ij" | jq '(.nodes // .) | length' 2>/dev/null || printf -- '-1')"
             [ "$_oc" = "0" ] && continue
           fi
         fi
         active_projects+=("$_pname")
-      done <<< "$(printf '%s' "$_pj" | jq -r '.nodes[]? | [.id, .name] | @tsv' 2>/dev/null || true)"
+      done <<< "$(printf '%s' "$_pj" | jq -r '(.nodes // .)[]? | [.id, .name] | @tsv' 2>/dev/null || true)"
     fi
   fi
 

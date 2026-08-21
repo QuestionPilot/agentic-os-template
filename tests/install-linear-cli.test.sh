@@ -210,6 +210,12 @@ if [ -z "$LC_ASSET" ]; then
     "install-linear-cli: an unvetted tag installs NOTHING" \
     "install-linear-cli: a version-smoke mismatch exits 1" \
     "install-linear-cli: a version-smoke mismatch removes the installed binary" \
+    "install-linear-cli: a version-smoke mismatch leaves no staged file behind" \
+    "install-linear-cli: upgrade fixture: the initial install succeeds" \
+    "install-linear-cli: a failed-smoke upgrade exits 1" \
+    "install-linear-cli: a failed-smoke upgrade preserves the previous binary" \
+    "install-linear-cli: the preserved binary still reports its original version" \
+    "install-linear-cli: a failed-smoke upgrade leaves no staged file behind" \
     "install-linear-cli: an archive with TWO candidate binaries is REFUSED" \
     "install-linear-cli: an archive with NO candidate binary is REFUSED"; do
     _skip "$_lc_label" "no upstream linear-cli asset for $(uname -s)/$(uname -m)"
@@ -369,6 +375,39 @@ else
     _fail "install-linear-cli: a version-smoke mismatch removes the installed binary" \
       "still present: $LC_DIR_WRONG/$LC_BIN"
   fi
+  # With staging, the candidate never reaches $dest on a smoke failure: the
+  # STAGED file must be deleted and no file of ANY name may remain (there was no
+  # prior install here, so $dest simply never appears).
+  LC_WRONG_LEFT="$(find "$LC_DIR_WRONG" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "$LC_WRONG_LEFT" = "0" ]; then
+    _pass "install-linear-cli: a version-smoke mismatch leaves no staged file behind"
+  else
+    _fail "install-linear-cli: a version-smoke mismatch leaves no staged file behind" \
+      "files left under $LC_DIR_WRONG: $LC_WRONG_LEFT"
+  fi
+
+  # === D2c. REGRESSION — a failed upgrade preserves the previous installation.
+  # Install a WORKING binary first, then attempt an upgrade whose version smoke
+  # FAILS (the candidate prints the wrong version). The staged candidate must be
+  # deleted while the ORIGINAL binary survives at $dest and still executes with
+  # its original version output — "nothing is left installed" means the previous
+  # state is preserved, not that a working install is deleted.
+  LC_DIR_UPG="$LC_TMP/bin-upgrade"
+  _lc_run "$LC_VER" "$LC_SUMS_OK" "$LC_MIRROR_URL" "$LC_DIR_UPG"
+  assert_eq "install-linear-cli: upgrade fixture: the initial install succeeds" "0" "$LC_RC"
+  _lc_run "$LC_VER" "$LC_SUMS_WRONG" "$(_lc_fileurl "$LC_MIRROR_WRONG")" "$LC_DIR_UPG"
+  assert_eq "install-linear-cli: a failed-smoke upgrade exits 1" "1" "$LC_RC"
+  if [ -x "$LC_DIR_UPG/$LC_BIN" ]; then
+    _pass "install-linear-cli: a failed-smoke upgrade preserves the previous binary"
+  else
+    _fail "install-linear-cli: a failed-smoke upgrade preserves the previous binary" \
+      "missing or not executable: $LC_DIR_UPG/$LC_BIN"
+  fi
+  LC_UPG_OUT="$("$LC_DIR_UPG/$LC_BIN" --version 2>&1 || true)"
+  assert_contains "install-linear-cli: the preserved binary still reports its original version" \
+    "$LC_UPG_OUT" "9.9.9"
+  LC_UPG_FILES="$(find "$LC_DIR_UPG" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  assert_eq "install-linear-cli: a failed-smoke upgrade leaves no staged file behind" "1" "$LC_UPG_FILES"
 
   # === D3. NEGATIVE, archive-specific — TWO candidate binaries inside one
   # verified archive. The pin covers the archive, not the binary, so an archive

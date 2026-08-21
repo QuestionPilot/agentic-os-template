@@ -705,7 +705,7 @@ function Invoke-Pillar1 {
             # id+name pairs (jq matches bash; fall back to ConvertFrom-Json).
             $pairs = @()
             if (Test-Command 'jq') {
-                $tsv = $projectsJson | & jq -r '.nodes[]? | [.id, .name] | @tsv' 2>$null
+                $tsv = $projectsJson | & jq -r '(.nodes // .)[]? | [.id, .name] | @tsv' 2>$null
                 if ($LASTEXITCODE -eq 0 -and $tsv) {
                     foreach ($line in @($tsv)) {
                         if ([string]::IsNullOrEmpty($line)) { continue }
@@ -728,7 +728,7 @@ function Invoke-Pillar1 {
                         $issuesJson = if ($issuesLines -is [array]) { ($issuesLines -join "`n") } else { $issuesLines }
                         $open = -1
                         if (Test-Command 'jq') {
-                            $len = $issuesJson | & jq '.nodes | length' 2>$null
+                            $len = $issuesJson | & jq '(.nodes // .) | length' 2>$null
                             if ($LASTEXITCODE -eq 0 -and $len) { $open = [int]$len }
                         } else {
                             try { $open = @(($issuesJson | ConvertFrom-Json).nodes).Count } catch { $open = -1 }

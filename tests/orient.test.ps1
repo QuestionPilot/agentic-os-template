@@ -270,6 +270,31 @@ try { $docAlias = $outAlias | ConvertFrom-Json } catch { $docAlias = $null }
 Assert-Eq 'orient: the deprecated --lineark alias still reaches the same seam' `
     'ok' $docAlias.surfaces.linear.status
 
+# The deprecated ENV seam rides the same transition release: LINEARK_BIN is
+# honored when LINEAR_CLI_BIN is unset (same precedence as the hygiene and
+# currentness twins), and LINEAR_CLI_BIN wins when both are set.
+$savedCliBin = $env:LINEAR_CLI_BIN; $savedLkBin = $env:LINEARK_BIN
+try {
+    Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue
+    $env:LINEARK_BIN = $stub1
+    $outEnvDep = (& pwsh -NoProfile -File $ORIENT 2>$null | Out-String)
+    $docEnvDep = $null
+    try { $docEnvDep = $outEnvDep | ConvertFrom-Json } catch { $docEnvDep = $null }
+    Assert-Eq 'orient: the deprecated LINEARK_BIN env seam still reaches the same seam' `
+        'ok' $docEnvDep.surfaces.linear.status
+
+    $env:LINEAR_CLI_BIN = $stub1
+    $env:LINEARK_BIN = 'definitely-absent-bin'
+    $outEnvBoth = (& pwsh -NoProfile -File $ORIENT 2>$null | Out-String)
+    $docEnvBoth = $null
+    try { $docEnvBoth = $outEnvBoth | ConvertFrom-Json } catch { $docEnvBoth = $null }
+    Assert-Eq 'orient: LINEAR_CLI_BIN wins over the deprecated LINEARK_BIN' `
+        'ok' $docEnvBoth.surfaces.linear.status
+} finally {
+    if ($null -eq $savedCliBin) { Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue } else { $env:LINEAR_CLI_BIN = $savedCliBin }
+    if ($null -eq $savedLkBin) { Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue } else { $env:LINEARK_BIN = $savedLkBin }
+}
+
 # --- output modes -------------------------------------------------------------
 Assert-Eq 'orient: default output is ONE compact JSON line' `
     '1' (@($r.Out -split "`n" | Where-Object { $_.Trim() -ne '' }).Count).ToString()
