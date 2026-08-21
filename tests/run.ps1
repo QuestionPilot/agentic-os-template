@@ -36,10 +36,15 @@ param([string]$Filter = '')
 # is mangled crossing the pipe, and string equality fails on bytes that RENDER
 # identically — five phantom orient failures traced to exactly this. Pinning
 # here makes suite results console-independent; child pwsh processes inherit
-# the console handle's encoding.
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-[Console]::InputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
+# the console handle's encoding. BOM-LESS UTF-8 is load-bearing: the static
+# [Text.Encoding]::UTF8 property EMITS a BOM, and a BOM'd $OutputEncoding
+# prefixes every native-command pipe with three bytes — which broke every
+# byte-identical bash<->pwsh parity assertion on CI (stuck-detector, append,
+# hooks parity) the first time this pin used the BOM'd form.
+$script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $script:Utf8NoBom
+[Console]::InputEncoding = $script:Utf8NoBom
+$OutputEncoding = $script:Utf8NoBom
 
 if ($PSScriptRoot) {
     $testsDir = $PSScriptRoot
