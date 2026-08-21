@@ -258,6 +258,58 @@ name: history
 $r = Invoke-Csc $stub5 $M5 @('--no-projects')
 Assert-Eq 'check-state-currentness: history-only note yields no comparable claims (skip 2)' 2 $r.Rc
 
+# --- per-file state resets at file boundaries --------------------------------
+# Section/fence suppression is PER FILE. The PS twin resets by construction
+# (Get-Claims runs once per path); the bash twin's single awk pass used to leak
+# a trailing `## State Deltas` section into the next note and swallow its
+# claims. Pinned on BOTH twins so neither regresses. Filenames sort so the
+# suppressing note is scanned first.
+$D5b = New-CscTmp; $M5b = Join-Path $D5b 'mem'; New-Item -ItemType Directory -Path $M5b -Force | Out-Null
+$stub5b = New-CscStub $D5b; Set-CscStates $D5b
+@'
+---
+name: a-history
+---
+
+## State Deltas
+
+- 2026-07-01: ABC-2 was In Progress at the time.
+'@ | Set-Content -LiteralPath (Join-Path $M5b 'a-history.md')
+@'
+---
+name: b-claim
+---
+
+ABC-1 is In Progress and gating the wave.
+'@ | Set-Content -LiteralPath (Join-Path $M5b 'b-claim.md')
+$r = Invoke-Csc $stub5b $M5b @('--no-projects')
+Assert-Eq       'check-state-currentness: a prior note ending in a history section does not suppress the next note (exit 1)' 1 $r.Rc
+Assert-Contains 'check-state-currentness: claim after a history-terminated note is still scanned' `
+    $r.Out 'WARN stale-claim ABC-1: note says "In Progress", tracker says "Done"'
+
+# Same boundary class via an UNCLOSED fence.
+$D5c = New-CscTmp; $M5c = Join-Path $D5c 'mem'; New-Item -ItemType Directory -Path $M5c -Force | Out-Null
+$stub5c = New-CscStub $D5c; Set-CscStates $D5c
+@'
+---
+name: a-fence
+---
+
+```bash
+# unclosed fence
+'@ | Set-Content -LiteralPath (Join-Path $M5c 'a-fence.md')
+@'
+---
+name: b-claim
+---
+
+ABC-1 is In Progress and gating the wave.
+'@ | Set-Content -LiteralPath (Join-Path $M5c 'b-claim.md')
+$r = Invoke-Csc $stub5c $M5c @('--no-projects')
+Assert-Eq       'check-state-currentness: a prior note ending in an unclosed fence does not suppress the next note (exit 1)' 1 $r.Rc
+Assert-Contains 'check-state-currentness: claim after a fence-terminated note is still scanned' `
+    $r.Out 'WARN stale-claim ABC-1: note says "In Progress", tracker says "Done"'
+
 # --- fenced code is syntax documentation, never a claim ----------------------
 $D6 = New-CscTmp; $M6 = Join-Path $D6 'mem'; New-Item -ItemType Directory -Path $M6 -Force | Out-Null
 $stub6 = New-CscStub $D6; Set-CscStates $D6
