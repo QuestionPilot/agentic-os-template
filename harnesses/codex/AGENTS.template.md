@@ -48,7 +48,7 @@ families), see `@@AI_CONFIG_DIR@@/skills/`.
 ## Layer 2 — Active Work (Linear)
 
 Linear holds current tasks, status, blockers, acceptance criteria, and next
-actions. The framework supports two Linear access surfaces — `lineark` CLI
+actions. The framework supports two Linear access surfaces — `linear` CLI
 and Linear MCP (Codex via [`openai/plugins/linear`](https://github.com/openai/plugins/tree/main/plugins/linear)).
 Both first-class. See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for
 setup, operating instructions, and the runtime contract. The `$session-agent`

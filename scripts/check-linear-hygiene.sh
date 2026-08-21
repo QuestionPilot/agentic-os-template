@@ -21,18 +21,21 @@
 # enforced by the create command itself; parent/relations and body-section
 # completeness beyond the AC heading are judgment calls the sweep does not
 # police. The PASS line claims exactly the checked fields, nothing more.
-# Open-only scope relies on lineark's documented default of hiding
-# Done/Canceled in `issues list` (linear/linear-setup.md §4.1/§4.3).
+# Open-only scope is enforced by the EXPLICIT -s state list on the query
+# (triage/backlog/unstarted/started) — the linear CLI's `issue query` returns
+# ALL states by default, Done/Canceled included, so the state filter is what
+# keeps this an open-issues sweep (linear/linear-setup.md §4.1/§4.3).
 #
 # ADVISORY, WARN-only — never a gate. Deliberately NOT wired into `make verify`:
 # CI has no Linear token, and issue hygiene is workspace state, not repo state.
 # Run it manually or as part of a periodic hygiene sweep; the fix is upgrading
 # the flagged issues to the linear/issue-template.md standard.
 #
-# Requires the lineark CLI (linear/linear-setup.md §3.2) and jq. Override the
-# binary with $LINEARK_BIN — the hermetic tests use this to inject a stub that
-# serves fixture JSON, so the check itself never needs live credentials to be
-# testable.
+# Requires the linear CLI (schpet/linear-cli; linear/linear-setup.md §3.2) and
+# jq. Override the binary with $LINEAR_CLI_BIN — the hermetic tests use this to
+# inject a stub that serves fixture JSON, so the check itself never needs live
+# credentials to be testable. $LINEARK_BIN is still accepted as a DEPRECATED
+# fallback for one transition release (lineark → schpet/linear-cli).
 #
 # The list payload carries priority/labels/assignee but NOT project or
 # description, so those checks need a per-issue read. Reads run sequentially
@@ -55,12 +58,15 @@
 # Exit codes (BOTH modes):
 #   0  clean — no evaluated issue has a hygiene gap (unchecked-only is clean)
 #   1  gaps  — at least one open issue has a hygiene gap (advisory WARN)
-#   2  skip  — could not determine (no lineark / no jq / list call failed /
+#   2  skip  — could not determine (no linear CLI / no jq / query failed /
 #              unparseable payload / bad argument). Callers treat exit 2 as
 #              "say nothing".
 set -uo pipefail
 
-LINEARK_BIN="${LINEARK_BIN:-lineark}"
+# Binary seam: $LINEAR_CLI_BIN preferred; $LINEARK_BIN is a DEPRECATED fallback
+# kept for one transition release after the lineark →
+# schpet/linear-cli migration; default `linear`.
+LINEAR_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
 MAX_READS=50
 MODE_LIST=0
 while [ $# -gt 0 ]; do
@@ -84,13 +90,23 @@ skip() {
 }
 
 command -v jq >/dev/null 2>&1 || skip "jq unavailable; cannot parse issue payloads"
-command -v "$LINEARK_BIN" >/dev/null 2>&1 || skip "lineark not found (\$LINEARK_BIN or PATH) — see linear/linear-setup.md §3.2"
+command -v "$LINEAR_BIN" >/dev/null 2>&1 || skip "linear CLI not found (\$LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2"
 
-list_json="$("$LINEARK_BIN" issues list --format json 2>/dev/null)" || skip "lineark issues list failed"
-printf '%s' "$list_json" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  || skip "unexpected issues-list payload (not a JSON array)"
+# Open-only scope via the explicit -s state list (see SCOPE above): the linear
+# CLI returns ALL states by default, so triage/backlog/unstarted/started is
+# what excludes Done/Canceled.
+list_json="$("$LINEAR_BIN" issue query --all-teams -s triage -s backlog -s unstarted -s started --limit 250 --json 2>/dev/null)" \
+  || skip "linear CLI issue query failed"
+# The linear CLI wraps rows as {nodes:[...]}; a bare array is also accepted
+# (fixture simplicity). Anything else means the call failed.
+rows_json="$(printf '%s' "$list_json" | jq -c '
+  if type == "object" then (if (.nodes | type) == "array" then .nodes else null end)
+  elif type == "array" then .
+  else null end' 2>/dev/null)"
+{ [ -n "$rows_json" ] && [ "$rows_json" != "null" ]; } \
+  || skip "unexpected issue-query payload (no rows array)"
 
-total="$(printf '%s' "$list_json" | jq 'length')"
+total="$(printf '%s' "$rows_json" | jq 'length')"
 if [ "$total" -eq 0 ]; then
   [ "$MODE_LIST" -eq 1 ] || printf 'PASS no open issues to check\n'
   exit 0
@@ -107,8 +123,12 @@ unchecked=()
 # would subshell the counters — same pattern as check-freshness.sh). Empty
 # fields become a "-" sentinel in jq BEFORE @tsv: tab is IFS whitespace, so
 # adjacent tabs from empty middle fields would collapse and misalign `read`.
-# The s() helper also tolerates the Linear-MCP-shaped payloads (arrays /
-# objects where lineark returns flat strings) rather than crashing @tsv.
+# The s() helper normalizes the linear CLI's object shapes to the flat strings
+# downstream logic expects — assignee/state objects to .name, {nodes:[...]}
+# label wrappers to a joined name list — and still tolerates flat strings
+# (fixture simplicity) rather than crashing @tsv. priority is a NUMBER with a
+# sibling priorityLabel string; the label is preferred, with 0 → "No priority"
+# as the numeric fallback so the downstream default-priority check is untouched.
 # rows_seen/evaluated are audited after the loop: a jq crash mid-stream or a
 # payload of identifier-less entries must yield skip (2), never a false PASS.
 while IFS=$'\t' read -r ident priority labels assignee; do
@@ -125,7 +145,7 @@ while IFS=$'\t' read -r ident priority labels assignee; do
 
   if [ "$reads" -lt "$MAX_READS" ]; then
     reads=$((reads + 1))
-    if read_json="$("$LINEARK_BIN" issues read "$ident" --format json 2>/dev/null)" \
+    if read_json="$("$LINEAR_BIN" issue view "$ident" --json 2>/dev/null)" \
        && printf '%s' "$read_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
       printf '%s' "$read_json" | jq -e '.project != null' >/dev/null 2>&1 || g_project=1
       # Line-anchored H2 match via split: this jq build's `^` anchors only at
@@ -173,14 +193,22 @@ while IFS=$'\t' read -r ident priority labels assignee; do
       printf 'WARN %s: %s\n' "$ident" "$joined"
     fi
   fi
-done < <(printf '%s' "$list_json" | jq -r '
+done < <(printf '%s' "$rows_json" | jq -r '
   def s(f): (f // ""
+    | if type == "object" and ((.nodes? // null) | type) == "array" then .nodes else . end
     | if type == "array"
       then (map(if type == "object" then (.name // tostring) else tostring end) | join(", "))
       elif type == "object" then (.name // tostring)
       else tostring end)
     | if . == "" then "-" else . end;
-  .[] | [ s(.identifier), s(.priority), s(.labels), s(.assignee) ] | @tsv')
+  def prio: if .priorityLabel != null then s(.priorityLabel)
+    elif (.priority | type) == "number"
+    then (if .priority == 0 then "No priority" else (.priority | tostring) end)
+    else s(.priority) end;
+  .[] | [ s(.identifier), prio, s(.labels), s(.assignee) ] | @tsv' | tr -d '\r')
+  # ^ tr guard: Windows-built jq emits \r\n, and a trailing \r inside the last
+  # @tsv field breaks the "-" sentinel equality (no-assignee would never flag).
+  # Same pattern as check-freshness.sh's jqr().
 
 # Stream/shape audit — never let a truncated or identifier-less payload read
 # as a clean verdict.

@@ -27,7 +27,7 @@
     "harness": "claude",
     "tool_calls": 9,
     "fixed_reads": 6,
-    "lineark_calls": 3,
+    "tracker_calls": 3,
     "wall_time": "unmeasured — interactive session"
   }
 }

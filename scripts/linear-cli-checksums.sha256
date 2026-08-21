@@ -1,0 +1,17 @@
+# Operator-reviewed sha256 pins for schpet/linear-cli release assets.
+# Key format: <tag>/<asset>  (matches install-linear-cli.sh's lookup key).
+#
+# Vetting procedure and revocation semantics: linear/linear-setup.md §3.2
+# ("Updating / re-vetting a new release"). Removing a line is the revocation
+# mechanism — the installer then refuses that tag as unvetted. Keep entries for
+# old tags: they are what make rollback work.
+#
+# v2.5.0 vetted 2026-08-21: hashes computed locally from the downloaded assets
+# AND cross-checked against upstream's published sha256.sum manifest (both
+# sources agreed; the Windows asset was additionally verified on the adopting Windows machine
+# before first execution). Adopted by a cross-model panel decision + live parity test (2026-08-21).
+6d11eb5a0ee2aa10d24625d23c605bf56987a94741e60bb9817f87b123a9a00b  v2.5.0/linear-aarch64-apple-darwin.tar.xz
+c8ddd7fb478ff23cd752026eb609f25ef91cc36cb1b55900db9f182f4aeb47b5  v2.5.0/linear-aarch64-unknown-linux-gnu.tar.xz
+f57c7acc974c1bc01c0ac141658a2fd380e36776b85f15da9fcbf2e824c0823c  v2.5.0/linear-x86_64-apple-darwin.tar.xz
+3cc9c14d4fa9855544be84454cdd9cb8d9d3b65a51f2ababc7bcd8d5c4a392bf  v2.5.0/linear-x86_64-pc-windows-msvc.zip
+62accf1eb36c31e897f8490e826182f012b9a4b3a2c0d3bf8c8dde906039c3ea  v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz

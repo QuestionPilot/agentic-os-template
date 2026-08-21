@@ -452,16 +452,17 @@ assert_contains "install-lineark: the usage error names the offending argument" 
 LK_SETUP_BODY="$(cat "$REPO_ROOT/linear/linear-setup.md" 2>/dev/null || printf '')"
 assert_not_contains "install-lineark: linear-setup.md no longer pipes the upstream installer into a shell" \
   "$LK_SETUP_BODY" "install.sh | sh"
-assert_contains "install-lineark: linear-setup.md documents the pinned installer" \
-  "$LK_SETUP_BODY" "bash scripts/install-lineark.sh"
-assert_contains "install-lineark: linear-setup.md documents the pwsh form" \
-  "$LK_SETUP_BODY" "scripts/install-lineark.ps1"
+# Migration note: lineark is the DEPRECATED surface (one transition release). The doc
+# no longer teaches its install flow — the schpet/linear-cli sections own that
+# (asserted by tests/linear-setup.test.sh + tests/install-linear-cli.test.sh).
+# What linear-setup.md must still guarantee about lineark: the migration note
+# names the deprecated installer, and §3.5 documents its removal.
+assert_contains "install-lineark: linear-setup.md migration note names the deprecated installer" \
+  "$LK_SETUP_BODY" "scripts/install-lineark.sh"
+assert_contains "install-lineark: linear-setup.md frames lineark as transition-release-only" \
+  "$LK_SETUP_BODY" "transition release"
 assert_contains "install-lineark: linear-setup.md documents the re-vet procedure" \
   "$LK_SETUP_BODY" "Updating / re-vetting a new release"
-assert_contains "install-lineark: linear-setup.md documents the rollback lever" \
-  "$LK_SETUP_BODY" "LINEARK_VERSION="
-assert_contains "install-lineark: linear-setup.md names the checksum pin file" \
-  "$LK_SETUP_BODY" "scripts/lineark-checksums.sha256"
 # Revocation is the half operators forget: keeping old entries enables rollback,
 # and DELETING one is the only way to make a withdrawn release un-installable.
 # Both halves must be stated, in the doc and in the pin file's own comments.
@@ -477,8 +478,10 @@ assert_contains "install-lineark: the pin file says old tags are kept for rollba
 LK_README_BODY="$(cat "$REPO_ROOT/README.md" 2>/dev/null || printf '')"
 assert_not_contains "install-lineark: README no longer says the lineark doc reproduces curl-to-shell" \
   "$LK_README_BODY" "reproduce the upstream installer's"
-assert_contains "install-lineark: README points at the pinned installer" \
-  "$LK_README_BODY" "scripts/install-lineark.sh"
+# Migration note: README now leads with the linear-cli installer; lineark is named as
+# the deprecated predecessor following the same supply-chain shape.
+assert_contains "install-lineark: README still names the deprecated installer" \
+  "$LK_README_BODY" "install-lineark.sh"
 
 # Inline cleanup — tests/run.sh sources this file, so an EXIT trap would fire for
 # every subsequent test.

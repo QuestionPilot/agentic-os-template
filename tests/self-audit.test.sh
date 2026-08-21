@@ -862,7 +862,7 @@ EOF
   # Non-isolated so the CONFIG_DIR→memory auto-resolution runs (the D1 code
   # path); --config-dir pins the config so the result does not depend on ambient
   # env / local.env. Vault unset → skipped. Assert on pillar 2 (memory-hygiene),
-  # which is independent of lineark.
+  # which is independent of the linear CLI.
   local out p2 missing_detail
   out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR \
           bash "$REPO_ROOT/scripts/self-audit.sh" \
@@ -1343,7 +1343,7 @@ _test_unscored_pillars_no_false_100() {
   command -v jq >/dev/null 2>&1 || { _skip "unscored-pillars false-100 test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
-  # No --memory-dir, no --vault-dir, --isolated (no lineark) → the cross-layer and
+  # No --memory-dir, no --vault-dir, --isolated (no linear CLI) → the cross-layer and
   # memory pillars can measure nothing.
   local out p1 p2 p1u p2u uc total
   out="$(env -u OBSIDIAN_VAULT_PATH -u CLAUDE_PRIMARY_MEMORY_DIR -u CLAUDE_CONFIG_DIR \

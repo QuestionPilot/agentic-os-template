@@ -10,8 +10,10 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # tracker state, and flags project-status/child contradictions. Advisory, never
 # a gate, and it never edits anything.
 #
-# Hermetic: $env:LINEARK_BIN is pointed at a stub .ps1 serving fixture JSON from
-# its own directory — no live tracker access, no token.
+# Hermetic: $env:LINEAR_CLI_BIN is pointed at a stub .ps1 serving fixture JSON
+# from its own directory — no live tracker access, no token. One case injects
+# via the deprecated $env:LINEARK_BIN instead, pinning the transition-release
+# fallback (one transition release).
 #
 # Two halves, and the second matters as much as the first:
 #   DETECTION — the three classes the checker exists to catch (a memory note
@@ -40,24 +42,26 @@ function New-CscTmp {
     return $p
 }
 
-# New-CscStub <dir> — lineark stub .ps1. Serves:
-#   issues list [--project P]  -> list.json / projissues-P.json
-#   issues read ID             -> read-ID.json
-#   projects list              -> projects.json
-#   projects read ID           -> proj-ID.json
+# New-CscStub <dir> — schpet/linear-cli stub .ps1. Matches on the leading
+# subcommand words (flags ignored except --project, whose value routes the
+# child list):
+#   issue query [--project P]  -> list.json / projissues-P.json
+#   issue view ID              -> read-ID.json
+#   project list               -> projects.json  (rows CARRY the status object —
+#                                 the per-project read lineark needed is gone)
 function New-CscStub([string]$d) {
     $stub = Join-Path $d 'stub.ps1'
     @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList = @())
 $d = Split-Path -Parent $MyInvocation.MyCommand.Path
-# Call log — the read-budget assertion counts `issues read` invocations, which is
+# Call log — the read-budget assertion counts `issue view` invocations, which is
 # the only way to prove the cap actually held (the exit code cannot show it).
 Add-Content -LiteralPath (Join-Path $d 'calls.log') -Value ("CALL " + ($ArgList -join ' '))
 $proj = ''
 for ($i = 0; $i -lt $ArgList.Count - 1; $i++) {
     if ($ArgList[$i] -eq '--project') { $proj = $ArgList[$i + 1] }
 }
-if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'list') {
+if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issue' -and $ArgList[1] -eq 'query') {
     if ($proj -ne '') {
         $f = Join-Path $d ("projissues-{0}.json" -f $proj)
         if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
@@ -67,18 +71,13 @@ if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'lis
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
 }
-if ($ArgList.Count -ge 3 -and $ArgList[0] -eq 'issues' -and $ArgList[1] -eq 'read') {
+if ($ArgList.Count -ge 3 -and $ArgList[0] -eq 'issue' -and $ArgList[1] -eq 'view') {
     $f = Join-Path $d ("read-{0}.json" -f $ArgList[2])
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
 }
-if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'projects' -and $ArgList[1] -eq 'list') {
+if ($ArgList.Count -ge 2 -and $ArgList[0] -eq 'project' -and $ArgList[1] -eq 'list') {
     $f = Join-Path $d 'projects.json'
-    if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
-    exit 1
-}
-if ($ArgList.Count -ge 3 -and $ArgList[0] -eq 'projects' -and $ArgList[1] -eq 'read') {
-    $f = Join-Path $d ("proj-{0}.json" -f $ArgList[2])
     if (Test-Path -LiteralPath $f) { Get-Content -Raw $f; exit 0 }
     exit 1
 }
@@ -88,21 +87,22 @@ exit 1
 }
 
 # Live state used by every fixture below: ABC-1 Done, ABC-2 Done, ABC-3 In
-# Progress, ABC-4 Backlog.
+# Progress, ABC-4 Backlog. Realistic schpet/linear-cli shape: a {nodes:[...]}
+# wrapper with object-valued states the checker flattens to the name.
 function Set-CscStates([string]$d) {
     @'
-[
-  {"identifier": "ABC-1", "state": "Done"},
-  {"identifier": "ABC-2", "state": "Done"},
-  {"identifier": "ABC-3", "state": "In Progress"},
-  {"identifier": "ABC-4", "state": "Backlog"}
-]
+{"nodes": [
+  {"identifier": "ABC-1", "state": {"name": "Done", "type": "completed"}},
+  {"identifier": "ABC-2", "state": {"name": "Done", "type": "completed"}},
+  {"identifier": "ABC-3", "state": {"name": "In Progress", "type": "started"}},
+  {"identifier": "ABC-4", "state": {"name": "Backlog", "type": "backlog"}}
+]}
 '@ | Set-Content -LiteralPath (Join-Path $d 'list.json')
 }
 
 # Invoke-Csc <stub> <memdir> [extra flags] — stdout only, exit code captured.
 function Invoke-Csc([string]$stub, [string]$memDir, [string[]]$flags = @()) {
-    $env:LINEARK_BIN = $stub
+    $env:LINEAR_CLI_BIN = $stub
     try {
         $argv = @('--isolated', '--prefix', 'ABC')
         if ($memDir -ne '') { $argv += @('--memory-dir', $memDir) }
@@ -110,7 +110,7 @@ function Invoke-Csc([string]$stub, [string]$memDir, [string[]]$flags = @()) {
         $out = (& pwsh -NoProfile -File $CSC @argv 2>$null | Out-String).Trim()
         return @{ Out = $out; Rc = $LASTEXITCODE }
     } finally {
-        Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue
+        Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue
     }
 }
 
@@ -159,6 +159,8 @@ Assert-Contains 'check-state-currentness: summary separates the two classes' `
     $r.Out '1 stale claim(s), 1 stale snapshot(s)'
 
 # --- class 3: project status vs child states ---------------------------------
+# Project rows carry the status object in the list payload — schpet/linear-cli
+# needs no per-project read, so there are no proj-<pid>.json fixtures.
 $D3 = New-CscTmp; $M3 = Join-Path $D3 'mem'; New-Item -ItemType Directory -Path $M3 -Force | Out-Null
 $stub3 = New-CscStub $D3; Set-CscStates $D3
 @'
@@ -169,16 +171,15 @@ name: quiet
 Nothing asserted here about any identifier.
 '@ | Set-Content -LiteralPath (Join-Path $M3 'quiet.md')
 @'
-[{"id": "p-closed", "name": "Shipped Thing"},
- {"id": "p-idle", "name": "Sleepy Thing"},
- {"id": "p-active", "name": "Busy Thing"}]
+{"nodes": [
+ {"id": "p-closed", "name": "Shipped Thing", "status": {"name": "Completed", "type": "completed"}},
+ {"id": "p-idle", "name": "Sleepy Thing", "status": {"name": "Backlog", "type": "backlog"}},
+ {"id": "p-active", "name": "Busy Thing", "status": {"name": "In Progress", "type": "started"}}
+]}
 '@ | Set-Content -LiteralPath (Join-Path $D3 'projects.json')
-'{"id":"p-closed","name":"Shipped Thing","status":{"name":"Completed"}}'   | Set-Content -LiteralPath (Join-Path $D3 'proj-p-closed.json')
-'{"id":"p-idle","name":"Sleepy Thing","status":{"name":"Backlog"}}'        | Set-Content -LiteralPath (Join-Path $D3 'proj-p-idle.json')
-'{"id":"p-active","name":"Busy Thing","status":{"name":"In Progress"}}'    | Set-Content -LiteralPath (Join-Path $D3 'proj-p-active.json')
-'[{"identifier":"ABC-4","state":"Backlog"}]'                               | Set-Content -LiteralPath (Join-Path $D3 'projissues-p-closed.json')
-'[{"identifier":"ABC-3","state":"In Progress"}]'                           | Set-Content -LiteralPath (Join-Path $D3 'projissues-p-idle.json')
-'[]'                                                                       | Set-Content -LiteralPath (Join-Path $D3 'projissues-p-active.json')
+'{"nodes":[{"identifier":"ABC-4","state":{"name":"Backlog"}}]}'     | Set-Content -LiteralPath (Join-Path $D3 'projissues-p-closed.json')
+'{"nodes":[{"identifier":"ABC-3","state":{"name":"In Progress"}}]}' | Set-Content -LiteralPath (Join-Path $D3 'projissues-p-idle.json')
+'{"nodes":[]}'                                                      | Set-Content -LiteralPath (Join-Path $D3 'projissues-p-active.json')
 
 $r = Invoke-Csc $stub3 $M3
 Assert-Eq       'check-state-currentness: project contradictions exit 1' 1 $r.Rc
@@ -188,6 +189,17 @@ Assert-Contains 'check-state-currentness: Backlog project with active children' 
     $r.Out 'WARN project-idle-with-active-children "Sleepy Thing": status "Backlog" with 1 open child'
 Assert-Contains 'check-state-currentness: In Progress project with no open children' `
     $r.Out 'WARN project-active-with-no-open-children "Busy Thing"'
+
+# The project loop spends ONE budgeted read per project (the child list) — the
+# lineark-era second read (project status) rides the list payload now. A cap of
+# 2 therefore evaluates exactly two of the three projects and NAMEs the third
+# as not evaluated.
+$r = Invoke-Csc $stub3 $M3 @('--max-reads', '2')
+Assert-Eq          'check-state-currentness: project read cap still yields findings (exit 1)' 1 $r.Rc
+Assert-Contains    'check-state-currentness: capped project run names the skipped project' $r.Out 'not evaluated'
+Assert-Contains    'check-state-currentness: read cap 2 = two projects checked, third skipped' $r.Out 'Busy Thing;'
+Assert-NotContains 'check-state-currentness: the capped project is not evaluated' `
+    $r.Out 'WARN project-active-with-no-open-children'
 
 # --- --list machine mode: stable TSV shape -----------------------------------
 $r = Invoke-Csc $stub1 $M1 @('--no-projects', '--list')
@@ -340,20 +352,22 @@ Remove-Item -LiteralPath $DA -Recurse -Force -ErrorAction SilentlyContinue
 $DB = New-CscTmp; $MB = Join-Path $DB 'mem'; New-Item -ItemType Directory -Path $MB -Force | Out-Null
 $stubB = New-CscStub $DB
 # Bulk payload returns exactly --limit rows => treated as possibly truncated,
-# so every unmatched identifier is a per-issue read candidate.
+# so every unmatched identifier is a per-issue read candidate. Bare-array shape
+# with flat string states, deliberately: it pins the tolerance for both.
 '[{"identifier":"ABC-90","state":"Done"},{"identifier":"ABC-91","state":"Done"}]' | Set-Content -LiteralPath (Join-Path $DB 'list.json')
 foreach ($n in 1..5) {
-    ('{"identifier":"ABC-' + $n + '","state":"Done"}') | Set-Content -LiteralPath (Join-Path $DB ("read-ABC-$n.json"))
+    ('{"identifier":"ABC-' + $n + '","state":{"name":"Done","type":"completed"}}') | Set-Content -LiteralPath (Join-Path $DB ("read-ABC-$n.json"))
 }
 (1..5 | ForEach-Object { "ABC-$_ is Backlog." }) -join "`n" | Set-Content -LiteralPath (Join-Path $MB 'many.md')
 $null = Invoke-Csc $stubB $MB @('--no-projects', '--limit', '2', '--max-reads', '1')
-$calls = @(Get-Content -LiteralPath (Join-Path $DB 'calls.log') -ErrorAction SilentlyContinue | Where-Object { $_ -match 'issues read' })
+$calls = @(Get-Content -LiteralPath (Join-Path $DB 'calls.log') -ErrorAction SilentlyContinue | Where-Object { $_ -match 'issue view' })
 Assert-Eq 'check-state-currentness: --max-reads caps per-issue reads' 1 $calls.Count
 Remove-Item -LiteralPath $DB -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- state lookup is key-exact, not a substring --------------------------------
 # The bash twin used a fixed-string grep that also matched an XABC-1 row; this
 # hashtable lookup must stay exact so the twins resolve identifiers identically.
+# (Bare-array bulk payload here too — the tolerance pin.)
 $DC = New-CscTmp; $MC = Join-Path $DC 'mem'; New-Item -ItemType Directory -Path $MC -Force | Out-Null
 $stubC = New-CscStub $DC
 '[{"identifier":"XABC-1","state":"Done"},{"identifier":"ABC-3","state":"In Progress"}]' | Set-Content -LiteralPath (Join-Path $DC 'list.json')
@@ -367,16 +381,15 @@ Remove-Item -LiteralPath $DC -Recurse -Force -ErrorAction SilentlyContinue
 $DD = New-CscTmp; $MD = Join-Path $DD 'mem'; New-Item -ItemType Directory -Path $MD -Force | Out-Null
 $stubD = New-CscStub $DD; Set-CscStates $DD
 'ABC-3 is In Progress.' | Set-Content -LiteralPath (Join-Path $MD 'q.md')
-'[{"id": "p-big", "name": "Big Thing"}]' | Set-Content -LiteralPath (Join-Path $DD 'projects.json')
-'{"id":"p-big","name":"Big Thing","status":{"name":"Backlog"}}' | Set-Content -LiteralPath (Join-Path $DD 'proj-p-big.json')
+'{"nodes":[{"id":"p-big","name":"Big Thing","status":{"name":"Backlog"}}]}' | Set-Content -LiteralPath (Join-Path $DD 'projects.json')
 # Exactly --limit children, none of them active on this page.
-'[{"identifier":"ABC-4","state":"Backlog"},{"identifier":"ABC-5","state":"Backlog"}]' | Set-Content -LiteralPath (Join-Path $DD 'projissues-p-big.json')
+'{"nodes":[{"identifier":"ABC-4","state":{"name":"Backlog"}},{"identifier":"ABC-5","state":{"name":"Backlog"}}]}' | Set-Content -LiteralPath (Join-Path $DD 'projissues-p-big.json')
 $r = Invoke-Csc $stubD $MD @('--limit', '2')
 Assert-Contains    'check-state-currentness: at-limit child list is named as not evaluated' $r.Out 'child list may be truncated'
 Assert-NotContains 'check-state-currentness: a truncated project is not counted as agreeing' $r.Out '1 project(s) agree'
 Remove-Item -LiteralPath $DD -Recurse -Force -ErrorAction SilentlyContinue
 
-# --- a lineark that cannot EXECUTE still fails soft ----------------------------
+# --- a linear CLI that cannot EXECUTE still fails soft --------------------------
 # $ErrorActionPreference is 'Stop', so an exec failure would otherwise throw and
 # exit with PowerShell's own code — which self-audit would read as "findings".
 $DE = New-CscTmp; $ME = Join-Path $DE 'mem'; New-Item -ItemType Directory -Path $ME -Force | Out-Null
@@ -384,13 +397,17 @@ $DE = New-CscTmp; $ME = Join-Path $DE 'mem'; New-Item -ItemType Directory -Path 
 $broken = Join-Path $DE 'broken.ps1'
 'this is not valid powershell {{{' | Set-Content -LiteralPath $broken
 $r = Invoke-Csc $broken $ME @('--no-projects')
-Assert-Eq 'check-state-currentness: an unrunnable lineark still exits 2 (fail-soft)' 2 $r.Rc
+Assert-Eq 'check-state-currentness: an unrunnable linear CLI still exits 2 (fail-soft)' 2 $r.Rc
 Remove-Item -LiteralPath $DE -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- vault scope: only `status: active` project notes are scanned -------------
 # PS-only coverage the bash twin does not carry: the vault half of the source
 # set. A completed project note is a historical record by definition, so its
 # claims must not be read as present-tense assertions.
+#
+# Injected via the DEPRECATED $env:LINEARK_BIN seam on purpose: this is the one
+# case pinning that the fallback still resolves the binary for the transition
+# release — $env:LINEAR_CLI_BIN is unset here, so the fallback runs.
 $D9 = New-CscTmp; $V9 = Join-Path $D9 'vault'
 $P9 = Join-Path $V9 '01-Projects'
 New-Item -ItemType Directory -Path $P9 -Force | Out-Null
@@ -409,25 +426,29 @@ status: completed
 
 ABC-1 is In Progress.
 '@ | Set-Content -LiteralPath (Join-Path $P9 'shipped.md')
-$r = Invoke-Csc $stub9 '' @('--no-projects', '--vault-dir', $V9)
-Assert-Eq          'check-state-currentness: active vault note scanned, completed one skipped (exit 0)' 0 $r.Rc
-Assert-NotContains 'check-state-currentness: completed vault project note is not a present claim' $r.Out 'ABC-1'
+$env:LINEARK_BIN = $stub9
+try {
+    $out9 = (& pwsh -NoProfile -File $CSC '--isolated' '--prefix' 'ABC' '--no-projects' '--vault-dir' $V9 2>$null | Out-String).Trim()
+    $rc9 = $LASTEXITCODE
+} finally { Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue }
+Assert-Eq          'check-state-currentness: active vault note scanned, completed one skipped (exit 0, via LINEARK_BIN fallback)' 0 $rc9
+Assert-NotContains 'check-state-currentness: completed vault project note is not a present claim' $out9 'ABC-1'
 
 # ============================ SKIP CONTRACT ==================================
 
-# --- no lineark on PATH -------------------------------------------------------
+# --- no linear CLI on PATH ----------------------------------------------------
 $r = Invoke-Csc (Join-Path $D1 'definitely-absent.ps1') $M1
-Assert-Eq 'check-state-currentness: absent lineark skips (2)' 2 $r.Rc
+Assert-Eq 'check-state-currentness: absent linear CLI skips (2)' 2 $r.Rc
 
 # The skip reason must reach STDERR in --list mode too — self-audit reports a
 # NAMED skip, and stdout must stay pure TSV so the machine parse is unaffected.
-$env:LINEARK_BIN = (Join-Path $D1 'definitely-absent.ps1')
+$env:LINEAR_CLI_BIN = (Join-Path $D1 'definitely-absent.ps1')
 try {
     $errFile = Join-Path $D1 'skip.err'
     $stdout = (& pwsh -NoProfile -File $CSC '--isolated' '--prefix' 'ABC' '--memory-dir' $M1 '--list' 2>$errFile | Out-String).Trim()
     $stderr = (Get-Content -Raw -LiteralPath $errFile -ErrorAction SilentlyContinue)
-} finally { Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue }
-Assert-Contains 'check-state-currentness: --list names the skip reason on stderr' "$stderr" 'SKIP lineark not found'
+} finally { Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue }
+Assert-Contains 'check-state-currentness: --list names the skip reason on stderr' "$stderr" 'SKIP linear CLI not found'
 Assert-Eq       'check-state-currentness: --list keeps stdout empty on skip' '' $stdout
 
 # --- bulk list call fails ------------------------------------------------------
@@ -437,12 +458,27 @@ Copy-Item -LiteralPath (Join-Path $M1 'project-thing.md') -Destination $M8
 $r = Invoke-Csc $stub8 $M8
 Assert-Eq 'check-state-currentness: failed bulk list skips (2)' 2 $r.Rc
 
+# --- unparseable bulk payload --------------------------------------------------
+# An object with no nodes array is neither {nodes:[...]} nor a bare array — the
+# skip must name the shape, not read as "tracker unreachable".
+'{"foo": 1}' | Set-Content -LiteralPath (Join-Path $D8 'list.json')
+$env:LINEAR_CLI_BIN = $stub8
+try {
+    $errFile8 = Join-Path $D8 'shape.err'
+    $null = (& pwsh -NoProfile -File $CSC '--isolated' '--prefix' 'ABC' '--memory-dir' $M8 2>$errFile8 | Out-String)
+    $rc8 = $LASTEXITCODE
+    $stderr8 = (Get-Content -Raw -LiteralPath $errFile8 -ErrorAction SilentlyContinue)
+} finally { Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue }
+Assert-Eq       'check-state-currentness: unparseable bulk payload skips (2)' 2 $rc8
+Assert-Contains 'check-state-currentness: unparseable bulk payload names the shape' `
+    "$stderr8" 'unexpected issue-query payload (neither {nodes:[...]} nor a JSON array)'
+
 # --- no prefix ----------------------------------------------------------------
-$env:LINEARK_BIN = $stub1
+$env:LINEAR_CLI_BIN = $stub1
 try {
     $out = (& pwsh -NoProfile -File $CSC '--isolated' '--memory-dir' $M1 2>$null | Out-String).Trim()
     $rc = $LASTEXITCODE
-} finally { Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue }
+} finally { Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue }
 Assert-Eq 'check-state-currentness: missing prefix skips (2)' 2 $rc
 
 # --- no sources ---------------------------------------------------------------

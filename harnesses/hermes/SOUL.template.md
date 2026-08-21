@@ -30,7 +30,7 @@ work. Load only the relevant slice; never the whole framework by default.
   net: it opens once the routing declaration (including its `Linear gate:` and
   `Lessons:` lines) is written to `$HERMES_HOME/agentic-os/gate-<session_id>`
   per the `/session-agent` skill body.
-- **Active work → Linear** (`lineark` CLI or Linear MCP). Multi-step or
+- **Active work → Linear** (`linear` CLI or Linear MCP). Multi-step or
   multi-session work gets a Linear issue *before* execution; session todos track
   only the steps within an issue being actively executed.
 - **Durable knowledge → the vault** at `@@OBSIDIAN_VAULT_PATH@@/`; start at

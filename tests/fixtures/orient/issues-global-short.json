@@ -1,3 +1,5 @@
-[
-  {"identifier": "ABC-1", "title": "Alpha one", "priority": "High", "state": "In Progress", "assignee": "Sample Assignee", "team": "ABC", "url": "https://tracker.example/ABC-1", "completedAt": null}
-]
+{
+  "nodes": [
+    {"identifier": "ABC-1", "title": "Alpha one", "priority": 2, "priorityLabel": "High", "state": {"name": "In Progress", "type": "started"}, "assignee": {"name": "Sample Assignee", "displayName": "Sample Assignee"}, "team": {"key": "ABC"}, "url": "https://tracker.example/ABC-1", "completedAt": null}
+  ]
+}

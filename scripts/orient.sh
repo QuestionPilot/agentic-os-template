@@ -26,7 +26,7 @@
 #   anomalies                [{type, subject, detail}] — see below
 #   memory_pointers          project-type memory notes: [{file, name, description}]
 #   degraded                 named degraded surfaces, e.g.
-#                            "linear: lineark not on PATH (lineark)"
+#                            "linear: linear CLI not on PATH (linear)"
 #   safety                   DETECTED per-run safety posture (see below)
 #   telemetry                orientation-cost measurement (see below)
 #
@@ -67,11 +67,11 @@
 #
 # An `issue` is normalized to {identifier, title, state, priority, assignee, url}.
 #
-# ANOMALY CLASSES. `project-idle-with-active-children` is NOT detectable here:
-# `lineark projects list` carries no project state field (verified — it returns
-# {id, name, slug_id, lead}), and paying a `projects read` per project to get one
-# is check-state-currentness.sh's job, not a kickoff helper's. The two classes a
-# single-pass sweep CAN decide:
+# ANOMALY CLASSES. `project-idle-with-active-children` is deliberately NOT
+# decided here: `linear project list --json` does carry a status object, but
+# cross-checking project state against child issue state is
+# check-state-currentness.sh's job, not a kickoff helper's — this helper stays a
+# single-pass sweep. The two classes it CAN decide:
 #   all-issues-backlog-no-assignee  every open issue in a project is Backlog with
 #                                   no assignee — a project nobody is on
 #   open-issue-count-mismatch       an identifier appears under a project but not
@@ -96,25 +96,36 @@
 # means the script itself could not run (bad argument, jq missing), never that a
 # surface was unreachable.
 #
-# Tracker access is the `lineark` CLI ONLY (linear/linear-setup.md §3.2) — no
-# MCP. Override the binary with --lineark or $LINEARK_BIN; the hermetic tests
-# inject a stub serving fixture JSON, so this runs without live credentials.
+# Tracker access is the `linear` CLI ONLY (schpet/linear-cli,
+# linear/linear-setup.md §3.2) — no MCP. Override the binary with --linear-cli
+# or $LINEAR_CLI_BIN; the hermetic tests inject a stub serving fixture JSON, so
+# this runs without live credentials.
 #
-# Response shapes handled (verified against lineark, not assumed):
-#   projects list  -> [{id, name, slug_id, lead}]           NO state field
-#   issues list    -> [{identifier, …, state: "Backlog"}]   state is a BARE STRING,
-#                                                           Done/Canceled hidden
-#   issues read    -> {…, state: {id, name}}                state is an OBJECT
-# Every state read goes through one normalizer that accepts either shape, so
-# nothing here calls `.state.name` on list output.
+# Response shapes handled (verified against schpet/linear-cli v2.5.0, not
+# assumed):
+#   project list --json  -> {nodes:[{id, name, slugId, status:{name,…}, …}]}
+#   issue query  --json  -> {nodes:[{identifier, …, state:{name,…},
+#                            assignee:{name,…}|null, priority: NUMBER,
+#                            priorityLabel: "Medium"}]}
+# Payloads are OBJECTS carrying a `nodes` array (lk() unwraps them; a bare
+# array is also accepted for fixture simplicity). `issue query` returns ALL
+# states by default — Done/Canceled included — so every open cut passes the
+# open states explicitly (-s triage -s backlog -s unstarted -s started).
+# Every state/assignee read goes through one normalizer that accepts object,
+# string, or null, so nothing here calls `.state.name` unguarded.
+#
+# The mine cut needs the viewer's username: `issue query --assignee` filters by
+# display name, which is parsed from `linear auth whoami` ("Display name: …").
+# A whoami parse failure degrades ONLY the mine cut.
 #
 # Usage:
-#   orient.sh [--memory-dir <path>] [--lineark <bin>] [--pretty]
+#   orient.sh [--memory-dir <path>] [--linear-cli <bin>] [--pretty]
 #
 #   --memory-dir <path>  memory store to scan for project-type notes (a single
 #                        store; omit to skip the memory surface).
-#   --lineark <bin>      tracker CLI to invoke (default $LINEARK_BIN, else
-#                        `lineark`). Test-injection seam.
+#   --linear-cli <bin>   tracker CLI to invoke (default $LINEAR_CLI_BIN, else
+#                        `linear`). Test-injection seam. (--lineark is accepted
+#                        as a deprecated alias for one transition release.)
 #   --pretty             indent the JSON (default: one compact line).
 #
 # Exit codes:
@@ -122,11 +133,13 @@
 #   2  the script could not run: bad argument, or jq unavailable
 set -uo pipefail
 
-LINEARK_BIN="${LINEARK_BIN:-lineark}"
+# LINEARK_BIN is the deprecated env seam (one transition release) — same
+# precedence the hygiene and currentness twins use.
+LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
 MEMORY_DIR=""
 PRETTY=0
-# lineark's documented ceiling. Not a flag: a kickoff sweep that needs paging is
-# a different problem than this helper solves, and the count-mismatch anomaly
+# One page's worth. Not a flag: a kickoff sweep that needs paging is a
+# different problem than this helper solves, and the count-mismatch anomaly
 # surfaces the truncation rather than hiding it.
 LIMIT=250
 
@@ -138,7 +151,9 @@ while [ $# -gt 0 ]; do
     # pattern, check-state-currentness.sh): a value-less flag would otherwise
     # re-loop on itself forever.
     --memory-dir) [ $# -ge 2 ] || die "--memory-dir needs a path"; MEMORY_DIR="$2"; shift 2 ;;
-    --lineark)    [ $# -ge 2 ] || die "--lineark needs a path"; LINEARK_BIN="$2"; shift 2 ;;
+    --linear-cli) [ $# -ge 2 ] || die "--linear-cli needs a path"; LINEAR_CLI_BIN="$2"; shift 2 ;;
+    # Deprecated alias (one transition release): same seam, old name.
+    --lineark)    [ $# -ge 2 ] || die "--lineark needs a path"; LINEAR_CLI_BIN="$2"; shift 2 ;;
     --pretty)     PRETTY=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -177,21 +192,35 @@ def issue: {
   identifier: flat(.identifier),
   title:      flat(.title),
   state:      flat(.state),
-  priority:   flat(.priority),
+  # schpet emits a numeric .priority plus a human .priorityLabel; prefer the
+  # label so the normalized row reads "Medium", falling back to the number as
+  # a string when a fixture omits the label.
+  priority:   (.priorityLabel // flat(.priority)),
   assignee:   flat(.assignee),
   url:        flat(.url)
 };
 def rows: objs | map(issue);'
 
-# lk <outfile> <lineark args…> — run the tracker CLI, require a JSON ARRAY back.
-# A non-zero exit, an exec failure, or a non-array payload are all one thing to
-# the caller: this cut is unavailable.
+# lk <outfile> <linear-cli args…> — run the tracker CLI, require a JSON payload
+# carrying rows back. schpet wraps every list in an OBJECT with a `nodes` array;
+# lk() unwraps that to the bare array every consumer reads (a bare array is
+# accepted too, which keeps fixtures simple). A non-zero exit, an exec failure,
+# or a payload that is neither shape are all one thing to the caller: this cut
+# is unavailable.
 lk() {
   local out="$1"; shift
-  "$LINEARK_BIN" "$@" --format json > "$out" 2>/dev/null || return 1
+  "$LINEAR_CLI_BIN" "$@" --json > "$out.raw" 2>/dev/null || return 1
+  jq 'if type == "object" and (.nodes | type == "array") then .nodes
+      elif type == "array" then .
+      else null end' "$out.raw" > "$out" 2>/dev/null || return 1
   jq -e 'type == "array"' "$out" >/dev/null 2>&1 || return 1
   return 0
 }
+
+# The explicit open-state cut. `issue query` returns ALL states by default —
+# Done/Canceled included — so every open sweep names the open states rather
+# than trusting a hiding default that does not exist in this CLI.
+OPEN_STATES=(-s triage -s backlog -s unstarted -s started)
 
 # ---- linear surface ----------------------------------------------------------
 LINEAR_STATUS="ok"
@@ -206,32 +235,41 @@ printf '[]' > "$WORK/projects.json"
 printf '[]' > "$WORK/global.json"
 printf '[]' > "$WORK/mine.json"
 
-if ! command -v "$LINEARK_BIN" >/dev/null 2>&1; then
+if ! command -v "$LINEAR_CLI_BIN" >/dev/null 2>&1; then
   LINEAR_STATUS="absent"
-  LINEAR_DETAIL="lineark not found (--lineark or PATH): $LINEARK_BIN — see linear/linear-setup.md §3.2"
-  degrade "linear: lineark not on PATH ($LINEARK_BIN)"
+  LINEAR_DETAIL="linear CLI not found (--linear-cli or PATH): $LINEAR_CLI_BIN — see linear/linear-setup.md §3.2"
+  degrade "linear: linear CLI not on PATH ($LINEAR_CLI_BIN)"
 else
   linear_errs=0
 
-  if ! lk "$WORK/projects.json" projects list; then
+  if ! lk "$WORK/projects.json" project list; then
     printf '[]' > "$WORK/projects.json"
     linear_errs=1
     PROJECT_CUT_INCOMPLETE=1
-    degrade "linear: projects list failed"
+    degrade "linear: project list failed"
   fi
-  if ! lk "$WORK/global.json" issues list --limit "$LIMIT"; then
+  if ! lk "$WORK/global.json" issue query --all-teams "${OPEN_STATES[@]}" --limit "$LIMIT"; then
     printf '[]' > "$WORK/global.json"
     linear_errs=1
     # A failed GLOBAL sweep breaks reconciliation the same way a failed project
     # cut does: every project-listed identifier would surface as a phantom
     # count-mismatch against the empty sweep.
     PROJECT_CUT_INCOMPLETE=1
-    degrade "linear: global issues list failed"
+    degrade "linear: global issue query failed"
   fi
-  if ! lk "$WORK/mine.json" issues list --mine --limit "$LIMIT"; then
+  # The mine cut filters by the viewer's display name — `issue query` has no
+  # "me" token, so the name is parsed from `auth whoami`. A parse failure
+  # degrades ONLY this cut; the project and global cuts stand on their own.
+  ME_NAME="$("$LINEAR_CLI_BIN" auth whoami 2>/dev/null \
+    | LC_ALL=C sed -nE 's/^[[:space:]]*Display name:[[:space:]]*//p' | head -n 1 | tr -d '\r')"
+  if [ -z "$ME_NAME" ]; then
     printf '[]' > "$WORK/mine.json"
     linear_errs=1
-    degrade "linear: issues list --mine failed"
+    degrade "linear: whoami display name unavailable — mine cut skipped"
+  elif ! lk "$WORK/mine.json" issue query --all-teams --assignee "$ME_NAME" "${OPEN_STATES[@]}" --limit "$LIMIT"; then
+    printf '[]' > "$WORK/mine.json"
+    linear_errs=1
+    degrade "linear: issue query --assignee (mine) failed"
   fi
 
   # Project-first cut: one issues-list call per project, in tracker order.
@@ -240,38 +278,41 @@ else
     [ -n "${pid:-}" ] || continue
     pn=$((pn + 1))
     pf="$WORK/pi-$pn.json"
-    if ! lk "$pf" issues list --project "$pid" --limit "$LIMIT"; then
+    if ! lk "$pf" issue query --all-teams --project "$pid" "${OPEN_STATES[@]}" --limit "$LIMIT"; then
       printf '[]' > "$pf"
       linear_errs=1
       PROJECT_CUT_INCOMPLETE=1
-      degrade "linear: issues list failed for project $pname"
+      degrade "linear: issue query failed for project $pname"
     fi
 
     jq -nc --arg id "$pid" --arg name "$pname" --arg slug "$pslug" --slurpfile iss "$pf" \
       "$ISSUE_DEF"'{id:$id, name:$name, slug_id:$slug, open_issues: (($iss[0] // []) | rows)}' \
       >> "$PROJECTS_OUT"
 
-    jq -r "$ISSUE_DEF"'rows[] | .identifier | select(length > 0)' "$pf" >> "$PROJ_IDS"
+    jq -r "$ISSUE_DEF"'rows[] | .identifier | select(length > 0)' "$pf" | LC_ALL=C tr -d '\r' >> "$PROJ_IDS"
 
     # ANOMALY: a project whose whole open set is unassigned Backlog. Empty
     # projects are NOT this class — nothing is stalled when nothing is open.
     # Counted over `rows` (object elements only), so the total and the idle count
     # are drawn from the SAME set — a non-object element cannot make them differ.
-    p_total="$(jq "$ISSUE_DEF"'rows | length' "$pf")"
+    p_total="$(jq "$ISSUE_DEF"'rows | length' "$pf" | LC_ALL=C tr -d '[:space:]')"
     if [ "${p_total:-0}" -gt 0 ]; then
-      p_idle="$(jq "$ISSUE_DEF"'[ rows[] | select(.state == "Backlog" and .assignee == "") ] | length' "$pf")"
+      p_idle="$(jq "$ISSUE_DEF"'[ rows[] | select(.state == "Backlog" and .assignee == "") ] | length' "$pf" | LC_ALL=C tr -d '[:space:]')"
       if [ "${p_idle:-0}" -eq "${p_total:-0}" ]; then
         anomaly "all-issues-backlog-no-assignee" "$pname" \
           "all $p_total open issue(s) are Backlog with no assignee"
       fi
     fi
-  done < <(jq -r "$ISSUE_DEF"'objs[] | select((.id // "") != "") | [ (.id | tostring), (.name // "-" | tostring), (.slug_id // "" | tostring) ] | @tsv' "$WORK/projects.json")
+  # `tr -d '\r'`: Windows-built jq emits CRLF, so the LAST @tsv field would
+  # otherwise carry a trailing \r into slug_id values and identifier sets
+  # (same trap check-freshness.sh documents). Harmless on POSIX jq.
+  done < <(jq -r "$ISSUE_DEF"'objs[] | select((.id // "") != "") | [ (.id | tostring), (.name // "-" | tostring), ((.slugId // .slug_id // "") | tostring) ] | @tsv' "$WORK/projects.json" | LC_ALL=C tr -d '\r')
 
   if [ "$linear_errs" -eq 1 ]; then
     LINEAR_STATUS="error"
-    LINEAR_DETAIL="one or more lineark calls failed — see degraded"
+    LINEAR_DETAIL="one or more linear CLI calls failed — see degraded"
   else
-    LINEAR_DETAIL="lineark ok: $pn project(s), $(jq 'length' "$WORK/global.json") open issue(s) in the global sweep"
+    LINEAR_DETAIL="linear CLI ok: $pn project(s), $(jq 'length' "$WORK/global.json" | LC_ALL=C tr -d '[:space:]') open issue(s) in the global sweep"
   fi
 fi
 
@@ -295,7 +336,7 @@ if [ "$PROJECT_CUT_INCOMPLETE" -eq 1 ]; then
   jq "$ISSUE_DEF"'[ rows[] | select(.state == "In Progress") ]' "$WORK/mine.json" > "$WORK/mine_ip.json"
 else
 
-jq -r "$ISSUE_DEF"'rows[] | .identifier | select(length > 0)' "$WORK/global.json" > "$WORK/global.ids"
+jq -r "$ISSUE_DEF"'rows[] | .identifier | select(length > 0)' "$WORK/global.json" | LC_ALL=C tr -d '\r' > "$WORK/global.ids"
 LC_ALL=C sort -u "$WORK/global.ids" > "$WORK/global.sorted"
 LC_ALL=C sort -u "$PROJ_IDS" > "$WORK/proj.sorted"
 LC_ALL=C comm -23 "$WORK/global.sorted" "$WORK/proj.sorted" > "$WORK/projectless.ids"

@@ -58,7 +58,7 @@
     renders, as a NAMED skip.
 
 .PARAMETER Isolated
-    Turn off all operator-env fallbacks (env vars + lineark detection). Used
+    Turn off all operator-env fallbacks (env vars + linear CLI detection). Used
     by tests so fixtures only see what the test sets up.
 
 .NOTES
@@ -70,7 +70,7 @@
     are avoided for byte-significant output.
 
     Per [[feedback_ps_port_path_capture_at_precheck]]: external binaries
-    (lineark, jq, git) are looked up via Get-Command at call time (matching the
+    (linear, jq, git) are looked up via Get-Command at call time (matching the
     bash twin's `command -v ... >/dev/null 2>&1` pattern). <TEAM>-180 D2 added a
     local.env read for config resolution, but via Get-SaLocalEnvValue it reads
     ONLY the four config keys (CLAUDE_CONFIG_DIR / OBSIDIAN_VAULT_PATH /
@@ -278,7 +278,7 @@ if (Test-Path -LiteralPath $RepoRoot -PathType Container) {
 # Get-SaLocalEnvValue — read ONE key's value from local.env WITHOUT importing the
 # whole file (<TEAM>-180 D2). We deliberately do NOT use scripts/lib/local-env.ps1's
 # Import-LocalEnv here: that pushes EVERY key (incl. a hostile PATH=) into the
-# process env, and this script resolves lineark/jq/git via Get-Command AFTER this
+# process env, and this script resolves linear/jq/git via Get-Command AFTER this
 # point — the exact [[feedback_ps_port_path_capture_at_precheck]] PATH-poisoning
 # window. Reading only the four config keys (never PATH) keeps the bash twin's
 # `set -a; . local.env` behaviour while preserving the hardened posture. Mirrors
@@ -665,43 +665,47 @@ function Test-GitIgnored {
 function Invoke-Pillar1 {
     $key = 'cross-layer-handoffs'
 
-    $linearkAvail = 0
+    $linearCliAvail = 0
     $memoryAvail  = 0
     $vaultAvail   = 0
 
-    if (-not $Isolated.IsPresent -and (Test-Command 'lineark')) { $linearkAvail = 1 }
+    if (-not $Isolated.IsPresent -and (Test-Command 'linear')) { $linearCliAvail = 1 }
     if ($MemoryDirs.Count -gt 0) { $memoryAvail = 1 }
     if ((-not [string]::IsNullOrEmpty($VaultDir))  -and (Test-Path -LiteralPath $VaultDir  -PathType Container)) { $vaultAvail  = 1 }
 
-    if ($linearkAvail -eq 0) { Add-Skip 'lineark not installed — Linear-side cross-layer checks skipped' }
+    if ($linearCliAvail -eq 0) { Add-Skip 'linear CLI not installed — Linear-side cross-layer checks skipped' }
     if ($memoryAvail -eq 0)  { Add-Skip 'memory dir not resolved — memory-side cross-layer checks skipped' }
     if ($vaultAvail -eq 0)   { Add-Skip 'vault dir not configured — vault-side cross-layer checks skipped' }
 
-    # Codex S-4 mirror: jq-missing skip emitted once if lineark is available.
+    # Codex S-4 mirror: jq-missing skip emitted once if the linear CLI is available.
     $needJqWarned = $false
-    if ($linearkAvail -eq 1 -and -not (Test-Command 'jq')) {
+    if ($linearCliAvail -eq 1 -and -not (Test-Command 'jq')) {
         Add-Skip 'jq not installed — Linear-side cross-layer checks skipped'
         $needJqWarned = $true
     }
 
-    # Helper: list active+planned Linear project names via lineark.
+    # Helper: list active+planned Linear project names via the linear CLI
+    # (schpet/linear-cli).
     # Returns @() on any failure path so the calling code can continue cleanly.
     # _Get-ActiveProjectNames — names of Linear projects with >=1 OPEN issue
-    # (lineark hides Done/Canceled). A project with zero open issues is closed-out
-    # and must NOT demand a memory/vault handshake (<TEAM>-353): self-audit used to
-    # flag EVERY `lineark projects list` entry, so closed Agentic-OS sub-projects
-    # (Launch Gate, Pre-Ship Review Fixes, …) kept deducting forever. If a per-
-    # project issues query errors we KEEP the project (conservative — a transient
-    # lineark error must not hide a real handshake gap).
+    # (Done/Canceled are excluded by the explicit `-s` open-state filters, since
+    # the linear CLI's issue query returns ALL states by default). A project with
+    # zero open issues is closed-out and must NOT demand a memory/vault handshake
+    # (<TEAM>-353): self-audit used to flag EVERY `linear project list` entry, so
+    # closed Agentic-OS sub-projects (Launch Gate, Pre-Ship Review Fixes, …)
+    # kept deducting forever. If a per-project issues query errors we KEEP the
+    # project (conservative — a transient linear CLI error must not hide a real
+    # handshake gap). schpet/linear-cli wraps list payloads in an object —
+    # unwrap `.nodes`.
     function _Get-ActiveProjectNames {
         try {
-            $projectsJsonLines = & lineark projects list --format json 2>$null
+            $projectsJsonLines = & linear project list --json 2>$null
             if ($LASTEXITCODE -ne 0 -or -not $projectsJsonLines) { return @() }
             $projectsJson = if ($projectsJsonLines -is [array]) { ($projectsJsonLines -join "`n") } else { $projectsJsonLines }
             # id+name pairs (jq matches bash; fall back to ConvertFrom-Json).
             $pairs = @()
             if (Test-Command 'jq') {
-                $tsv = $projectsJson | & jq -r '.[] | [.id, .name] | @tsv' 2>$null
+                $tsv = $projectsJson | & jq -r '(.nodes // .)[]? | [.id, .name] | @tsv' 2>$null
                 if ($LASTEXITCODE -eq 0 -and $tsv) {
                     foreach ($line in @($tsv)) {
                         if ([string]::IsNullOrEmpty($line)) { continue }
@@ -712,22 +716,22 @@ function Invoke-Pillar1 {
             }
             if ($pairs.Count -eq 0) {
                 $obj = $projectsJson | ConvertFrom-Json -ErrorAction Stop
-                foreach ($p in @($obj)) { $pairs += ,@($p.id, $p.name) }
+                foreach ($p in @($obj.nodes)) { $pairs += ,@($p.id, $p.name) }
             }
             $active = @()
             foreach ($pair in $pairs) {
                 $projId = $pair[0]; $projName = $pair[1]
                 if ([string]::IsNullOrEmpty($projName)) { continue }
                 if (-not [string]::IsNullOrEmpty($projId)) {
-                    $issuesLines = & lineark issues list --project $projId --format json 2>$null
+                    $issuesLines = & linear issue query --all-teams --project $projId -s triage -s backlog -s unstarted -s started --limit 250 --json 2>$null
                     if ($LASTEXITCODE -eq 0 -and $issuesLines) {
                         $issuesJson = if ($issuesLines -is [array]) { ($issuesLines -join "`n") } else { $issuesLines }
                         $open = -1
                         if (Test-Command 'jq') {
-                            $len = $issuesJson | & jq 'length' 2>$null
+                            $len = $issuesJson | & jq '(.nodes // .) | length' 2>$null
                             if ($LASTEXITCODE -eq 0 -and $len) { $open = [int]$len }
                         } else {
-                            try { $open = @(($issuesJson | ConvertFrom-Json)).Count } catch { $open = -1 }
+                            try { $open = @(($issuesJson | ConvertFrom-Json).nodes).Count } catch { $open = -1 }
                         }
                         if ($open -eq 0) { continue }
                     }
@@ -741,9 +745,9 @@ function Invoke-Pillar1 {
     }
 
     # Compute the active-project names ONCE (shared by 1.1 + 1.2) so the per-
-    # project issues queries do not run twice. Only when lineark + jq available.
+    # project issues queries do not run twice. Only when linear CLI + jq available.
     $activeProjectNames = @()
-    if ($linearkAvail -eq 1 -and (Test-Command 'jq')) {
+    if ($linearCliAvail -eq 1 -and (Test-Command 'jq')) {
         $activeProjectNames = @(_Get-ActiveProjectNames)
     }
 
@@ -752,12 +756,13 @@ function Invoke-Pillar1 {
     $ran = 0
 
     # Sub-check 1.1 — for each ACTIVE project (>=1 open issue), a matching
-    # project-type memory note (frontmatter type: project — <TEAM>-353). lineark slug
-    # != memory filename, so match the project NAME in note bodies, not filenames.
+    # project-type memory note (frontmatter type: project — <TEAM>-353). The linear
+    # CLI's project slug != memory filename, so match the project NAME in note
+    # bodies, not filenames.
     # <TEAM>-366: notes are collected across ALL scanned stores — a project note in
     # ANY store satisfies the handshake (the old single-store scan demanded the
     # note in whichever store the picker happened to select).
-    if ($linearkAvail -eq 1 -and $memoryAvail -eq 1 -and (Test-Command 'jq')) {
+    if ($linearCliAvail -eq 1 -and $memoryAvail -eq 1 -and (Test-Command 'jq')) {
         $ran = 1
         $projNoteFiles = @()
         foreach ($mdDir in $MemoryDirs) {
@@ -786,7 +791,7 @@ function Invoke-Pillar1 {
 
     # Sub-check 1.2 — for each ACTIVE project (>=1 open issue), a matching vault
     # handshake. Shares $activeProjectNames from 1.1 (<TEAM>-353).
-    if ($linearkAvail -eq 1 -and $vaultAvail -eq 1 -and (Test-Command 'jq')) {
+    if ($linearCliAvail -eq 1 -and $vaultAvail -eq 1 -and (Test-Command 'jq')) {
         $ran = 1
         $hsRoot = Join-Path $VaultDir '01-Projects'
         foreach ($pname in $activeProjectNames) {
@@ -852,7 +857,7 @@ function Invoke-Pillar1 {
     # Finalize note. A pillar that ran zero sub-checks (no reachable cross-layer
     # surface) is UNSCORED — not a free 20.
     if ($ran -eq 0) {
-        Set-Unscored $key 'no cross-layer surface reachable (lineark/memory/vault)'
+        Set-Unscored $key 'no cross-layer surface reachable (linear/memory/vault)'
         return
     }
     $s = $pillarScores[$key]
@@ -1647,7 +1652,7 @@ function Invoke-StateCurrentness {
     } else {
         $script:scStatus = 'skipped'
         # The checker names its skip on stderr in BOTH modes precisely so this
-        # stays a NAMED skip ("lineark not found") and not a bare exit 2.
+        # stays a NAMED skip (e.g. "linear CLI not found") and not a bare exit 2.
         $errText = ''
         try { $errText = (Get-Content -LiteralPath $errFile -TotalCount 1 -ErrorAction SilentlyContinue) } catch { $errText = '' }
         if ($null -eq $errText) { $errText = '' }

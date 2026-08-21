@@ -39,7 +39,7 @@ Each pillar is scored 0–20. Total is 0–100. Below ~80 is "actively thinning"
 ~80–95 is "healthy with named gaps"; ~95–100 is "actually in good shape".
 
 **UNSCORED pillars depress the total by design.** A pillar whose surface is not
-configured (no Linear/`lineark`, no memory dir, no vault) cannot be measured, so it
+configured (no Linear/`linear` CLI, no memory dir, no vault) cannot be measured, so it
 is **floored to 0 and flagged `UNSCORED`** — never left at the seeded 20. This
 follows `core/verification.md`: a check that cannot run must fail, never pass.
 Consequence: a fresh clone with operator surfaces unwired lands well below 95 (e.g.
@@ -146,12 +146,12 @@ script's penalty rules are the canonical scoring.
    With no flags it **reads `local.env`** (the same file `bootstrap.sh` /
    `install.sh` use) and resolves three optional surfaces from it: the memory
    dir under `$CLAUDE_CONFIG_DIR/projects/*/memory/`, the vault at
-   `$OBSIDIAN_VAULT_PATH`, plus `lineark` if installed. It **parses just the
+   `$OBSIDIAN_VAULT_PATH`, plus the `linear` CLI if installed. It **parses just the
    four config keys as data** (those two paths, `CLAUDE_PRIMARY_MEMORY_DIR`,
    and `INJECTION_SURFACE_WARN_KB`) rather than sourcing the file — both twins
    (`self-audit.sh`, `self-audit.ps1`) read the keys without executing
    `local.env`, so a hostile or malformed file can neither run code nor poison
-   the `lineark`/`jq`/`git` lookups. Reading `local.env`
+   the `linear`/`jq`/`git` lookups. Reading `local.env`
    rather than the ambient environment is what makes the score **reproducible** —
    two shells score the same repo identically whether or not they happened to
    export those vars. `local.env` wins over ambient env; explicit
@@ -331,7 +331,7 @@ Total: <bytes> bytes — soft threshold <K> KB (OK|OVER)
 
 ## Skipped surfaces
 
-- <surface>: <reason> (e.g. "lineark not installed; cross-layer Linear checks skipped")
+- <surface>: <reason> (e.g. "linear CLI not installed; cross-layer Linear checks skipped")
 
 ## Operator sub-gates
 
@@ -382,7 +382,7 @@ exit_code, detail}], dropped}`.
 - **Not a substitute for the PASS/FAIL gates.** `validate.sh`,
   `check-drift.sh`, and — where the upstream acceptance suite is present —
   `tests/run.sh` catch hard breakage. Self-audit catches thinning. Run both.
-- **Graceful degradation.** Missing `lineark`, missing `OBSIDIAN_VAULT_PATH`,
+- **Graceful degradation.** Missing the `linear` CLI, missing `OBSIDIAN_VAULT_PATH`,
   missing `$CLAUDE_CONFIG_DIR` are skipped with a one-line note — the audit
   scores what it can see and tells you what it could not.
 - **Operator-local state.** The scorecard reflects the operator's local

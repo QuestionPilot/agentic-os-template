@@ -23,9 +23,11 @@
     SCOPE: the machine-visible subset of the standard. Team is enforced by
     the create command itself; parent/relations and body completeness beyond
     the AC heading are judgment calls the sweep does not police. The PASS
-    line claims exactly the checked fields. Open-only scope relies on
-    lineark's documented default of hiding Done/Canceled in `issues list`
-    (linear/linear-setup.md §4.1/§4.3).
+    line claims exactly the checked fields. Open-only scope is enforced by
+    the EXPLICIT -s state list on the query (triage/backlog/unstarted/
+    started) — the linear CLI's `issue query` returns ALL states by default,
+    Done/Canceled included, so the state filter is what keeps this an
+    open-issues sweep (linear/linear-setup.md §4.1/§4.3).
 
     ADVISORY, WARN-only — never a gate. Deliberately NOT wired into
     `make verify`. Reads run sequentially, capped by --max-reads; issues
@@ -46,13 +48,15 @@
     Exit codes (BOTH modes), parity with the bash twin:
       0  clean — no evaluated issue has a hygiene gap (unchecked-only is clean)
       1  gaps  — at least one open issue has a hygiene gap (advisory WARN)
-      2  skip  — could not determine (no lineark / list call failed /
+      2  skip  — could not determine (no linear CLI / query failed /
                  unparseable payload / bad argument). Callers treat exit 2
                  as "say nothing".
 
-    Requires the lineark CLI (linear/linear-setup.md §3.2). Override the
-    binary with $env:LINEARK_BIN — the hermetic tests inject a stub .ps1 that
-    serves fixture JSON.
+    Requires the linear CLI (schpet/linear-cli; linear/linear-setup.md §3.2).
+    Override the binary with $env:LINEAR_CLI_BIN — the hermetic tests inject a
+    stub .ps1 that serves fixture JSON. $env:LINEARK_BIN is still accepted as
+    a DEPRECATED fallback for one transition release (lineark →
+    schpet/linear-cli).
 
     POSIX-style --max-reads / --list flags pass through $Rest so bash-trained
     operators get muscle-memory parity (mirrors check-freshness.ps1's parser).
@@ -109,15 +113,22 @@ function Skip-Hygiene([string]$reason) {
 }
 
 # Get-Field <obj> <name> — flatten a payload field to a display string: ''
-# for missing/null, joined names for Linear-MCP-shaped arrays/objects where
-# lineark returns flat strings (parity with the bash twin's jq s() helper).
-# Null-safe on array elements: a [null] entry contributes '', never a
-# StrictMode property-access crash.
+# for missing/null. Normalizes the linear CLI's object shapes to the flat
+# strings downstream logic expects — assignee/state objects to .name and
+# {nodes:[...]} label wrappers to a joined name list — while still tolerating
+# flat strings and bare arrays (fixture simplicity; parity with the bash
+# twin's jq s() helper). Null-safe on array elements: a [null] entry
+# contributes '', never a StrictMode property-access crash.
 function Get-Field($obj, [string]$name) {
     if ($null -eq $obj) { return '' }
     $p = $obj.PSObject.Properties[$name]
     if ($null -eq $p -or $null -eq $p.Value) { return '' }
     $v = $p.Value
+    if ($v -is [PSCustomObject]) {
+        # {nodes:[...]} wrapper (linear CLI labels shape) — unwrap to the rows.
+        $np = $v.PSObject.Properties['nodes']
+        if ($null -ne $np -and $np.Value -is [array]) { $v = $np.Value }
+    }
     if ($v -is [array]) {
         return (($v | ForEach-Object {
             if ($null -eq $_) { '' }
@@ -133,18 +144,35 @@ function Get-Field($obj, [string]$name) {
     return "$v"
 }
 
-$lineark = if ($env:LINEARK_BIN) { $env:LINEARK_BIN } else { 'lineark' }
-if (-not (Get-Command $lineark -ErrorAction SilentlyContinue)) {
-    Skip-Hygiene 'lineark not found ($env:LINEARK_BIN or PATH) — see linear/linear-setup.md §3.2'
+# Binary seam: $env:LINEAR_CLI_BIN preferred; $env:LINEARK_BIN is a DEPRECATED
+# fallback kept for one transition release after the lineark →
+# schpet/linear-cli migration; default `linear`.
+$linearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN }
+             elseif ($env:LINEARK_BIN) { $env:LINEARK_BIN }
+             else { 'linear' }
+if (-not (Get-Command $linearCli -ErrorAction SilentlyContinue)) {
+    Skip-Hygiene 'linear CLI not found ($env:LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2'
 }
 
-$raw = (& $lineark issues list --format json 2>$null | Out-String)
-if ($LASTEXITCODE -ne 0) { Skip-Hygiene 'lineark issues list failed' }
-if (-not $raw.TrimStart().StartsWith('[')) {
-    Skip-Hygiene 'unexpected issues-list payload (not a JSON array)'
+# Open-only scope via the explicit -s state list (see SCOPE above): the linear
+# CLI returns ALL states by default, so triage/backlog/unstarted/started is
+# what excludes Done/Canceled.
+$raw = (& $linearCli issue query --all-teams -s triage -s backlog -s unstarted -s started --limit 250 --json 2>$null | Out-String)
+if ($LASTEXITCODE -ne 0) { Skip-Hygiene 'linear CLI issue query failed' }
+try { $payload = ConvertFrom-Json -InputObject $raw -NoEnumerate } catch {
+    Skip-Hygiene 'unexpected issue-query payload (not valid JSON)'
 }
-try { $issues = @($raw | ConvertFrom-Json) } catch {
-    Skip-Hygiene 'unexpected issues-list payload (not valid JSON)'
+# The linear CLI wraps rows as {nodes:[...]}; a bare array is also accepted
+# (fixture simplicity). Anything else means the call failed.
+$issues = $null
+if ($payload -is [array]) {
+    $issues = @($payload)
+} elseif ($payload -is [PSCustomObject]) {
+    $np = $payload.PSObject.Properties['nodes']
+    if ($null -ne $np -and $np.Value -is [array]) { $issues = @($np.Value) }
+}
+if ($null -eq $issues) {
+    Skip-Hygiene 'unexpected issue-query payload (no rows array)'
 }
 
 $total = $issues.Count
@@ -163,7 +191,22 @@ foreach ($it in $issues) {
     $ident = Get-Field $it 'identifier'
     if (-not $ident) { $malformed++; continue }
     $evaluated++
-    $priority = Get-Field $it 'priority'
+    # priority is a NUMBER with a sibling priorityLabel string in the linear
+    # CLI payload; prefer the label, with 0 → 'No priority' as the numeric
+    # fallback, so the downstream default-priority check is untouched. Flat
+    # string fixtures still flow through Get-Field unchanged.
+    $priority = $null
+    $plProp = $it.PSObject.Properties['priorityLabel']
+    if ($null -ne $plProp -and $null -ne $plProp.Value -and "$($plProp.Value)" -ne '') {
+        $priority = "$($plProp.Value)"
+    } else {
+        $pvProp = $it.PSObject.Properties['priority']
+        if ($null -ne $pvProp -and $null -ne $pvProp.Value -and $pvProp.Value -isnot [string] -and $pvProp.Value -is [ValueType] -and $pvProp.Value -isnot [bool]) {
+            $priority = if ([double]$pvProp.Value -eq 0) { 'No priority' } else { "$($pvProp.Value)" }
+        } else {
+            $priority = Get-Field $it 'priority'
+        }
+    }
     $labels = Get-Field $it 'labels'
     $assignee = Get-Field $it 'assignee'
 
@@ -175,7 +218,7 @@ foreach ($it in $issues) {
     if ($reads -lt $MaxReads) {
         $reads++
         $robj = $null
-        $rraw = (& $lineark issues read $ident --format json 2>$null | Out-String)
+        $rraw = (& $linearCli issue view $ident --json 2>$null | Out-String)
         if ($LASTEXITCODE -eq 0) {
             try { $robj = $rraw | ConvertFrom-Json } catch { $robj = $null }
         }

@@ -1,0 +1,3 @@
+[
+  {"identifier": "ABC-7", "title": "Bare-array issue", "priority": 2, "priorityLabel": "High", "state": {"name": "In Progress", "type": "started"}, "assignee": {"name": "Sample Assignee", "displayName": "Sample Assignee"}, "url": "https://tracker.example/ABC-7"}
+]
