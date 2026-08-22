@@ -267,6 +267,7 @@ For agent orientation in a new or unfamiliar project, use `playbooks/project-onb
 For repository hygiene, privacy, and cleanup checks, use `playbooks/github-housekeeping.md`.
 For changes that are published, deployed, or live-state-changing, use `playbooks/deploy-certification.md`.
 For fixing a failing test, error, regression, or defect, use `playbooks/root-cause-debugging.md`.
+For writing or changing a verification gate, scanner, hook, or other trusted script, use `playbooks/script-and-guard-authoring.md`.
 For running the framework as your own personal OS (co-located config dirs, consumer postures, which publish-guards to drop), use `playbooks/personal-fork.md`.
 
 ## Golden Rule

@@ -23,6 +23,8 @@ Use this before broad vault search.
 | Linting/improving memory | [[00-System/Lint Workflow]], [[40-Observability/recommendations]] | [[40-Observability/stale-memory]], [[40-Observability/repeated-work]] |
 | Dream Review | [[00-System/Dream Review]], [[40-Observability/dream-reviews]] | Linear, `agentic-os-template`, project manuals, health check output |
 | End of meaningful work | [[00-System/Wrap-Up Workflow]], [[00-System/Self-Improvement Loop]] | Relevant project, decision, lesson, archive, or Linear destination |
+| No route fits — broad search | `bin/vault-search.sh <query>` (deterministic full-text baseline; lexical, so try more than one phrasing) | [[00-System/Retrieval Fixtures]] for what the baseline is measured against |
+| What a past session did | [[90-Indexes/Session Index]] (generated query surface over the session archive) | The linked session log itself |
 
 ## Rule
 

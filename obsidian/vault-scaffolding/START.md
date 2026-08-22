@@ -43,3 +43,5 @@ For meaningful vault changes, run:
 ```bash
 node bin/memory-vault-audit.js
 ```
+
+For a broad question with no obvious route, `bin/vault-search.sh <query>` is the deterministic full-text baseline; `bin/retrieval-evals.sh` checks it still retrieves. See [[00-System/Health Check]].

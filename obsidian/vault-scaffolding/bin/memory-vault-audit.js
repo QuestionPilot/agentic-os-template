@@ -10,6 +10,11 @@ const exists = (p) => fs.existsSync(path.join(root, p));
 const errors = [];
 const warnings = [];
 const passes = [];
+// Checks that target an OPTIONAL artifact report NOT-APPLICABLE rather than
+// passing or failing. A fresh vault legitimately has not created every artifact
+// yet, and "absent" must never masquerade as "checked and clean" — an N/A line
+// is printed and counted, so the reader can see which instruments did not run.
+const skipped = [];
 
 function walk(dir) {
   const out = [];
@@ -29,6 +34,7 @@ function walk(dir) {
 function pass(msg) { passes.push(msg); }
 function warn(msg) { warnings.push(msg); }
 function fail(msg) { errors.push(msg); }
+function na(msg) { skipped.push(msg); }
 
 const files = walk(root);
 const mdFiles = files.filter((f) => f.endsWith(".md"));
@@ -289,6 +295,85 @@ function checkHarnessIndexViews() {
   }
 }
 
+function checkRetrievalPointers() {
+  // The retrieval fixture set (00-System/Retrieval Fixtures.md) is the eval
+  // corpus for bin/vault-search.sh. It is OPTIONAL — a vault that has not
+  // adopted the retrieval baseline has no fixture note, and that is a clean
+  // N/A, not a failure. Where it DOES exist, two properties are checked:
+  //
+  //   1. Every positive fixture's `Must surface` path still exists. A fixture
+  //      pointing at a renamed or deleted note can never pass, and a broken
+  //      pointer nobody notices is how a green eval suite starts lying.
+  //   2. The negative-control table is non-empty. A fixture set with only
+  //      positives can never demonstrate the surface saying "nothing here", and
+  //      a search that always answers is indistinguishable from one guessing.
+  //
+  // Parsing mirrors bin/retrieval-evals.sh's row shapes deliberately: two
+  // independent readers of one table catch a shape change that a single reader
+  // would silently absorb.
+  const fixturesRel = "00-System/Retrieval Fixtures.md";
+  if (!exists(fixturesRel)) {
+    na(`retrieval fixtures absent — pointer check not applicable: ${fixturesRel}`);
+    return;
+  }
+  const text = fs.readFileSync(path.join(root, fixturesRel), "utf8");
+  const cells = (line) =>
+    line.split("|").slice(1, -1).map((c) => c.trim().replace(/`/g, ""));
+  const positives = [];
+  const negatives = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\| *R[0-9]+ *\|/.test(line)) positives.push(cells(line));
+    else if (/^\| *N[0-9]+ *\|/.test(line)) negatives.push(cells(line));
+  }
+  if (!positives.length) {
+    fail(`retrieval fixtures: parsed 0 positive fixtures from ${fixturesRel} — has the table shape changed?`);
+    return;
+  }
+  const broken = positives
+    .map((c) => ({ id: c[0], target: c[4] }))
+    .filter((p) => p.target && !exists(p.target));
+  broken.forEach((p) =>
+    fail(`retrieval fixture broken pointer: ${p.id} -> ${p.target} does not exist`),
+  );
+  if (!negatives.length) {
+    fail(`retrieval fixtures: no negative controls in ${fixturesRel} — a surface that can never report absence is untestable`);
+  }
+  if (!broken.length && negatives.length) {
+    pass(`retrieval fixture pointers resolve (${positives.length} positives, ${negatives.length} negative controls)`);
+  }
+}
+
+function checkSessionIndexView() {
+  // 90-Indexes/Session Index.md is GENERATED from the 30-Archive/Sessions
+  // corpus, so a hand edit or a stale view silently breaks the archive's query
+  // surface. Re-derive and fail on drift — same contract as the harness index
+  // views above. The generator is OPTIONAL: a vault that has not adopted the
+  // session index has no generator, which is a clean N/A. Its exit codes are
+  // distinguished on purpose — 1 is drift ("the index is stale"), 2 is a
+  // corpus-integrity failure ("the archive is unreadable"), and collapsing them
+  // would hide which of the two actually happened. An EMPTY archive is neither:
+  // the generator writes a truthful zero-coverage view, so this check passes on
+  // a fresh vault.
+  const generator = path.join(__dirname, "generate-session-index.js");
+  if (!fs.existsSync(generator)) {
+    na("session index generator absent — view check not applicable: bin/generate-session-index.js");
+    return;
+  }
+  const res = spawnSync("node", [generator, "--check"], { encoding: "utf8" });
+  const out = (res.stderr || res.stdout || "").trim();
+  if (res.status === 0) {
+    pass("session index view matches regeneration");
+  } else if (res.status === 2) {
+    fail(`session index corpus failure: ${out || "generator exited 2 with no message"}`);
+  } else {
+    out
+      .split("\n")
+      .filter(Boolean)
+      .forEach((line) => fail(`session index drift: ${line}`));
+    if (!out) fail(`session index check failed (exit ${res.status}) with no message`);
+  }
+}
+
 checkRequired();
 checkNoiseAndSecrets();
 checkAgnostic();
@@ -300,9 +385,14 @@ checkWikiSourceRefs();
 checkIndexes();
 checkActiveTaskMarkers();
 checkHarnessIndexViews();
+checkRetrievalPointers();
+checkSessionIndexView();
 
 for (const p of passes) console.log(`PASS ${p}`);
+// N/A lines print between PASS and WARN: an instrument that did not run is not
+// a clean result, and silence would let it read as one.
+for (const s of skipped) console.log(`N/A  ${s}`);
 for (const w of warnings) console.log(`WARN ${w}`);
 for (const e of errors) console.log(`FAIL ${e}`);
-console.log(`\nSummary: ${passes.length} pass, ${warnings.length} warn, ${errors.length} fail`);
+console.log(`\nSummary: ${passes.length} pass, ${skipped.length} n/a, ${warnings.length} warn, ${errors.length} fail`);
 process.exit(errors.length ? 1 : 0);
