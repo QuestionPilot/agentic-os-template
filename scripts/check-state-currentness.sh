@@ -446,6 +446,11 @@ scan_claims() {
       if (match(s, /20[0-9][0-9]-[01][0-9]-[0-3][0-9]/)) return substr(s, RSTART, RLENGTH)
       return ""
     }
+    # One awk invocation scans EVERY file, so per-file state must reset at each
+    # file boundary — a note ending inside a history section (or an unclosed
+    # fence) must not suppress the next note. The PS twin resets per file by
+    # construction (Get-Claims is called once per path).
+    FNR == 1 { fence = 0; section = ""; secdate = "" }
     # Fenced code is documentation of syntax, never a state claim.
     /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
     fence { next }

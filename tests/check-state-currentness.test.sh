@@ -275,6 +275,50 @@ EOF
 o="$(run_csc "$D5" "$M5" --no-projects)"; rc=$?
 assert_eq "check-state-currentness: history-only note yields no comparable claims (skip 2)" 2 "$rc"
 
+# --- per-file state resets at file boundaries --------------------------------
+# One awk invocation scans every note; section/fence suppression is PER FILE.
+# Regression: a note ending inside `## State Deltas` used to leak its section
+# state into the next note and silently swallow that note's claims — the bash
+# twin reported "0 claims" where the PS twin (per-file by construction)
+# compared 1. Filenames sort so the suppressing note is scanned FIRST.
+D5b="$(mktemp -d)"; M5b="$D5b/mem"; mkdir -p "$M5b"; csc_stub "$D5b"; csc_states "$D5b"
+cat > "$M5b/a-history.md" <<'EOF'
+---
+name: a-history
+---
+
+## State Deltas
+
+- 2026-07-01: ABC-2 was In Progress at the time.
+EOF
+cat > "$M5b/b-claim.md" <<'EOF'
+---
+name: b-claim
+---
+
+ABC-1 is In Progress and gating the wave.
+EOF
+o="$(run_csc "$D5b" "$M5b" --no-projects)"; rc=$?
+assert_eq       "check-state-currentness: a prior note ending in a history section does not suppress the next note (exit 1)" 1 "$rc"
+assert_contains "check-state-currentness: claim after a history-terminated note is still scanned" \
+  "$o" 'WARN stale-claim ABC-1: note says "In Progress", tracker says "Done"'
+
+# Same boundary class via an UNCLOSED fence: a note ending inside ``` must not
+# swallow the next note either.
+D5c="$(mktemp -d)"; M5c="$D5c/mem"; mkdir -p "$M5c"; csc_stub "$D5c"; csc_states "$D5c"
+{ printf -- '---\nname: a-fence\n---\n\n```bash\n# unclosed fence\n'; } > "$M5c/a-fence.md"
+cat > "$M5c/b-claim.md" <<'EOF'
+---
+name: b-claim
+---
+
+ABC-1 is In Progress and gating the wave.
+EOF
+o="$(run_csc "$D5c" "$M5c" --no-projects)"; rc=$?
+assert_eq       "check-state-currentness: a prior note ending in an unclosed fence does not suppress the next note (exit 1)" 1 "$rc"
+assert_contains "check-state-currentness: claim after a fence-terminated note is still scanned" \
+  "$o" 'WARN stale-claim ABC-1: note says "In Progress", tracker says "Done"'
+
 # --- fenced code is syntax documentation, never a claim ----------------------
 D6="$(mktemp -d)"; M6="$D6/mem"; mkdir -p "$M6"; csc_stub "$D6"; csc_states "$D6"
 cat > "$M6/fenced.md" <<'EOF'
