@@ -46,7 +46,7 @@ exact set.
   framework adopts — none exist today; the generic predicates in
   `scripts/validate.sh` `check_lifecycle` cover any that appear
 - `capabilities/*.md` — agnostic capability bodies
-- `harnesses/{claude,codex,hermes}/capabilities/*.md` — per-harness realizations
+- `harnesses/{claude,codex,hermes,cursor}/capabilities/*.md` — per-harness realizations
 
 `README.md` is excluded across all in-scope dirs — a `README.md` is a directory
 introduction, not the lifecycle-tracked artifact it documents. (Mirrors the
@@ -104,7 +104,7 @@ name: <name>
 summary: <one line>
 triggers: [...]
 verification: <gate>
-harnesses: [claude, codex, hermes]
+harnesses: [claude, codex, hermes, cursor]
 kind: native
 enforcement: <class>
 lifecycle: shipped
