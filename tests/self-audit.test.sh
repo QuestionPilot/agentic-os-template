@@ -1517,13 +1517,17 @@ _test_antipattern_gap_order_sorted() {
   printf 'keep\n' > "$fixture/zeta/tmp/keep.txt"
   printf 'keep\n' > "$fixture/alpha/tmp/keep.txt"
 
-  local out details
+  local out details fx
   out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" --json 2>/dev/null)"
   details="$(printf '%s' "$out" | jq -r '[.gaps[] | select(.title == "Anti-pattern directory name") | .detail] | join("|")')"
+  # Gap details carry the host-native forward-slash spelling on Windows; build
+  # the expectation in the same spelling (tests/lib.sh native_path_fwd) so the
+  # assert is path-shape-agnostic. Resolve before the fixture is removed.
+  fx="$(native_path_fwd "$fixture")"
   rm -rf "$fixture"
 
   assert_eq "anti-pattern multi-hit gaps record in C-sorted path order (alpha before zeta) — twin-parity traversal determinism" \
-    "$fixture/alpha/tmp uses a name (\"tmp\") that signals undisciplined accretion|$fixture/zeta/tmp uses a name (\"tmp\") that signals undisciplined accretion" \
+    "$fx/alpha/tmp uses a name (\"tmp\") that signals undisciplined accretion|$fx/zeta/tmp uses a name (\"tmp\") that signals undisciplined accretion" \
     "$details"
 }
 _test_antipattern_gap_order_sorted
@@ -1859,14 +1863,18 @@ _test_codex_registry_excluded_from_injection_largest_store() {
   local pad; pad="$(printf 'z%.0s' $(seq 1 200))"
   local i
   for i in $(seq 1 300); do printf -- '- %s\n' "$pad" >> "$fixture/codex-mem/MEMORY.md"; done
-  local out largest_path
+  local out largest_path fx
   out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --memory-dir "$fixture/mem" --codex-memory-dir "$fixture/codex-mem" --json 2>/dev/null)"
   largest_path="$(printf '%s' "$out" \
     | jq -r '.injection_surface.components[] | select(.name == "MEMORY.md (largest store)") | .path')"
+  # Component paths carry the host-native forward-slash spelling on Windows;
+  # compare in that spelling (tests/lib.sh native_path_fwd), resolved before
+  # the fixture is removed.
+  fx="$(native_path_fwd "$fixture")"
   rm -rf "$fixture"
   assert_eq "codex registry: oversized registry never wins the injection-surface largest-store pick" \
-    "$fixture/mem/MEMORY.md" "$largest_path"
+    "$fx/mem/MEMORY.md" "$largest_path"
 }
 _test_codex_registry_excluded_from_injection_largest_store
 
