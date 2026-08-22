@@ -11,17 +11,27 @@ Dream Review is the self-improvement pass for the Agentic OS.
 
 It is inspired by the "dreaming" pattern: periodically look across recent work and suggest high-leverage improvements. Start manual and evidence-based before automating.
 
+## Cadence
+
+On-demand, entered through the closeout / [[00-System/Wrap-Up Workflow|wrap-up]] pass. Trigger it when a closeout surfaces systemic-drift signals — repeated manual work, stale or conflicting memory, tool or routing drift — or whenever the operator asks for it directly.
+
+Run [[00-System/Health Check]] as part of the review.
+
 ## Inputs
 
+**Primary — live sources** (read these first; on a fresh vault some will be thin — use what exists):
+
 - Recent Linear issues and project status
-- Recent Memory Vault archive summaries
-- [[40-Observability/repeated-work]]
-- [[40-Observability/stale-memory]]
-- [[40-Observability/skills]]
-- [[40-Observability/tool-health]]
-- [[40-Observability/routes]]
-- Relevant project notes
-- Recent source ingests and wiki activity
+- The harness memory store (the autoloaded index plus recently written notes)
+- Recent commits in the operating-framework repo (`agentic-os-template`)
+- The Health Check output
+- Recent Memory Vault decisions, lessons, project notes, and source ingests
+
+**Optional — the `40-Observability` tables, only when populated:**
+
+- [[40-Observability/repeated-work]] · [[40-Observability/stale-memory]] · [[40-Observability/skills]] · [[40-Observability/tool-health]] · [[40-Observability/routes]] · [[40-Observability/recommendations]]
+
+These tables are fed opportunistically by the lint and wrap-up workflows, not by every session. An empty table is expected and is not a blocker — Dream Review runs off the primary live sources above.
 
 ## Review Dimensions
 

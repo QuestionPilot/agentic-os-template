@@ -18,11 +18,18 @@ Every goal-run needs six anchors:
 | Anchor | Requirement |
 |---|---|
 | Noun target | Name the concrete thing being changed or produced. |
-| Decision criteria | Define how each item should be judged. |
+| Decision criteria | Define how each item should be judged — prefer an objective, machine-checkable rule. |
 | State change | Require an output that changes durable state, not just analysis. |
 | Proof artifact | Name the evidence the run must leave behind. |
-| Stop condition | Define what "done enough" means. |
-| Safety cap | Limit time, turns, files, retries, spend, or scope. |
+| Stop condition | Define what "done enough" means, as a checkable predicate (not "until satisfied"). |
+| Safety cap | Limit time, turns, files, retries, spend, or scope — a separate failure predicate from the done check. |
+
+## Make the checks real
+
+Two anchors above quietly decide whether a loop works:
+
+- **Stop condition = a checkable predicate, not a mood.** "Iterate until X metric >= Y" beats "until it's good" — a subjective done-check lets a run stop early or never. When the work is inherently subjective, make the check as objective as you can (a rubric a second agent scores, a screenshot diff), not an implicit "until satisfied".
+- **Safety cap = a separate *failure* predicate, checked every iteration.** It bounds the run when "done" is never reached. In a single-agent prompt a cap is advisory — a stuck agent often runs past it; for a hard ceiling that halts regardless of the agent's self-assessment (plus a per-iteration trace), run under a runtime harness that enforces iteration limits, not a prose instruction.
 
 ## Routing
 

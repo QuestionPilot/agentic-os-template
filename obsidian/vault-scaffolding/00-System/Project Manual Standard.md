@@ -9,7 +9,7 @@ tags:
 
 Project manuals are thin local files placed in meaningful folders so agents enter a project already briefed.
 
-Use `AGENTS.md`, `CLAUDE.md`, or another harness entrypoint as needed.
+Use `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or another harness entrypoint as needed.
 
 ## Purpose
 
