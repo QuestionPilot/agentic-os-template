@@ -120,11 +120,12 @@ foreach ($h in @('claude', 'codex', 'hermes', 'cursor')) {
 # === negative regressions: the specific stale count claims stay fixed ========
 Assert-NotContains "capabilities/README.md no longer claims 'two adapters'" `
     $capReadme "two adapters"
-# Single-line needle (CRLF-immune): the corrected example lists hermes.
-# "[claude, codex]" is not a substring of "[claude, codex, hermes]".
+# Single-line needle (CRLF-immune): the corrected example lists hermes and
+# cursor. "[claude, codex, hermes]" is not a substring of
+# "[claude, codex, hermes, cursor]".
 $lifecycleMd = Get-Content -LiteralPath (Join-Path $repo 'core/lifecycle.md') -Raw
-Assert-Contains "core/lifecycle.md capability example includes hermes (not the stale [claude, codex])" `
-    $lifecycleMd "harnesses: [claude, codex, hermes]"
+Assert-Contains "core/lifecycle.md capability example includes cursor (not the stale [claude, codex, hermes])" `
+    $lifecycleMd "harnesses: [claude, codex, hermes, cursor]"
 
 # === detector unit tests: Get-NumWord + a stale-prose fixture trips the guard =
 Assert-Eq "num_word maps 3 -> three" "three" (Get-NumWord 3)

@@ -125,11 +125,12 @@ done
 assert_not_contains "capabilities/README.md no longer claims 'two adapters'" \
   "$CAP_README" "two adapters"
 # Single-line needle (CRLF-immune for the PS twin): the corrected example lists
-# hermes. "[claude, codex]" is NOT a substring of "[claude, codex, hermes]" (the
-# char after 'codex' is ',' not ']'), so this also goes red on a revert.
+# hermes and cursor. "[claude, codex, hermes]" is NOT a substring of
+# "[claude, codex, hermes, cursor]" (the char after 'hermes' is ',' not ']'),
+# so this also goes red on a revert.
 LIFECYCLE_MD="$(cat "$REPO_ROOT/core/lifecycle.md")"
-assert_contains "core/lifecycle.md capability example includes hermes (not the stale [claude, codex])" \
-  "$LIFECYCLE_MD" "harnesses: [claude, codex, hermes]"
+assert_contains "core/lifecycle.md capability example includes cursor (not the stale [claude, codex, hermes])" \
+  "$LIFECYCLE_MD" "harnesses: [claude, codex, hermes, cursor]"
 
 # === detector unit tests: num_word + a stale-prose fixture trips the guard ====
 assert_eq "num_word maps 3 -> three" "three" "$(num_word 3)"
