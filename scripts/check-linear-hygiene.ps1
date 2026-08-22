@@ -54,9 +54,7 @@
 
     Requires the linear CLI (schpet/linear-cli; linear/linear-setup.md §3.2).
     Override the binary with $env:LINEAR_CLI_BIN — the hermetic tests inject a
-    stub .ps1 that serves fixture JSON. $env:LINEARK_BIN is still accepted as
-    a DEPRECATED fallback for one transition release (lineark →
-    schpet/linear-cli).
+    stub .ps1 that serves fixture JSON.
 
     POSIX-style --max-reads / --list flags pass through $Rest so bash-trained
     operators get muscle-memory parity (mirrors check-freshness.ps1's parser).
@@ -144,11 +142,8 @@ function Get-Field($obj, [string]$name) {
     return "$v"
 }
 
-# Binary seam: $env:LINEAR_CLI_BIN preferred; $env:LINEARK_BIN is a DEPRECATED
-# fallback kept for one transition release after the lineark →
-# schpet/linear-cli migration; default `linear`.
+# Binary seam: $env:LINEAR_CLI_BIN, default `linear`.
 $linearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN }
-             elseif ($env:LINEARK_BIN) { $env:LINEARK_BIN }
              else { 'linear' }
 if (-not (Get-Command $linearCli -ErrorAction SilentlyContinue)) {
     Skip-Hygiene 'linear CLI not found ($env:LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2'

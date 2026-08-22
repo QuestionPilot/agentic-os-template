@@ -7,7 +7,7 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # tests/fresh-clone-validate.test.sh.
 #
 # T-90B: validate.ps1 must exit 0 on a fresh clone with no operator
-# tools installed (lineark, codegraph, agy, superpowers). Same hermetic-PATH
+# tools installed (codegraph, agy, superpowers). Same hermetic-PATH
 # discipline as the bash twin.
 #
 # Mirrors tests/fresh-clone-validate.test.sh 1:1.
@@ -28,7 +28,7 @@ Assert-File 'fresh-clone-validate.test: scripts/validate.ps1 exists' $VALIDATE_P
 # tool dirs are absent).
 #
 # Approach: instead of hard PATH replacement, dynamically prune entries from
-# the current PATH that contain operator tools (lineark/codegraph/agy). The
+# the current PATH that contain operator tools (codegraph/agy). The
 # operator tools live under directories specific to operator installs;
 # subtracting those leaves the system tools intact AND removes operator-
 # tool visibility.
@@ -39,7 +39,7 @@ $savedPath = $env:PATH
 # bash twin's "no operator tools on PATH" assertion intent without breaking
 # the standard system tools the test-target script needs.
 $opToolDirs = New-Object System.Collections.Generic.HashSet[string]
-foreach ($tool in @('lineark', 'codegraph', 'agy', 'pp-linear', 'linctl', 'schpet')) {
+foreach ($tool in @('codegraph', 'agy', 'pp-linear', 'linctl', 'schpet')) {
     $cmd = Get-Command $tool -ErrorAction SilentlyContinue
     if ($cmd -and $cmd.Source) {
         [void]$opToolDirs.Add((Split-Path -Parent $cmd.Source))
@@ -59,7 +59,7 @@ try {
     $env:PATH = $minPath
 
     # Confirm we're stripping the operator tools — they should be absent under MINIMAL_PATH.
-    foreach ($tool in @('lineark', 'codegraph', 'agy')) {
+    foreach ($tool in @('codegraph', 'agy')) {
         $found = $null -ne (Get-Command $tool -ErrorAction SilentlyContinue)
         if ($found) {
             _Fail "fresh-clone-validate.test: fresh-clone PATH still has $tool" `
@@ -82,11 +82,10 @@ try {
 
     # Defensive: any FAIL line mentioning a known operator tool is a leak.
     # Runtime-construct the tool sentinels per [[feedback_self_tripping_test_source]].
-    $TOOL_LINEARK = 'line' + 'ark'
     $TOOL_CODEGRAPH = 'code' + 'graph'
     $TOOL_SUPERPOWERS = 'super' + 'powers'
     $TOOL_AGY = 'a' + 'gy'
-    $fail_re = "^FAIL .*($TOOL_LINEARK|$TOOL_CODEGRAPH|$TOOL_SUPERPOWERS|$TOOL_AGY)"
+    $fail_re = "^FAIL .*($TOOL_CODEGRAPH|$TOOL_SUPERPOWERS|$TOOL_AGY)"
     if ($fresh_out -cmatch "(?m)$fail_re") {
         _Fail 'fresh-clone-validate.test: validate.ps1 has tool-presence FAIL on fresh clone' `
             'output mentions FAIL near a tool name'

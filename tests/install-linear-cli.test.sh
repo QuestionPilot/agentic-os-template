@@ -5,7 +5,7 @@
 declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh (e.g. bash tests/run.sh <stem>), not standalone\n' >&2; exit 1; }
 # tests/install-linear-cli.test.sh — behavioral tests for
 # scripts/install-linear-cli.sh, the pinned checksum-verified installer for the
-# `linear` CLI (schpet/linear-cli) that succeeds the retired lineark installer.
+# `linear` CLI (schpet/linear-cli).
 #
 # What is under test is the REFUSAL contract, because that is the whole reason
 # the script exists — an installer that happily installs is indistinguishable
@@ -19,7 +19,7 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 #   - version smoke MISMATCH        -> exit 1, the binary removed again
 #   - unsupported platform          -> exit 3, both documented alternatives named
 #
-# NEW versus the lineark suite: the release asset is an ARCHIVE (tar.xz on
+# The release asset is an ARCHIVE (tar.xz on
 # macOS/Linux, zip on Windows) containing the binary, so the archive-shape
 # refusals are pinned too — an archive holding TWO candidate binaries and an
 # archive holding NONE are both exit 1 ("expected exactly one"), never a guess.

@@ -34,8 +34,7 @@
 # Requires the linear CLI (schpet/linear-cli; linear/linear-setup.md §3.2) and
 # jq. Override the binary with $LINEAR_CLI_BIN — the hermetic tests use this to
 # inject a stub that serves fixture JSON, so the check itself never needs live
-# credentials to be testable. $LINEARK_BIN is still accepted as a DEPRECATED
-# fallback for one transition release (lineark → schpet/linear-cli).
+# credentials to be testable.
 #
 # The list payload carries priority/labels/assignee but NOT project or
 # description, so those checks need a per-issue read. Reads run sequentially
@@ -63,10 +62,8 @@
 #              "say nothing".
 set -uo pipefail
 
-# Binary seam: $LINEAR_CLI_BIN preferred; $LINEARK_BIN is a DEPRECATED fallback
-# kept for one transition release after the lineark →
-# schpet/linear-cli migration; default `linear`.
-LINEAR_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
+# Binary seam: $LINEAR_CLI_BIN, default `linear`.
+LINEAR_BIN="${LINEAR_CLI_BIN:-linear}"
 MAX_READS=50
 MODE_LIST=0
 while [ $# -gt 0 ]; do

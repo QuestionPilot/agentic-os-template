@@ -51,8 +51,7 @@ Assert-Contains 'linear-setup.test: linear-setup §3 documents headless auth env
 
 # --- T4.5: §3.5 documents uninstall/migration with teardown for stale stubs ---
 Assert-Contains 'linear-setup.test: linear-setup §3.5 names uninstall/migration sub-section' $ls_body '### 3.5 Uninstalling or migrating between surfaces'
-Assert-Contains 'linear-setup.test: linear-setup §3.5 documents deprecated lineark binary removal' $ls_body 'rm -f ~/.local/bin/lineark'
-Assert-Contains 'linear-setup.test: linear-setup §3.5 documents API token removal' $ls_body 'rm -f ~/.linear_api_token'
+Assert-Contains 'linear-setup.test: linear-setup §3.5 documents linear binary removal' $ls_body 'rm -f ~/.local/bin/linear'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents npm uninstall step' $ls_body 'npm uninstall -g <package-name>'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents per-machine config stub sweep' $ls_body 'rm -rf ~/.<tool-name>'
 Assert-Contains 'linear-setup.test: linear-setup §3.5 documents cache leftover sweep' $ls_body 'rm -rf ~/.cache/<tool-name>'

@@ -786,8 +786,9 @@ check_local_env_gitignored() {
 }
 check_local_env_gitignored
 
-# <TEAM>-90: removed check_lineark_on_path. The framework no longer hard-fails
-# on missing operator-installed tools (lineark / codegraph / agy / superpowers).
+# <TEAM>-90: removed the on-PATH check for operator tools. The framework no
+# longer hard-fails on missing operator-installed tools (tracker CLI /
+# codegraph / agy / superpowers).
 # validate.sh now checks framework internal consistency only; bootstrap.sh
 # --check checks operator setup health advisorily. See core/operating-system.md
 # §Composition layers.

@@ -11,9 +11,7 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # a gate, and it never edits anything.
 #
 # Hermetic: $env:LINEAR_CLI_BIN is pointed at a stub .ps1 serving fixture JSON
-# from its own directory — no live tracker access, no token. One case injects
-# via the deprecated $env:LINEARK_BIN instead, pinning the transition-release
-# fallback (one transition release).
+# from its own directory — no live tracker access, no token.
 #
 # Two halves, and the second matters as much as the first:
 #   DETECTION — the three classes the checker exists to catch (a memory note
@@ -48,7 +46,7 @@ function New-CscTmp {
 #   issue query [--project P]  -> list.json / projissues-P.json
 #   issue view ID              -> read-ID.json
 #   project list               -> projects.json  (rows CARRY the status object —
-#                                 the per-project read lineark needed is gone)
+#                                 no per-project read is needed)
 function New-CscStub([string]$d) {
     $stub = Join-Path $d 'stub.ps1'
     @'
@@ -190,8 +188,8 @@ Assert-Contains 'check-state-currentness: Backlog project with active children' 
 Assert-Contains 'check-state-currentness: In Progress project with no open children' `
     $r.Out 'WARN project-active-with-no-open-children "Busy Thing"'
 
-# The project loop spends ONE budgeted read per project (the child list) — the
-# lineark-era second read (project status) rides the list payload now. A cap of
+# The project loop spends ONE budgeted read per project (the child list) —
+# project status rides the list payload, needing no second read. A cap of
 # 2 therefore evaluates exactly two of the three projects and NAMEs the third
 # as not evaluated.
 $r = Invoke-Csc $stub3 $M3 @('--max-reads', '2')
@@ -456,10 +454,6 @@ Remove-Item -LiteralPath $DE -Recurse -Force -ErrorAction SilentlyContinue
 # PS-only coverage the bash twin does not carry: the vault half of the source
 # set. A completed project note is a historical record by definition, so its
 # claims must not be read as present-tense assertions.
-#
-# Injected via the DEPRECATED $env:LINEARK_BIN seam on purpose: this is the one
-# case pinning that the fallback still resolves the binary for the transition
-# release — $env:LINEAR_CLI_BIN is unset here, so the fallback runs.
 $D9 = New-CscTmp; $V9 = Join-Path $D9 'vault'
 $P9 = Join-Path $V9 '01-Projects'
 New-Item -ItemType Directory -Path $P9 -Force | Out-Null
@@ -478,12 +472,12 @@ status: completed
 
 ABC-1 is In Progress.
 '@ | Set-Content -LiteralPath (Join-Path $P9 'shipped.md')
-$env:LINEARK_BIN = $stub9
+$env:LINEAR_CLI_BIN = $stub9
 try {
     $out9 = (& pwsh -NoProfile -File $CSC '--isolated' '--prefix' 'ABC' '--no-projects' '--vault-dir' $V9 2>$null | Out-String).Trim()
     $rc9 = $LASTEXITCODE
-} finally { Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue }
-Assert-Eq          'check-state-currentness: active vault note scanned, completed one skipped (exit 0, via LINEARK_BIN fallback)' 0 $rc9
+} finally { Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue }
+Assert-Eq          'check-state-currentness: active vault note scanned, completed one skipped (exit 0)' 0 $rc9
 Assert-NotContains 'check-state-currentness: completed vault project note is not a present claim' $out9 'ABC-1'
 
 # ============================ SKIP CONTRACT ==================================

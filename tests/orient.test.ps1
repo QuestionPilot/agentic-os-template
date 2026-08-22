@@ -260,39 +260,19 @@ Assert-Eq 'orient: a memory pointer carries name + description from frontmatter'
 Assert-Eq 'orient: a healthy run names no degraded surface' `
     '0' (@($r.Doc.degraded).Count).ToString()
 
-# --- deprecated alias ---------------------------------------------------------
-# --lineark is kept as a deprecated alias for ONE transition release (
-# lineark -> schpet/linear-cli migration) so in-flight callers keep working;
-# drop this test with the alias.
-$outAlias = (& pwsh -NoProfile -File $ORIENT '--lineark' $stub1 2>$null | Out-String)
-$docAlias = $null
-try { $docAlias = $outAlias | ConvertFrom-Json } catch { $docAlias = $null }
-Assert-Eq 'orient: the deprecated --lineark alias still reaches the same seam' `
-    'ok' $docAlias.surfaces.linear.status
-
-# The deprecated ENV seam rides the same transition release: LINEARK_BIN is
-# honored when LINEAR_CLI_BIN is unset (same precedence as the hygiene and
-# currentness twins), and LINEAR_CLI_BIN wins when both are set.
-$savedCliBin = $env:LINEAR_CLI_BIN; $savedLkBin = $env:LINEARK_BIN
+# --- env seam -----------------------------------------------------------------
+# $env:LINEAR_CLI_BIN is the env-side injection seam (same as the hygiene and
+# currentness twins).
+$savedCliBin = $env:LINEAR_CLI_BIN
 try {
-    Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue
-    $env:LINEARK_BIN = $stub1
-    $outEnvDep = (& pwsh -NoProfile -File $ORIENT 2>$null | Out-String)
-    $docEnvDep = $null
-    try { $docEnvDep = $outEnvDep | ConvertFrom-Json } catch { $docEnvDep = $null }
-    Assert-Eq 'orient: the deprecated LINEARK_BIN env seam still reaches the same seam' `
-        'ok' $docEnvDep.surfaces.linear.status
-
     $env:LINEAR_CLI_BIN = $stub1
-    $env:LINEARK_BIN = 'definitely-absent-bin'
-    $outEnvBoth = (& pwsh -NoProfile -File $ORIENT 2>$null | Out-String)
-    $docEnvBoth = $null
-    try { $docEnvBoth = $outEnvBoth | ConvertFrom-Json } catch { $docEnvBoth = $null }
-    Assert-Eq 'orient: LINEAR_CLI_BIN wins over the deprecated LINEARK_BIN' `
-        'ok' $docEnvBoth.surfaces.linear.status
+    $outEnv = (& pwsh -NoProfile -File $ORIENT 2>$null | Out-String)
+    $docEnv = $null
+    try { $docEnv = $outEnv | ConvertFrom-Json } catch { $docEnv = $null }
+    Assert-Eq 'orient: the LINEAR_CLI_BIN env seam reaches the tracker seam' `
+        'ok' $docEnv.surfaces.linear.status
 } finally {
     if ($null -eq $savedCliBin) { Remove-Item Env:LINEAR_CLI_BIN -ErrorAction SilentlyContinue } else { $env:LINEAR_CLI_BIN = $savedCliBin }
-    if ($null -eq $savedLkBin) { Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue } else { $env:LINEARK_BIN = $savedLkBin }
 }
 
 # --- output modes -------------------------------------------------------------
@@ -770,8 +750,6 @@ Assert-Contains 'orient: unknown argument names itself' $bad 'unknown argument: 
 Assert-Eq 'orient: value-less --memory-dir exits 2 (no self-loop)' 2 $LASTEXITCODE
 & pwsh -NoProfile -File $ORIENT '--linear-cli' 2>&1 | Out-Null
 Assert-Eq 'orient: value-less --linear-cli exits 2 (no self-loop)' 2 $LASTEXITCODE
-& pwsh -NoProfile -File $ORIENT '--lineark' 2>&1 | Out-Null
-Assert-Eq 'orient: value-less --lineark exits 2 (no self-loop)' 2 $LASTEXITCODE
 
 foreach ($d in @($O1, $O2, $O2N, $O3, $O4, $O5, $O6, $O7, $O8, $O9,
                  $OW, $OM, $OS1, $OSF, $OT, $OT2)) {

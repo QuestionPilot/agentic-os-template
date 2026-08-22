@@ -644,7 +644,7 @@ fi
 # actually happened AND that the twins agree. Gap DETAILS (store attribution)
 # must match too, after masking the tmp path. Non-isolated so the
 # CONFIG_DIR→discovery path runs (the aggregation code path); env -u pins the
-# operator vars; assertions stay on pillar 2, which is lineark-independent.
+# operator vars; assertions stay on pillar 2, which needs no tracker CLI.
 # ---------------------------------------------------------------------------
 
 if [ -f "$REPO_ROOT/scripts/self-audit.sh" ] && [ -f "$REPO_ROOT/scripts/self-audit.ps1" ] \

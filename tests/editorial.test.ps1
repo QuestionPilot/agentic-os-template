@@ -5,8 +5,7 @@
 if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine('ERROR: run via tests/run.ps1 (e.g. pwsh tests/run.ps1 <stem>), not standalone'); exit 1 }
 # tests/editorial.test.ps1 — Windows-native twin of tests/editorial.test.sh.
 #
-# Asserts editorial deliverables: CI workflow no longer installs lineark;
-# Linear/Obsidian REQUIRED-language is
+# Asserts editorial deliverables: Linear/Obsidian REQUIRED-language is
 # softened in root entrypoints; core/operating-system.md is QUE-NN-free for
 # standalone-read.
 #
@@ -23,21 +22,6 @@ Assert-File 'editorial.test: install-render-stable.yml exists' $WORKFLOW
 Assert-File 'editorial.test: root CLAUDE.md exists' $ROOT_CLAUDE
 Assert-File 'editorial.test: root AGENTS.md exists' $ROOT_AGENTS
 Assert-File 'editorial.test: core/operating-system.md exists' $OS_DOC
-
-# ---- A. CI workflow: lineark install step removed ---------------------------
-$workflow_body = Get-Content -LiteralPath $WORKFLOW -Raw
-
-Assert-NotContains 'editorial.test: workflow no longer has ''Install lineark CLI'' step' `
-    $workflow_body 'Install lineark CLI'
-Assert-NotContains 'editorial.test: workflow no longer pipes upstream lineark installer' `
-    $workflow_body 'flipbit03/lineark/main/install.sh'
-
-# 'lineark --version' at a leading-space-bullet position. The bash twin used
-# `grep -E '^[[:space:]]+lineark --version'`. PS `-cmatch` with `(?m)` for
-# multiline anchoring.
-$leadingLinearkVersion = $workflow_body -cmatch '(?m)^[ \t]+lineark --version'
-Assert-Eq 'editorial.test: workflow no longer invokes lineark --version' `
-    'False' "$leadingLinearkVersion"
 
 # ---- C. Linear/Obsidian REQUIRED-language softened in root entrypoints ------
 $claude_body = Get-Content -LiteralPath $ROOT_CLAUDE -Raw

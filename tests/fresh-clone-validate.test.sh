@@ -4,20 +4,20 @@
 # error, yet the file still exits 0 — a false green. Bail loudly instead.
 declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh (e.g. bash tests/run.sh <stem>), not standalone\n' >&2; exit 1; }
 # tests/fresh-clone-validate.test.sh — validate.sh must exit 0
-# on a fresh clone with NO operator tools installed (no lineark, codegraph,
+# on a fresh clone with NO operator tools installed (no codegraph,
 # superpowers, agy on PATH). Hermetic PATH manipulation — only POSIX baseline
 # tools available.
 #
 # Sourced by tests/run.sh; uses assert_* helpers from tests/lib.sh. Never call
 # `exit` — failures bubble through assertion counters.
 
-# Minimal PATH = POSIX baseline only. No ~/.local/bin (lineark, codegraph,
+# Minimal PATH = POSIX baseline only. No ~/.local/bin (codegraph and
 # agy live there per operator install patterns). No homebrew Cellar.
 MINIMAL_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Confirm we're stripping the operator tools (they should be on the real PATH
 # in this test environment if the operator has them installed).
-for tool in lineark codegraph agy; do
+for tool in codegraph agy; do
   if PATH="$MINIMAL_PATH" command -v "$tool" >/dev/null 2>&1; then
     _fail "fresh-clone PATH still has $tool" \
       "MINIMAL_PATH=$MINIMAL_PATH includes $tool — fix the test setup"
@@ -40,11 +40,10 @@ fi
 # trigger on a clean checkout; tool-presence failures will.
 # Runtime-construct the tool sentinels per [[feedback_self_tripping_test_source]]
 # so this test source doesn't self-trip a future tool-name scanner.
-TOOL_LINEARK="line""ark"
 TOOL_CODEGRAPH="code""graph"
 TOOL_SUPERPOWERS="super""powers"
 TOOL_AGY="a""gy"
-fail_re="^FAIL .*(${TOOL_LINEARK}|${TOOL_CODEGRAPH}|${TOOL_SUPERPOWERS}|${TOOL_AGY})"
+fail_re="^FAIL .*(${TOOL_CODEGRAPH}|${TOOL_SUPERPOWERS}|${TOOL_AGY})"
 if printf '%s' "$fresh_out" | grep -qE "$fail_re"; then
   _fail "validate.sh has tool-presence FAIL on fresh clone" \
     "output mentions FAIL near a tool name"

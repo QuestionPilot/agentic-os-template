@@ -124,8 +124,7 @@
 #   --memory-dir <path>  memory store to scan for project-type notes (a single
 #                        store; omit to skip the memory surface).
 #   --linear-cli <bin>   tracker CLI to invoke (default $LINEAR_CLI_BIN, else
-#                        `linear`). Test-injection seam. (--lineark is accepted
-#                        as a deprecated alias for one transition release.)
+#                        `linear`). Test-injection seam.
 #   --pretty             indent the JSON (default: one compact line).
 #
 # Exit codes:
@@ -133,9 +132,7 @@
 #   2  the script could not run: bad argument, or jq unavailable
 set -uo pipefail
 
-# LINEARK_BIN is the deprecated env seam (one transition release) — same
-# precedence the hygiene and currentness twins use.
-LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
+LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-linear}"
 MEMORY_DIR=""
 PRETTY=0
 # One page's worth. Not a flag: a kickoff sweep that needs paging is a
@@ -152,8 +149,6 @@ while [ $# -gt 0 ]; do
     # re-loop on itself forever.
     --memory-dir) [ $# -ge 2 ] || die "--memory-dir needs a path"; MEMORY_DIR="$2"; shift 2 ;;
     --linear-cli) [ $# -ge 2 ] || die "--linear-cli needs a path"; LINEAR_CLI_BIN="$2"; shift 2 ;;
-    # Deprecated alias (one transition release): same seam, old name.
-    --lineark)    [ $# -ge 2 ] || die "--lineark needs a path"; LINEAR_CLI_BIN="$2"; shift 2 ;;
     --pretty)     PRETTY=1; shift ;;
     *) die "unknown argument: $1" ;;
   esac

@@ -67,10 +67,8 @@ assert_contains "linear-setup §3 documents headless auth env var" \
 # loud, not silent.
 assert_contains "linear-setup §3.5 names uninstall/migration sub-section" \
   "$ls_body" "### 3.5 Uninstalling or migrating between surfaces"
-assert_contains "linear-setup §3.5 documents deprecated lineark binary removal" \
-  "$ls_body" "rm -f ~/.local/bin/lineark"
-assert_contains "linear-setup §3.5 documents API token removal" \
-  "$ls_body" "rm -f ~/.linear_api_token"
+assert_contains "linear-setup §3.5 documents linear binary removal" \
+  "$ls_body" "rm -f ~/.local/bin/linear"
 assert_contains "linear-setup §3.5 documents npm uninstall step" \
   "$ls_body" "npm uninstall -g <package-name>"
 assert_contains "linear-setup §3.5 documents per-machine config stub sweep" \

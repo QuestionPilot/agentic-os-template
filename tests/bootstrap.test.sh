@@ -721,11 +721,10 @@ rm -rf "$PSEED_HOME" "$PSEED_STUBS" "$PSEED_REPO" 2>/dev/null || true
 
 # --- T-90C: bootstrap.sh --check parity ---
 # After, bootstrap.sh --check must NOT hard-fail on missing operator
-# tools (lineark, codegraph, superpowers, agy). The universal framework-required
+# tools (codegraph, superpowers, agy). The universal framework-required
 # CLIs are gh, jq, rg (codex is required only for the codex harness). Missing-tool
 # warnings are advisory, not errors.
 # Runtime-construct the tool sentinels per [[feedback_self_tripping_test_source]].
-T90C_LINEARK="line""ark"
 T90C_CODEGRAPH="code""graph"
 T90C_SUPERPOWERS="super""powers"
 T90C_AGY="a""gy"
@@ -741,14 +740,14 @@ make_stub_cli "$PARITY_STUBS" jq    "jq-1.7.0"
 make_stub_cli "$PARITY_STUBS" rg    "ripgrep 14.0.0"
 
 # Run --check with minimal PATH + just the true-required stubs. Operator
-# tools (lineark/codegraph/agy/superpowers) are absent.
+# tools (codegraph/agy/superpowers) are absent.
 parity_out="$(PATH="$PARITY_STUBS:/usr/bin:/bin:/usr/sbin:/sbin" \
   bash "$REPO_ROOT/scripts/bootstrap.sh" --check 2>&1 || true)"
 
 # Expect zero FAIL/ERROR lines naming the absent operator tools. WARN lines
 # are OK (advisory). The check_clis function uses "warn"/"WARNING:" for missing,
 # but we strictly assert no fatal error tone.
-for absent in "$T90C_LINEARK" "$T90C_CODEGRAPH" "$T90C_SUPERPOWERS" "$T90C_AGY"; do
+for absent in "$T90C_CODEGRAPH" "$T90C_SUPERPOWERS" "$T90C_AGY"; do
   if printf '%s' "$parity_out" | grep -qiE "(FAIL|ERROR)[^:]*:?[^:]*$absent"; then
     _fail "bootstrap.sh --check hard-fails on absent operator tool: $absent" \
       "expected WARN (advisory) or no mention"

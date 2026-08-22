@@ -15,8 +15,7 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 # its own directory — no live Linear access, no token. The stub answers the
 # schpet/linear-cli surface: `issue query ... --json` (list) and
 # `issue view <IDENT> --json` (per-issue read). Verified here: clean→0,
-# gappy→1 with the exact gap list, the deprecated $LINEARK_BIN fallback and
-# the LINEAR_CLI_BIN-wins precedence, the realistic {nodes:[...]} payload
+# gappy→1 with the exact gap list, the realistic {nodes:[...]} payload
 # shape plus the bare-array / flat-string fixture tolerance, priorityLabel
 # preference with numeric 0 → "No priority", --list machine mode (incl. the
 # `unchecked` token — no silent truncation in machine mode), the --max-reads
@@ -90,19 +89,6 @@ assert_contains     "check-linear-hygiene: gappy issue WARNs all five gaps" \
   "$o" "WARN ABC-9: $ALL_GAPS"
 assert_not_contains "check-linear-hygiene: conforming issue not flagged" "$o" "WARN ABC-1"
 assert_contains     "check-linear-hygiene: summary counts 1 of 2"        "$o" "SUMMARY 1 of 2"
-
-# --- binary seam: deprecated $LINEARK_BIN fallback still honored (one
-# --- transition release: lineark → schpet/linear-cli) ---------------
-o="$(LINEARK_BIN="$D1/stub" bash "$CLH" 2>/dev/null)"; rc=$?
-assert_eq       "check-linear-hygiene: deprecated LINEARK_BIN fallback exits 1" 1 "$rc"
-assert_contains "check-linear-hygiene: deprecated LINEARK_BIN fallback flags gaps" \
-  "$o" "WARN ABC-9: $ALL_GAPS"
-
-# --- binary seam precedence: LINEAR_CLI_BIN wins over LINEARK_BIN ------------
-o="$(LINEAR_CLI_BIN="$D1/stub" LINEARK_BIN="$D1/does-not-exist" bash "$CLH" 2>/dev/null)"; rc=$?
-assert_eq       "check-linear-hygiene: LINEAR_CLI_BIN wins over LINEARK_BIN" 1 "$rc"
-assert_contains "check-linear-hygiene: precedence run still flags gaps" \
-  "$o" "WARN ABC-9: $ALL_GAPS"
 
 # --- mixed --list: machine mode, exactly one tab-separated line --------------
 o="$(LINEAR_CLI_BIN="$D1/stub" bash "$CLH" --list 2>/dev/null)"; rc=$?

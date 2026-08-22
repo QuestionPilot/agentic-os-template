@@ -213,23 +213,12 @@ assert_eq "orient: a memory pointer carries name + description from frontmatter"
 assert_eq "orient: a healthy run names no degraded surface" \
   "0" "$(printf '%s' "$o" | jq -r '.degraded | length')"
 
-# --- deprecated alias ---------------------------------------------------------
-# --lineark is kept as a deprecated alias for ONE transition release (
-# lineark -> schpet/linear-cli migration) so in-flight callers keep working;
-# drop this test with the alias.
-o_alias="$(bash "$ORIENT" --lineark "$O1/stub" 2>/dev/null)"
-assert_eq "orient: the deprecated --lineark alias still reaches the same seam" \
-  "ok" "$(printf '%s' "$o_alias" | jq -r '.surfaces.linear.status')"
-
-# The deprecated ENV seam rides the same transition release: LINEARK_BIN is
-# honored when LINEAR_CLI_BIN is unset (same precedence as the hygiene and
-# currentness twins), and LINEAR_CLI_BIN wins when both are set.
-o_envdep="$(env -u LINEAR_CLI_BIN LINEARK_BIN="$O1/stub" bash "$ORIENT" 2>/dev/null)"
-assert_eq "orient: the deprecated LINEARK_BIN env seam still reaches the same seam" \
-  "ok" "$(printf '%s' "$o_envdep" | jq -r '.surfaces.linear.status')"
-o_envboth="$(LINEAR_CLI_BIN="$O1/stub" LINEARK_BIN="$O1/definitely-absent" bash "$ORIENT" 2>/dev/null)"
-assert_eq "orient: LINEAR_CLI_BIN wins over the deprecated LINEARK_BIN" \
-  "ok" "$(printf '%s' "$o_envboth" | jq -r '.surfaces.linear.status')"
+# --- env seam -----------------------------------------------------------------
+# LINEAR_CLI_BIN is the env-side injection seam (same as the hygiene and
+# currentness twins).
+o_env="$(LINEAR_CLI_BIN="$O1/stub" bash "$ORIENT" 2>/dev/null)"
+assert_eq "orient: the LINEAR_CLI_BIN env seam reaches the tracker seam" \
+  "ok" "$(printf '%s' "$o_env" | jq -r '.surfaces.linear.status')"
 
 # --- output modes -------------------------------------------------------------
 assert_eq "orient: default output is ONE compact JSON line" \
@@ -678,8 +667,6 @@ o="$(bash "$ORIENT" --memory-dir 2>&1)"; rc=$?
 assert_eq "orient: value-less --memory-dir exits 2 (no self-loop)" 2 "$rc"
 o="$(bash "$ORIENT" --linear-cli 2>&1)"; rc=$?
 assert_eq "orient: value-less --linear-cli exits 2 (no self-loop)" 2 "$rc"
-o="$(bash "$ORIENT" --lineark 2>&1)"; rc=$?
-assert_eq "orient: value-less --lineark exits 2 (no self-loop)" 2 "$rc"
 
 rm -rf "$O1" "$O2" "$O2N" "$O3" "$O4" "$O5" "$O6" "$O7" "$O8" "$O9" "$OCR" \
        "$OW" "$OM" "$OS1" "$OSF" "$OT" "$OT2"

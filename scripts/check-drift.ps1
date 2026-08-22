@@ -64,9 +64,6 @@
     is constructed at runtime from non-trip halves so this file does not
     self-trip the very scan it runs. Comments + sentinel literals also
     runtime-split for the <TEAM>-87 extension class.
-
-    Per [[reference_lineark_no_comment_subcommand]]: not relevant — this
-    script does not touch lineark.
 #>
 
 [CmdletBinding()]
