@@ -116,8 +116,7 @@
     Requires the schpet/linear-cli `linear` binary (linear/linear-setup.md
     §3.2). Override the binary with $env:LINEAR_CLI_BIN — the hermetic tests
     inject a stub .ps1 that serves fixture JSON, so this check is testable
-    without live credentials. $env:LINEARK_BIN is still accepted as a
-    deprecated fallback.
+    without live credentials.
 
     The bash twin's `jq`/`awk` skip cases have no PS analogue — this port
     parses with ConvertFrom-Json and scans with .NET regex — so those two
@@ -313,10 +312,8 @@ if ($IssuePrefix -notmatch '^[A-Za-z0-9_]+$') {
     Skip-Currentness "tracker prefix '$IssuePrefix' is not alphanumeric — refusing to build a scan pattern from it"
 }
 
-# Binary seam. Precedence: $env:LINEAR_CLI_BIN, then $env:LINEARK_BIN
-# (deprecated — accepted for one transition release), then `linear`.
+# Binary seam: $env:LINEAR_CLI_BIN, default `linear`.
 $linearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN }
-             elseif ($env:LINEARK_BIN) { $env:LINEARK_BIN }
              else { 'linear' }
 if (-not (Get-Command $linearCli -ErrorAction SilentlyContinue)) {
     Skip-Currentness 'linear CLI not found ($env:LINEAR_CLI_BIN or PATH) — see linear/linear-setup.md §3.2'
@@ -711,8 +708,7 @@ if (-not $NoProjects) {
             if ($pname -eq '') { $pname = '-' }
 
             # Project state rides the list payload in schpet/linear-cli (each
-            # row carries a status object) — the per-project read lineark
-            # needed is gone.
+            # row carries a status object) — no per-project read is needed.
             $pstatus = Get-Field $p 'status'
             if ($pstatus -eq '') { $projectsSkipped = "$projectsSkipped $pname;"; continue }
 

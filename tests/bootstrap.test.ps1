@@ -59,7 +59,6 @@ _Skip 'bootstrap.test: bootstrap.ps1 -Check exits 1 on missing CLI' $reason
 _Skip 'bootstrap.test: bootstrap.ps1 -DryRun mentions rg install' $reason
 _Skip 'bootstrap.test: fresh seed persists CLAUDE_CONFIG_DIR to ~/.zshenv' $reason
 _Skip 'bootstrap.test: seeded ~/.zshenv carries the config dir' $reason
-_Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent lineark' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent codegraph' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent superpowers' $reason
 _Skip 'bootstrap.test: bootstrap.sh --check does not hard-fail on absent agy' $reason

@@ -48,7 +48,7 @@
 # Requires the schpet/linear-cli `linear` binary (linear/linear-setup.md §3.2),
 # jq, and awk. Override the binary with $LINEAR_CLI_BIN — the hermetic tests
 # inject a stub that serves fixture JSON, so this check is testable without
-# live credentials. $LINEARK_BIN is still accepted as a deprecated fallback.
+# live credentials.
 #
 # Usage:
 #   check-state-currentness.sh [--memory-dir <d>]... [--vault-dir <d>]
@@ -89,9 +89,8 @@
 #             in BOTH modes as `SKIP <reason>` so the skip is never anonymous.
 set -uo pipefail
 
-# Binary seam. Precedence: $LINEAR_CLI_BIN, then $LINEARK_BIN (deprecated —
-# accepted for one transition release), then `linear` on PATH.
-LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-${LINEARK_BIN:-linear}}"
+# Binary seam: $LINEAR_CLI_BIN, default `linear` on PATH.
+LINEAR_CLI_BIN="${LINEAR_CLI_BIN:-linear}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -570,14 +569,14 @@ if [ "$DO_PROJECTS" -eq 1 ]; then
   pj_raw="$("$LINEAR_CLI_BIN" project list --json 2>/dev/null || true)"
   pj="$(printf '%s' "$pj_raw" | jq -c 'if type == "object" then (.nodes // null) elif type == "array" then . else null end' 2>/dev/null)"
   if printf '%s' "$pj" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    # Project state rides the list payload in schpet/linear-cli (each row carries
-    # a status object) — the per-project read lineark needed is gone.
+    # Project state rides the list payload in schpet/linear-cli (each row
+    # carries a status object) — no per-project read is needed.
     while IFS=$'\t' read -r pid pname pstatus; do
       [ -n "${pid:-}" ] || continue
       # jq on Windows writes CRLF, and `read` leaves the \r on the LAST TSV
-      # field. The lineark-era code took pstatus through a command substitution
-      # (which Git Bash CR-strips); this TSV read must strip it explicitly or
-      # every status silently fails the case match below on Windows.
+      # field. A command substitution would CR-strip in Git Bash; this TSV
+      # read must strip it explicitly or every status silently fails the
+      # case match below on Windows.
       pstatus="${pstatus%$'\r'}"
       [ -n "${pstatus:-}" ] || { projects_skipped="$projects_skipped $pname;"; continue; }
 

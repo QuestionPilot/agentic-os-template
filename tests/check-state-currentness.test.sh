@@ -11,9 +11,7 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 # a gate, and it never edits anything.
 #
 # Hermetic: $LINEAR_CLI_BIN is pointed at a stub serving fixture JSON from its
-# own directory — no live tracker access, no token. One case injects via the
-# deprecated $LINEARK_BIN instead, pinning the transition-release fallback
-# (transition-release fallback).
+# own directory — no live tracker access, no token.
 #
 # Two halves, and the second matters as much as the first:
 #   DETECTION — the three classes the checker exists to catch (a memory note
@@ -36,7 +34,7 @@ CSC="$REPO_ROOT/scripts/check-state-currentness.sh"
 #   issue query [--project P]  -> list.json / projissues-P.json
 #   issue view ID              -> read-ID.json
 #   project list               -> projects.json  (rows CARRY the status object —
-#                                 the per-project read lineark needed is gone)
+#                                 no per-project read is needed)
 csc_stub() {
   local d="$1"
   cat > "$d/stub" <<'STUB'
@@ -157,8 +155,8 @@ assert_contains "check-state-currentness: Backlog project with active children" 
 assert_contains "check-state-currentness: In Progress project with no open children" \
   "$o" 'WARN project-active-with-no-open-children "Busy Thing"'
 
-# The project loop spends ONE budgeted read per project (the child list) — the
-# lineark-era second read (project status) rides the list payload now. A cap of
+# The project loop spends ONE budgeted read per project (the child list) —
+# project status rides the list payload, needing no second read. A cap of
 # 2 therefore evaluates exactly two of the three projects and NAMEs the third
 # as not evaluated.
 o="$(run_csc "$D3" "$M3" --max-reads 2)"; rc=$?
@@ -505,10 +503,6 @@ rm -rf "$DD"
 # The vault half of the source set. A completed project note is a historical
 # record by definition, so its claims must not be read as present-tense
 # assertions — the same reason `## State Deltas` sections are skipped.
-#
-# Injected via the DEPRECATED $LINEARK_BIN seam on purpose: this is the one case
-# pinning that the fallback still resolves the binary for the transition release
-# — $LINEAR_CLI_BIN is unset here, so the fallback is what runs.
 D9="$(mktemp -d)"; V9="$D9/vault"; mkdir -p "$V9/01-Projects"; csc_stub "$D9"; csc_states "$D9"
 cat > "$V9/01-Projects/live.md" <<'EOF'
 ---
@@ -524,8 +518,8 @@ status: completed
 
 ABC-1 is In Progress.
 EOF
-o="$(LINEARK_BIN="$D9/stub" bash "$CSC" --isolated --prefix ABC --vault-dir "$V9" --no-projects 2>/dev/null)"; rc=$?
-assert_eq           "check-state-currentness: active vault note scanned, completed one skipped (exit 0, via LINEARK_BIN fallback)" 0 "$rc"
+o="$(LINEAR_CLI_BIN="$D9/stub" bash "$CSC" --isolated --prefix ABC --vault-dir "$V9" --no-projects 2>/dev/null)"; rc=$?
+assert_eq           "check-state-currentness: active vault note scanned, completed one skipped (exit 0)" 0 "$rc"
 assert_not_contains "check-state-currentness: completed vault project note is not a present claim" "$o" "ABC-1"
 
 # ============================ SKIP CONTRACT ==================================

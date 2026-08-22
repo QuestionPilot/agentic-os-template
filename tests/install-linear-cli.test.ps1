@@ -7,8 +7,8 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # tests/install-linear-cli.test.sh.
 #
 # Behavioral tests for scripts/install-linear-cli.ps1, the pinned
-# checksum-verified installer for the `linear` CLI (schpet/linear-cli) that
-# succeeds the retired lineark installer. What is under test is the REFUSAL
+# checksum-verified installer for the `linear` CLI (schpet/linear-cli).
+# What is under test is the REFUSAL
 # contract, because that is the whole reason the script exists:
 #
 #   - correct checksum              -> installs, version smoke passes, exit 0
@@ -18,7 +18,7 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 #                                      installed, re-vet procedure named
 #   - version smoke MISMATCH        -> exit 1, the binary removed again
 #
-# NEW versus the lineark suite: the release asset is an ARCHIVE (zip on Windows,
+# The release asset is an ARCHIVE (zip on Windows,
 # tar.xz on macOS/Linux) containing the binary, so the archive-shape refusals
 # are pinned too — an archive holding TWO candidate binaries and an archive
 # holding NONE are both exit 1 ("expected exactly one"), never a guess.
@@ -28,15 +28,15 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # EXECUTES it as a Win32 process, so a shebang shell script cannot stand in the
 # way it does for the bash twin — the fake binary is a tiny C# program compiled
 # on the fly with the .NET Framework csc.exe every Windows box ships. On
-# macOS/Linux pwsh the stand-in stays a /bin/sh script, like the lineark suite.
+# macOS/Linux pwsh the stand-in stays a /bin/sh script, like the bash twin.
 # EVERY invocation pins LINEAR_CLI_VERSION, LINEAR_CLI_CHECKSUM_FILE,
 # LINEAR_CLI_BASE_URL and LINEAR_CLI_INSTALL_DIR, so the operator's real pin
 # file, real install dir and real network are never reachable from this suite.
 #
 # TWIN DIVERGENCE. The bash twin forces the unsupported-platform branch on every
 # host by stubbing `uname` ahead of the script's PATH. The PS twin resolves its
-# platform from RuntimeInformation, which no PATH entry can shadow — and unlike
-# lineark, upstream ships a Windows binary, so on every host this suite supports
+# platform from RuntimeInformation, which no PATH entry can shadow — and
+# upstream ships a Windows binary, so on every host this suite supports
 # the platform IS supported and the unsupported branch is a named skip.
 #
 # tests/lib.ps1 dot-sourced by tests/run.ps1; Assert-* + counters in scope.
@@ -552,7 +552,7 @@ if ($LC_SKIP_REASON -ne '') {
     }
 }
 
-# === E. Unsupported platform. Unlike lineark, upstream DOES ship a Windows
+# === E. Unsupported platform. Upstream DOES ship a Windows
 # binary, so every platform this suite runs on is supported and the branch
 # cannot be provoked (RuntimeInformation cannot be shadowed the way the bash
 # twin shadows `uname`). Named skips on supported hosts; if a future lane runs

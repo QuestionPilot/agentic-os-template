@@ -6,9 +6,6 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 # tests/editorial.test.sh — assert editorial deliverables.
 #
 # Scope:
-# - CI workflow no longer installs lineark (validate.sh removed
-# check_lineark_on_path under the composition-layers dissolution; the
-# install step is dead code).
 # - Root CLAUDE.md + AGENTS.md soften REQUIRED-language for Linear +
 # Obsidian: they remain the framework's canonical examples, but the
 # entrypoints accept equivalents (a tracker-agnostic + vault-agnostic
@@ -28,17 +25,6 @@ assert_file "install-render-stable.yml exists" "$WORKFLOW"
 assert_file "root CLAUDE.md exists" "$ROOT_CLAUDE"
 assert_file "root AGENTS.md exists" "$ROOT_AGENTS"
 assert_file "core/operating-system.md exists" "$OS_DOC"
-
-# ---- A. CI workflow: lineark install step removed ---------------------------
-# The lineark step was installed at lines 47-59 to satisfy
-# validate.sh's check_lineark_on_path. removed that check; the install
-# step is now dead. The whole `Install lineark CLI` step block must be gone.
-assert_exit "workflow no longer has 'Install lineark CLI' step" 1 \
-  -- /usr/bin/grep -qF 'Install lineark CLI' "$WORKFLOW"
-assert_exit "workflow no longer pipes upstream lineark installer" 1 \
-  -- /usr/bin/grep -qF 'flipbit03/lineark/main/install.sh' "$WORKFLOW"
-assert_exit "workflow no longer invokes lineark --version" 1 \
-  -- /usr/bin/grep -qE '^[[:space:]]+lineark --version' "$WORKFLOW"
 
 # ---- C. Linear/Obsidian REQUIRED-language softened in root entrypoints ------
 # The pre-fix root entrypoints carried hard "assumes the machine has" +
@@ -123,8 +109,7 @@ done
 
 # ---- E. Workflow + Makefile audit (Codex F-4) -------------------------------
 # Scope per dispatch brief: audit `Makefile` + `.github/workflows/*.yml`
-# for operator-only assumptions. The lineark install step (Section A) is
-# the concrete known case. Generalize: no QUE-NN identifiers in any of
+# for operator-only assumptions: no QUE-NN identifiers in any of
 # these operator-build infrastructure files for the public-template ship.
 MAKEFILE="$REPO_ROOT/Makefile"
 assert_file "Makefile exists" "$MAKEFILE"

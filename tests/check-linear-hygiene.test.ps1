@@ -7,8 +7,7 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # tests/check-linear-hygiene.test.sh.
 #
 # Unit acceptance for scripts/check-linear-hygiene.ps1: clean→0, gappy→1 with
-# the exact ordered gap list, the deprecated $env:LINEARK_BIN fallback and
-# the LINEAR_CLI_BIN-wins precedence, the realistic {nodes:[...]} payload
+# the exact ordered gap list, the realistic {nodes:[...]} payload
 # shape plus the bare-array / flat-string fixture tolerance, priorityLabel
 # preference with numeric 0 → "No priority", --list machine mode (incl. the
 # `unchecked` token — no silent truncation in machine mode), the --max-reads
@@ -64,16 +63,15 @@ exit 1
     return $stub
 }
 
-# Invoke-Clh <stub> [<flags>] [-EnvVar <name>] — run the check with the stub
-# injected via the named binary-seam env var (LINEAR_CLI_BIN by default;
-# LINEARK_BIN pins the deprecated fallback).
-function Invoke-Clh([string]$stub, [string[]]$flags = @(), [string]$EnvVar = 'LINEAR_CLI_BIN') {
-    Set-Item -Path "Env:$EnvVar" -Value $stub
+# Invoke-Clh <stub> [<flags>] — run the check with the stub injected via the
+# LINEAR_CLI_BIN binary-seam env var.
+function Invoke-Clh([string]$stub, [string[]]$flags = @()) {
+    Set-Item -Path 'Env:LINEAR_CLI_BIN' -Value $stub
     try {
         $out = (& pwsh -NoProfile -File $CLH @flags 2>$null | Out-String).Trim()
         return @{ Out = $out; Rc = $LASTEXITCODE }
     } finally {
-        Remove-Item "Env:$EnvVar" -ErrorAction SilentlyContinue
+        Remove-Item 'Env:LINEAR_CLI_BIN' -ErrorAction SilentlyContinue
     }
 }
 
@@ -106,22 +104,6 @@ Assert-Eq          'check-linear-hygiene: mixed exits 1'                 1 $r.Rc
 Assert-Contains    'check-linear-hygiene: gappy issue WARNs all five gaps' $r.Out "WARN ABC-9: $AllGaps"
 Assert-NotContains 'check-linear-hygiene: conforming issue not flagged'  $r.Out 'WARN ABC-1'
 Assert-Contains    'check-linear-hygiene: summary counts 1 of 2'         $r.Out 'SUMMARY 1 of 2'
-
-# --- binary seam: deprecated $env:LINEARK_BIN fallback still honored (one
-# --- transition release: lineark → schpet/linear-cli) ---------------
-$r = Invoke-Clh $stub1 @() -EnvVar 'LINEARK_BIN'
-Assert-Eq       'check-linear-hygiene: deprecated LINEARK_BIN fallback exits 1' 1 $r.Rc
-Assert-Contains 'check-linear-hygiene: deprecated LINEARK_BIN fallback flags gaps' $r.Out "WARN ABC-9: $AllGaps"
-
-# --- binary seam precedence: LINEAR_CLI_BIN wins over LINEARK_BIN ------------
-$env:LINEARK_BIN = (Join-Path $D1 'does-not-exist.ps1')
-try {
-    $r = Invoke-Clh $stub1
-} finally {
-    Remove-Item Env:LINEARK_BIN -ErrorAction SilentlyContinue
-}
-Assert-Eq       'check-linear-hygiene: LINEAR_CLI_BIN wins over LINEARK_BIN' 1 $r.Rc
-Assert-Contains 'check-linear-hygiene: precedence run still flags gaps' $r.Out "WARN ABC-9: $AllGaps"
 
 $r = Invoke-Clh $stub1 @('--list')
 Assert-Eq 'check-linear-hygiene: --list exits 1'    1 $r.Rc

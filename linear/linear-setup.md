@@ -48,8 +48,6 @@ Setting up Linear access is a four-stage walkthrough. The framework targets two 
 
 Both surfaces give the same Linear access semantics; the framework's capability bodies are surface-agnostic and execute against whichever is available.
 
-> **Migration note (one transition release).** The framework's previous default CLI surface was `lineark` (github.com/flipbit03/lineark). It was replaced by schpet/linear-cli after a unanimous cross-model panel decision — the deciding constraint was Windows: lineark publishes no Windows binary, and Windows is a first-class operator platform. lineark still works where installed (macOS/Linux); the deprecated `scripts/install-lineark.sh` installer and its pin file remain for this transition release only. Framework scripts (`orient`, `check-linear-hygiene`, `check-state-currentness`) now speak the `linear` CLI. Uninstall guidance: §3.5.
-
 ### 3.2 Option A — install the `linear` CLI
 
 `linear` is the CLI from [github.com/schpet/linear-cli](https://github.com/schpet/linear-cli) (TypeScript/Deno, compiled per-platform binaries; ~160 MB with the embedded runtime; ~200 ms cold start). Upstream documents brew/npm installs; the framework does not use them. Install with the framework's pinned installer instead, from the cloned repo root:
@@ -152,15 +150,6 @@ Re-run `bash scripts/install.sh --harness claude --harness codex` after editing 
 
 When swapping Linear access surfaces — or removing one outright — clean up the per-machine artifacts the install flow created. The standard uninstall command typically removes the binary but leaves config dirs, cache dirs, data files, and tokens behind. Stale artifacts accumulate disk weight, confuse future hygiene sweeps, and can mislead drift checks.
 
-**Removing the deprecated `lineark` CLI (the pre-migration default).**
-
-```bash
-# Remove the binary (the old installer's default destination)
-rm -f ~/.local/bin/lineark
-# Remove its plaintext API token if nothing else uses it
-rm -f ~/.linear_api_token
-```
-
 **Removing the `linear` CLI.**
 
 ```bash
@@ -202,7 +191,7 @@ Both surfaces expose the same Linear semantics; the syntax differs.
 
 ### 4.1 Common commands — `linear` CLI
 
-**Before guessing any subcommand or flag, read [`linear-cli-usage.md`](linear-cli-usage.md)** — the framework's static, drift-checked command reference (under 1k tokens; the token-cheap equivalent of the old `lineark usage` dump). Reach for `linear <cmd> --help` only for long-tail detail *after* the fixture has shown you the command exists; do **not** re-derive the surface by trying per-subcommand `--help` and inferring from failures. Three shapes that bite when guessed: subcommand groups are **singular** (`issue`/`project`/`team`/`label`/`document` — not plurals), every query needs a **team scope** (`--team <KEY>` or `--all-teams`), and `issue query` returns **all states by default** — pass `-s triage -s backlog -s unstarted -s started` for the open-work cut.
+**Before guessing any subcommand or flag, read [`linear-cli-usage.md`](linear-cli-usage.md)** — the framework's static, drift-checked command reference (under 1k tokens). Reach for `linear <cmd> --help` only for long-tail detail *after* the fixture has shown you the command exists; do **not** re-derive the surface by trying per-subcommand `--help` and inferring from failures. Three shapes that bite when guessed: subcommand groups are **singular** (`issue`/`project`/`team`/`label`/`document` — not plurals), every query needs a **team scope** (`--team <KEY>` or `--all-teams`), and `issue query` returns **all states by default** — pass `-s triage -s backlog -s unstarted -s started` for the open-work cut.
 
 ```bash
 # All projects — the list payload INCLUDES each project's status object

@@ -11,8 +11,7 @@
     raw release archives. Any unpinned install hands whatever the registry or
     host serves at request time straight onto PATH: no pinned version, no local
     integrity check, no reviewable artifact. This script replaces that with the
-    framework's ordinary supply-chain shape (same pattern as the retired
-    lineark installer it succeeds):
+    framework's ordinary supply-chain shape:
 
       1. PIN a release tag (never "whatever latest serves right now").
       2. Download the release ARCHIVE to a throwaway dir — never into a shell.

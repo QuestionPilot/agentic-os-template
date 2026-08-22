@@ -125,14 +125,12 @@
     Omit to skip the memory surface.
 
 .PARAMETER LinearCli
-    Tracker CLI to invoke (POSIX form: --linear-cli; --lineark is accepted as a
-    deprecated alias for one transition release). Default
+    Tracker CLI to invoke (POSIX form: --linear-cli). Default
     $env:LINEAR_CLI_BIN, else `linear`.
 
     The hyphenated POSIX token `--linear-cli` is not prefix-matched by the
-    binder against `LinearCli` (the embedded hyphen breaks the match), and a
-    bare `--lineark` token prefix-matches no parameter here either, so both
-    flags fall through to $Rest where the twin's semantics live. (`--pretty`
+    binder against `LinearCli` (the embedded hyphen breaks the match), so the
+    flag falls through to $Rest where the twin's semantics live. (`--pretty`
     DOES prefix-match -Pretty and binds there; that is harmless — identical
     effect, no value token to swallow.)
 
@@ -190,13 +188,6 @@ while ($i -lt $Rest.Count) {
             }
             $LinearCli = $Rest[$i + 1]; $i += 2
         }
-        # Deprecated alias (one transition release): same seam, old name.
-        '--lineark' {
-            if ($i + 1 -ge $Rest.Count) {
-                [Console]::Error.WriteLine('orient: --lineark needs a path'); exit 2
-            }
-            $LinearCli = $Rest[$i + 1]; $i += 2
-        }
         '--pretty' { $Pretty = [switch]$true; $i += 1 }
         default {
             [Console]::Error.WriteLine("orient: unknown argument: $($Rest[$i])"); exit 2
@@ -205,10 +196,7 @@ while ($i -lt $Rest.Count) {
 }
 
 if ($LinearCli -eq '') {
-    # $env:LINEARK_BIN is the deprecated env seam (one transition release) —
-    # same precedence the hygiene and currentness twins use.
     $LinearCli = if ($env:LINEAR_CLI_BIN) { $env:LINEAR_CLI_BIN }
-                 elseif ($env:LINEARK_BIN) { $env:LINEARK_BIN }
                  else { 'linear' }
 }
 
