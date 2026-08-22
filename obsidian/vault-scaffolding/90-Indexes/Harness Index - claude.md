@@ -24,6 +24,7 @@ Lists every note scoped `harness: all` or `harness: claude`.
 - [[00-System/Project Manual Standard]]
 - [[00-System/Query Workflow]]
 - [[00-System/Recall Workflow]]
+- [[00-System/Retrieval Fixtures]]
 - [[00-System/Retrieval Routes]]
 - [[00-System/Self-Improvement Loop]]
 - [[00-System/Source of Truth]]

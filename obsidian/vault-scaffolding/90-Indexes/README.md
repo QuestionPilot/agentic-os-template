@@ -16,3 +16,4 @@ Navigation notes for Memory Vault.
 - [[90-Indexes/Lesson Index]]
 - [[90-Indexes/Source Index]]
 - [[90-Indexes/Observability Index]]
+- [[90-Indexes/Session Index]] — generated from `30-Archive/Sessions/`; rebuild with `node bin/generate-session-index.js`
