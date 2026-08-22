@@ -51,6 +51,12 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+# Pin stdout to BOM-less UTF-8. Invoked directly (`pwsh -File` from the bash
+# suite or an operator shell) this process inherits the console's legacy
+# codepage (ibm437 observed live), which best-fits "Δ" / "—" in the trend
+# header into mangled bytes and breaks bash<->pwsh byte-parity. tests/run.ps1
+# pins its own console, but a direct child invocation gets no such pin.
+[Console]::OutputEncoding = $utf8NoBom
 
 function Write-Out {
     # Emit text with LF-only newlines (no trailing-CR drift on Windows).
