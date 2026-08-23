@@ -2342,6 +2342,37 @@ _test_operator_subgates() {
   assert_contains "operator sub-gates: a missing registry is a NAMED skip" \
     "$gone_md" "registry file not found:"
 
+  # Drive-letter registry path — the contract is PLATFORM-CONDITIONAL, and
+  # both arms are pinned. Under a Windows bash (MSYS/MinGW/Cygwin) `C:\...` is
+  # a contract-valid absolute path, and the old bare-`/*` guard rejected it as
+  # "not absolute" — silently turning the entire configured sub-gate surface
+  # into a named skip on that platform; the guard must pass it through to the
+  # existence check. On macOS/Linux the SAME spelling is a relative path, and
+  # accepting it would re-open the cwd-dependent resolution the guard exists
+  # to refuse — so there it must stay rejected.
+  printf 'AUDIT_SUBGATES_FILE="C:\\fixture\\subgates.txt"\n' > "$fixture/local.env"
+  local winreg_md
+  winreg_md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+      assert_not_contains "operator sub-gates: a C:\\ registry path is not rejected as relative (Windows bash)" \
+        "$winreg_md" "registry path is not absolute"
+      assert_contains "operator sub-gates: a C:\\ registry path reaches the existence check (Windows bash)" \
+        "$winreg_md" "registry file not found:"
+      ;;
+    *)
+      assert_contains "operator sub-gates: a C:\\ registry path stays refused on POSIX (it is relative there)" \
+        "$winreg_md" "registry path is not absolute"
+      ;;
+  esac
+  # A genuinely relative path must still be refused — the Windows allowance
+  # must not have widened the guard into accepting cwd-dependent spellings.
+  printf 'AUDIT_SUBGATES_FILE=relative/subgates.txt\n' > "$fixture/local.env"
+  local relreg_md
+  relreg_md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --repo-root "$fixture" 2>/dev/null)"
+  assert_contains "operator sub-gates: a relative registry path is still refused" \
+    "$relreg_md" "registry path is not absolute"
+
   # Key UNSET: same named-skip contract, different named reason.
   printf 'OBSIDIAN_VAULT_PATH=\n' > "$fixture/local.env"
   local unset_md unset_json

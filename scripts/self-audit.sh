@@ -125,6 +125,28 @@ INJECTION_WARN_KB=""
 # flag; the local.env / ambient-env fallbacks and the default apply below,
 # exactly like INJECTION_WARN_KB.
 PROJECT_NOTE_WARN_KB=""
+# Absolute-path test that accepts the POSIX spelling (/...) everywhere and the
+# native Windows spellings (C:/... or C:\...) ONLY under a Windows bash runtime
+# (MSYS/MinGW/Cygwin). Under Git Bash the same contract-valid configuration
+# value can arrive in either shape, and a bare `/*` case rejects every native
+# Windows absolute path as "not absolute" — which silently turns a configured
+# surface into a named skip on that platform. The platform gate is load-bearing
+# in the other direction: on macOS/Linux `C:/foo` IS a relative path, and
+# accepting it there would re-open exactly the cwd-dependent resolution these
+# guards exist to refuse (panel finding). The PowerShell twin's
+# [System.IO.Path]::IsPathRooted has the same platform-conditional behavior by
+# construction — rooted on Windows, not rooted on Unix.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) _SA_WIN_BASH=1 ;;
+  *) _SA_WIN_BASH=0 ;;
+esac
+_sa_is_abs_path() {
+  case "$1" in
+    /*) return 0 ;;
+    [A-Za-z]:/*|[A-Za-z]:\\*) [ "$_SA_WIN_BASH" -eq 1 ] && return 0; return 1 ;;
+    *) return 1 ;;
+  esac
+}
 # Operator sub-gate registry: path resolved from local.env AUDIT_SUBGATES_FILE
 # (or the ambient env). SUBGATES_ENABLED=0 (--no-subgates) skips EXECUTION but
 # still renders the section as a named skip — a silently absent section is the
@@ -1888,10 +1910,9 @@ run_operator_subgates() {
   # different file depending on where the audit was launched from — a
   # cwd-dependent choice of what code to run is not a resolution rule, it is a
   # hijack surface.
-  case "$SUBGATES_FILE" in
-    /*) ;;
-    *) SG_REASON="registry path is not absolute: $SUBGATES_FILE"; return ;;
-  esac
+  _sa_is_abs_path "$SUBGATES_FILE" || {
+    SG_REASON="registry path is not absolute: $SUBGATES_FILE"; return
+  }
   if [ ! -f "$SUBGATES_FILE" ]; then
     SG_REASON="registry file not found: $SUBGATES_FILE"
     return
@@ -2371,10 +2392,15 @@ fi
 printf '%s\n' "$OUTPUT"
 
 if [ -n "$SAVE_PATH" ]; then
-  case "$SAVE_PATH" in
-    /*) save_full="$SAVE_PATH" ;;
-    *)  save_full="$REPO_ROOT/$SAVE_PATH" ;;
-  esac
+  if _sa_is_abs_path "$SAVE_PATH"; then
+    save_full="$SAVE_PATH"
+    # POSIX dirname/mkdir split only on `/`; under a Windows bash a
+    # backslash-shaped save path would resolve its parent to `.` and the
+    # write would miss the intended directory (panel finding).
+    [ "$_SA_WIN_BASH" -eq 1 ] && save_full="${save_full//\\//}"
+  else
+    save_full="$REPO_ROOT/$SAVE_PATH"
+  fi
   mkdir -p "$(dirname "$save_full")"
   printf '%s\n' "$OUTPUT" > "$save_full"
   printf '\nSaved scorecard to %s\n' "$save_full" >&2

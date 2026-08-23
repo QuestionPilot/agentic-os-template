@@ -85,6 +85,72 @@ else
     vsr_po_rc=$?
     assert_eq "empty --paths-only exits 1" 1 "$vsr_po_rc"
     assert_eq "empty --paths-only emits nothing on stdout" "" "$vsr_po_stdout"
+
+    # --- T1d: the eval runner normalizes Windows-shaped baseline output. On
+    # Windows, a baseline that misses its own normalization emits
+    # `<root>/<relative-with-backslashes>` and the runner's exact-line compare
+    # then fails EVERY positive fixture while retrieval is actually correct.
+    # Pin the runner-side guard with a wrapper baseline that mangles the real
+    # output into exactly that shape; the shipped fixture set must stay green.
+    VSR_WIN="$(mktemp -d)/vault"
+    cp -R "$VSR_SCAFFOLD" "$VSR_WIN"
+    mv "$VSR_WIN/bin/vault-search.sh" "$VSR_WIN/bin/vault-search-real.sh"
+    # Stub factory: wrap the real baseline and mangle each output line as
+    # `<prefix><sep><relative-with-backslashes>`. The prefix rides in ENVIRON,
+    # never `awk -v` — the shipped fix's own rule (a -v value undergoes escape
+    # processing, so backslashes in it would be interpreted).
+    vsr_win_stub() {
+      printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+        'ROOT="$(cd "$DIR/.." && pwd)"' \
+        'out="$(bash "$DIR/vault-search-real.sh" "$@")"; rc=$?' \
+        "[ -n \"\$out\" ] && printf '%s\\n' \"\$out\" | VS_PREFIX=\"$1\" VS_SEP=\"$2\" awk 'BEGIN { p = ENVIRON[\"VS_PREFIX\"]; s = ENVIRON[\"VS_SEP\"] } { gsub(\"/\", \"\\\\\"); print p s \$0 }'" \
+        'exit "$rc"' > "$VSR_WIN/bin/vault-search.sh"
+      chmod +x "$VSR_WIN/bin/vault-search.sh"
+    }
+    vsr_win_stub "\$ROOT" "/"
+    assert_exit "fixtures stay green when the baseline emits absolute+backslash paths" 0 -- \
+      bash "$VSR_WIN/$VSR_EVALS"
+
+    # Restraint: normalization must not have loosened the compare into a
+    # substring/suffix match — a wrong-directory hit is still a miss.
+    vsr_win_stub "\$ROOT" "/wrong\\\\"
+    assert_exit "a wrong-directory hit still fails the fixture compare" 1 -- \
+      bash "$VSR_WIN/$VSR_EVALS"
+
+    # Restraint: normalization is ROOT-ANCHORED. A line that does NOT sit
+    # under the vault root's literal `<root>/` spelling (here: root followed
+    # by a backslash — the shape of a sibling POSIX path whose name contains
+    # backslashes) must pass through untouched and stay a miss.
+    vsr_win_stub "\$ROOT" "\\\\"
+    assert_exit "a non-root-anchored backslash path is not normalized into a match" 1 -- \
+      bash "$VSR_WIN/$VSR_EVALS"
+
+    # The NATIVE-root branch, via the script's test-injection seam: the stub
+    # emits `C:/fake vault/<relative-with-backslashes>` and the runner is told
+    # that native root; normalization must strip it and the fixtures go green.
+    vsr_win_stub "C:/fake vault" "/"
+    RETRIEVAL_EVALS_NATIVE_ROOT="C:/fake vault" bash "$VSR_WIN/$VSR_EVALS" >/dev/null 2>&1
+    vsr_native_rc=$?
+    assert_eq "the native-root branch strips an injected drive-letter root" 0 "$vsr_native_rc"
+    # ...and WITHOUT the seam the same drive-letter lines must stay misses on
+    # POSIX (no native root exists here) — red, not silently green.
+    assert_exit "drive-letter lines stay misses when no native root exists" 1 -- \
+      bash "$VSR_WIN/$VSR_EVALS"
+
+    # A baseline that CRASHES after emitting output must surface as a baseline
+    # error, never as "no matches" — the exit-status capture is load-bearing
+    # (the old in-pipeline PIPESTATUS could never see it).
+    printf '%s\n' '#!/usr/bin/env bash' 'echo garbage-line' 'exit 2' \
+      > "$VSR_WIN/bin/vault-search.sh"
+    chmod +x "$VSR_WIN/bin/vault-search.sh"
+    vsr_err_out="$(bash "$VSR_WIN/$VSR_EVALS" 2>&1)"
+    vsr_err_rc=$?
+    assert_eq "a crashing baseline fails the eval run" 1 "$vsr_err_rc"
+    assert_contains "a crashing baseline is reported as a baseline error, not as no-matches" \
+      "$vsr_err_out" "baseline errored (exit 2)"
+    rm -rf "${VSR_WIN%/vault}"
   fi
 
   # --- T2: session index --check is green on the pristine, EMPTY scaffold.
