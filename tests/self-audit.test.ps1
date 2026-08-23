@@ -1993,6 +1993,26 @@ Assert-Eq 'self-audit.test: operator sub-gates a missing registry nulls the JSON
 Assert-Contains 'self-audit.test: operator sub-gates a missing registry is a NAMED skip' `
     $sgGoneMd 'registry file not found:'
 
+# Windows-shaped ABSOLUTE registry path: contract-valid on this platform, and
+# the guard must pass it through to the existence check — the named skip is
+# file-not-found, never not-absolute. (The bash twin pins the same contract
+# with its POSIX-side case patterns; here IsPathRooted carries it.) Only
+# meaningful where the OS roots drive-letter paths, so gate on that rather
+# than on the OS name.
+if ([System.IO.Path]::IsPathRooted('C:\probe')) {
+    Write-LfFile (Join-Path $sgFixture 'local.env') ('AUDIT_SUBGATES_FILE="C:\fixture\subgates.txt"' + "`n")
+    $sgWinMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+    Assert-NotContains 'self-audit.test: operator sub-gates a C:\ registry path is not rejected as relative' `
+        $sgWinMd 'registry path is not absolute'
+    Assert-Contains 'self-audit.test: operator sub-gates a C:\ registry path reaches the existence check' `
+        $sgWinMd 'registry file not found:'
+}
+# A genuinely relative path is still refused on every platform.
+Write-LfFile (Join-Path $sgFixture 'local.env') ('AUDIT_SUBGATES_FILE=relative/subgates.txt' + "`n")
+$sgRelMd = Invoke-SelfAudit @('--repo-root', $sgFixture)
+Assert-Contains 'self-audit.test: operator sub-gates a relative registry path is still refused' `
+    $sgRelMd 'registry path is not absolute'
+
 # Key UNSET: same named-skip contract, different named reason.
 Write-LfFile (Join-Path $sgFixture 'local.env') "OBSIDIAN_VAULT_PATH=`n"
 $sgUnsetRaw = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json')

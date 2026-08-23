@@ -975,9 +975,17 @@ corender_agents() {
   # A relative AGENTS_DIR resolves against an unpredictable CWD — and, worse,
   # a relative spelling of the live overlay (`.agents`) would slip past the
   # string-compare guard below (panel finding). Absolute only, like every
-  # other build-target var.
+  # other build-target var. Under a Windows bash (MSYS/MinGW/Cygwin) the
+  # native spellings (C:/... or C:\...) are absolute too — a bare `/*` test
+  # would refuse a correct Windows configuration outright; on macOS/Linux
+  # those same spellings ARE relative and stay refused.
   case "$adir" in
     /*) ;;
+    [A-Za-z]:/*|[A-Za-z]:\\*)
+      case "$(uname -s 2>/dev/null)" in
+        MINGW*|MSYS*|CYGWIN*) ;;
+        *) die ".agents co-render: AGENTS_DIR must be an absolute path (got '$adir') — set it absolute in local.env" ;;
+      esac ;;
     *) die ".agents co-render: AGENTS_DIR must be an absolute path (got '$adir') — set it absolute in local.env" ;;
   esac
 

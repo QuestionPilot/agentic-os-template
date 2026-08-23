@@ -92,10 +92,53 @@ fi
 SELF="00-System/Retrieval Fixtures.md"
 strip_self() { grep -Fxv "$SELF" || true; }
 
+# The baseline's --paths-only contract is vault-relative forward-slash lines,
+# but on Windows a baseline that misses its own normalization emits
+# `<native-root>/<relative-with-backslashes>` — and the exact-line compares
+# below then fail EVERY positive fixture while the retrieval itself is correct.
+# A runner that can only say "red" about path spelling proves nothing about
+# retrieval, so normalize here too — but ROOT-ANCHORED, never blanket: a line
+# is rewritten only when it provably sits under the vault root (POSIX spelling,
+# or the native spelling when one exists). A line under neither root passes
+# through untouched, so an outside path whose NAME merely contains backslashes
+# (e.g. a sibling directory literally named `vault\03-...`) can never collapse
+# into a vault-relative match (panel finding). Deliberately an exact-line
+# compare after normalizing, never a substring match — a wrong-directory hit
+# must stay a miss.
+# $RETRIEVAL_EVALS_NATIVE_ROOT is a TEST-INJECTION seam (same pattern as the
+# self-audit `$SELF_AUDIT_*` seams): POSIX suites cannot make `pwd -W` succeed,
+# and without the seam the native-root branch would ship untestable.
+EVAL_ROOT_NATIVE="${RETRIEVAL_EVALS_NATIVE_ROOT:-}"
+if [ -z "$EVAL_ROOT_NATIVE" ]; then
+  if EVAL_ROOT_NATIVE="$(cd "$VAULT_ROOT" && pwd -W 2>/dev/null)"; then
+    [ "$EVAL_ROOT_NATIVE" = "$VAULT_ROOT" ] && EVAL_ROOT_NATIVE=""
+  else
+    EVAL_ROOT_NATIVE=""
+  fi
+fi
+# `pwd -W` is not contractually slash-shaped; normalize the ROOT once so the
+# prefix strip below cannot silently no-op on a backslash-shaped native root
+# (panel finding).
+EVAL_ROOT_NATIVE="${EVAL_ROOT_NATIVE//\\//}"
+normalize_paths() {
+  while IFS= read -r _np; do
+    if [ "${_np#"$VAULT_ROOT"/}" != "$_np" ]; then
+      _np="${_np#"$VAULT_ROOT"/}"
+      _np="${_np//\\//}"
+    elif [ -n "$EVAL_ROOT_NATIVE" ]; then
+      _nps="${_np//\\//}"
+      if [ "${_nps#"$EVAL_ROOT_NATIVE"/}" != "$_nps" ]; then
+        _np="${_nps#"$EVAL_ROOT_NATIVE"/}"
+      fi
+    fi
+    printf '%s\n' "$_np"
+  done
+}
+
 # Prove the two agree, rather than assuming it. A control query is asked of the
 # baseline directly; if the note comes back, the caller surface and the measured
 # surface have diverged and every negative control below is meaningless.
-_probe="$("$SEARCH" "kubernetes ingress controller" --scope durable --paths-only 2>/dev/null)"
+_probe="$("$SEARCH" "kubernetes ingress controller" --scope durable --paths-only 2>/dev/null | normalize_paths)"
 if printf '%s\n' "$_probe" | grep -Fxq "$SELF"; then
   die "baseline returns the fixture note itself — caller and measured surface have diverged"
 fi
@@ -111,8 +154,15 @@ while IFS=$'\t' read -r id q scope max target class; do
   fi
   # Ask for one extra result: excluding the self-match must not silently cost a
   # fixture its last slot.
-  out="$("$SEARCH" "$q" --scope "$scope" --max "$((max + 1))" --paths-only 2>/dev/null | strip_self | head -n "$max")"
-  rc=${PIPESTATUS[0]}
+  target="${target//\\//}"
+  # Capture the baseline's exit BEFORE any filter pipeline. Inside a command
+  # substitution `${PIPESTATUS[0]}` reflects the substitution itself, not the
+  # first pipe stage — so the old one-liner could never see a baseline error,
+  # and a crashed baseline read as "no matches" (panel finding, fixture-
+  # confirmed). Two steps: run the search, then filter its captured output.
+  raw_out="$("$SEARCH" "$q" --scope "$scope" --max "$((max + 1))" --paths-only 2>/dev/null)"
+  rc=$?
+  out="$(printf '%s\n' "$raw_out" | normalize_paths | strip_self | head -n "$max")"
   if [ "$rc" -gt 1 ]; then
     printf 'FAIL %s  baseline errored (exit %s) on query: %s\n' "$id" "$rc" "$q"
     fails=$((fails + 1)); continue
@@ -129,8 +179,11 @@ done <<< "$POSITIVES"
 
 while IFS=$'\t' read -r id q scope; do
   [ -n "${id:-}" ] || continue
-  hits="$("$SEARCH" "$q" --scope "$scope" --paths-only 2>/dev/null | strip_self)"
-  rc=${PIPESTATUS[0]}
+  # Same two-step capture as the positive loop: a baseline that crashes must
+  # surface as an error, never as a clean "found nothing" negative pass.
+  raw_hits="$("$SEARCH" "$q" --scope "$scope" --paths-only 2>/dev/null)"
+  rc=$?
+  hits="$(printf '%s\n' "$raw_hits" | normalize_paths | strip_self)"
   # A control whose ONLY hit was the fixture note itself is still a clean
   # "found nothing" — the scaffolding does not count as a match.
   [ "$rc" -eq 0 ] && [ -z "$hits" ] && rc=1

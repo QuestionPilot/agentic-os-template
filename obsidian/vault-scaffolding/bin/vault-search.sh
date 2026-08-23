@@ -70,6 +70,39 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# WINDOWS PATH SHAPE. Under Git Bash / MSYS, `pwd` reports the POSIX-mapped form
+# (/g/My Drive/Vault) while ripgrep — a native Win32 binary — echoes the paths it
+# was handed back in native form (G:/My Drive/Vault) with BACKSLASH separators
+# inside. The two never string-match, so every "strip the vault root" below
+# silently no-ops and the script emits ABSOLUTE paths where its contract promises
+# vault-relative ones. That failure is invisible on macOS/Linux, where the two
+# forms coincide, and it is not loud on Windows either: callers just get a path
+# that never equals the relative one they compare against — it made
+# bin/retrieval-evals.sh fail every positive fixture while all of them were in
+# fact retrieving the correct note first. Capture the native form too, and
+# normalize separators — but ONLY when a native form exists, so a POSIX filename
+# that legitimately contains a backslash is left alone.
+VAULT_ROOT_NATIVE=""
+if VAULT_ROOT_NATIVE="$(cd "$SCRIPT_DIR/.." && pwd -W 2>/dev/null)"; then
+  [ "$VAULT_ROOT_NATIVE" = "$VAULT_ROOT" ] && VAULT_ROOT_NATIVE=""
+else
+  VAULT_ROOT_NATIVE=""
+fi
+# `pwd -W` is not contractually slash-shaped; normalize the ROOT once so the
+# prefix strip in vault_relpath cannot silently no-op against the already
+# slash-normalized path (panel finding).
+VAULT_ROOT_NATIVE="${VAULT_ROOT_NATIVE//\\//}"
+
+# Normalize one path to the vault-relative, forward-slash form this script's
+# stdout contract promises. Both root spellings are tried because which one
+# ripgrep echoes depends on how the search dirs were spelled going in.
+vault_relpath() {
+  _vr_p="$1"
+  [ -n "$VAULT_ROOT_NATIVE" ] && _vr_p="${_vr_p//\\//}"
+  _vr_p="${_vr_p#"$VAULT_ROOT"/}"
+  [ -n "$VAULT_ROOT_NATIVE" ] && _vr_p="${_vr_p#"$VAULT_ROOT_NATIVE"/}"
+  printf '%s\n' "$_vr_p"
+}
 
 DURABLE_DIRS=(00-System 01-Projects 02-Areas 03-Decisions 04-Lessons 10-Wiki 90-Indexes)
 ARCHIVE_DIRS=(30-Archive)
@@ -194,7 +227,9 @@ RG_DISPLAY=("${RG_BASE[@]}" --no-heading --with-filename --line-number)
 RAW="$(rg "${RG_DISPLAY[@]}" -- "$QUERY" "${TARGETS[@]}" 2>/dev/null)"
 
 if [ "$PATHS_ONLY" -eq 1 ]; then
-  printf '%s\n' "$RANKED" | cut -f2- | sed "s|^$VAULT_ROOT/||"
+  printf '%s\n' "$RANKED" | cut -f2- | while IFS= read -r _p; do
+    [ -n "$_p" ] && vault_relpath "$_p"
+  done
   exit 0
 fi
 
@@ -203,9 +238,12 @@ printf 'query: %s   scope: %s   notes matched: %s (showing up to %s)\n\n' \
 
 printf '%s\n' "$RANKED" | while IFS=$'\t' read -r hits file; do
   [ -n "$file" ] || continue
-  relpath="${file#"$VAULT_ROOT"/}"
+  relpath="$(vault_relpath "$file")"
   title="$(sed -nE 's/^title:[[:space:]]*//p' "$file" 2>/dev/null | head -1 | tr -d '"')"
-  [ -n "$title" ] || title="$(basename "$file" .md)"
+  # Fall back on the NORMALIZED relative path, not the raw one: POSIX basename
+  # splits only on `/`, so a backslash-shaped native path would yield the whole
+  # path as the "title" for a note without frontmatter (panel finding).
+  [ -n "$title" ] || title="$(basename "$relpath" .md)"
   printf '%s  (%s hit(s))\n    %s\n' "$relpath" "$hits" "$title"
   # Match records are `path:lineno:text`; context records (only present when
   # --context > 0) are `path-lineno-text`. Both must pass the filter, or the
@@ -214,8 +252,17 @@ printf '%s\n' "$RANKED" | while IFS=$'\t' read -r hits file; do
   # so context does not evict the matches it belongs to.
   note_cap="$MAX_LINES"
   [ "$CONTEXT" -gt 0 ] && note_cap=$((MAX_LINES * (1 + 2 * CONTEXT)))
+  # NEVER pass a filesystem path through `awk -v`. POSIX requires -v assignments
+  # to undergo escape processing, so every backslash in the value is interpreted:
+  # a Windows path like `03-Decisions\2026-....md` has its `\202` read as an
+  # OCTAL escape and it silently becomes a single byte. The filter then matches
+  # nothing and every excerpt line vanishes from the output — with no error, on
+  # a code path that looks obviously correct. ENVIRON is not escape-processed,
+  # so the path arrives intact. Same trap for any POSIX filename that
+  # legitimately contains a backslash.
   printf '%s\n' "$RAW" \
-    | awk -v fc="$file:" -v fd="$file-" 'index($0, fc) == 1 || index($0, fd) == 1' \
+    | VS_FILE="$file" awk 'BEGIN { fc = ENVIRON["VS_FILE"] ":"; fd = ENVIRON["VS_FILE"] "-" }
+                           index($0, fc) == 1 || index($0, fd) == 1' \
     | head -n "$note_cap" | while IFS= read -r line; do
     rest="${line#"$file"}"
     sep="${rest%"${rest#?}"}"; rest="${rest#?}"

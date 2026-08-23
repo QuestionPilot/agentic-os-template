@@ -519,9 +519,19 @@ if [ -n "$GUARD_SPEC" ]; then
     # ABSOLUTE only. The contract documents absolute paths, and resolving a
     # relative one against the CALLER's cwd would make the same configuration
     # detect a different file depending on where the session started — a posture
-    # that changes with the launch directory is not a detected posture.
+    # that changes with the launch directory is not a detected posture. Under a
+    # Windows bash (MSYS/MinGW/Cygwin) the native drive-letter spellings
+    # (C:/... or C:\...) count as absolute too — a bare `/*` test counted every
+    # native Windows path as unresolved, reporting a genuinely tightened posture
+    # as broken wiring on that platform. On macOS/Linux those same spellings ARE
+    # relative paths and stay refused (panel finding).
     case "$gpath" in
       /*) ;;
+      [A-Za-z]:/*|[A-Za-z]:\\*)
+        case "$(uname -s 2>/dev/null)" in
+          MINGW*|MSYS*|CYGWIN*) ;;
+          *) SAFETY_UNRESOLVED=$(( SAFETY_UNRESOLVED + 1 )); continue ;;
+        esac ;;
       *) SAFETY_UNRESOLVED=$(( SAFETY_UNRESOLVED + 1 )); continue ;;
     esac
     # A configured path that does not exist, or exists but is EMPTY, is not a

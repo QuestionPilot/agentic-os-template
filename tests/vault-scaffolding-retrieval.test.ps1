@@ -86,6 +86,60 @@ else {
         $vsrPoRc = $LASTEXITCODE
         Assert-Eq 'vault-scaffolding-retrieval.test: empty --paths-only exits 1' 1 $vsrPoRc
         Assert-Eq 'vault-scaffolding-retrieval.test: empty --paths-only emits nothing on stdout' '' $vsrPoOut
+
+        # --- T1d: the eval runner normalizes Windows-shaped baseline output
+        # (absolute root + backslash separators) — the shipped fixture set must
+        # stay green through a baseline that emits exactly that shape, the
+        # normalization must stay root-anchored (no substring loosening), and a
+        # crashing baseline must surface as an error. Mirrors the bash twin.
+        $cWin = New-VsrCopy
+        $winEvalsPath = ($cWin.Vault -replace '\\', '/') + '/' + $VSR_EVALS_REL
+        $winBinDir = Join-Path $cWin.Vault 'bin'
+        Move-Item -LiteralPath (Join-Path $winBinDir 'vault-search.sh') `
+            -Destination (Join-Path $winBinDir 'vault-search-real.sh')
+        # LF + UTF-8 no-BOM: bash must be able to execute the stub byte-for-byte.
+        # The chmod matters on POSIX runners — WriteAllText creates the file
+        # without the execute bit and the runner refuses a non-executable
+        # baseline by contract (exit 2, "baseline missing or not executable").
+        # The mangling prefix rides in ENVIRON, never `awk -v` (a -v value
+        # undergoes escape processing — the shipped fix's own rule).
+        $vsrUtf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        $winSearchSh = ($cWin.Vault -replace '\\', '/') + '/bin/vault-search.sh'
+        $winStubTemplate = @'
+#!/usr/bin/env bash
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$DIR/.." && pwd)"
+out="$(bash "$DIR/vault-search-real.sh" "$@")"; rc=$?
+[ -n "$out" ] && printf '%s\n' "$out" | VS_PREFIX="__PREFIX__" VS_SEP="__SEP__" awk 'BEGIN { p = ENVIRON["VS_PREFIX"]; s = ENVIRON["VS_SEP"] } { gsub("/", "\\"); print p s $0 }'
+exit "$rc"
+'@
+        function Write-VsrWinStub([string]$Prefix, [string]$Sep) {
+            $body = $winStubTemplate.Replace('__PREFIX__', $Prefix).Replace('__SEP__', $Sep)
+            [System.IO.File]::WriteAllText((Join-Path $winBinDir 'vault-search.sh'), ($body + "`n"), $vsrUtf8NoBom)
+            & bash -c "chmod +x '$winSearchSh'"
+        }
+        Write-VsrWinStub '$ROOT' '/'
+        Assert-Exit 'vault-scaffolding-retrieval.test: fixtures stay green when the baseline emits absolute+backslash paths' 0 -- `
+            bash $winEvalsPath
+        Write-VsrWinStub '$ROOT' '/wrong\'
+        Assert-Exit 'vault-scaffolding-retrieval.test: a wrong-directory hit still fails the fixture compare' 1 -- `
+            bash $winEvalsPath
+        Write-VsrWinStub '$ROOT' '\'
+        Assert-Exit 'vault-scaffolding-retrieval.test: a non-root-anchored backslash path is not normalized into a match' 1 -- `
+            bash $winEvalsPath
+        Write-VsrWinStub 'C:/fake vault' '/'
+        & bash -c "RETRIEVAL_EVALS_NATIVE_ROOT='C:/fake vault' bash '$winEvalsPath'" *> $null
+        Assert-Eq 'vault-scaffolding-retrieval.test: the native-root branch strips an injected drive-letter root' 0 $LASTEXITCODE
+        Assert-Exit 'vault-scaffolding-retrieval.test: drive-letter lines stay misses when no native root exists' 1 -- `
+            bash $winEvalsPath
+        $winCrashStub = "#!/usr/bin/env bash`necho garbage-line`nexit 2"
+        [System.IO.File]::WriteAllText((Join-Path $winBinDir 'vault-search.sh'), ($winCrashStub + "`n"), $vsrUtf8NoBom)
+        & bash -c "chmod +x '$winSearchSh'"
+        $winErrOut = (& bash $winEvalsPath 2>&1) -join "`n"
+        Assert-Eq 'vault-scaffolding-retrieval.test: a crashing baseline fails the eval run' 1 $LASTEXITCODE
+        Assert-Contains 'vault-scaffolding-retrieval.test: a crashing baseline is reported as a baseline error' `
+            $winErrOut 'baseline errored (exit 2)'
+        Remove-Item -LiteralPath $cWin.Parent -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # --- T2: session index --check is green on the pristine, EMPTY scaffold ---
