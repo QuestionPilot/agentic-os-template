@@ -71,6 +71,23 @@ else
   assert_contains "missing harness: key defaults to all (codex view lists it)" \
     "$hi_codex_view" "__unscoped-fixture__"
 
+  # --- T2b: an empty / whitespace-only note is EXCLUDED from every view. A
+  # content-less .md carries no frontmatter, would default to `harness: all`,
+  # and inject a junk link into every generated view (live-vault regression:
+  # an accidental empty daily note at the vault root drifted the index).
+  # Restraint control: a non-empty note WITHOUT frontmatter is still indexed —
+  # the guard keys on content emptiness, not on a missing frontmatter block.
+  printf '   \n\n' > "$HI_TMP/__empty-note__.md"
+  printf 'no frontmatter, but real content\n' > "$HI_TMP/__bare-note__.md"
+  node "$HI_TMP/$HI_GEN" >/dev/null 2>&1
+  hi_claude_view="$(cat "$HI_TMP/90-Indexes/Harness Index - claude.md")"
+  assert_not_contains "a whitespace-only note is excluded from the generated views" \
+    "$hi_claude_view" "__empty-note__"
+  assert_contains "a non-empty frontmatter-less note IS indexed (guard restraint)" \
+    "$hi_claude_view" "__bare-note__"
+  rm -f "$HI_TMP/__empty-note__.md" "$HI_TMP/__bare-note__.md"
+  node "$HI_TMP/$HI_GEN" >/dev/null 2>&1
+
   # --- T3: determinism — regenerate twice, byte-identical ---
   hi_sum1="$(cat "$HI_TMP/90-Indexes/Harness Index - "*.md | cksum)"
   node "$HI_TMP/$HI_GEN" >/dev/null 2>&1

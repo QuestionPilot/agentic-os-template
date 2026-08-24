@@ -77,6 +77,23 @@ Shared guidance.
     Assert-Contains 'harness-index.test: missing harness: key defaults to all (codex view lists it)' `
         $hiCodexView '__unscoped-fixture__'
 
+    # --- T2b: an empty / whitespace-only note is EXCLUDED from every view. A
+    # content-less .md carries no frontmatter, would default to `harness: all`,
+    # and inject a junk link into every generated view (live-vault regression:
+    # an accidental empty daily note at the vault root drifted the index).
+    # Restraint control: a non-empty note WITHOUT frontmatter is still indexed —
+    # the guard keys on content emptiness, not on a missing frontmatter block.
+    Set-Content -LiteralPath (Join-Path $HI_TMP '__empty-note__.md') -Value "   `n" -NoNewline
+    Set-Content -LiteralPath (Join-Path $HI_TMP '__bare-note__.md') -Value 'no frontmatter, but real content'
+    node $hiGen *> $null
+    $hiClaudeView = Get-Content -LiteralPath (Join-Path $hiViews 'Harness Index - claude.md') -Raw
+    Assert-NotContains 'harness-index.test: a whitespace-only note is excluded from the generated views' `
+        $hiClaudeView '__empty-note__'
+    Assert-Contains 'harness-index.test: a non-empty frontmatter-less note IS indexed (guard restraint)' `
+        $hiClaudeView '__bare-note__'
+    Remove-Item -LiteralPath (Join-Path $HI_TMP '__empty-note__.md'), (Join-Path $HI_TMP '__bare-note__.md') -Force
+    node $hiGen *> $null
+
     # --- T3: determinism — regenerate twice, byte-identical ---
     $hiSum1 = (Get-ChildItem -LiteralPath $hiViews -Filter 'Harness Index - *.md' |
         Sort-Object Name | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"

@@ -246,4 +246,99 @@ else
   assert_not_contains "absent retrieval fixtures do not report a pointer PASS" \
     "$vsr_na2_out" "PASS retrieval fixture pointers resolve"
   rm -rf "${VSR_T9%/vault}"
+
+  # --- T10: local-config seams (bin/session-index.local.json). The config is
+  # what lets a live vault keep operator behavior in DATA while this script
+  # stays byte-identical to its template twin.
+  VSR_T10="$(mktemp -d)/vault"
+  cp -R "$VSR_SCAFFOLD" "$VSR_T10"
+  # (a) fail-loud posture: an empty corpus becomes a corpus-integrity exit 2,
+  # and the generator refuses to write a view it cannot populate.
+  printf '{"failOnEmptyCorpus": true}\n' > "$VSR_T10/bin/session-index.local.json"
+  vsr_t10_out="$(node "$VSR_T10/$VSR_SESSION" --check 2>&1)"; vsr_t10_rc=$?
+  assert_eq "failOnEmptyCorpus turns an empty corpus into exit 2" 2 "$vsr_t10_rc"
+  assert_contains "the fail-loud empty corpus names itself" \
+    "$vsr_t10_out" "session corpus empty"
+  VSR_T10_SEAM="$(mktemp -d)"
+  mkdir -p "$VSR_T10_SEAM/90-Indexes"
+  vsr_t10m_out="$(VAULT_AUDIT_ROOT="$VSR_T10_SEAM" node "$VSR_T10/$VSR_SESSION" 2>&1)"; vsr_t10m_rc=$?
+  assert_eq "failOnEmptyCorpus turns a missing corpus into exit 2" 2 "$vsr_t10m_rc"
+  assert_contains "the fail-loud missing corpus names itself" \
+    "$vsr_t10m_out" "session corpus missing"
+  if [ ! -f "$VSR_T10_SEAM/90-Indexes/Session Index.md" ]; then
+    _pass "the generator refuses to write an index it cannot populate"
+  else
+    _fail "the generator refuses to write an index it cannot populate" \
+      "view written under $VSR_T10_SEAM"
+  fi
+  rm -rf "$VSR_T10_SEAM"
+  # (b) machineFolds + viewTag are honored: a folded spelling lands under its
+  # canonical token and the view carries the configured tag.
+  printf '{"machineFolds":{"old-mbp":"main-machine"},"viewTag":"custom-vault/retrieval"}\n' \
+    > "$VSR_T10/bin/session-index.local.json"
+  mkdir -p "$VSR_T10/30-Archive/Sessions"
+  printf -- '---\ntitle: fold fixture\ndate: 2026-01-02\nharness: claude-code\nmachine: Old-MBP.local\nlinear: [ABC-1]\n---\n\n## Issues this session\n\n### ABC-1 — fixture\n' \
+    > "$VSR_T10/30-Archive/Sessions/2026-01-02-000000-old-mbp-fixture.md"
+  node "$VSR_T10/$VSR_SESSION" >/dev/null 2>&1
+  vsr_t10_view="$(cat "$VSR_T10/$VSR_VIEW")"
+  assert_contains "machineFolds folds a confirmed spelling to its canonical token" \
+    "$vsr_t10_view" "| Machine | main-machine (1) |"
+  assert_contains "viewTag replaces the default frontmatter tag" \
+    "$vsr_t10_view" "custom-vault/retrieval"
+  # (c) restraint: with NO config the same tree gets the conservative
+  # pass-through and the default tag — folds come only from local data.
+  rm -f "$VSR_T10/bin/session-index.local.json"
+  node "$VSR_T10/$VSR_SESSION" >/dev/null 2>&1
+  vsr_t10_view="$(cat "$VSR_T10/$VSR_VIEW")"
+  assert_contains "without config the spelling passes through lowercased (no guessed fold)" \
+    "$vsr_t10_view" "| Machine | old-mbp (1) |"
+  assert_contains "without config the view keeps the default tag" \
+    "$vsr_t10_view" "memory-vault/retrieval"
+  # (d) a malformed config file fails loud (exit 2), never a silent default.
+  printf '{nope\n' > "$VSR_T10/bin/session-index.local.json"
+  vsr_t10c_out="$(node "$VSR_T10/$VSR_SESSION" --check 2>&1)"; vsr_t10c_rc=$?
+  assert_eq "a malformed local config exits 2" 2 "$vsr_t10c_rc"
+  assert_contains "a malformed local config names itself" \
+    "$vsr_t10c_out" "local config malformed"
+  # (e) documented types are ENFORCED, not coerced: a stringly boolean would
+  # silently flip the posture ("false" is truthy), a multiline tag would break
+  # the view's YAML frontmatter (panel findings).
+  printf '{"failOnEmptyCorpus": "false"}\n' > "$VSR_T10/bin/session-index.local.json"
+  vsr_t10e_out="$(node "$VSR_T10/$VSR_SESSION" --check 2>&1)"; vsr_t10e_rc=$?
+  assert_eq "a non-boolean failOnEmptyCorpus exits 2" 2 "$vsr_t10e_rc"
+  assert_contains "the non-boolean failOnEmptyCorpus names its key" \
+    "$vsr_t10e_out" "failOnEmptyCorpus must be a boolean"
+  printf '{"viewTag": "a\\nb"}\n' > "$VSR_T10/bin/session-index.local.json"
+  vsr_t10f_out="$(node "$VSR_T10/$VSR_SESSION" --check 2>&1)"; vsr_t10f_rc=$?
+  assert_eq "a multiline viewTag exits 2" 2 "$vsr_t10f_rc"
+  assert_contains "the multiline viewTag names its key" \
+    "$vsr_t10f_out" "viewTag must be a non-empty single-line string"
+  # (f) the fold table never consults inherited Object.prototype properties:
+  # a machine legitimately named `constructor` passes through as itself even
+  # while unrelated folds are configured (panel finding).
+  printf '{"machineFolds":{"old-mbp":"main-machine"}}\n' > "$VSR_T10/bin/session-index.local.json"
+  printf -- '---\ntitle: proto fixture\ndate: 2026-01-03\nharness: claude\nmachine: Constructor\n---\n' \
+    > "$VSR_T10/30-Archive/Sessions/2026-01-03-000000-proto-fixture.md"
+  node "$VSR_T10/$VSR_SESSION" >/dev/null 2>&1
+  vsr_t10_view="$(cat "$VSR_T10/$VSR_VIEW")"
+  assert_contains "a prototype-property machine name passes through as itself" \
+    "$vsr_t10_view" "| 2026-01-03 | claude | constructor |"
+  rm -rf "${VSR_T10%/vault}"
+
+  # --- T11: the $VAULT_AUDIT_ROOT seam retargets the generator at the given
+  # root, and the audit PINS its session child to its own root so a stray env
+  # value can never make parent and child check two different trees.
+  VSR_T11A="$(mktemp -d)/vault"
+  VSR_T11B="$(mktemp -d)/vault"
+  cp -R "$VSR_SCAFFOLD" "$VSR_T11A"
+  cp -R "$VSR_SCAFFOLD" "$VSR_T11B"
+  printf 'HAND EDIT\n' >> "$VSR_T11B/$VSR_VIEW"
+  assert_exit "VAULT_AUDIT_ROOT retargets --check at the seam root (drift there is seen)" 1 -- \
+    env VAULT_AUDIT_ROOT="$VSR_T11B" node "$VSR_T11A/$VSR_SESSION" --check
+  assert_exit "without the seam the same generator is clean on its own root" 0 -- \
+    node "$VSR_T11A/$VSR_SESSION" --check
+  vsr_t11_out="$(VAULT_AUDIT_ROOT="$VSR_T11B" node "$VSR_T11A/$VSR_AUDIT" 2>&1)"
+  assert_contains "the audit pins its session child to its own root (stray env ignored)" \
+    "$vsr_t11_out" "PASS session index view matches regeneration"
+  rm -rf "${VSR_T11A%/vault}" "${VSR_T11B%/vault}"
 fi

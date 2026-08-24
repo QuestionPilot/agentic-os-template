@@ -78,6 +78,13 @@ function collectNotes() {
     const r = rel(f);
     if (isGeneratedView(r)) continue;
     const text = fs.readFileSync(f, "utf8");
+    // Skip whitespace-only notes. An empty .md (e.g. an accidental daily note
+    // created at the vault root) carries no frontmatter, so it would default
+    // to `harness: all` and inject a junk link into every generated view —
+    // drifting the index against the on-disk views. Guard scope: whitespace-
+    // only files ONLY — a note with a frontmatter block or any body text is
+    // still indexed (placeholder/stub notes are legitimate orient targets).
+    if (text.trim() === "") continue;
     const harness = (frontmatterScalar(text, "harness") || "all").toLowerCase();
     notes.push({ rel: r, harness });
   }

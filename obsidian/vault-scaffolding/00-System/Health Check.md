@@ -22,6 +22,12 @@ bin/retrieval-evals.sh                  # measure search against [[00-System/Ret
 node bin/generate-session-index.js      # rebuild [[90-Indexes/Session Index]] from the session archive
 ```
 
+The session-index generator reads an optional `bin/session-index.local.json`
+for per-vault settings (machine-name fold pairs, a fail-loud posture once an
+archive exists, a custom view tag) — operator behavior lives in that data file,
+never in edits to the script itself. The recognized keys are documented in the
+script's header.
+
 ## What It Checks
 
 - broken wikilinks
