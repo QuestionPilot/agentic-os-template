@@ -359,7 +359,14 @@ function checkSessionIndexView() {
     na("session index generator absent — view check not applicable: bin/generate-session-index.js");
     return;
   }
-  const res = spawnSync("node", [generator, "--check"], { encoding: "utf8" });
+  // Forward this audit's resolved root explicitly. The generator honors
+  // $VAULT_AUDIT_ROOT as a test seam; pinning it to OUR root means a stray
+  // value in the caller's environment can never make parent and child check
+  // two different trees.
+  const res = spawnSync("node", [generator, "--check"], {
+    encoding: "utf8",
+    env: { ...process.env, VAULT_AUDIT_ROOT: root },
+  });
   const out = (res.stderr || res.stdout || "").trim();
   if (res.status === 0) {
     pass("session index view matches regeneration");

@@ -34,8 +34,34 @@
 // a trailing `.local` is dropped), and an unrecognized value passes through
 // lowercased rather than being guessed into a bucket — so a new machine or
 // harness shows up as itself instead of being absorbed into an existing one.
-// Add your own fold pairs below as your corpus grows them; add a pair only for
-// spellings you have CONFIRMED are the same thing.
+// Machine fold pairs are LOCAL DATA, not code — see LOCAL CONFIG below. Add a
+// pair only for spellings you have CONFIRMED are the same thing.
+//
+// LOCAL CONFIG — operator-local behavior lives in data, not in code edits.
+// An optional `bin/session-index.local.json` (next to this script, never
+// committed to a shared template) carries per-vault settings, so a live vault
+// can keep operator-specific behavior while running this file byte-identical
+// to its template twin — that is what lets a code-level drift check between the
+// two stay meaningful. Recognized keys, all optional:
+//   machineFolds     object mapping an already-lowercased, `.local`-stripped
+//                    machine spelling to its canonical token,
+//                    e.g. {"old-hostname": "current-hostname"}
+//   failOnEmptyCorpus  boolean; true = a missing OR empty 30-Archive/Sessions
+//                    is a corpus-integrity failure (exit 2) instead of a valid
+//                    fresh-vault state. Set it once the vault HAS an archive:
+//                    from then on "no logs found" means the archive is gone
+//                    (unmounted drive, bad root), not that history vanished.
+//   viewTag          string; extra tag written into the view's frontmatter
+//                    (default "memory-vault/retrieval") so a vault keeps its
+//                    own tag taxonomy.
+// A present-but-unreadable or malformed config file is a loud exit-2 failure —
+// silently ignoring it would silently change what the index claims.
+//
+// ROOT OVERRIDE — $VAULT_AUDIT_ROOT resolves the vault root instead of this
+// script's parent directory. A test-injection seam (fixture vaults in tmp
+// dirs), same pattern as RETRIEVAL_EVALS_NATIVE_ROOT in retrieval-evals.sh;
+// the audit forwards its own resolved root to this generator so parent and
+// child can never disagree about which tree they are checking.
 //
 // RECALL-FAILURE CLASS — consumes an existing contract, does not re-invent one.
 // The markers below are kept byte-identical (modulo the POSIX-ERE-to-JavaScript
@@ -67,10 +93,84 @@
 const fs = require("fs");
 const path = require("path");
 
-const root = path.resolve(__dirname, "..");
+const root = process.env.VAULT_AUDIT_ROOT
+  ? path.resolve(process.env.VAULT_AUDIT_ROOT)
+  : path.resolve(__dirname, "..");
 
 const SESSIONS_DIR = "30-Archive/Sessions";
 const VIEW_PATH = "90-Indexes/Session Index.md";
+const CONFIG_PATH = path.join(__dirname, "session-index.local.json");
+
+// Loaded once in main(), inside the exit-2 error boundary — see LOCAL CONFIG
+// in the header for the recognized keys and why a broken config fails loud.
+let LOCAL = {};
+
+function loadLocalConfig() {
+  if (!fs.existsSync(CONFIG_PATH)) return {};
+  let raw;
+  try {
+    raw = fs.readFileSync(CONFIG_PATH, "utf8");
+  } catch (err) {
+    throw new Error(
+      `local config unreadable: bin/session-index.local.json — ${err.message}`,
+    );
+  }
+  let cfg;
+  try {
+    cfg = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `local config malformed: bin/session-index.local.json — ${err.message}`,
+    );
+  }
+  if (cfg === null || typeof cfg !== "object" || Array.isArray(cfg)) {
+    throw new Error(
+      "local config malformed: bin/session-index.local.json — expected a JSON object",
+    );
+  }
+  if (cfg.machineFolds !== undefined) {
+    if (
+      cfg.machineFolds === null ||
+      typeof cfg.machineFolds !== "object" ||
+      Array.isArray(cfg.machineFolds)
+    ) {
+      throw new Error(
+        "local config malformed: bin/session-index.local.json — machineFolds must be an object",
+      );
+    }
+    for (const [from, to] of Object.entries(cfg.machineFolds)) {
+      if (
+        from.trim() === "" ||
+        typeof to !== "string" ||
+        to.trim() === "" ||
+        /[\r\n]/.test(to)
+      ) {
+        throw new Error(
+          "local config malformed: bin/session-index.local.json — machineFolds entries must map non-empty single-line strings",
+        );
+      }
+    }
+  }
+  if (
+    cfg.failOnEmptyCorpus !== undefined &&
+    typeof cfg.failOnEmptyCorpus !== "boolean"
+  ) {
+    throw new Error(
+      "local config malformed: bin/session-index.local.json — failOnEmptyCorpus must be a boolean",
+    );
+  }
+  if (
+    cfg.viewTag !== undefined &&
+    (typeof cfg.viewTag !== "string" ||
+      cfg.viewTag.trim() === "" ||
+      /[\r\n]/.test(cfg.viewTag))
+  ) {
+    throw new Error(
+      "local config malformed: bin/session-index.local.json — viewTag must be a non-empty single-line string",
+    );
+  }
+  return cfg;
+}
 
 // Kept in lockstep with scripts/recall-report.sh — see header.
 const MEANINGFUL_RE = /^## Issues this session[ \t]*$/m;
@@ -102,12 +202,18 @@ function canonHarness(raw) {
 }
 
 // Same conservative fold for machines: drop the mDNS `.local` suffix, then map
-// only the spellings positively identified as the same host. This vault ships
-// with no host-specific pairs — add them here as you confirm them.
+// only the spellings positively identified as the same host. Host-specific
+// pairs are LOCAL DATA (`machineFolds` in bin/session-index.local.json — see
+// LOCAL CONFIG in the header); the shared code ships with none.
 function canonMachine(raw) {
   if (!raw) return "—";
   const v = raw.toLowerCase().replace(/\.local$/, "").trim();
-  return v || "—";
+  if (!v) return "—";
+  // Own-property lookup only: a plain-object fold table inherits
+  // Object.prototype, so a machine legitimately named `constructor` or
+  // `toString` would otherwise resolve to a native function, not a fold.
+  const folds = LOCAL.machineFolds || {};
+  return Object.hasOwn(folds, v) ? folds[v] : v;
 }
 
 // Read a frontmatter value that may be a same-line scalar OR a YAML block
@@ -184,16 +290,26 @@ const cell = (s) => (s && s.length ? String(s).replace(/\|/g, "\\|") : "—");
 // rather than escaped.
 const alias = (s) => String(s).replace(/\|/g, "/");
 
-// An UNREADABLE corpus is fatal; an EMPTY one is not. A missing directory could
-// mean either (a fresh vault that has not created it, or an archive that went
-// missing), so the absent-directory case is treated as the benign one and
-// reported truthfully in the view rather than guessed at. What is never
+// An UNREADABLE corpus is fatal; an EMPTY one is not — by default. A missing
+// directory could mean either (a fresh vault that has not created it, or an
+// archive that went missing), and the two postures are irreconcilable in one
+// default: a fresh vault must treat absence as benign, a vault with months of
+// archive must treat it as the archive being GONE. The `failOnEmptyCorpus`
+// local-config key picks the posture (see LOCAL CONFIG in the header); without
+// it, absence is benign and reported truthfully in the view. What is never
 // acceptable is writing a view whose prose implies coverage of logs that were
 // never read — see EMPTY STATE in the header. Genuine read errors (a permission
-// failure, an unreadable file) throw and exit 2.
+// failure, an unreadable file) throw and exit 2 in both postures.
 function collectLogs() {
   const dirAbs = path.join(root, SESSIONS_DIR);
-  if (!fs.existsSync(dirAbs)) return [];
+  if (!fs.existsSync(dirAbs)) {
+    if (LOCAL.failOnEmptyCorpus) {
+      throw new Error(
+        `session corpus missing: ${SESSIONS_DIR} — refusing to write an empty index`,
+      );
+    }
+    return [];
+  }
   let names;
   try {
     names = fs.readdirSync(dirAbs);
@@ -230,6 +346,14 @@ function collectLogs() {
     });
   }
   logs.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+  // A present-but-empty corpus is the same call as a missing one under the
+  // fail-loud posture: the directory exists, so the check above passes, yet
+  // the view would still claim complete coverage of nothing.
+  if (logs.length === 0 && LOCAL.failOnEmptyCorpus) {
+    throw new Error(
+      `session corpus empty: ${SESSIONS_DIR} contains no session logs — refusing to write an empty index`,
+    );
+  }
   return logs;
 }
 
@@ -246,12 +370,14 @@ function tally(logs, pick) {
   );
 }
 
-const HEADER = [
+// A function, not a const: the tag line reads the local config, which is only
+// loaded inside main()'s error boundary.
+const HEADER = () => [
   "---",
   "title: Session Index",
   "tags:",
   "  - generated-index",
-  "  - memory-vault/retrieval",
+  `  - ${LOCAL.viewTag || "memory-vault/retrieval"}`,
   "---",
   "",
   "# Session Index",
@@ -266,7 +392,7 @@ const HEADER = [
 
 function renderEmpty() {
   return [
-    ...HEADER,
+    ...HEADER(),
     "This is the archive's **query surface** — once closeout logs exist, filter",
     "it by machine, harness, issue, date, or recall-failure class instead of",
     "grepping the logs.",
@@ -292,7 +418,7 @@ function renderView(logs) {
   const span = dates.length ? `${dates[0]} → ${dates[dates.length - 1]}` : "—";
 
   const lines = [
-    ...HEADER,
+    ...HEADER(),
     "This is the archive's **query surface** — filter it by machine, harness,",
     "issue, date, or recall-failure class instead of grepping the logs. Harness",
     "and machine values are normalized (for example `claude-code` → `claude`,",
@@ -332,6 +458,7 @@ function main() {
   const viewAbs = path.join(root, VIEW_PATH);
   let want;
   try {
+    LOCAL = loadLocalConfig();
     want = renderView(collectLogs());
   } catch (err) {
     // Corpus-integrity failures exit 2 — distinct from drift (1) so the audit

@@ -228,4 +228,133 @@ exit "$rc"
     Assert-NotContains 'vault-scaffolding-retrieval.test: absent retrieval fixtures do not report a pointer PASS' `
         $vsrNa2Out 'PASS retrieval fixture pointers resolve'
     Remove-Item -LiteralPath $c9.Parent -Recurse -Force -ErrorAction SilentlyContinue
+
+    # --- T10: local-config seams (bin/session-index.local.json). The config is
+    # what lets a live vault keep operator behavior in DATA while the script
+    # stays byte-identical to its template twin.
+    $c10 = New-VsrCopy
+    $vsrCfg10 = Join-Path $c10.Vault 'bin' 'session-index.local.json'
+    $vsrGen10 = Join-Path $c10.Vault $VSR_SESSION_REL
+    # (a) fail-loud posture: an empty corpus becomes a corpus-integrity exit 2,
+    # and the generator refuses to write a view it cannot populate.
+    Set-Content -LiteralPath $vsrCfg10 -Value '{"failOnEmptyCorpus": true}'
+    $vsrT10Out = (& node $vsrGen10 --check 2>&1) -join "`n"
+    Assert-Eq 'vault-scaffolding-retrieval.test: failOnEmptyCorpus turns an empty corpus into exit 2' 2 $LASTEXITCODE
+    Assert-Contains 'vault-scaffolding-retrieval.test: the fail-loud empty corpus names itself' `
+        $vsrT10Out 'session corpus empty'
+    $vsrSeamParent = Join-Path ([System.IO.Path]::GetTempPath()) ("vsr-seam-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path (Join-Path $vsrSeamParent '90-Indexes') -Force | Out-Null
+    # try/finally: the env var must not leak into later tests if anything
+    # between set and clear throws — the bash twin scopes it per-invocation.
+    try {
+        $env:VAULT_AUDIT_ROOT = $vsrSeamParent
+        $vsrT10mOut = (& node $vsrGen10 2>&1) -join "`n"
+        $vsrT10mRc = $LASTEXITCODE
+    }
+    finally {
+        Remove-Item Env:VAULT_AUDIT_ROOT -ErrorAction SilentlyContinue
+    }
+    Assert-Eq 'vault-scaffolding-retrieval.test: failOnEmptyCorpus turns a missing corpus into exit 2' 2 $vsrT10mRc
+    Assert-Contains 'vault-scaffolding-retrieval.test: the fail-loud missing corpus names itself' `
+        $vsrT10mOut 'session corpus missing'
+    if (-not (Test-Path -LiteralPath (Join-Path $vsrSeamParent '90-Indexes' 'Session Index.md'))) {
+        _Pass 'vault-scaffolding-retrieval.test: the generator refuses to write an index it cannot populate'
+    }
+    else {
+        _Fail 'vault-scaffolding-retrieval.test: the generator refuses to write an index it cannot populate' "view written under $vsrSeamParent"
+    }
+    Remove-Item -LiteralPath $vsrSeamParent -Recurse -Force -ErrorAction SilentlyContinue
+    # (b) machineFolds + viewTag are honored: a folded spelling lands under its
+    # canonical token and the view carries the configured tag.
+    Set-Content -LiteralPath $vsrCfg10 -Value '{"machineFolds":{"old-mbp":"main-machine"},"viewTag":"custom-vault/retrieval"}'
+    $vsrSessDir10 = Join-Path $c10.Vault '30-Archive' 'Sessions'
+    New-Item -ItemType Directory -Path $vsrSessDir10 -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $vsrSessDir10 '2026-01-02-000000-old-mbp-fixture.md') -Value @'
+---
+title: fold fixture
+date: 2026-01-02
+harness: claude-code
+machine: Old-MBP.local
+linear: [ABC-1]
+---
+
+## Issues this session
+
+### ABC-1 — fixture
+'@
+    node $vsrGen10 *> $null
+    $vsrT10View = Get-Content -LiteralPath (Join-Path $c10.Vault $VSR_VIEW_REL) -Raw
+    Assert-Contains 'vault-scaffolding-retrieval.test: machineFolds folds a confirmed spelling to its canonical token' `
+        $vsrT10View '| Machine | main-machine (1) |'
+    Assert-Contains 'vault-scaffolding-retrieval.test: viewTag replaces the default frontmatter tag' `
+        $vsrT10View 'custom-vault/retrieval'
+    # (c) restraint: with NO config the same tree gets the conservative
+    # pass-through and the default tag — folds come only from local data.
+    Remove-Item -LiteralPath $vsrCfg10 -Force
+    node $vsrGen10 *> $null
+    $vsrT10View = Get-Content -LiteralPath (Join-Path $c10.Vault $VSR_VIEW_REL) -Raw
+    Assert-Contains 'vault-scaffolding-retrieval.test: without config the spelling passes through lowercased (no guessed fold)' `
+        $vsrT10View '| Machine | old-mbp (1) |'
+    Assert-Contains 'vault-scaffolding-retrieval.test: without config the view keeps the default tag' `
+        $vsrT10View 'memory-vault/retrieval'
+    # (d) a malformed config file fails loud (exit 2), never a silent default.
+    Set-Content -LiteralPath $vsrCfg10 -Value '{nope'
+    $vsrT10cOut = (& node $vsrGen10 --check 2>&1) -join "`n"
+    Assert-Eq 'vault-scaffolding-retrieval.test: a malformed local config exits 2' 2 $LASTEXITCODE
+    Assert-Contains 'vault-scaffolding-retrieval.test: a malformed local config names itself' `
+        $vsrT10cOut 'local config malformed'
+    # (e) documented types are ENFORCED, not coerced: a stringly boolean would
+    # silently flip the posture ("false" is truthy), a multiline tag would
+    # break the view's YAML frontmatter (panel findings).
+    Set-Content -LiteralPath $vsrCfg10 -Value '{"failOnEmptyCorpus": "false"}'
+    $vsrT10eOut = (& node $vsrGen10 --check 2>&1) -join "`n"
+    Assert-Eq 'vault-scaffolding-retrieval.test: a non-boolean failOnEmptyCorpus exits 2' 2 $LASTEXITCODE
+    Assert-Contains 'vault-scaffolding-retrieval.test: the non-boolean failOnEmptyCorpus names its key' `
+        $vsrT10eOut 'failOnEmptyCorpus must be a boolean'
+    Set-Content -LiteralPath $vsrCfg10 -Value '{"viewTag": "a\nb"}'
+    $vsrT10fOut = (& node $vsrGen10 --check 2>&1) -join "`n"
+    Assert-Eq 'vault-scaffolding-retrieval.test: a multiline viewTag exits 2' 2 $LASTEXITCODE
+    Assert-Contains 'vault-scaffolding-retrieval.test: the multiline viewTag names its key' `
+        $vsrT10fOut 'viewTag must be a non-empty single-line string'
+    # (f) the fold table never consults inherited Object.prototype properties:
+    # a machine legitimately named `constructor` passes through as itself even
+    # while unrelated folds are configured (panel finding).
+    Set-Content -LiteralPath $vsrCfg10 -Value '{"machineFolds":{"old-mbp":"main-machine"}}'
+    Set-Content -LiteralPath (Join-Path $vsrSessDir10 '2026-01-03-000000-proto-fixture.md') -Value @'
+---
+title: proto fixture
+date: 2026-01-03
+harness: claude
+machine: Constructor
+---
+'@
+    node $vsrGen10 *> $null
+    $vsrT10View = Get-Content -LiteralPath (Join-Path $c10.Vault $VSR_VIEW_REL) -Raw
+    Assert-Contains 'vault-scaffolding-retrieval.test: a prototype-property machine name passes through as itself' `
+        $vsrT10View '| 2026-01-03 | claude | constructor |'
+    Remove-Item -LiteralPath $c10.Parent -Recurse -Force -ErrorAction SilentlyContinue
+
+    # --- T11: the $VAULT_AUDIT_ROOT seam retargets the generator at the given
+    # root, and the audit PINS its session child to its own root so a stray env
+    # value can never make parent and child check two different trees.
+    $c11a = New-VsrCopy
+    $c11b = New-VsrCopy
+    Add-Content -LiteralPath (Join-Path $c11b.Vault $VSR_VIEW_REL) -Value 'HAND EDIT'
+    # try/finally: same env-leak guard as T10 — the var must be gone even if
+    # an invocation throws.
+    try {
+        $env:VAULT_AUDIT_ROOT = $c11b.Vault
+        & node (Join-Path $c11a.Vault $VSR_SESSION_REL) --check *> $null
+        $vsrT11Rc = $LASTEXITCODE
+        $vsrT11Out = (& node (Join-Path $c11a.Vault $VSR_AUDIT_REL) 2>&1) -join "`n"
+    }
+    finally {
+        Remove-Item Env:VAULT_AUDIT_ROOT -ErrorAction SilentlyContinue
+    }
+    Assert-Eq 'vault-scaffolding-retrieval.test: VAULT_AUDIT_ROOT retargets --check at the seam root (drift there is seen)' 1 $vsrT11Rc
+    Assert-Exit 'vault-scaffolding-retrieval.test: without the seam the same generator is clean on its own root' 0 -- `
+        node (Join-Path $c11a.Vault $VSR_SESSION_REL) --check
+    Assert-Contains 'vault-scaffolding-retrieval.test: the audit pins its session child to its own root (stray env ignored)' `
+        $vsrT11Out 'PASS session index view matches regeneration'
+    Remove-Item -LiteralPath $c11a.Parent, $c11b.Parent -Recurse -Force -ErrorAction SilentlyContinue
 }
