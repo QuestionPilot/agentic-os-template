@@ -25,6 +25,12 @@ Before meaningful closeout:
 
 For detailed framework recipes, use `verification/README.md`.
 
+## Blind-First Perceptual Judgement
+
+Where unaided perception is itself the evidence — UI feel, visual quality, prose clarity — form the judgement cold first, then open the spec and diff against it. Where the cold judgement and the spec disagree, treat the artifact, not the spec, as the presumptive fault — a reader or viewer meets the artifact without the spec in hand — and investigate the disagreement rather than editing the spec to match the artifact. A spec that is deliberately audience-specific or unconventional can survive the investigation; it just does not win by default.
+
+This clause is scoped to perceptual surfaces only. It does not apply to code review, security review, self-audit, or spec-conformance review — those require the full packet and settled criteria up front, and judging them blind would contradict packet completeness.
+
 ## Independent Review
 
 Use independent review when risk or ambiguity warrants it. Treat external model output as advice, not proof. The primary agent remains responsible for verification.

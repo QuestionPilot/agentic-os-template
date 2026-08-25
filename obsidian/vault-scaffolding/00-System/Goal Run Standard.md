@@ -13,7 +13,7 @@ The purpose is to make the agent's work measurable, bounded, and useful before i
 
 ## Required Anchors
 
-Every goal-run needs six anchors:
+Every goal-run needs seven anchors:
 
 | Anchor | Requirement |
 |---|---|
@@ -23,6 +23,7 @@ Every goal-run needs six anchors:
 | Proof artifact | Name the evidence the run must leave behind. |
 | Stop condition | Define what "done enough" means, as a checkable predicate (not "until satisfied"). |
 | Safety cap | Limit time, turns, files, retries, spend, or scope — a separate failure predicate from the done check. |
+| Input provenance | For autonomous runs: declare which material decision inputs the agent supplied on the absent operator's behalf, and carry that declaration into the proof artifact — a self-written brief must be stamped self-authored, not interviewed. |
 
 ## Make the checks real
 
@@ -48,6 +49,7 @@ Ask:
 - What proof will let a human verify the run?
 - Where should the agent stop?
 - What safety cap prevents runaway work?
+- For autonomous runs: which decision inputs will the agent supply itself, and where is that declared?
 
 ## Closeout
 
