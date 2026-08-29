@@ -291,7 +291,11 @@ This never overrides principle 3: a load-bearing, must-fire rule belongs inline 
 pointer tuning is for the reference depth around it, not the gate itself. A pointer does two jobs: say what the material is, and name the
 distinct trigger cases — front-load the words that do the triggering work, collapse synonyms that
 rename one case, and cut identifying description the target's own body already carries, because an always-loaded
-pointer costs tokens on every turn whether or not it fires.
+pointer costs tokens on every turn whether or not it fires. The trigger-case job has a negative side:
+a skill description may also name its **anti-triggers** (what the skill is NOT for), but only where a
+genuine routing boundary exists — a neighboring skill whose trigger space overlaps ("NOT for X — that
+is skill Y"). An anti-trigger marks a real boundary between overlapping skills, never an enumeration
+of every irrelevant task; each clause pays the same always-loaded cost as the rest of the pointer.
 
 **Apply when:** writing or tuning any skill description, index trigger row, or entrypoint pointer —
 and *before* concluding that under-triggering material must move inline. Measure a re-phrase with
