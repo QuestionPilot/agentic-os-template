@@ -296,6 +296,14 @@ a skill description may also name its **anti-triggers** (what the skill is NOT f
 genuine routing boundary exists — a neighboring skill whose trigger space overlaps ("NOT for X — that
 is skill Y"). An anti-trigger marks a real boundary between overlapping skills, never an enumeration
 of every irrelevant task; each clause pays the same always-loaded cost as the rest of the pointer.
+A description may also carry a **path-keyed MUST-use trigger**, binding the skill to a path domain
+("editing anything under path X → this skill MUST be used"). The routing-boundary discipline holds
+here too, with its own concrete test: the skill must genuinely own the path domain — it is the single
+designated authority for that domain, and no other skill's description or trigger row claims an
+overlapping path — the same path, an ancestor, or a descendant (a competing claim means resolving
+ownership first, never shipping a second MUST) —
+and the claim is never a blanket over paths the skill does not truly own. Each path clause, like each
+anti-trigger, marks a real boundary and pays the always-loaded cost.
 
 **Apply when:** writing or tuning any skill description, index trigger row, or entrypoint pointer —
 and *before* concluding that under-triggering material must move inline. Measure a re-phrase with
