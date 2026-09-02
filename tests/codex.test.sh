@@ -263,6 +263,10 @@ cx_nl_fixture="$(cat "$fix/codex-transcript-session-agent-no-linear.jsonl")"
 assert_contains "codex no-linear fixture models the catalog path line"    "$cx_nl_fixture" 'skills/session-agent/SKILL.md'
 assert_contains "codex no-linear fixture models the injected template line" "$cx_nl_fixture" 'Linear gate: <ISSUE-ID'
 assert_contains "codex no-linear fixture models the Lessons template line" "$cx_nl_fixture" 'Lessons: <matched'
+assert_contains "codex no-linear fixture models the Execution template line" "$cx_nl_fixture" 'Execution: inline | delegated wave | delegated wave + panel'
+# Positive path: the ok fixture's ASSISTANT declaration carries the line too, so
+# cr3's allow above proves a real declaration is not rejected for carrying it.
+assert_contains "codex ok fixture declares Execution in the assistant declaration" "$(cat "$fix/codex-transcript-session-agent-ok.jsonl")" 'Linear gate: PROJ-1\nExecution: inline'
 assert_contains "codex no-linear fixture models a prior deny message"     "$cx_nl_fixture" 'no complete routing declaration'
 
 # Windows-separator ran marker (panel follow-up): the bash twin must accept a

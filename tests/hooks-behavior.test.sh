@@ -95,9 +95,33 @@ assert_eq "session-agent: invoked w/o Linear blocks" "block" "$(classify_block "
 hb_nl_fixture="$(cat "$fix/transcript-session-agent-no-linear.jsonl")"
 assert_contains "session-agent: no-linear fixture models the injected template line" "$hb_nl_fixture" 'Linear gate: <ISSUE-ID'
 assert_contains "session-agent: no-linear fixture models the Lessons template line"  "$hb_nl_fixture" 'Lessons: <matched'
+assert_contains "session-agent: no-linear fixture models the Execution template line" "$hb_nl_fixture" 'Execution: inline | delegated wave | delegated wave + panel'
 assert_contains "session-agent: no-linear fixture models a prior deny message"       "$hb_nl_fixture" 'no complete routing declaration'
 hb_nls_fixture="$(cat "$fix/transcript-session-agent-no-lessons.jsonl")"
 assert_contains "session-agent: no-lessons fixture models the Lessons template line" "$hb_nls_fixture" 'Lessons: <matched'
+# Positive path: the ok fixture's ASSISTANT declaration carries the Execution line,
+# so r3's allow above proves a real declaration is not rejected for carrying it.
+# Across the fixtures all three R2b values are exercised on a live hook path:
+# `delegated wave` here, `inline` on the codex ok fixture, `delegated wave + panel`
+# on the marker-write allow cases below.
+assert_contains "session-agent: ok fixture declares Execution in the assistant declaration" "$(cat "$fix/transcript-session-agent-ok.jsonl")" 'Linear gate: PROJ-1\nExecution: delegated wave'
+
+# The Execution template/declaration edits are hand-written JSON escapes inside
+# these fixtures — one bad backslash silently reshapes a record and every hook
+# assertion above starts testing a different transcript. Sweep them all through
+# jq. The enumerated COUNT is part of the compared value, so a glob that matches
+# nothing (a rename, a moved fixtures dir) fails loudly instead of passing on an
+# empty set.
+hb_jsonl_n=0; hb_jsonl_bad=""
+for hb_f in "$fix"/transcript-session-agent-*.jsonl "$fix"/transcript-desktop-session-agent.jsonl \
+            "$fix"/codex-transcript-session-agent-*.jsonl; do
+  [ -f "$hb_f" ] || continue
+  hb_jsonl_n=$(( hb_jsonl_n + 1 ))
+  jq -e . "$hb_f" >/dev/null 2>&1 || hb_jsonl_bad="$hb_jsonl_bad $(basename "$hb_f")"
+done
+assert_eq "session-agent: every session-agent fixture parses as JSONL" \
+  "enumerated>=8 bad=none" \
+  "$([ "$hb_jsonl_n" -ge 8 ] && printf 'enumerated>=8' || printf 'enumerated=%s' "$hb_jsonl_n") bad=${hb_jsonl_bad:-none}"
 
 # <TEAM>-365 — desktop/SDK-variant transcript: assistant TEXT blocks (including
 # the R5 declaration, even as tool preamble) are NOT persisted; only tool_use /
@@ -126,9 +150,18 @@ assert_contains "session-agent/desktop: deny names the marker path" "${d1#*|}" "
 
 # 2. The marker Write itself is allowed through pre-gate — exact path + both
 #    line-anchored declaration lines in the content.
+# Pre-existing contract: a declaration WITHOUT `Execution:` still allows — the gate
+# must never require the new line (R2b is protocol, not enforcement).
 d2_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "Routing: fix\nLessons: none match\nLinear gate: none — single-step\n"}')"
 d2="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID" Write "$d2_input")")"
 assert_eq "session-agent/desktop: marker write allowed through" "allow" "$(classify_block "$d2")"
+
+# 2b. A marker carrying the R2b `Execution:` line as well is still allowed — the
+#     gate keys on the two declaration lines and must not reject extra ones. The
+#     value is the `+`-and-spaces spelling, the one most likely to trip a matcher.
+d2b_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "Routing: fix\nLessons: none match\nLinear gate: none — single-step\nExecution: delegated wave + panel\n"}')"
+d2b="$(run_hook "$GEN_HOOKS/session-agent.sh" "$(dtp "$DT_FIX" "$DT_SID" Write "$d2b_input")")"
+assert_eq "session-agent/desktop: marker write with the Execution line allowed through" "allow" "$(classify_block "$d2b")"
 
 # 3. A marker Write WITHOUT the declaration lines is denied (content contract).
 d3_input="$(jq -nc --arg p "$DT_GATE" '{file_path: $p, content: "remember to declare later"}')"
