@@ -519,3 +519,54 @@ try {
 } finally {
     Remove-Item -LiteralPath $vieFix -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# --- capability bodies must reference framework scripts via $AI_CONFIG_DIR/ ---
+# Twin of the bash case: a planted bare `scripts/<name>.sh` invocation in a
+# capability body must FAIL naming the site; the prefixed form must pass.
+$vcpFix = Join-Path ([IO.Path]::GetTempPath()) ('vcp-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vcpFix
+    $vcpCap = Join-Path $vcpFix 'capabilities' 'session-agent.md'
+    Add-Content -LiteralPath $vcpCap -Value "`nRun ``scripts/orient.sh --memory-dir <store>`` again if the tracker was down."
+    $vcpOut = (& pwsh -NoProfile -File (Join-Path $vcpFix 'scripts' 'validate.ps1') 2>&1 | Out-String)
+    Assert-Eq 'validate.test: validate.ps1 fails on a bare scripts/ path in a capability body' '1' "$LASTEXITCODE"
+    Assert-Contains 'validate.test: validate.ps1 names the bare-path site' $vcpOut 'bare scripts/ path in capabilities/session-agent.md:'
+} finally {
+    Remove-Item -LiteralPath $vcpFix -Recurse -Force -ErrorAction SilentlyContinue
+}
+$vcpFix2 = Join-Path ([IO.Path]::GetTempPath()) ('vcp2-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vcpFix2
+    $vcpCap2 = Join-Path $vcpFix2 'capabilities' 'session-agent.md'
+    # SINGLE-quoted on purpose: inside single quotes both `$` and the backtick are
+    # literal. The double-quoted form `"...``\$AI_CONFIG_DIR/scripts/..."` is a trap —
+    # backslash is NOT a PowerShell escape, so `$AI_CONFIG_DIR` still expands (to
+    # empty, being undefined) and the planted text becomes `\/scripts/orient.sh`,
+    # which the check cannot match on any pattern. The test then passes for the
+    # wrong reason. The literal-content assertion below is what pins that shut.
+    Add-Content -LiteralPath $vcpCap2 -Value ''
+    Add-Content -LiteralPath $vcpCap2 -Value 'Run `$AI_CONFIG_DIR/scripts/orient.sh --memory-dir <store>` again if the tracker was down.'
+    Assert-Contains 'validate.test: the prefixed fixture really carries the $AI_CONFIG_DIR/ literal' `
+        (Get-Content -Raw -LiteralPath $vcpCap2) '$AI_CONFIG_DIR/scripts/orient.sh'
+    & pwsh -NoProfile -File (Join-Path $vcpFix2 'scripts' 'validate.ps1') *>$null
+    Assert-Eq 'validate.test: validate.ps1 accepts a $AI_CONFIG_DIR/-prefixed scripts/ path in a capability body' '0' "$LASTEXITCODE"
+} finally {
+    Remove-Item -LiteralPath $vcpFix2 -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Twin of the bash `./scripts/` case: a `./`- or `../`-relative prefix resolves
+# only from the framework root, so it must FAIL exactly like a bare path.
+$vcpFix3 = Join-Path ([IO.Path]::GetTempPath()) ('vcp3-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vcpFix3
+    $vcpCap3 = Join-Path $vcpFix3 'capabilities' 'session-agent.md'
+    Add-Content -LiteralPath $vcpCap3 -Value ''
+    Add-Content -LiteralPath $vcpCap3 -Value 'Run `./scripts/orient.sh --memory-dir <store>` again if the tracker was down.'
+    Assert-Contains 'validate.test: the dot-slash fixture really carries ./scripts/orient.sh' `
+        (Get-Content -Raw -LiteralPath $vcpCap3) './scripts/orient.sh'
+    $vcpOut3 = (& pwsh -NoProfile -File (Join-Path $vcpFix3 'scripts' 'validate.ps1') 2>&1 | Out-String)
+    Assert-Eq 'validate.test: validate.ps1 fails on a ./scripts/ path in a capability body' '1' "$LASTEXITCODE"
+    Assert-Contains 'validate.test: validate.ps1 names the ./-prefixed site' $vcpOut3 'bare scripts/ path in capabilities/session-agent.md:'
+} finally {
+    Remove-Item -LiteralPath $vcpFix3 -Recurse -Force -ErrorAction SilentlyContinue
+}

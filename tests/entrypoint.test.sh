@@ -35,6 +35,12 @@ if [ -f "$ep_build/CLAUDE.md" ]; then
   # `@@AI_CONFIG_DIR@@` substitution can land a worktree path containing the
   # literal substring `cross-model-review`, producing a false positive.
   assert_contains "generated CLAUDE.md keeps the broad quick-reference" "$cmd" "security-review"
+  # The pre-PR review row routes to the `code-review` built-in. `review` was
+  # renamed upstream; a template still advertising `` `review` (built-in) ``
+  # sends the operator to a skill the harness no longer ships.
+  assert_contains "generated CLAUDE.md routes pre-PR review to code-review" "$cmd" "code-review"
+  assert_not_contains "generated CLAUDE.md drops the retired \`review\` (built-in) row" \
+    "$cmd" '`review` (built-in)'
   # Path placeholders are resolved against local.env.
   assert_not_contains "generated CLAUDE.md has no unresolved placeholders" "$cmd" "@@"
   assert_contains "generated CLAUDE.md substitutes the vault path"  "$cmd" "$EP_VAULT"

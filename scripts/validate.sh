@@ -816,6 +816,35 @@ check_harness_adapters() {
 }
 check_harness_adapters
 
+# Capability bodies must invoke framework scripts through $AI_CONFIG_DIR/. A bare
+# `scripts/<name>.sh` only resolves with the framework root as the working
+# directory, but the compiled skill runs from wherever the session is (a
+# projects/ checkout, a worktree) — session-agent's first kickoff command was one
+# of eight bare invocations this check now refuses. Scope: every capabilities/*.md
+# except README.md, which DESCRIBES the compiler by file name rather than
+# invoking anything. Prefixed references are blanked first, so a line may carry
+# both forms and only the bare one trips.
+check_capability_script_paths() {
+  local f rel n hits=0
+  for f in "$repo_root"/capabilities/*.md; do
+    [ -e "$f" ] || continue
+    [ "$(basename "$f")" = "README.md" ] && continue
+    rel="${f#"$repo_root"/}"
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      printf 'FAIL bare scripts/ path in %s:%s (prefix it with $AI_CONFIG_DIR/)\n' "$rel" "$n" >&2
+      hits=$((hits + 1))
+    done < <(sed -E 's#\$AI_CONFIG_DIR/scripts/#PREFIXED/#g; s#@@AI_CONFIG_DIR@@/scripts/#PREFIXED/#g' "$f" \
+             | grep -nE '(^|[^A-Za-z0-9_/.@$-])(\.\.?/)?scripts/[A-Za-z0-9_.-]+\.(sh|ps1|js)' \
+             | cut -d: -f1)
+  done
+  if [ "$hits" -ne 0 ]; then
+    exit 1
+  fi
+  printf 'PASS capability bodies reference framework scripts via $AI_CONFIG_DIR/\n'
+}
+check_capability_script_paths
+
 # Internal markdown link integrity (<TEAM>-53 C7 + <TEAM>-63 fence/inline-code parser).
 #
 # Scans every tracked *.md outside the vendored allowlist for markdown links

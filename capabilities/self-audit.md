@@ -10,8 +10,8 @@ lifecycle: shipped
 
 # Self-Audit — Framework Health Scorecard
 
-The framework already has PASS/FAIL gates: `bash scripts/validate.sh`,
-`bash scripts/check-drift.sh --manifest "$CLAUDE_CONFIG_DIR"`, and — where the
+The framework already has PASS/FAIL gates: `bash $AI_CONFIG_DIR/scripts/validate.sh`,
+`bash $AI_CONFIG_DIR/scripts/check-drift.sh --manifest "$CLAUDE_CONFIG_DIR"`, and — where the
 upstream acceptance suite is present — `bash tests/run.sh`. They answer "is
 anything broken?" — they do not answer
 "where are we thinning out?" Self-audit closes that gap with a five-pillar
@@ -61,7 +61,7 @@ re-audit to score them. The bands above describe a fully-measured run.
 can score 20/20 while a memory note or an active vault project note confidently
 asserts a tracker state that changed hours ago — a system can be perfectly tidy
 and materially wrong, and until this check existed it presented as an unqualified
-100/100. `scripts/check-state-currentness.sh` (PowerShell twin:
+100/100. `$AI_CONFIG_DIR/scripts/check-state-currentness.sh` (PowerShell twin:
 `check-state-currentness.ps1`) closes that: it reconciles tracker-state CLAIMS in
 the scanned memory stores and in `status: active` vault project notes against
 live tracker state, and flags project-status/child contradictions
@@ -122,7 +122,7 @@ invisible. An unset key, a missing registry, an empty registry, or
 
 **Companion qualitative check — vault-promotion lag (Pillar 2).** Beyond the scored index hygiene, when running `/self-audit` also judge whether durable lessons are *reaching the durable-knowledge vault* or only accumulating in local auto-memory. Compare the newest durable-class memory write against the newest vault Lesson/Decision note: a multi-day gap means the closeout `obsidian` promotion step has lapsed and durable knowledge is stranded in the disposable cache. This stays qualitative (not part of the 0–100 score) because most auto-memory is correctly local — only the operator-durable subset should ever be promoted, so a raw count would be noise. If the operator ships a promotion-sweep helper, run it; otherwise eyeball the newest memory mtimes against the vault index dates. Flag a stale lag as a Pillar-2 gap and name the un-promoted candidates.
 
-**Companion qualitative check — recall efficacy (Pillar 2).** The scored checks and the promotion-lag check above are all **write-side**; a store can score 100 while sessions still skip recorded rules — the read-side failure an operator experiences as "I keep re-teaching things." Judge the read side from two signals: (a) **recall failures recorded** — `scripts/recall-report.sh` (PowerShell twin: `recall-report.ps1`) counts the closeout Q1a recall-failure records across the newest N meaningful session logs in `30-Archive/Sessions/`, ordered by the timestamp in the FILENAME, never mtime (the vault is cloud-synced), and the audit reports its counts in a `## Recall failures` section + a `recall_failures` JSON key. That count is **informational and never scored** — it does not move `total`, a pillar score, or `gaps`, and it is deliberately not a gap-on-any-hit rule: grading a self-reported miss count makes the honest act (recording the miss) the costly one, and the records stop being written. Read it as a rolling rate over time, and open a Pillar-2 gap only when you can name the *surface* that failed (not-loaded vs loaded-but-ignored) and the concrete fix. An unmeasured window is a NAMED skip, never a clean zero. (b) **Recall surfaces intact** — spot-check that the session-agent orient is actually reading the vault lesson index (O4). For the per-harness autoloaded indexes, check first for **actively-misleading entries** (facts that are now provably false — the failure that matters), and only secondarily for age: a cache whose newest content lags the vault by weeks is a weaker signal now that every orient reads the vault lesson index directly, and harness caches are separate stores that need not mirror each new lesson. Stays qualitative (not part of the 0–100 score): session-log text and content dates cannot be scored deterministically without brittle parsing. Flag findings as Pillar-2 gaps with the concrete fix (store placement, trigger rephrasing, cache rebuild).
+**Companion qualitative check — recall efficacy (Pillar 2).** The scored checks and the promotion-lag check above are all **write-side**; a store can score 100 while sessions still skip recorded rules — the read-side failure an operator experiences as "I keep re-teaching things." Judge the read side from two signals: (a) **recall failures recorded** — `$AI_CONFIG_DIR/scripts/recall-report.sh` (PowerShell twin: `recall-report.ps1`) counts the closeout Q1a recall-failure records across the newest N meaningful session logs in `30-Archive/Sessions/`, ordered by the timestamp in the FILENAME, never mtime (the vault is cloud-synced), and the audit reports its counts in a `## Recall failures` section + a `recall_failures` JSON key. That count is **informational and never scored** — it does not move `total`, a pillar score, or `gaps`, and it is deliberately not a gap-on-any-hit rule: grading a self-reported miss count makes the honest act (recording the miss) the costly one, and the records stop being written. Read it as a rolling rate over time, and open a Pillar-2 gap only when you can name the *surface* that failed (not-loaded vs loaded-but-ignored) and the concrete fix. An unmeasured window is a NAMED skip, never a clean zero. (b) **Recall surfaces intact** — spot-check that the session-agent orient is actually reading the vault lesson index (O4). For the per-harness autoloaded indexes, check first for **actively-misleading entries** (facts that are now provably false — the failure that matters), and only secondarily for age: a cache whose newest content lags the vault by weeks is a weaker signal now that every orient reads the vault lesson index directly, and harness caches are separate stores that need not mirror each new lesson. Stays qualitative (not part of the 0–100 score): session-log text and content dates cannot be scored deterministically without brittle parsing. Flag findings as Pillar-2 gaps with the concrete fix (store placement, trigger rephrasing, cache rebuild).
 
 **Companion qualitative check — skill/capability authoring quality (Pillar 4).** Beyond the scored
 recipe-coverage check, when auditing skill or capability quality judge it against the authoring
@@ -133,7 +133,7 @@ of structure is *thinning* even when no PASS/FAIL gate fires — which is exactl
 this scorecard exists to catch. This stays qualitative (not part of the 0–100 score) because authoring
 quality is a judgment, not a deterministic count.
 
-The pillars are scored by `scripts/self-audit.sh`. The script is the source of
+The pillars are scored by `$AI_CONFIG_DIR/scripts/self-audit.sh`. The script is the source of
 truth for the rubric — this prose describes what the rubric checks, but the
 script's penalty rules are the canonical scoring.
 
@@ -141,7 +141,7 @@ script's penalty rules are the canonical scoring.
 
 1. **Run the scoring script:**
    ```bash
-   bash scripts/self-audit.sh
+   bash $AI_CONFIG_DIR/scripts/self-audit.sh
    ```
    With no flags it **reads `local.env`** (the same file `bootstrap.sh` /
    `install.sh` use) and resolves three optional surfaces from it: the memory
@@ -194,7 +194,7 @@ script's penalty rules are the canonical scoring.
 5. **Record the run for trend tracking.** Pipe the run's `--json` output into
    the history helper so the per-pillar scores accumulate over time:
    ```bash
-   bash scripts/self-audit.sh --json | bash scripts/self-audit-history.sh append
+   bash $AI_CONFIG_DIR/scripts/self-audit.sh --json | bash $AI_CONFIG_DIR/scripts/self-audit-history.sh append
    ```
    This appends ONE record to the operator-local history store (see
    [Trend tracking](#trend-tracking) below). It does not touch the framework
@@ -237,7 +237,7 @@ opt-in pipe step the operator runs.
 **Append a run** (step 5 of the Procedure):
 
 ```bash
-bash scripts/self-audit.sh --json | bash scripts/self-audit-history.sh append
+bash $AI_CONFIG_DIR/scripts/self-audit.sh --json | bash $AI_CONFIG_DIR/scripts/self-audit-history.sh append
 ```
 
 `append` validates the piped `--json` scorecard (a malformed or `--json`-failed
@@ -249,8 +249,8 @@ Pass an explicit store path as the first argument to target a non-default store
 **View the trend** over the last N runs (default 5):
 
 ```bash
-bash scripts/self-audit-history.sh trend            # last 5 runs
-bash scripts/self-audit-history.sh trend "" 10      # last 10 runs
+bash $AI_CONFIG_DIR/scripts/self-audit-history.sh trend            # last 5 runs
+bash $AI_CONFIG_DIR/scripts/self-audit-history.sh trend "" 10      # last 10 runs
 ```
 
 The trend view prints a per-pillar table — one column per recorded run, one row

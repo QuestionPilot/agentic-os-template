@@ -156,6 +156,16 @@ the same enforcement class degrades to a strong instruction. The build must emit
 loud warning whenever a capability declares enforcement a target harness cannot
 hard-enforce.
 
+### session-agent gate — declaration channels, mode marker, catalog inputs
+
+Hook plumbing that used to ride inside the compiled `session-agent` skill body (every session paid ~2 KB to read it at invocation; routing does not need it).
+
+- **Declaration channels** — either opens the pre-edit gate; both require a `Skill` invocation of `session-agent` in the transcript first.
+  1. **Gate marker** — the model writes its R5 declaration (including the `Linear gate:` and `Lessons:` lines) to `$CLAUDE_CONFIG_DIR/agentic-os/gate-<session_id>`. A `Write` to that exact path is allowed through the gate (a Bash heredoc works too). This is the ONLY channel on harness variants (desktop/SDK) whose transcript does not persist assistant text blocks; elsewhere it is a harmless extra write. The SessionStart directive tells the model the exact path (the model cannot reliably learn its own session id); markers older than 7 days are reaped by the hook.
+  2. **Transcript** — assistant-authored text blocks carrying the line-anchored `Linear gate:` and `Lessons:` declarations (the two lines may land in different assistant messages).
+- **Mode marker** — the gate hook and the Mode-1-vs-Mode-2 selection both detect a prior invocation by matching the literal `"skill":"session-agent"` in the transcript JSON. The capability name must stay in sync with `hooks/session-agent.sh` and `hooks/framework-surface.sh`.
+- **Catalog inputs (R2)** — `$CLAUDE_CONFIG_DIR/SKILLS.md` (build-generated) and the quick-reference table in `$CLAUDE_CONFIG_DIR/CLAUDE.md`; the routable capabilities are the compiled skills under `$CLAUDE_CONFIG_DIR/skills/`.
+
 ## Fact 3 — Capability invocation convention
 
 Claude Code invokes a capability through the **`Skill` tool**, with the

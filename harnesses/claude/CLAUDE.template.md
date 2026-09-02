@@ -17,23 +17,21 @@ Key files for most sessions:
 
 ## Skills
 
-**Catalog:** `@@CLAUDE_CONFIG_DIR@@/SKILLS.md` — full live inventory by family + candidates. Open on demand.
+**Catalog:** `@@CLAUDE_CONFIG_DIR@@/SKILLS.md` — the routing table, the build-generated table of the OS's own capabilities (`session-agent`, `closeout`, `self-audit`), and the live inventory of built-in + operator-installed skills. Open on demand; this file does not repeat it.
 
 **`session-agent` is the spine.** The framework SessionStart hook directs you to invoke `session-agent` as the first action of every session — Mode 1 (kickoff orient: memory + Linear + vault + reconciliation) then route the user's first prompt. On every subsequent non-trivial prompt, re-invoke `session-agent` (Mode 2: route only — orient is already live in context). One capability, two modes; the body teaches both. A PreToolUse hook on Write/Edit/NotebookEdit enforces the gate before file edits as a safety net.
 
 ### Quick-reference
 
-The framework itself ships only the spine capabilities (table below). Everything else routes to Claude Code built-ins or to operator-installed skills — the build-generated `@@CLAUDE_CONFIG_DIR@@/SKILLS.md` Live Inventory is the source of truth for what is actually installed here.
+Only the rows that decide a route on their own; everything else is in the `SKILLS.md` routing table.
 
-| Surface | Primary skill |
+| Surface | Primary route |
 | --- | --- |
-| Pre-PR review of local changes | `review` (built-in) |
+| Failing test, error, regression, defect | `@@AI_CONFIG_DIR@@/playbooks/root-cause-debugging.md` first — demonstrate the root cause before editing (an operator debugging skill, if installed, implements it) |
+| Pre-PR review of local changes | `code-review` (built-in) |
 | Security-sensitive change | `security-review` (built-in) |
 | Anthropic SDK / Claude API code | `claude-api` (built-in) |
-| Build / update a Claude Code skill | `@@AI_CONFIG_DIR@@/skills/skill-authoring.md`; operator skill-creation tooling if installed |
-| Active work tracking | See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` for the linear CLI / Linear MCP setup options |
-| Data analysis / document artifacts (deck, doc, sheet, PDF) | operator-installed skills, if present — see the `SKILLS.md` Live Inventory |
-| Engineering workflows (debug, plans, TDD, parallel work, branch closeout) | see `SKILLS.md` Live Inventory |
+| Build / update a Claude Code skill | `@@AI_CONFIG_DIR@@/skills/skill-authoring.md` |
 | Ambiguous or multi-surface | `/session-agent` (orchestration sub-routine) |
 
 ### OS capability skills
@@ -57,9 +55,7 @@ Start with `START.md` inside the vault. Load only the relevant notes — do not 
 
 ## Pre-Push
 
-Before opening a PR or pushing a branch with framework changes, run `make verify` from the repo root. It runs the verification gates in order, failing fast on first non-zero exit: the acceptance suite (`tests/run.sh`) when present, static validation (`scripts/validate.sh`), and the manifest-based drift check across every rendered harness home (`scripts/check-drift.sh --auto` — the claude, codex, hermes, and cursor renders, plus the `.agents` co-render when `AGENTS_DIR` is set; a home that is unset or not yet rendered is skipped with a notice). These are the same gates a future-Claude or future-operator runs when picking up the change.
-
-Commit identity: a clone with no repo-local git identity derives the operator's personal name and machine hostname into public history on a plain commit. Pin every framework commit to your published identity (`git -c user.name=… -c user.email=…`, or a repo-local `git config`). Declare that identity as `COMMIT_IDENTITY_ALLOWLIST` in the gitignored `local.env` (comma-separated exact `Name <email>` entries) and `scripts/check-clean.sh` fails any branch commit whose author or committer is off-list — the content scans cannot see commit metadata, so this is the gate that covers it.
+Before opening a PR or pushing a branch with framework changes, run `make verify` from the repo root — fail-fast, in order: the acceptance suite (`tests/run.sh`), static validation (`scripts/validate.sh`), and the manifest drift check across every rendered harness home (`scripts/check-drift.sh --auto`). `make verify` never writes: when the only drift is app-written user-preference keys in a rendered `settings.json`, it fails and prints the one-line cure (`scripts/check-drift.sh --cure-soft-drift --manifest <home>`) — run that, then re-verify. Commit identity: pin every framework commit to your published identity and declare it as `COMMIT_IDENTITY_ALLOWLIST` in the gitignored `local.env` so `scripts/check-clean.sh` can gate author and committer — the how and why are in `@@AI_CONFIG_DIR@@/playbooks/personal-fork.md`.
 
 ## Ground Rules
 

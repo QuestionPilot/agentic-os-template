@@ -44,7 +44,7 @@ linear issue view TEAM-NN --json                     # single issue object
 linear issue create -t "Title" --team KEY --project <P> --label L --priority 3 \
   --assignee <user> -d "body"                        # priority: 1 urgent…4 low
 linear issue update TEAM-NN --state started          # state by type or name
-linear issue comment add TEAM-NN -b "text"           # -b - reads stdin
+linear issue comment add TEAM-NN --body-file <path>   # markdown bodies: a file, never `-b -` (CLI 2.5.0 posts a literal "-", it does not read stdin)
 linear issue relation add|delete TEAM-X <type> TEAM-Y   # types: blocks, blocked-by,
 linear issue relation list TEAM-X                       # related, duplicate
 linear api '<graphql>'                               # escape hatch; `linear schema`

@@ -55,6 +55,15 @@ $settingsPath = Join-Path $Q106.Out 'settings.json'
 Invoke-Jq-File -Path $settingsPath -Filter '. + {theme: "auto", effortLevel: "xhigh"}'
 
 Assert-Exit 't-106.test: default behavior unchanged: soft-drift still fails without --cure-soft-drift' 1 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $Q106.Out
+# The read-only failure names the one-line cure (operator hint only — no write).
+$q106NoteOut = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $Q106.Out 2>&1 | Out-String)
+Assert-Contains 't-106.test: soft-drift without the flag names the one-line cure' $q106NoteOut '--cure-soft-drift --manifest'
+# ...and the hint NEVER writes. Hash settings.json across a no-cure run and
+# require byte-identity — the read-only gate must stay read-only.
+$q106HashBefore = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash
+& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $Q106.Out *>$null
+$q106HashAfter = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash
+Assert-Eq 't-106.test: the no-cure NOTE run never writes settings.json' $q106HashBefore $q106HashAfter
 
 # ---------- Test 2: --cure-soft-drift cures the soft-drift case --------------
 # DEFERRED to follow-on "Fix CRLF line endings on all scripts/*.ps1".
