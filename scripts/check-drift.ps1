@@ -490,6 +490,12 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
     }
 
     if ($drift) {
+        # Operator hint, never a write — twin of the bash NOTE: when settings.json
+        # drifted and the cure was not requested, name the one-line cure so the
+        # soft-drift case is not re-diagnosed every session.
+        if (-not $CureSoftDrift.IsPresent -and $driftedFiles.Contains('settings.json')) {
+            [Console]::Error.WriteLine("NOTE if the only differences are app-written user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, notification flags), cure without re-diagnosing - from the framework root: pwsh -File scripts/check-drift.ps1 --cure-soft-drift --manifest `"$target`"")
+        }
         # <TEAM>-106 soft-drift cure (opt-in).
         if ($CureSoftDrift.IsPresent -and `
             $driftedFiles.Count -eq 1 -and `

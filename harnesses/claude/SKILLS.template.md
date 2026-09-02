@@ -36,7 +36,8 @@ Adapted from the session-agent orchestration sub-routine (`@@AI_CONFIG_DIR@@/cap
 | Task surface | Primary route | Add when needed |
 | --- | --- | --- |
 | Routing ambiguity, multiple skills might apply | `/session-agent` (orchestration sub-routine; this table is the fallback) | see `@@AI_CONFIG_DIR@@/skills/skill-authoring.md` to author a missing capability |
-| Pre-PR review of local changes | `review` (built-in) | `security-review`, `simplify` |
+| Failing test, error, regression, defect | `@@AI_CONFIG_DIR@@/playbooks/root-cause-debugging.md` — demonstrate the root cause before editing | an operator debugging skill, if installed, as the implementation; `@@AI_CONFIG_DIR@@/verification/code-change.md` |
+| Pre-PR review of local changes | `code-review` (built-in) | `security-review`, `simplify` |
 | Risky path edit (auth, billing, migrations, deploy, secrets) | `security-review` | `@@AI_CONFIG_DIR@@/verification/high-risk.md` |
 | Security audit / sensitive change | `security-review` (built-in) | `@@AI_CONFIG_DIR@@/verification/high-risk.md` |
 | Anthropic API / SDK code | `claude-api` | `claude-api` also covers MCP-server patterns |

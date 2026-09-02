@@ -47,6 +47,26 @@ mv "$Q106_OUT/settings.json.tmp" "$Q106_OUT/settings.json"
 
 assert_exit "default behavior unchanged: soft-drift still fails without --cure-soft-drift" 1 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106_OUT"
+# The read-only failure names the one-line cure so the soft-drift case is not
+# re-diagnosed every session (operator hint only — no write happens here).
+q106_note_out="$(bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106_OUT" 2>&1 || true)"
+assert_contains "soft-drift without the flag names the one-line cure" "$q106_note_out" \
+  "--cure-soft-drift --manifest"
+unset q106_note_out
+# ...and the hint NEVER writes. `make verify` runs the no-cure path, so a NOTE
+# that mutated settings.json would turn a read-only gate into a silent editor.
+# Hash the file across a no-cure run and require byte-identity.
+q106_sha() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
+  else printf 'NO-HASH-TOOL\n'; fi
+}
+q106_hash_before="$(q106_sha "$Q106_OUT/settings.json")"
+bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106_OUT" >/dev/null 2>&1 || true
+q106_hash_after="$(q106_sha "$Q106_OUT/settings.json")"
+assert_eq "the no-cure NOTE run never writes settings.json" "$q106_hash_before" "$q106_hash_after"
+unset q106_hash_before q106_hash_after
+unset -f q106_sha
 
 # ---------- Test 2: --cure-soft-drift cures the soft-drift case --------------
 #

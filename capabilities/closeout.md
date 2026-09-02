@@ -156,7 +156,7 @@ From `$AI_CONFIG_DIR/core/self-improvement.md` — answer each in 1–2 sentence
 
    If any check fails, pause to either (a) commit / stash / restore the dirty state
    inline BEFORE emitting the output block, OR (b) explicitly name the dirty state in
-   the State Deltas line (e.g. `operator-main has 1 staged file: scripts/foo.sh
+   the State Deltas line (e.g. `operator-main has 1 staged file: core/tool-use.md
    (uncommitted)`). **Silent claims of `clean` are forbidden.**
 
 If every answer is "no", classify as `no-action` with a single reason line and skip
@@ -231,7 +231,7 @@ skips the steps.
    `## Source Notes` section — the linkage the completeness guard keys on (it
    normalizes separators, so either slug style resolves).
 4. **Gate the write — scan at promotion, don't trust the past.** Run
-   `scripts/closeout-gate.sh --draft <path>` over BOTH the source note AND the
+   `$AI_CONFIG_DIR/scripts/closeout-gate.sh --draft <path>` over BOTH the source note AND the
    distilled `04-Lessons` note after folding, and confirm the vault audit stays clean
    (`node bin/memory-vault-audit.js`). A non-zero gate exit or a non-clean audit
    PAUSES the distillation: remediate before the output block reports it ran. Never
@@ -368,8 +368,8 @@ gate below; a violation fails closed.
 **Before writing, the pre-write gate must pass — fail closed:**
 
 ```bash
-scripts/closeout-gate.sh --draft <draft-path>
-# PowerShell: pwsh -File scripts/closeout-gate.ps1 -Draft <draft-path>
+$AI_CONFIG_DIR/scripts/closeout-gate.sh --draft <draft-path>
+# PowerShell: pwsh -File $AI_CONFIG_DIR/scripts/closeout-gate.ps1 -Draft <draft-path>
 ```
 
 One invocation runs the whole required set — the injection scan

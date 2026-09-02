@@ -217,6 +217,18 @@ if [ "${1:-}" = "--manifest" ]; then
     fi
   done < <(find "${scan_roots[@]}" -type f 2>/dev/null; [ -f "$target/settings.json" ] && printf '%s\n' "$target/settings.json")
   if [ "$drift" -ne 0 ]; then
+    # Operator hint, never a write: when settings.json is among the drifted files
+    # and the cure was not requested, name the one-line cure so the soft-drift
+    # case (app-written user-preference keys) is not re-diagnosed from scratch
+    # every session. `--auto` (what `make verify` runs) stays read-only by design.
+    if [ "$CURE_SOFT_DRIFT" -ne 1 ]; then
+      for _d in "${DRIFTED_FILES[@]}"; do
+        if [ "$_d" = "settings.json" ]; then
+          printf 'NOTE if the only differences are app-written user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, notification flags), cure without re-diagnosing — from the framework root: bash scripts/check-drift.sh --cure-soft-drift --manifest "%s"\n' "$target" >&2
+          break
+        fi
+      done
+    fi
     # <TEAM>-106 soft-drift auto-cure (opt-in via --cure-soft-drift).
     #
     # Soft-drift envelope: the SINGLE drifted file is settings.json AND every

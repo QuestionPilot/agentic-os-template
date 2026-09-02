@@ -44,8 +44,8 @@ sub-step before routing.
 (tracker + memory) that O1 and O3 consume:
 
 ```bash
-scripts/orient.sh --memory-dir <this harness's memory store>
-# PowerShell: pwsh -File scripts/orient.ps1 -MemoryDir <path>
+$AI_CONFIG_DIR/scripts/orient.sh --memory-dir <this harness's memory store>
+# PowerShell: pwsh -File $AI_CONFIG_DIR/scripts/orient.ps1 -MemoryDir <path>
 ```
 
 It emits ONE `orient/v1` JSON document — a **projects-first** cut with per-project

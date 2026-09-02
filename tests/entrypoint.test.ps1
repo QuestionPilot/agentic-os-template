@@ -53,6 +53,10 @@ if (Test-Path -LiteralPath $claudeMd) {
     Assert-Contains 'entrypoint.test: generated CLAUDE.md references core/' $cmd 'core/'
     Assert-Contains 'entrypoint.test: generated CLAUDE.md carries the session-agent spine rule' $cmd 'session-agent` is the spine'
     Assert-Contains 'entrypoint.test: generated CLAUDE.md keeps the broad quick-reference' $cmd 'security-review'
+    # Twin of the bash assertions: the pre-PR review row routes to `code-review`,
+    # and the retired `` `review` (built-in) `` literal is gone.
+    Assert-Contains 'entrypoint.test: generated CLAUDE.md routes pre-PR review to code-review' $cmd 'code-review'
+    Assert-NotContains 'entrypoint.test: generated CLAUDE.md drops the retired `review` (built-in) row' $cmd '`review` (built-in)'
     Assert-NotContains 'entrypoint.test: generated CLAUDE.md has no unresolved placeholders' $cmd '@@'
     Assert-Contains 'entrypoint.test: generated CLAUDE.md substitutes the vault path' $cmd $EP_VAULT
     Assert-Contains 'entrypoint.test: generated CLAUDE.md substitutes the agentic-os-template path' $cmd $env:REPO_ROOT

@@ -959,6 +959,31 @@ function Test-HarnessAdapters {
 Test-HarnessAdapters
 
 # ---------------------------------------------------------------------------
+# 8b. Capability bodies invoke framework scripts via $AI_CONFIG_DIR/ — twin of
+#     check_capability_script_paths in validate.sh (same scope, same message).
+# ---------------------------------------------------------------------------
+
+function Test-CapabilityScriptPaths {
+    $capDir = Join-Path $repo 'capabilities'
+    $hits = 0
+    foreach ($f in (Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
+        if ($f.Name -eq 'README.md') { continue }
+        $rel = 'capabilities/' + $f.Name
+        $lines = [System.IO.File]::ReadAllLines($f.FullName)
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $t = $lines[$i].Replace('$AI_CONFIG_DIR/scripts/', 'PREFIXED/').Replace('@@AI_CONFIG_DIR@@/scripts/', 'PREFIXED/')
+            if ($t -cmatch '(^|[^A-Za-z0-9_/.@$-])(\.\.?/)?scripts/[A-Za-z0-9_.-]+\.(sh|ps1|js)') {
+                [Console]::Error.WriteLine("FAIL bare scripts/ path in ${rel}:$($i + 1) (prefix it with `$AI_CONFIG_DIR/)")
+                $hits++
+            }
+        }
+    }
+    if ($hits -ne 0) { exit 1 }
+    Pass-Line 'PASS capability bodies reference framework scripts via $AI_CONFIG_DIR/'
+}
+Test-CapabilityScriptPaths
+
+# ---------------------------------------------------------------------------
 # 9. Internal markdown link integrity (<TEAM>-53 C7 + <TEAM>-63 + <TEAM>-88 + <TEAM>-105
 #    + <TEAM>-124)
 #

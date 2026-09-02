@@ -720,3 +720,39 @@ assert_exit "validate.sh still guards .claude/skills even when info/exclude'd (f
   bash "$VIE_FIX/scripts/validate.sh"
 rm -rf "$VIE_FIX"
 unset VIE_FIX
+
+# --- capability bodies must reference framework scripts via $AI_CONFIG_DIR/ ---
+# A bare `scripts/<name>.sh` in a capability body only resolves from the
+# framework root; the compiled skill runs from wherever the session is. Plant one
+# bare invocation in a hermetic tracked-only copy and expect a FAIL that names
+# the site; the same line prefixed must pass.
+VCP_FIX="$(mktemp -d)"
+copy_repo_tracked "$VCP_FIX"
+printf '\nRun `scripts/orient.sh --memory-dir <store>` again if the tracker was down.\n' >> "$VCP_FIX/capabilities/session-agent.md"
+vcp_out="$(bash "$VCP_FIX/scripts/validate.sh" 2>&1 || true)"
+assert_exit "validate.sh fails on a bare scripts/ path in a capability body" 1 -- \
+  bash "$VCP_FIX/scripts/validate.sh"
+assert_contains "validate.sh names the bare-path site" "$vcp_out" \
+  "bare scripts/ path in capabilities/session-agent.md:"
+rm -rf "$VCP_FIX"
+VCP_FIX="$(mktemp -d)"
+copy_repo_tracked "$VCP_FIX"
+printf '\nRun `$AI_CONFIG_DIR/scripts/orient.sh --memory-dir <store>` again if the tracker was down.\n' >> "$VCP_FIX/capabilities/session-agent.md"
+assert_exit "validate.sh accepts a \$AI_CONFIG_DIR/-prefixed scripts/ path in a capability body" 0 -- \
+  bash "$VCP_FIX/scripts/validate.sh"
+rm -rf "$VCP_FIX"
+
+# A `./`- or `../`-relative prefix is no better than a bare path: the compiled
+# skill runs from whatever cwd the session is in, so a relative prefix resolves
+# only by accident. Plant `./scripts/orient.sh` and expect the same FAIL naming
+# the site (the char class alone let a leading `./` through).
+VCP_FIX="$(mktemp -d)"
+copy_repo_tracked "$VCP_FIX"
+printf '\nRun `./scripts/orient.sh --memory-dir <store>` again if the tracker was down.\n' >> "$VCP_FIX/capabilities/session-agent.md"
+vcp_dot_out="$(bash "$VCP_FIX/scripts/validate.sh" 2>&1 || true)"
+assert_exit "validate.sh fails on a ./scripts/ path in a capability body" 1 -- \
+  bash "$VCP_FIX/scripts/validate.sh"
+assert_contains "validate.sh names the ./-prefixed site" "$vcp_dot_out" \
+  "bare scripts/ path in capabilities/session-agent.md:"
+rm -rf "$VCP_FIX"
+unset VCP_FIX vcp_out vcp_dot_out
