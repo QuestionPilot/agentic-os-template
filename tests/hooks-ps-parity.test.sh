@@ -313,6 +313,17 @@ HKPS_CLAUDE_STUB
     _fail "hooks-ps-parity: claude session-agent.ps1 should ALLOW the marker write" "got: $hkps_out"
   fi
 
+  # the same marker Write plus R2b's `Execution:` line → still ALLOW (the PS hook
+  # keys on the two declaration lines and must not reject extra ones).
+  hkps_wpayload2="$(jq -nc --arg t "$(native_path_fwd "$hkps_sa365_fix")" --arg sid "$hkps_sa365_sid" --arg p "$(native_path_fwd "$hkps_sa365_gate")" \
+    '{transcript_path: $t, session_id: $sid, tool_name: "Write", tool_input: {file_path: $p, content: "Routing: fix\nLessons: none match\nLinear gate: none — single-step\nExecution: delegated wave + panel\n"}}')"
+  hkps_out="$(printf '%s' "$hkps_wpayload2" | pwsh -NoProfile -File "$hkps_sa365/hooks/session-agent.ps1" 2>/dev/null)"
+  if [ -z "$hkps_out" ]; then
+    _pass "hooks-ps-parity: claude session-agent.ps1 ALLOWS a marker write carrying the Execution line"
+  else
+    _fail "hooks-ps-parity: claude session-agent.ps1 should ALLOW a marker write with the Execution line" "got: $hkps_out"
+  fi
+
   # marker on disk with the declaration → ALLOW subsequent edits.
   mkdir -p "$hkps_sa365/agentic-os"
   printf 'Routing: fix\nLessons: none match\nLinear gate: none — single-step\n' > "$hkps_sa365_gate"

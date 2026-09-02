@@ -162,6 +162,30 @@ if [ -n "$SS_BUILD" ] && [ -f "$SS_SA" ] && [ -f "$SS_CL" ]; then
     "$SS_SA_BODY" "Linear gate: <ISSUE-ID or URL>"
   assert_contains "spine-size: compiled session-agent carries the Lessons declaration line" \
     "$SS_SA_BODY" "Lessons: <matched lesson"
+  # R2b's execution-shape declaration — the routing walk's HOW line.
+  assert_contains "spine-size: compiled session-agent carries the Execution declaration line" \
+    "$SS_SA_BODY" "Execution: inline | delegated wave | delegated wave + panel"
+  # Every execution shape R2b names, pinned WITH its cascade position. The bare
+  # values are satisfiable by an unrelated mention elsewhere in the body (the Notes
+  # honesty bullet names \`inline\`), so a value-only loop would not notice R2b
+  # losing a rule — nor the risk-before-size ORDER the numbering encodes.
+  for _ss_exec in "1. \`delegated wave + panel\`" "2. \`delegated wave\`" "3. \`inline\`"; do
+    assert_contains "spine-size: compiled session-agent keeps R2b cascade rule $_ss_exec" \
+      "$SS_SA_BODY" "$_ss_exec"
+  done
+  # ORDER, not just presence: the numbering is only meaningful if the rules appear
+  # in it — risk BEFORE size BEFORE the residue. A future slim that reshuffles the
+  # cascade keeps every needle above and would pass on presence alone.
+  ss_pos() { local pre="${SS_SA_BODY%%"$1"*}"; [ "$pre" = "$SS_SA_BODY" ] && printf -- '-1' || printf '%s' "${#pre}"; }
+  _ss_o1="$(ss_pos "1. \`delegated wave + panel\`")"
+  _ss_o2="$(ss_pos "2. \`delegated wave\`")"
+  _ss_o3="$(ss_pos "3. \`inline\`")"
+  if [ "$_ss_o1" -ge 0 ] && [ "$_ss_o1" -lt "$_ss_o2" ] && [ "$_ss_o2" -lt "$_ss_o3" ]; then
+    _pass "spine-size: compiled session-agent keeps the R2b cascade order 1→2→3"
+  else
+    _fail "spine-size: compiled session-agent keeps the R2b cascade order 1→2→3" \
+      "offsets rule1=$_ss_o1 rule2=$_ss_o2 rule3=$_ss_o3 (want 0 <= rule1 < rule2 < rule3)"
+  fi
   # Every valid Lessons value the hook's deny message and the honesty rules name.
   for _ss_val in "none match" "index unreachable" "skipped — "; do
     assert_contains "spine-size: compiled session-agent names the Lessons value '$_ss_val'" \
@@ -207,4 +231,5 @@ rm -rf "$SS_DIR"
 unset SS_BASELINE SS_BASE_SA SS_BASE_CL SS_BASE_COMBINED SS_CEILING SS_DIR SS_OUT \
       SS_ENV SS_BUILD SS_SA SS_CL SS_NOW_SA SS_NOW_CL SS_NOW_COMBINED SS_SA_BODY SS_CL_BODY \
       SS_FLOOR_SA SS_FLOOR_CL SS_SRC_SA SS_SRC_CL SS_BASE_SRC_SA SS_BASE_SRC_CL \
-      SS_SRC_CEIL_SA SS_SRC_CEIL_CL SS_NOW_SRC_SA SS_NOW_SRC_CL
+      SS_SRC_CEIL_SA SS_SRC_CEIL_CL SS_NOW_SRC_SA SS_NOW_SRC_CL _ss_o1 _ss_o2 _ss_o3
+unset -f ss_pos

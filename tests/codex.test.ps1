@@ -369,6 +369,8 @@ try {
     _Skip 'codex.test: codex session-agent: no routing blocks' $hbreason
     _Skip 'codex.test: codex session-agent: invoked+Linear allows' $hbreason
     _Skip 'codex.test: codex session-agent: invoked w/o Linear blocks' $hbreason
+    _Skip 'codex.test: codex no-linear fixture models the Execution template line' $hbreason
+    _Skip 'codex.test: codex ok fixture declares Execution in the assistant declaration' $hbreason
     _Skip 'codex.test: codex session-agent: kill switch allows' $hbreason
     _Skip 'codex.test: codex framework-surface: emits context exits 0' $hbreason
     _Skip 'codex.test: codex framework-surface: emits additionalContext' $hbreason

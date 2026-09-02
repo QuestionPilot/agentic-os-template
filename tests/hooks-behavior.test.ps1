@@ -40,6 +40,10 @@ _Skip 'hooks-behavior.test: session-agent/desktop: no marker exits 0' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: no marker blocks' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: deny names the marker path' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: marker write allowed through' $reason
+_Skip 'hooks-behavior.test: session-agent/desktop: marker write with the Execution line allowed through' $reason
+_Skip 'hooks-behavior.test: session-agent: no-linear fixture models the Execution template line' $reason
+_Skip 'hooks-behavior.test: session-agent: ok fixture declares Execution in the assistant declaration' $reason
+_Skip 'hooks-behavior.test: session-agent: every session-agent fixture parses as JSONL' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: undeclared marker write blocks' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: marker on disk allows' $reason
 _Skip 'hooks-behavior.test: session-agent/desktop: declaration-less marker blocks' $reason

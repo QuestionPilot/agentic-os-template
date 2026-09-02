@@ -169,6 +169,29 @@ if ($ssBuild -and (Test-Path -LiteralPath $ssSa) -and (Test-Path -LiteralPath $s
         $ssSaBody 'Linear gate: <ISSUE-ID or URL>'
     Assert-Contains 'spine-size.test: compiled session-agent carries the Lessons declaration line' `
         $ssSaBody 'Lessons: <matched lesson'
+    # R2b's execution-shape declaration — the routing walk's HOW line.
+    Assert-Contains 'spine-size.test: compiled session-agent carries the Execution declaration line' `
+        $ssSaBody 'Execution: inline | delegated wave | delegated wave + panel'
+    # Every execution shape R2b names, pinned WITH its cascade position. The bare
+    # values are satisfiable by an unrelated mention elsewhere in the body (the Notes
+    # honesty bullet names `inline`), so a value-only loop would not notice R2b
+    # losing a rule — nor the risk-before-size ORDER the numbering encodes.
+    foreach ($exec in @('1. `delegated wave + panel`', '2. `delegated wave`', '3. `inline`')) {
+        Assert-Contains ('spine-size.test: compiled session-agent keeps R2b cascade rule ' + $exec) `
+            $ssSaBody $exec
+    }
+    # ORDER, not just presence: the numbering is only meaningful if the rules appear
+    # in it — risk BEFORE size BEFORE the residue. A future slim that reshuffles the
+    # cascade keeps every needle above and would pass on presence alone.
+    $ssO1 = $ssSaBody.IndexOf('1. `delegated wave + panel`')
+    $ssO2 = $ssSaBody.IndexOf('2. `delegated wave`')
+    $ssO3 = $ssSaBody.IndexOf('3. `inline`')
+    if ($ssO1 -ge 0 -and $ssO1 -lt $ssO2 -and $ssO2 -lt $ssO3) {
+        _Pass 'spine-size.test: compiled session-agent keeps the R2b cascade order 1→2→3'
+    } else {
+        _Fail 'spine-size.test: compiled session-agent keeps the R2b cascade order 1→2→3' `
+            "offsets rule1=$ssO1 rule2=$ssO2 rule3=$ssO3 (want 0 <= rule1 < rule2 < rule3)"
+    }
     foreach ($val in @('none match', 'index unreachable', 'skipped — ')) {
         Assert-Contains "spine-size.test: compiled session-agent names the Lessons value '$val'" $ssSaBody $val
     }

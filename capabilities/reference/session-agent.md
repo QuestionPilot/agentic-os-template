@@ -137,6 +137,43 @@ Composition rules beyond "smallest chain":
 When the sub-routine fired, the R5 declaration is extended with the block the body
 shows (Surface / Risk / Primary / Secondary / Verification / Next action).
 
+## Why R2b asks HOW, not only WHICH
+
+The delegated-execution method — the orchestrator plans and writes each lane's
+four-line brief, executors build, the orchestrator inspects every diff and reruns the
+proof itself, and a cross-model critic panel reads the diff for framework or
+high-risk work — lived only as an operator-layer FACT. A rule that is loaded but has
+no step consuming it gets re-taught every session; the durable fix is a declaration
+line the routing walk must fill, which is what R2b's `Execution:` line is.
+
+The three values are role-shaped on purpose. The framework names orchestrator,
+executor, and critic; which model fills each role is the operator layer's binding, so
+the body stays model-agnostic and survives a change of models.
+
+The rules are a top-down cascade — first match wins, risk BEFORE size — because the
+two predicates overlap: a one-line change to an auth path is small and dangerous at
+the same time, and a size-first reading would route it `inline`. So rule 1 is the
+risk rule. Framework and high-risk changes (auth, permissions, billing, migrations,
+secrets, public surfaces) earn `delegated wave + panel` whatever their size, because
+a defect there is expensive and hard to walk back and a second model family reading
+the diff catches what the author's own review does not; the wave under a one-line
+fix is simply a single lane. Rule 2 is the size rule: a multi-file build or ≥2
+independent lanes is where an orchestrator's diff inspection pays for itself, since
+parallel lanes are where unreviewed work accumulates fastest.
+
+Questions and review-only work never enter the walk: they are `inline` before it
+starts, because nothing is being built — no lane to delegate, no diff for a panel to
+read. The cascade is for CHANGES, and a change of any size enters it, which is why
+rule 1 is a risk test and not a size test. Rule 3 is then the residue — the
+single-file build that neither the risk rule nor the size rule claimed.
+
+That ordering is the whole reason the step is a walk rather than a menu. The body
+carries the same three rules in the same order; if the two ever disagree, the body
+is the contract and this page is the explanation.
+
+The four-line brief contract is `core/operating-system.md` → "Delegating to
+subagents"; the executor preamble it prepends is `core/discipline-kernel.md`.
+
 ## Token cost
 
 Mode 1 is expensive: one `orient.sh` run plus memory-body reads plus three vault
@@ -152,4 +189,6 @@ and `Lessons:` lines were declared. It does not police the judgment behind them 
 the protocol's value is in the model thinking through the steps, not in any single
 line. It is a discipline net with a kill switch, not a security boundary, which is
 why it enforces the first complete declaration per session rather than re-policing
-every Mode 2 route.
+every Mode 2 route. The `Execution:` line R2b adds sits outside the gate's
+check for the same reason: it is protocol the routing walk owes the operator, not an
+enforcement surface.
