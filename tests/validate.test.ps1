@@ -570,3 +570,55 @@ try {
 } finally {
     Remove-Item -LiteralPath $vcpFix3 -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# Twin of the bash brace-ref case: `scripts/foo.{sh,ps1}` names the same two
+# scripts as two bare refs and resolves no better, so the suffix alternation
+# must trip on it too. Single-quoted throughout — inside single quotes the
+# backtick and `{` are literal, so the planted line keeps its exact shape.
+$vcpFix4 = Join-Path ([IO.Path]::GetTempPath()) ('vcp4-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vcpFix4
+    $vcpCap4 = Join-Path $vcpFix4 'capabilities' 'closeout.md'
+    Add-Content -LiteralPath $vcpCap4 -Value ''
+    Add-Content -LiteralPath $vcpCap4 -Value 'Run `scripts/foo.{sh,ps1}` against the memory dir.'
+    Assert-Contains 'validate.test: the brace-ref fixture really carries scripts/foo.{sh,ps1}' `
+        (Get-Content -Raw -LiteralPath $vcpCap4) 'scripts/foo.{sh,ps1}'
+    $vcpOut4 = (& pwsh -NoProfile -File (Join-Path $vcpFix4 'scripts' 'validate.ps1') 2>&1 | Out-String)
+    Assert-Eq 'validate.test: validate.ps1 fails on a brace-ref scripts/ path in a capability body' '1' "$LASTEXITCODE"
+    Assert-Contains 'validate.test: validate.ps1 names the brace-ref site' $vcpOut4 'bare scripts/ path in capabilities/closeout.md:'
+} finally {
+    Remove-Item -LiteralPath $vcpFix4 -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# RESTRAINT twin: the brace list is limited to script extensions, so a
+# documentation brace naming non-script files must NOT trip the check.
+$vcpFix4b = Join-Path ([IO.Path]::GetTempPath()) ('vcp4b-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vcpFix4b
+    $vcpCap4b = Join-Path $vcpFix4b 'capabilities' 'closeout.md'
+    Add-Content -LiteralPath $vcpCap4b -Value ''
+    Add-Content -LiteralPath $vcpCap4b -Value 'See `scripts/example.{md,json}` for the fixture shapes.'
+    Assert-Contains 'validate.test: the non-script brace fixture really carries scripts/example.{md,json}' `
+        (Get-Content -Raw -LiteralPath $vcpCap4b) 'scripts/example.{md,json}'
+    & pwsh -NoProfile -File (Join-Path $vcpFix4b 'scripts' 'validate.ps1') *>$null
+    Assert-Eq 'validate.test: validate.ps1 accepts a non-script brace list in a capability body' '0' "$LASTEXITCODE"
+} finally {
+    Remove-Item -LiteralPath $vcpFix4b -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# Harness capability realizations compile into the same skill bodies, so the
+# scan covers harnesses/*/capabilities/*.md too — and reports the site by its
+# repo-relative path, not a bare basename.
+$vcpFix5 = Join-Path ([IO.Path]::GetTempPath()) ('vcp5-' + [Guid]::NewGuid().Guid.Substring(0,8))
+try {
+    Copy-RepoTracked $vcpFix5
+    $vcpCap5 = Join-Path $vcpFix5 'harnesses' 'hermes' 'capabilities' 'session-agent.md'
+    Add-Content -LiteralPath $vcpCap5 -Value ''
+    Add-Content -LiteralPath $vcpCap5 -Value 'Run `scripts/foo.sh` without `--memory-dir`.'
+    $vcpOut5 = (& pwsh -NoProfile -File (Join-Path $vcpFix5 'scripts' 'validate.ps1') 2>&1 | Out-String)
+    Assert-Eq 'validate.test: validate.ps1 fails on a bare scripts/ path in a harness capability body' '1' "$LASTEXITCODE"
+    Assert-Contains 'validate.test: validate.ps1 names the harness capability site repo-relatively' `
+        $vcpOut5 'bare scripts/ path in harnesses/hermes/capabilities/session-agent.md:'
+} finally {
+    Remove-Item -LiteralPath $vcpFix5 -Recurse -Force -ErrorAction SilentlyContinue
+}

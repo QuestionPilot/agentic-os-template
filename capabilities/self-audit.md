@@ -230,7 +230,7 @@ one record:
 
 The capability stays **read-only with respect to the framework tree** — the
 only file ever written is the operator-local store, via the dedicated helper
-`scripts/self-audit-history.{sh,ps1}` (bash + PowerShell twins). The scoring
+`$AI_CONFIG_DIR/scripts/self-audit-history.{sh,ps1}` (bash + PowerShell twins). The scoring
 script `self-audit.sh` itself never writes the store; appending is an explicit,
 opt-in pipe step the operator runs.
 

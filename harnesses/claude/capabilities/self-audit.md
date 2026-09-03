@@ -12,7 +12,7 @@ lifecycle: shipped
   them. (`closeout`'s `Stop` gate was removed; it is now manual-fire.)
 - **Tool envelope:** `Read` and `Glob` for state inspection (memory files,
   capability surfaces, vault notes if available); `Bash` to invoke
-  `scripts/self-audit.sh` and to optionally write a saved scorecard via the
+  `$AI_CONFIG_DIR/scripts/self-audit.sh` and to optionally write a saved scorecard via the
   script's `--save` flag. No `Write` / `Edit` in the allowed-tools list —
   self-audit is read-only by design.
 - **Script lookup:** the capability invokes `$AI_CONFIG_DIR/scripts/self-audit.sh`.

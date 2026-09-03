@@ -192,3 +192,20 @@ why it enforces the first complete declaration per session rather than re-polici
 every Mode 2 route. The `Execution:` line R2b adds sits outside the gate's
 check for the same reason: it is protocol the routing walk owes the operator, not an
 enforcement surface.
+
+## Notes — honesty rules and mode economics
+
+- **Mode 1 fires once per session.** A mid-session pivot uses Mode 2; an operator
+  "re-orient" forces a Mode 1 re-run.
+- **Be honest on the Linear gate.** Splitting genuine multi-session work into
+  "single-step" to skip the gate defeats the protocol.
+- **Be honest on the Lessons line.** `none match` after an actual trigger scan is
+  valid; as a reflex to satisfy the gate it defeats the recall step — the line exists
+  because already-recorded rules kept getting skipped. `index unreachable` claims a
+  failure and `skipped — <reason>` a policy bound; use whichever is true.
+- **Be honest on the Execution line.** A value below the rule that fires skips the
+  wave or the panel the operator asked for.
+- **The gate enforces the first complete declaration per session.** Later Mode 2
+  routes re-declare by protocol; the hook does not re-police them — a discipline net
+  with a kill switch, not a security boundary.
+- **Mode 1 is expensive, Mode 2 is cheap.** Don't re-orient on every prompt.

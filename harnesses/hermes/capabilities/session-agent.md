@@ -21,7 +21,7 @@ lifecycle: shipped
   repo-root `MEMORY.md`, and a filesystem search times out). Hermes has no
   `<config>/projects/<slug>/memory/` project notes — durable project memory lives in
   the vault, so satisfy O1's project-body reads inside the O4 vault orient (the
-  relevant `01-Projects/` notes). Run `scripts/orient.sh` without `--memory-dir`.
+  relevant `01-Projects/` notes). Run `$AI_CONFIG_DIR/scripts/orient.sh` without `--memory-dir`.
 - **O4 operator-identity read — Hermes-specific.** The operator-identity master
   ("Operator Soul") is ALREADY in your context: `install.sh --harness hermes`
   splices a lean projection (`SOUL_IDENTITY_PATH`) into `SOUL.md`, injected as

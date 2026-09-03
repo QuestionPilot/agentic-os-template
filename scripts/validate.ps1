@@ -961,18 +961,38 @@ Test-HarnessAdapters
 # ---------------------------------------------------------------------------
 # 8b. Capability bodies invoke framework scripts via $AI_CONFIG_DIR/ — twin of
 #     check_capability_script_paths in validate.sh (same scope, same message).
+#     Scope: capabilities/*.md AND harnesses/*/capabilities/*.md, README.md
+#     excluded. The suffix alternation covers brace refs (scripts/foo.{sh,ps1})
+#     as well as a single extension; the brace list is limited to SCRIPT
+#     extensions (sh / ps1 / js) so a documentation brace like
+#     scripts/example.{md,json} is not mistaken for an invocation.
+#     `rel` is the repo-relative path so a
+#     harness hit reports as harnesses/hermes/capabilities/session-agent.md:24,
+#     byte-identical to the bash twin's message.
 # ---------------------------------------------------------------------------
 
 function Test-CapabilityScriptPaths {
+    $scanned = [System.Collections.Generic.List[object]]::new()
     $capDir = Join-Path $repo 'capabilities'
+    foreach ($f in (Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $scanned.Add([pscustomobject]@{ Full = $f.FullName; Name = $f.Name; Rel = 'capabilities/' + $f.Name })
+    }
+    $harnessDir = Join-Path $repo 'harnesses'
+    foreach ($h in (Get-ChildItem -LiteralPath $harnessDir -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        $hCap = Join-Path $h.FullName 'capabilities'
+        if (-not (Test-Path -LiteralPath $hCap -PathType Container)) { continue }
+        foreach ($f in (Get-ChildItem -LiteralPath $hCap -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+            $scanned.Add([pscustomobject]@{ Full = $f.FullName; Name = $f.Name; Rel = 'harnesses/' + $h.Name + '/capabilities/' + $f.Name })
+        }
+    }
     $hits = 0
-    foreach ($f in (Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
-        if ($f.Name -eq 'README.md') { continue }
-        $rel = 'capabilities/' + $f.Name
-        $lines = [System.IO.File]::ReadAllLines($f.FullName)
+    foreach ($c in $scanned) {
+        if ($c.Name -eq 'README.md') { continue }
+        $rel = $c.Rel
+        $lines = [System.IO.File]::ReadAllLines($c.Full)
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $t = $lines[$i].Replace('$AI_CONFIG_DIR/scripts/', 'PREFIXED/').Replace('@@AI_CONFIG_DIR@@/scripts/', 'PREFIXED/')
-            if ($t -cmatch '(^|[^A-Za-z0-9_/.@$-])(\.\.?/)?scripts/[A-Za-z0-9_.-]+\.(sh|ps1|js)') {
+            if ($t -cmatch '(^|[^A-Za-z0-9_/.@$-])(\.\.?/)?scripts/[A-Za-z0-9_.-]+(\.(sh|ps1|js)|\.\{(sh|ps1|js)(,(sh|ps1|js))*\})') {
                 [Console]::Error.WriteLine("FAIL bare scripts/ path in ${rel}:$($i + 1) (prefix it with `$AI_CONFIG_DIR/)")
                 $hits++
             }
