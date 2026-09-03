@@ -2099,6 +2099,48 @@ Assert-Eq 'self-audit.test: body budget both oversize notes are named in the sin
     'True' "$((Get-PnbGaps $pnbTwo)[0].detail.StartsWith('2 project-type'))"
 Remove-Item -LiteralPath $pnbFixture -Recurse -Force -ErrorAction SilentlyContinue
 
+# --- Pillar 2 sub-check 2.6: WHICH `type:` the classifier reads ----------------
+# A frontmatter block can carry several `type:` keys under different parents, so
+# "the first `type:` at any indent" reads the wrong one. Asserted through the
+# audit itself, not the helper, so the fix is proven where it is consumed. Both
+# directions, because either alone is satisfiable by a classifier that has simply
+# stopped working: a `source:`-nested `type: project` must NOT raise the
+# over-budget gap, and the same note with `metadata: type: project` MUST.
+$ptnFixture = New-SaTmp
+New-SaFixtureRepo $ptnFixture
+$ptnMem = Join-Path $ptnFixture 'memory'
+New-Item -ItemType Directory -Path $ptnMem -Force | Out-Null
+$ptnPad = (('x' * 50 + "`n") * 400)
+# ~20 KB each, over the 16 KB default — size is never the variable here.
+Write-LfFile (Join-Path $ptnMem 'provenance-says-project.md') `
+    ("---`nsource:`n  type: project`nmetadata:`n  type: reference`n---`n" + $ptnPad)
+Write-LfFile (Join-Path $ptnMem 'metadata-says-project.md') `
+    ("---`nsource:`n  type: reference`nmetadata:`n  type: project`n---`n" + $ptnPad)
+# An UNCLOSED opening fence is not frontmatter at all — the whole file is body,
+# so a body line `type: project` must classify nothing.
+Write-LfFile (Join-Path $ptnMem 'unclosed-says-project.md') `
+    ("---`ntitle: an arc`ntype: project`n" + $ptnPad)
+# An INLINE YAML COMMENT on the value is ordinary operator practice, and the old
+# extractor handed back `project # active arc` — so the note a comment described
+# as an active arc was the one the budget never measured.
+Write-LfFile (Join-Path $ptnMem 'commented-says-project.md') `
+    ("---`nmetadata:`n  type: project # active arc`n---`n" + $ptnPad)
+Write-LfFile (Join-Path $ptnMem 'MEMORY.md') "provenance-says-project.md metadata-says-project.md unclosed-says-project.md commented-says-project.md`n"
+
+$ptnJson = (Invoke-SelfAudit @('--isolated', '--repo-root', $ptnFixture, '--memory-dir', $ptnMem, '--json') | ConvertFrom-Json)
+$ptnGaps = @($ptnJson.gaps | Where-Object { $_.title -eq 'Project-type note body over budget' })
+Assert-Eq 'self-audit.test: type nesting exactly two notes are classified project' `
+    'True' "$($ptnGaps.Count -eq 1 -and $ptnGaps[0].detail.StartsWith('2 project-type'))"
+Assert-Contains 'self-audit.test: type nesting a commented type: project value still classifies' `
+    $ptnGaps[0].detail 'commented-says-project.md'
+Assert-Contains 'self-audit.test: type nesting metadata.type: project is the one that classifies' `
+    $ptnGaps[0].detail 'metadata-says-project.md'
+Assert-NotContains 'self-audit.test: type nesting a source-nested type: project does NOT classify' `
+    $ptnGaps[0].detail 'provenance-says-project.md'
+Assert-NotContains 'self-audit.test: type nesting an UNCLOSED frontmatter block classifies nothing' `
+    $ptnGaps[0].detail 'unclosed-says-project.md'
+Remove-Item -LiteralPath $ptnFixture -Recurse -Force -ErrorAction SilentlyContinue
+
 # --- operator sub-gates: bounding + a runner that never runs ------------------
 # The bash twin's bound had to be rebuilt around a process group (its in-process
 # alarm was defeated by `trap '' ALRM` and by backgrounded children). This twin

@@ -196,16 +196,25 @@ file is scanned. `scripts/check-machine-paths.sh` mirrors the vault audit's
 `checkAgnostic` rule — it flags a home path with a real username segment while
 leaving a URL path and a lone `Users` token in prose untouched.
 
-### Why the three gates are wrapped
+### Why the gates are wrapped
 
-Composing three commands by hand at write time is exactly where one silently gets
+Composing the checks by hand at write time is exactly where one silently gets
 dropped: a skipped gate looks identical to a passed one in a transcript, and the
 miss surfaces only on the NEXT vault audit — after the artifact already landed.
 `scripts/closeout-gate.sh` makes the SET the unit. Its fail-closed asymmetry matters:
 a check that runs and reports a finding FAILS, a check whose *script* is absent also
 FAILS (a gate that cannot run has proven nothing), but a check whose *target surface*
-is absent (no vault configured, for the wikilink check) is a NAMED SKIP. Read the
-script header for the full contract.
+is absent (no vault for the wikilink check, no memory store for the project-note
+budget) is a NAMED SKIP. Read the script header for the full contract.
+
+The project-note budget is the one check that scans something other than the draft.
+It measures the memory store, because that is the file closeout is about to grow:
+the self-audit already reports the same per-note budget, but as an advisory warn
+read after the fact, in a different session from the write that caused it. Moving
+the same measurement to write time puts the finding in front of the session that
+can act on it, and keeps the two in agreement by construction — both classify a
+note by its frontmatter `type:`, and both read the same
+`PROJECT_NOTE_BODY_WARN_KB` knob.
 
 The injection scan itself is belt-and-suspenders, not the primary defense: it catches
 BARE, line-leading directives — the shape verbatim-pasted hostile tool/web text takes

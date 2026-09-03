@@ -241,6 +241,38 @@ if ($ssBuild -and (Test-Path -LiteralPath $ssSa) -and (Test-Path -LiteralPath $s
         $ssSaBody 'run Mode 1. Otherwise run Mode 2'
     Assert-Contains 'spine-size.test: compiled session-agent wires scripts/orient.sh' $ssSaBody 'scripts/orient.sh'
     Assert-Contains 'spine-size.test: compiled session-agent keeps the projects-first cut' $ssSaBody 'projects-first'
+    # O4 reads the GENERATED triggers-only lesson view, not the full canonical
+    # index — the compact view is what keeps the per-session vault read cheap,
+    # and a silent revert to _index.md would cost that back invisibly.
+    #
+    # ONE RELATIONAL anchor rather than a handful of substrings. Separate needles
+    # each pin a fragment — primary read, fallback clause, fallback target — but
+    # none can say whether the fragments still form one coherent instruction in
+    # the right order; a body that kept all three scattered across unrelated
+    # paragraphs satisfies every one. The needle is EXTRACTED from
+    # capabilities/session-agent.md instead of retyped here, so this test can
+    # never drift into asserting a paraphrase of what the source used to say.
+    # Both sides are whitespace-normalized because the bullet wraps mid-sentence.
+    $ssSrcNorm = [regex]::Replace([System.IO.File]::ReadAllText($ssSrcSa), '\s+', ' ')
+    $ssO4Start = $ssSrcNorm.IndexOf('04-Lessons/_triggers.md', [StringComparison]::Ordinal)
+    $ssO4End = if ($ssO4Start -ge 0) { $ssSrcNorm.IndexOf('absent.', $ssO4Start, [StringComparison]::Ordinal) } else { -1 }
+    # A FAILED extraction must not yield '': "contains ''" is trivially true, so
+    # the sentence assertion below would pass while the source no longer carries
+    # the sentence at all — the bash twin fails both assertions there, and this
+    # sentinel keeps the two shells agreeing on a mangled source.
+    $ssO4Needle = if ($ssO4End -ge 0) { $ssSrcNorm.Substring($ssO4Start, $ssO4End - $ssO4Start + 7) } else { '<<O4-SENTENCE-NOT-FOUND-IN-SOURCE>>' }
+    # A source that no longer carries the sentence yields a stub needle, and
+    # Assert-Contains on a stub passes for free — the extraction must itself be
+    # proven before the assertion it feeds means anything.
+    Assert-Eq 'spine-size.test: the O4 needle was really extracted from the source body' `
+        'True' "$($ssO4Needle.Length -ge 120 -and $ssO4Needle.Contains('`_index.md`') -and $ssO4Needle.EndsWith('fallback when it is absent.'))"
+    $ssSaNorm = [regex]::Replace($ssSaBody, '\s+', ' ')
+    Assert-Contains 'spine-size.test: compiled session-agent carries the whole O4 triggers-view sentence' `
+        $ssSaNorm $ssO4Needle
+    # Cheap presence check kept alongside it: it fails with a one-line message
+    # when the view is simply gone, without the reader parsing a 200-char needle.
+    Assert-Contains 'spine-size.test: compiled session-agent names the triggers-only lesson view' `
+        $ssSaBody '04-Lessons/_triggers.md'
 
     Assert-Contains 'spine-size.test: compiled closeout wires scripts/closeout-gate.sh' `
         $ssClBody 'scripts/closeout-gate.sh --draft'

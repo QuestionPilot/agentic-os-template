@@ -104,10 +104,10 @@ vault:
 - `Read` the **operator-identity master note** the vault entrypoint designates (the
   `harness: all`-scoped identity note; path is vault-specific) — its own mandatory
   sub-step, not an optional follow of START.md's pointer.
-- `Read` `$OBSIDIAN_VAULT_PATH/04-Lessons/_index.md` — the canonical lesson index,
-  whose **Trigger column** is what R1a matches against. Keep it in context; Mode 2
-  re-scans without re-reading. Apply harness scope at body-read
-  time from each note's frontmatter `harness:` key.
+- `Read` `$OBSIDIAN_VAULT_PATH/04-Lessons/_triggers.md` — the generated
+  triggers-only view (link + **Trigger** per row) R1a matches; `_index.md` is the
+  fallback when it is absent. Keep it in context; Mode 2 re-scans without
+  re-reading. Apply harness scope at body-read time from each note's `harness:` key.
 
 **Degrade gracefully — never fail the orient.** If the vault is unreachable or no
 identity note is configured, read what you can and continue with a one-line note

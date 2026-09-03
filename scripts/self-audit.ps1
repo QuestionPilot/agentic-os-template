@@ -308,29 +308,100 @@ function Get-SaLocalEnvValue {
     return $result
 }
 
-# Get-MemNoteType — return the note's memory type from frontmatter: the first
-# `type:` line inside the first `---`-fenced block, top-level or nested under
-# `metadata:`. Lowercased; '' if absent (`node_type:` is NOT matched). Mirrors
-# check-distillation-completeness + check-memory-drift so every scanner agrees on
-# what a "project" note is — the store keeps the type in frontmatter, not the
-# filename (<TEAM>-353).
+# Get-SaTypeValue — the value half of a `type:` line: leading key stripped
+# case-SENSITIVELY, trimmed, an inline YAML comment removed, one surrounding
+# quote pair unwrapped (so `type: "project"` classifies as project, else a valid
+# quoted note goes invisible), lowercased.
+function Get-SaTypeValue {
+    param([string]$Line)
+    $v = ($Line -creplace '^\s*type:\s*', '').Trim()
+    # QUOTED values are unwrapped by finding the CLOSING quote rather than by
+    # comparing the last character: `type: "project" # active arc` has a comment
+    # after the pair (so a last-character compare sees `c`, not `"`, and gives
+    # back the whole line), and a `#` INSIDE the quotes is literal, not a comment.
+    # Finding the close quote settles both.
+    if ($v.Length -ge 1) {
+        $q = $v[0]
+        if ($q -eq '"' -or $q -eq "'") {
+            $i = $v.IndexOf($q, 1)
+            if ($i -ge 1) { return $v.Substring(1, $i - 1).ToLowerInvariant() }
+            # No closing quote — not a quoted scalar; fall through.
+        }
+    }
+    # UNQUOTED: everything from a `#` that FOLLOWS whitespace is a YAML comment;
+    # `a#b` with no space keeps its hash.
+    $v = ($v -creplace '\s+#.*$', '').TrimEnd()
+    return $v.ToLowerInvariant()
+}
+
+# Get-MemNoteType — return the note's memory type from frontmatter, scoped to the
+# first `---`-fenced block. Lowercased; '' if absent.
+#
+# WHICH `type:` WINS, and the nesting rule is load-bearing. A frontmatter block
+# can carry several `type:` keys under different parents — `source:` provenance
+# blocks are the common case — so "the first `type:` at any indent" reads the
+# WRONG one: a note whose `source:` names `type: project` above its real
+# `metadata: type: reference` was classified project. The rules are therefore:
+#   0. the block must CLOSE (a second `---`); an unclosed opening fence is not
+#      frontmatter at all, so a body line `type: project` classifies nothing;
+#   1. a `type:` nested as a DIRECT child of the top-level `metadata:` key wins
+#      — direct meaning at the first indentation level seen inside that block,
+#      so `metadata: source: type: …` belongs to `source:`, not to the note;
+#   2. else a TOP-LEVEL `type:` (column 0);
+#   3. a `type:` nested under any OTHER key is ignored entirely.
+# `node_type:` is still not matched (the key is compared whole), and matching is
+# case-SENSITIVE (-cmatch / -ceq) so `Type:` does not classify — the bash twin's
+# awk is case-sensitive, and a case-insensitive PS regex classified notes the
+# other shell ignored.
+#
+# scripts/check-project-note-budget.ps1 carries the identical detector, so the
+# write-time budget gate and this audit can never disagree about which notes are
+# in scope. (check-memory-drift.ps1 + check-distillation-completeness.ps1 still
+# carry the older first-`type:`-at-any-indent form; they classify for different
+# purposes and are a separate follow-up.)
 function Get-MemNoteType {
     param([Parameter(Mandatory)][string]$Path)
     # try/catch so a locked/deleted file degrades to '' (parity with bash awk,
     # which warns + continues) instead of crashing the whole scan under Stop.
     try { $lines = [System.IO.File]::ReadAllLines($Path) } catch { return '' }
-    if ($lines.Count -eq 0 -or $lines[0].TrimEnd() -ne '---') { return '' }
+    if ($lines.Count -eq 0) { return '' }
+    $first = $lines[0]
+    if ($first.Length -ge 1 -and $first[0] -eq [char]0xFEFF) { $first = $first.Substring(1) }
+    if ($first.TrimEnd() -ne '---') { return '' }
+    $meta = ''; $top = ''; $cur = ''; $metaIndent = -1; $closed = $false
     for ($i = 1; $i -lt $lines.Count; $i++) {
-        if ($lines[$i].TrimEnd() -eq '---') { break }
-        if ($lines[$i] -match '^\s*type:\s*(.*)$') {
-            $v = $matches[1].Trim()
-            # Strip one surrounding quote pair so `type: "project"` / `type: 'project'`
-            # classify as project (else a valid quoted note goes invisible).
-            if ($v.Length -ge 2 -and (($v.StartsWith('"') -and $v.EndsWith('"')) -or ($v.StartsWith("'") -and $v.EndsWith("'")))) { $v = $v.Substring(1, $v.Length - 2) }
-            return $v.ToLower()
+        $ln = $lines[$i]
+        if ($ln.TrimEnd() -eq '---') { $closed = $true; break }
+        # A column-0 `<key>:` opens a top-level block. `type:` at column 0 IS the
+        # top-level type; any other key becomes the block an indented `type:`
+        # would belong to.
+        if ($ln -cmatch '^([A-Za-z0-9_.-]+):') {
+            if ($matches[1] -ceq 'type') {
+                if ($top -eq '') { $top = Get-SaTypeValue $ln }
+                $cur = ''
+            } else {
+                $cur = $matches[1]
+                if ($cur -ceq 'metadata') { $metaIndent = -1 }
+            }
+            continue
+        }
+        # An INDENTED `type:` counts only as a DIRECT child of `metadata:` — the
+        # first indentation level seen inside that block. A deeper `type:`
+        # belongs to a sub-key (`metadata: source: type: …`), not to the note.
+        if ($cur -ceq 'metadata' -and $ln -cmatch '^(\s+)[A-Za-z0-9_.-]+:') {
+            $w = $matches[1].Length
+            if ($metaIndent -lt 0) { $metaIndent = $w }
+            if ($w -eq $metaIndent -and $ln -cmatch '^\s+type:') {
+                if ($meta -eq '') { $meta = Get-SaTypeValue $ln }
+            }
         }
     }
-    return ''
+    # An UNCLOSED block is not frontmatter at all: without a second fence the
+    # whole file is body, and a body line `type: project` must not classify the
+    # note. Only a closed block yields a type.
+    if (-not $closed) { return '' }
+    if ($meta -ne '') { return $meta }
+    return $top
 }
 
 # Get-SaMemoryDirs — the memory-dir scan set (<TEAM>-366). The old Select-SaMemoryDir
@@ -767,7 +838,7 @@ function Invoke-Pillar1 {
         $projNoteFiles = @()
         foreach ($mdDir in $MemoryDirs) {
             $projNoteFiles += @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' })
+                Where-Object { $_.Name -cne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' })
         }
         foreach ($pname in $activeProjectNames) {
             if ([string]::IsNullOrEmpty($pname)) { continue }
@@ -934,7 +1005,7 @@ function Invoke-Pillar2 {
         $mdFiles = @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue)
         foreach ($mf in $mdFiles) {
             $base = $mf.Name
-            if ($base -eq 'MEMORY.md') { continue }
+            if ($base -ceq 'MEMORY.md') { continue }
             if (-not $indexContent.Contains($base)) { $orphans++ }
         }
         if ($orphans -gt 0) {
@@ -990,7 +1061,7 @@ function Invoke-Pillar2 {
         [string[]]$pnbPaths = @($mdFiles | ForEach-Object { $_.FullName })
         [Array]::Sort($pnbPaths, [System.StringComparer]::Ordinal)
         foreach ($pnbPath in $pnbPaths) {
-            if ([System.IO.Path]::GetFileName($pnbPath) -eq 'MEMORY.md') { continue }
+            if ([System.IO.Path]::GetFileName($pnbPath) -ceq 'MEMORY.md') { continue }
             if ((Get-MemNoteType $pnbPath) -ne 'project') { continue }
             $pnbBytes = [long](Get-Item -LiteralPath $pnbPath).Length
             if ($pnbBytes -gt ([long]$ProjectNoteWarnKbInt * 1024)) {
@@ -1543,7 +1614,7 @@ function Invoke-Pillar5 {
         $cutoffEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 7 * 86400
         foreach ($mdDir in $MemoryDirs) {
             $projectFiles = @(Get-ChildItem -LiteralPath $mdDir -Filter '*.md' -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -ne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' -and
+                Where-Object { $_.Name -cne 'MEMORY.md' -and (Get-MemNoteType -Path $_.FullName) -eq 'project' -and
                     ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds() -ge $cutoffEpoch })
             foreach ($pf in $projectFiles) {
                 $txt = [System.IO.File]::ReadAllText($pf.FullName)
