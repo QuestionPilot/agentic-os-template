@@ -234,15 +234,21 @@ if [ -f "$pl_out/settings.json" ]; then
     "$(jq -r '.effortLevel // "null"' "$pl_out/settings.json")"
   assert_eq "fresh install ships no outputStyle (spine-only base)" "null" \
     "$(jq -r '.outputStyle // "null"' "$pl_out/settings.json")"
+  assert_eq "fresh install ships no tui (spine-only base)" "null" \
+    "$(jq -r '.tui // "null"' "$pl_out/settings.json")"
   # Operator enables a plugin, sets a notif preference, and sets cost/UI
-  # preferences (theme, effortLevel, outputStyle) in their LOCAL config. theme
-  # uses a non-default value ("dark") so the assertion proves the OPERATOR's
-  # value is carried, not a base default re-asserted.
+  # preferences (theme, effortLevel, outputStyle, tui) in their LOCAL config.
+  # theme uses a non-default value ("dark") so the assertion proves the
+  # OPERATOR's value is carried, not a base default re-asserted. `tui` is
+  # app-written (the harness writes it when the operator toggles TUI mode) and
+  # is in check-drift.sh's soft-key allowlist, so a re-render that dropped it
+  # would restart the drift cycle the cure exists to end.
   jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true
       | .agentPushNotifEnabled = false
       | .theme = "dark"
       | .effortLevel = "xhigh"
-      | .outputStyle = "Test Style"' \
+      | .outputStyle = "Test Style"
+      | .tui = "fullscreen"' \
     "$pl_out/settings.json" > "$pl_out/settings.json.tmp"
   mv "$pl_out/settings.json.tmp" "$pl_out/settings.json"
   # Re-render: generate_settings must carry the local choices forward.
@@ -259,6 +265,8 @@ if [ -f "$pl_out/settings.json" ]; then
     "$(jq -r '.effortLevel // "DROPPED"' "$pl_out/settings.json")"
   assert_eq "re-render preserves operator outputStyle (preserve-live)" "Test Style" \
     "$(jq -r '.outputStyle // "DROPPED"' "$pl_out/settings.json")"
+  assert_eq "re-render preserves app-written tui (preserve-live)" "fullscreen" \
+    "$(jq -r '.tui // "DROPPED"' "$pl_out/settings.json")"
   # Hooks remain wired after the preserve-live re-render.
   assert_eq "re-render still wires PreToolUse hook" "true" \
     "$(jq -r '.hooks.PreToolUse != null' "$pl_out/settings.json")"

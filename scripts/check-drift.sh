@@ -12,7 +12,7 @@ jqr() { jq -r "$@" | tr -d '\r'; }
 # --- arg parse: --cure-soft-drift is optional + position-insensitive --------
 # The flag opts into soft-drift auto-cure. When set, a drift case
 # limited to settings.json's user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag,
-# agentPushNotifEnabled, inputNeededNotifEnabled, key
+# agentPushNotifEnabled, inputNeededNotifEnabled, tui, key
 # reordering inside enabledPlugins/extraKnownMarketplaces) triggers a
 # transparent re-render via install.sh instead of erroring. ANY drift outside
 # that envelope still errors as before — default behavior is unchanged.
@@ -224,7 +224,7 @@ if [ "${1:-}" = "--manifest" ]; then
     if [ "$CURE_SOFT_DRIFT" -ne 1 ]; then
       for _d in "${DRIFTED_FILES[@]}"; do
         if [ "$_d" = "settings.json" ]; then
-          printf 'NOTE if the only differences are app-written user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, notification flags), cure without re-diagnosing — from the framework root: bash scripts/check-drift.sh --cure-soft-drift --manifest "%s"\n' "$target" >&2
+          printf 'NOTE if the only differences are app-written user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, tui, notification flags), cure without re-diagnosing — from the framework root: bash scripts/check-drift.sh --cure-soft-drift --manifest "%s"\n' "$target" >&2
           break
         fi
       done
@@ -238,7 +238,7 @@ if [ "${1:-}" = "--manifest" ]; then
     #
     # Why: Claude Code's app process strips `theme` / `effortLevel`, writes the
     # notification preferences `agentPushNotifEnabled` / `inputNeededNotifEnabled`
-    # on its own, and reorders
+    # and the TUI mode preference `tui` on its own, and reorders
     # `enabledPlugins` / `extraKnownMarketplaces` between renders, so every
     # session opens with a drift trip even though the framework content hasn't
     # changed. Operator's pre-dispatch baseline currently pays a 3-step
@@ -390,7 +390,8 @@ with open(sys.argv[1]) as f:
       #
       # Soft-key allowlist (top-level): theme, effortLevel, outputStyle,
       # switchModelsOnFlag, plus the app-written notification preferences
-      # agentPushNotifEnabled and inputNeededNotifEnabled. Every entry is an
+      # agentPushNotifEnabled and inputNeededNotifEnabled plus the app-written
+      # TUI mode preference tui. Every entry is an
       # operator/app-written PREFERENCE the framework has no opinion on — a
       # value the harness app writes into settings.json on its own must be
       # curable, or the drift gate refuses on a key the operator never touched. PLUS we tolerate
@@ -454,7 +455,7 @@ with open(sys.argv[1]) as f:
         done
       done
       # Compute the soft-key allowlist as a JSON array for jq.
-      soft_keys='["theme","effortLevel","outputStyle","switchModelsOnFlag","agentPushNotifEnabled","inputNeededNotifEnabled"]'
+      soft_keys='["theme","effortLevel","outputStyle","switchModelsOnFlag","agentPushNotifEnabled","inputNeededNotifEnabled","tui"]'
       reorder_tolerant='["enabledPlugins","extraKnownMarketplaces"]'
       # jq script: for each top-level key in the union of both objects,
       # categorize. Output the set of NON-soft drifted keys; empty = soft.

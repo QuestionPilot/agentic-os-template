@@ -34,7 +34,7 @@
 .PARAMETER CureSoftDrift
     <TEAM>-106 opt-in: if manifest drift is limited to settings.json's
     user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, agentPushNotifEnabled,
-    inputNeededNotifEnabled, reorderings inside
+    inputNeededNotifEnabled, tui, reorderings inside
     enabledPlugins / extraKnownMarketplaces), trigger a transparent
     install.ps1 re-render instead of erroring out. ANY drift outside that
     envelope still errors. Default behavior unchanged.
@@ -494,7 +494,7 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
         # drifted and the cure was not requested, name the one-line cure so the
         # soft-drift case is not re-diagnosed every session.
         if (-not $CureSoftDrift.IsPresent -and $driftedFiles.Contains('settings.json')) {
-            [Console]::Error.WriteLine("NOTE if the only differences are app-written user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, notification flags), cure without re-diagnosing - from the framework root: pwsh -File scripts/check-drift.ps1 --cure-soft-drift --manifest `"$target`"")
+            [Console]::Error.WriteLine("NOTE if the only differences are app-written user-preference keys (theme, effortLevel, outputStyle, switchModelsOnFlag, tui, notification flags), cure without re-diagnosing - from the framework root: pwsh -File scripts/check-drift.ps1 --cure-soft-drift --manifest `"$target`"")
         }
         # <TEAM>-106 soft-drift cure (opt-in).
         if ($CureSoftDrift.IsPresent -and `
@@ -678,7 +678,7 @@ with open(sys.argv[1]) as f:
                 }
 
                 # Compute non-soft keys via jq classifier (same expression as bash).
-                $softKeys = '["theme","effortLevel","outputStyle","switchModelsOnFlag","agentPushNotifEnabled","inputNeededNotifEnabled"]'
+                $softKeys = '["theme","effortLevel","outputStyle","switchModelsOnFlag","agentPushNotifEnabled","inputNeededNotifEnabled","tui"]'
                 $reorderTolerant = '["enabledPlugins","extraKnownMarketplaces"]'
                 $jqExpr = @'
   ($cur[0] // {}) as $C

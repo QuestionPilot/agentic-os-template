@@ -11,16 +11,14 @@ lifecycle: shipped
 # Self-Audit — Framework Health Scorecard
 
 The framework already has PASS/FAIL gates: `bash $AI_CONFIG_DIR/scripts/validate.sh`,
-`bash $AI_CONFIG_DIR/scripts/check-drift.sh --manifest "$CLAUDE_CONFIG_DIR"`, and — where the
-upstream acceptance suite is present — `bash tests/run.sh`. They answer "is
-anything broken?" — they do not answer
-"where are we thinning out?" Self-audit closes that gap with a five-pillar
-leverage-weighted scorecard against the framework's own state across all three
-layers (agentic-os-template / Linear / vault).
+`bash $AI_CONFIG_DIR/scripts/check-drift.sh --manifest "$CLAUDE_CONFIG_DIR"`, and — where
+the upstream acceptance suite is present — `bash tests/run.sh`. They answer "is anything
+broken?" — not "where are we thinning out?" Self-audit closes that gap with a
+five-pillar leverage-weighted scorecard against the framework's own state across all
+three layers (agentic-os-template / Linear / vault).
 
-The capability is **read-only**. It never auto-fixes. The output is a scorecard
-+ a ranked list of gaps + concrete next steps; gap closure is the operator's
-call.
+The capability is **read-only** and never auto-fixes. The output is a scorecard + a
+ranked list of gaps + concrete next steps; gap closure is the operator's call.
 
 ## When to invoke
 
@@ -30,8 +28,7 @@ call.
 - When something feels rough but no PASS/FAIL gate catches it.
 
 It is **not** auto-fired. Of the three spine capabilities, only `session-agent`
-carries a session-start directive; `closeout` and `self-audit` are invoked
-manually (closeout's `Stop` gate was removed because it re-fired on closeout's own writes).
+carries a session-start directive; `closeout` and `self-audit` are invoked manually.
 
 ## The five pillars
 
@@ -40,28 +37,26 @@ Each pillar is scored 0–20. Total is 0–100. Below ~80 is "actively thinning"
 
 **UNSCORED pillars depress the total by design.** A pillar whose surface is not
 configured (no Linear/`linear` CLI, no memory dir, no vault) cannot be measured, so it
-is **floored to 0 and flagged `UNSCORED`** — never left at the seeded 20. This
-follows `core/verification.md`: a check that cannot run must fail, never pass.
-Consequence: a fresh clone with operator surfaces unwired lands well below 95 (e.g.
-two UNSCORED pillars cap the total at 60), and the scorecard prints a one-line
-`N of 5 pillars UNSCORED` banner. Do **not** read a number near the bottom of the
-range as "thinning" when the cause is UNSCORED pillars — wire the surface and
-re-audit to score them. The bands above describe a fully-measured run.
+is **floored to 0 and flagged `UNSCORED`** — never left at the seeded 20, per
+`core/verification.md`: a check that cannot run must fail, never pass. So the bands
+above describe a fully-measured run only. A fresh clone with operator surfaces unwired
+lands well below 95 (two UNSCORED pillars cap the total at 60) and prints a one-line
+`N of 5 pillars UNSCORED` banner — do **not** read that as "thinning"; wire the surface
+and re-audit to score it.
 
 | Pillar | What it scores |
 | --- | --- |
 | **1. Cross-layer handoffs** | Each Active Linear project (≥1 open issue — closed-out projects with all issues Done/Canceled are skipped) has a project-type memory note (frontmatter `metadata.type: project`) + a vault Handshake note (`linear:` frontmatter); MEMORY.md cross-references resolve to real files |
-| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) and each entry under the ~300-char per-line cap — **both caps apply to the framework's own per-note memory stores only**; the per-session **injection surface** — the largest per-note store's MEMORY.md + the rendered `$CLAUDE_CONFIG_DIR/CLAUDE.md` + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) — stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing the budget is a 2-pt **warn, never a hard cap** (a design panel rejected one — a large surface can be deliberate); components that do not resolve are skipped by name. The codex-native memory registry (`$CODEX_HOME/memories`) is scored for index **presence** only: it is consolidator-owned, no codex-side size or read-truncation limit exists (verified against openai/codex at tag `rust-v0.144.1`), so its size is **reported informationally** — never deducted, never a gap — and it is excluded from the injection-surface largest-store pick. Sub-check 2.6 adds the **per-note body budget**: the caps above bound the *index*, but nothing bounded the project-type note **bodies** the index points at — exactly what a kickoff orient dereferences. Any project-type note whose file size exceeds the soft `PROJECT_NOTE_BODY_WARN_KB` budget (default 16 KB) triggers one aggregate 2-pt warn and a named gap, never a hard cap |
+| **2. Memory hygiene** | MEMORY.md index has a one-line entry per memory file (no orphans); index byte-size stays under the recall cap (~24400) and each entry under the ~300-char per-line cap — **both caps apply to the framework's own per-note memory stores only**. Sub-check 2.5, the per-session **injection surface**: the largest per-note store's MEMORY.md + the rendered harness entrypoint + the vault `START.md` + the operator-identity note it names (the first `[[wikilink]]` before `## Read Order`) stays under the soft `INJECTION_SURFACE_WARN_KB` budget (default 32 KB). Crossing it is a 2-pt **warn, never a hard cap** — a large surface can be deliberate — and components that do not resolve are skipped by name. Sub-check 2.6, the **per-note body budget**: the caps above bound the *index*, but nothing bounded the project-type note **bodies** the index points at — exactly what a kickoff orient dereferences — so any project-type note over the soft `PROJECT_NOTE_BODY_WARN_KB` budget (default 16 KB) triggers one aggregate 2-pt warn and a named gap, never a hard cap. The codex-native memory registry (`$CODEX_HOME/memories`) is scored for index **presence** only: it is consolidator-owned and no codex-side size or read-truncation limit exists (verified at upstream tag `rust-v0.144.1`), so its size is **reported informationally** — never deducted, never a gap — and it is excluded from the injection-surface largest-store pick |
 | **3. Folder hygiene** | No empty dirs in framework-tracked surfaces; no anti-pattern names (`tmp/`, `misc/`, `notes/`, `scratch/`, `junk/`); `lifecycle: superseded` files cite their successor; `lifecycle: sunset` files explain why |
-| **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (a heuristic check: an incidentally-named recipe counts as referenced, so only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
+| **4. Verification coverage** | Every capability's `verification:` value resolves to an existing recipe; every `verification/*.md` recipe is referenced **by name** in a routing surface — a capability's `verification:` frontmatter, the `session-agent` R3 gate list, or a playbook/core routing doc (heuristic: only a recipe named nowhere flags as orphan); the operator's `$CLAUDE_CONFIG_DIR` build manifest is fresh against source |
 | **5. Closeout / spine discipline** | Native spine count is symmetric across harnesses (each harness a capability declares in its `harnesses:` frontmatter — claude, codex, hermes, cursor — carries every `kind: native` capability); project-type memory notes modified in the last 7 days carry a `## State Deltas` section |
 
 **Semantic currentness — reported, never scored.** Every pillar above is
 **mechanical**: it proves a structural property of the local filesystem. All five
 can score 20/20 while a memory note or an active vault project note confidently
-asserts a tracker state that changed hours ago — a system can be perfectly tidy
-and materially wrong, and until this check existed it presented as an unqualified
-100/100. `$AI_CONFIG_DIR/scripts/check-state-currentness.sh` (PowerShell twin:
+asserts a tracker state that changed hours ago — perfectly tidy and materially
+wrong at once. `$AI_CONFIG_DIR/scripts/check-state-currentness.sh` (PowerShell twin:
 `check-state-currentness.ps1`) closes that: it reconciles tracker-state CLAIMS in
 the scanned memory stores and in `status: active` vault project notes against
 live tracker state, and flags project-status/child contradictions
@@ -79,59 +74,53 @@ stays correct forever. When the tracker is unreachable, unauthenticated, or no
 issue prefix is configured, the check fails **soft** — the section reads
 `_(skipped — <named reason>)_` and the filesystem score is untouched.
 
-The extractor is a deliberately restrained heuristic: it fires only on a
-`<PREFIX>-<N>` token that owns a state word by tight adjacency, a short
-distributing `**State:**` label, or conjunction inheritance. Under-reporting is
-the chosen bias — a missed stale claim costs one audit cycle, a false accusation
-costs trust in the whole signal. Both twins' tests pin the known false positives
-as regression anchors; loosening one twin without the other is twin divergence.
+The extractor is a deliberately restrained heuristic, and **under-reporting is the
+chosen bias** — a missed stale claim costs one audit cycle, a false accusation costs
+trust in the whole signal. Both twins' tests pin the known false positives as
+regression anchors; loosening one twin without the other is twin divergence.
 
 **Operator sub-gates — aggregated and named, never scored.** Operators accumulate
-their own semantic checker scripts over time — a capability-map check, a drift
-check, a distillation check — and nothing aggregates them. The failure mode is
-quiet: this scorecard reads 100/100 while every operator gate fails, or worse,
-while one silently stopped being run at all. Point `AUDIT_SUBGATES_FILE` in
-`local.env` at a registry file (one `name = command` per line; `#` comments and
-blank lines ignored) and each run executes every registered gate with a bounded
-timeout (60s per gate) and reports it in a `## Operator sub-gates` section + an
-`operator_subgates` JSON key: name, status (`pass` on exit 0 / `fail` with the
-exit code / `error` on timeout or a malformed line), and the first line of
-output as detail. The registry path must be **absolute** (a relative one is a
-named skip, never resolved against the caller's cwd), at most **64** entries are
-executed per run (the rest are reported as a named drop count), and the ceiling
-is enforced from **outside** the gate — each gate runs in its own process group
-and is killed as a group on overrun, so a gate that traps the timeout signal or
-spawns workers is still bounded and still cleaned up.
+their own semantic checker scripts over time and nothing aggregates them. The failure
+mode is quiet: this scorecard reads 100/100 while every operator gate fails, or worse,
+while one silently stopped being run at all. Point `AUDIT_SUBGATES_FILE` in `local.env`
+at a registry file (one `name = command` per line; `#` comments and blank lines
+ignored) and each run executes every registered gate with a bounded timeout (60s per
+gate) and reports it in a `## Operator sub-gates` section + an `operator_subgates` JSON
+key: name, status (`pass` on exit 0 / `fail` with the exit code / `error` on timeout or
+a malformed line), and the first line of output as detail. The registry path must be
+**absolute** (a relative one is a named skip, never resolved against the caller's cwd),
+at most **64** entries are executed per run (the rest are reported as a named drop
+count), and the ceiling is enforced from **outside** the gate — each gate runs in its
+own process group and is killed as a group on overrun, so a gate that traps the timeout
+signal or spawns workers is still bounded and still cleaned up.
 
-The surface is **informational only** — it never touches `total`, a pillar
-score, or `gaps`, the same separation `## Semantic currentness` holds. The
-framework cannot know an operator gate's semantics, so it must not price one
-into the framework's own number; what it can do is stop the gate from being
-invisible. An unset key, a missing registry, an empty registry, or
-`--no-subgates` all render the section as a **named skip** with
+The surface is **informational only** — it never touches `total`, a pillar score, or
+`gaps`, the same separation `## Semantic currentness` holds: the framework cannot know
+an operator gate's semantics, so it must not price one into the framework's own number;
+what it can do is stop the gate from being invisible. An unset key, a missing registry,
+an empty registry, or `--no-subgates` all render the section as a **named skip** with
 `operator_subgates: null` — a skipped registry is never a clean pass.
 
-> **Security.** The registry is operator-authored **executable** content at the
-> same trust level as a harness hook: self-audit runs whatever it names, so
-> review a registry exactly as you would review a hook script, and never point
-> the key at a file you did not write. What does **not** change is the
-> `local.env` posture — both twins still parse `local.env` keys as *data* and
-> never execute the file itself.
+> **Security.** The registry is operator-authored **executable** content at the same
+> trust level as a harness hook: self-audit runs whatever it names, so review a
+> registry exactly as you would review a hook script, and never point the key at a
+> file you did not write. The `local.env` posture is unchanged — both twins still
+> parse `local.env` keys as *data* and never execute the file itself.
 
-**Still out of scope (deferred to future PRs):** state-delta memory writes matched against Linear closeout comments; "recent Linear activity" cross-referenced with "recent file mtime". These are non-trivial to score deterministically and the cost outweighs the benefit today.
+**Still out of scope:** state-delta memory writes matched against Linear closeout comments; "recent Linear activity" cross-referenced with "recent file mtime" — non-trivial to score deterministically, and the cost outweighs the benefit today.
 
-**Companion qualitative check — vault-promotion lag (Pillar 2).** Beyond the scored index hygiene, when running `/self-audit` also judge whether durable lessons are *reaching the durable-knowledge vault* or only accumulating in local auto-memory. Compare the newest durable-class memory write against the newest vault Lesson/Decision note: a multi-day gap means the closeout `obsidian` promotion step has lapsed and durable knowledge is stranded in the disposable cache. This stays qualitative (not part of the 0–100 score) because most auto-memory is correctly local — only the operator-durable subset should ever be promoted, so a raw count would be noise. If the operator ships a promotion-sweep helper, run it; otherwise eyeball the newest memory mtimes against the vault index dates. Flag a stale lag as a Pillar-2 gap and name the un-promoted candidates.
+**Companion qualitative check — vault-promotion lag (Pillar 2).** Beyond the scored index hygiene, judge whether durable lessons are *reaching the durable-knowledge vault* or only accumulating in local auto-memory: compare the newest durable-class memory write against the newest vault Lesson/Decision note — via the operator's promotion-sweep helper when one ships, else by mtime. A multi-day gap means the closeout `obsidian` promotion step has lapsed and durable knowledge is stranded in the disposable cache. Stays qualitative (not part of the 0–100 score) because most auto-memory is correctly local — only the operator-durable subset should ever be promoted, so a raw count would be noise. Flag a stale lag as a Pillar-2 gap and name the un-promoted candidates.
 
-**Companion qualitative check — recall efficacy (Pillar 2).** The scored checks and the promotion-lag check above are all **write-side**; a store can score 100 while sessions still skip recorded rules — the read-side failure an operator experiences as "I keep re-teaching things." Judge the read side from two signals: (a) **recall failures recorded** — `$AI_CONFIG_DIR/scripts/recall-report.sh` (PowerShell twin: `recall-report.ps1`) counts the closeout Q1a recall-failure records across the newest N meaningful session logs in `30-Archive/Sessions/`, ordered by the timestamp in the FILENAME, never mtime (the vault is cloud-synced), and the audit reports its counts in a `## Recall failures` section + a `recall_failures` JSON key. That count is **informational and never scored** — it does not move `total`, a pillar score, or `gaps`, and it is deliberately not a gap-on-any-hit rule: grading a self-reported miss count makes the honest act (recording the miss) the costly one, and the records stop being written. Read it as a rolling rate over time, and open a Pillar-2 gap only when you can name the *surface* that failed (not-loaded vs loaded-but-ignored) and the concrete fix. An unmeasured window is a NAMED skip, never a clean zero. (b) **Recall surfaces intact** — spot-check that the session-agent orient is actually reading the vault lesson index (O4). For the per-harness autoloaded indexes, check first for **actively-misleading entries** (facts that are now provably false — the failure that matters), and only secondarily for age: a cache whose newest content lags the vault by weeks is a weaker signal now that every orient reads the vault lesson index directly, and harness caches are separate stores that need not mirror each new lesson. Stays qualitative (not part of the 0–100 score): session-log text and content dates cannot be scored deterministically without brittle parsing. Flag findings as Pillar-2 gaps with the concrete fix (store placement, trigger rephrasing, cache rebuild).
+**Companion qualitative check — recall efficacy (Pillar 2).** The scored checks and the promotion-lag check above are all **write-side**; a store can score 100 while sessions still skip recorded rules — the read-side failure an operator experiences as "I keep re-teaching things." Judge the read side from two signals. (a) **Recall failures recorded** — `$AI_CONFIG_DIR/scripts/recall-report.sh` (PowerShell twin: `recall-report.ps1`) counts the closeout Q1a recall-failure records across the newest N meaningful session logs in `30-Archive/Sessions/`, ordered by the timestamp in the FILENAME, never mtime (the vault is cloud-synced), and the audit reports its counts in a `## Recall failures` section + a `recall_failures` JSON key. That count is **informational and never scored**, and deliberately not a gap-on-any-hit rule: grading a self-reported miss count makes the honest act — recording the miss — the costly one, and the records stop being written. Read it as a rolling rate over time, and open a Pillar-2 gap only when you can name the *surface* that failed (not-loaded vs loaded-but-ignored) and the concrete fix. An unmeasured window is a NAMED skip, never a clean zero. (b) **Recall surfaces intact** — spot-check that the session-agent orient is actually reading the vault lesson index (O4). For the per-harness autoloaded indexes, check first for **actively-misleading entries** (facts now provably false — the failure that matters) and only secondarily for age: harness caches are separate stores that need not mirror each new lesson now that every orient reads the vault lesson index directly. Stays qualitative — session-log text and content dates cannot be scored deterministically without brittle parsing. Flag findings as Pillar-2 gaps with the concrete fix (store placement, trigger rephrasing, cache rebuild).
 
-**Companion qualitative check — skill/capability authoring quality (Pillar 4).** Beyond the scored
-recipe-coverage check, when auditing skill or capability quality judge it against the authoring
-standard in `$AI_CONFIG_DIR/skills/skill-authoring.md`: a skill that bloats its
-body with conditional content (multiplicative cost), buries a load-bearing rule behind a reference,
-re-implements deterministic processing the model should offload to a script, or asserts prose instead
-of structure is *thinning* even when no PASS/FAIL gate fires — which is exactly the kind of erosion
-this scorecard exists to catch. This stays qualitative (not part of the 0–100 score) because authoring
-quality is a judgment, not a deterministic count.
+**Companion qualitative check — skill/capability authoring quality (Pillar 4).** Beyond the
+scored recipe-coverage check, judge skill and capability quality against the authoring standard
+in `$AI_CONFIG_DIR/skills/skill-authoring.md`: a body that bloats itself with conditional
+content (multiplicative cost), buries a load-bearing rule behind a reference, narrates step
+scripts a current model derives on its own, re-implements deterministic processing the model
+should offload to a script, or asserts prose instead of structure is *thinning* even when no
+PASS/FAIL gate fires — exactly the erosion this scorecard exists to catch. Stays qualitative
+because authoring quality is a judgment, not a deterministic count.
 
 The pillars are scored by `$AI_CONFIG_DIR/scripts/self-audit.sh`. The script is the source of
 truth for the rubric — this prose describes what the rubric checks, but the
@@ -147,41 +136,32 @@ script's penalty rules are the canonical scoring.
    `install.sh` use) and resolves three optional surfaces from it: the memory
    dir under `$CLAUDE_CONFIG_DIR/projects/*/memory/`, the vault at
    `$OBSIDIAN_VAULT_PATH`, plus the `linear` CLI if installed. It **parses just the
-   four config keys as data** (those two paths, `CLAUDE_PRIMARY_MEMORY_DIR`,
-   and `INJECTION_SURFACE_WARN_KB`) rather than sourcing the file — both twins
-   (`self-audit.sh`, `self-audit.ps1`) read the keys without executing
-   `local.env`, so a hostile or malformed file can neither run code nor poison
-   the `linear`/`jq`/`git` lookups. Reading `local.env`
-   rather than the ambient environment is what makes the score **reproducible** —
-   two shells score the same repo identically whether or not they happened to
-   export those vars. `local.env` wins over ambient env; explicit
-   `--config-dir` / `--vault-dir` / `--memory-dir` flags still win over
-   `local.env`. When several `projects/*/memory/` dirs exist (a multi-project
-   `$CLAUDE_CONFIG_DIR`), the script scans **all** of them and attributes each
-   gap to the store it fired in — a hygiene signal in a small secondary store
-   counts the same as one in the main store. (The old primary-store picker
-   scored only the dir with the most project-typed notes, so every other store
-   went silently unscanned — and the pick could flip stores when note counts
-   shifted, emitting pillar demands against the wrong store.) Set
-   `CLAUDE_PRIMARY_MEMORY_DIR` in `local.env` to pin scoring to a single store;
-   the explicit `--memory-dir` flag likewise means exactly one store. Each surface
-   is optional — the script degrades gracefully and notes "skipped: <surface> not
-   configured" in the output. Pass `--repo-root <path>` to point at a different
-   agentic-os-template checkout (the test suite uses this).
+   four config keys as data** (those two paths, `CLAUDE_PRIMARY_MEMORY_DIR`, and
+   `INJECTION_SURFACE_WARN_KB`) rather than sourcing the file, so a hostile or
+   malformed file can neither run code nor poison the `linear`/`jq`/`git` lookups.
+   Reading `local.env` rather than the ambient environment is what makes the score
+   **reproducible** — two shells score the same repo identically whether or not they
+   happened to export those vars. Precedence: explicit `--config-dir` /
+   `--vault-dir` / `--memory-dir` flags > `local.env` > ambient env. When several
+   `projects/*/memory/` dirs exist, the script scans **all** of them and attributes
+   each gap to the store it fired in — a hygiene signal in a small secondary store
+   counts the same as one in the main store, where the old primary-store picker left
+   every other store silently unscanned. Set `CLAUDE_PRIMARY_MEMORY_DIR` in
+   `local.env` to pin scoring to a single store; the explicit `--memory-dir` flag
+   likewise means exactly one store. Each surface is optional — the script degrades
+   gracefully and notes "skipped: <surface> not configured" in the output. Pass
+   `--repo-root <path>` to point at a different agentic-os-template checkout (the
+   test suite uses this).
 
-   The injection-surface budget (Pillar 2 sub-check) is tunable: precedence is
-   the `--injection-warn-kb <n>` flag > `INJECTION_SURFACE_WARN_KB` in
-   `local.env` > the ambient env var > the 32 KB default. The value is whole
-   KB; a non-positive or non-integer value silently falls back to the default
-   (the check is advisory, so a bad knob must not break the audit). The
-   per-note body budget (sub-check 2.6) is tunable identically:
-   `--project-note-warn-kb <n>` > `PROJECT_NOTE_BODY_WARN_KB` in `local.env` >
-   the ambient env var > the 16 KB default, with the same silent fallback.
+   Both soft budgets are tunable with the same precedence and the same silent
+   fallback on a non-positive or non-integer value (the checks are advisory, so a
+   bad knob must not break the audit): `--injection-warn-kb <n>` >
+   `INJECTION_SURFACE_WARN_KB` > ambient env > 32 KB, and
+   `--project-note-warn-kb <n>` > `PROJECT_NOTE_BODY_WARN_KB` > ambient env > 16 KB.
 
-2. **Read the scorecard.** The script's default output is human-readable
-   markdown. The top-of-output total + per-pillar scores are the answer; the
-   "Top gaps" section below ranks the most leverage-bearing gaps with concrete
-   next-step commands.
+2. **Read the scorecard.** Default output is human-readable markdown: the
+   top-of-output total + per-pillar scores are the answer, and the "Top gaps"
+   section ranks the most leverage-bearing gaps with concrete next-step commands.
 
 3. **For each surfaced gap, decide:** fix now (small, in-scope), file a Linear
    issue (multi-step), or accept-with-rationale (cost > benefit). The audit
@@ -196,10 +176,9 @@ script's penalty rules are the canonical scoring.
    ```bash
    bash $AI_CONFIG_DIR/scripts/self-audit.sh --json | bash $AI_CONFIG_DIR/scripts/self-audit-history.sh append
    ```
-   This appends ONE record to the operator-local history store (see
-   [Trend tracking](#trend-tracking) below). It does not touch the framework
-   tree — the only file written is the gitignored store. Skip this step for a
-   throwaway audit; run it whenever you want the run to count toward the trend.
+   Appends ONE record to the operator-local history store (see
+   [Trend tracking](#trend-tracking)); the only file written is the gitignored
+   store. Skip it for a throwaway audit.
 
 6. **Re-audit after fixes** to confirm the score moved. A pillar's score not
    moving despite a "fix" is a signal the fix did not address the rubric.
@@ -211,15 +190,14 @@ The scorecard above is point-in-time. To see whether the framework is
 a trend view across the last N runs.
 
 History is **runtime, per-operator state**, so it is NOT committed to the
-agentic-os-template repo (no repo churn; portable across operators). It persists in an
-operator-local JSONL store keyed off `$CLAUDE_CONFIG_DIR`, defaulting to:
+agentic-os-template repo. It persists in an operator-local JSONL store keyed off
+`$CLAUDE_CONFIG_DIR`, defaulting to:
 
 ```
 $CLAUDE_CONFIG_DIR/self-audit-history.jsonl
 ```
 
-This matches the existing convention for operator-local runtime artifacts
-(`cross-model-out/`, `$CLAUDE_CONFIG_DIR/.build-manifest.json`). The store is
+That matches the convention for operator-local runtime artifacts. The store is
 gitignored (`self-audit-history.jsonl`) so it can never be staged even if an
 operator's `$CLAUDE_CONFIG_DIR` happens to point inside a checkout. Each line is
 one record:
@@ -228,17 +206,11 @@ one record:
 {"timestamp":"2026-05-30T18:00:00Z","total":94,"overall":94,"pillars":{"cross-layer-handoffs":20,"memory-hygiene":20,"folder-hygiene":20,"verification-coverage":14,"closeout-spine-discipline":20}}
 ```
 
-The capability stays **read-only with respect to the framework tree** — the
-only file ever written is the operator-local store, via the dedicated helper
+The capability stays **read-only with respect to the framework tree** — the only
+file ever written is the operator-local store, via the dedicated helper
 `$AI_CONFIG_DIR/scripts/self-audit-history.{sh,ps1}` (bash + PowerShell twins). The scoring
-script `self-audit.sh` itself never writes the store; appending is an explicit,
-opt-in pipe step the operator runs.
-
-**Append a run** (step 5 of the Procedure):
-
-```bash
-bash $AI_CONFIG_DIR/scripts/self-audit.sh --json | bash $AI_CONFIG_DIR/scripts/self-audit-history.sh append
-```
+script `self-audit.sh` itself never writes the store; appending is the explicit,
+opt-in pipe step at Procedure step 5.
 
 `append` validates the piped `--json` scorecard (a malformed or `--json`-failed
 producer has no numeric `.total`, so the helper refuses to write a junk record)
@@ -253,19 +225,17 @@ bash $AI_CONFIG_DIR/scripts/self-audit-history.sh trend            # last 5 runs
 bash $AI_CONFIG_DIR/scripts/self-audit-history.sh trend "" 10      # last 10 runs
 ```
 
-The trend view prints a per-pillar table — one column per recorded run, one row
-per pillar (plus a Total row) — with a `Δ (latest)` column showing the
-newest-run-vs-prior delta per pillar. A pillar trending *down* across columns is
-the framework thinning out in that dimension even if no PASS/FAIL gate fired. An
-absent or empty store degrades gracefully with a one-line "no history yet" note
-and instructions to append the first run.
+The trend view prints a per-pillar table — one column per recorded run, one row per
+pillar plus a Total row — with a `Δ (latest)` column per pillar. A pillar trending
+*down* across columns is the framework thinning out in that dimension even if no
+PASS/FAIL gate fired. An absent or empty store degrades gracefully with a "no history
+yet" note and instructions to append the first run.
 
 ## Leverage weighting
 
-The script ranks each gap by a leverage score so that *what to fix first* is
-not the same as *which pillar lost the most points*. Today's v1 implementation
-uses **class-based leverage** — each gap class has a fixed weight reflecting
-how widely a gap of that class radiates through the framework:
+The script ranks each gap by a leverage score, so *what to fix first* is not the
+same as *which pillar lost the most points*. v1 uses **class-based leverage** — a
+fixed weight per gap class, reflecting how widely a gap of that class radiates:
 
 | Class | Leverage |
 | --- | --- |
@@ -289,11 +259,9 @@ The top-3 gaps are leverage-ranked, not penalty-amount-ranked. A pillar can
 score 18/20 (small absolute penalty) and still surface its single gap as the
 top finding if that gap has high leverage.
 
-**Out of scope for v1:** dynamic reference-counted leverage (e.g. "this stale
-memory is named by 5 active wiki-links, so its leverage is 5 + base"). The v1
-class-weights approximate this well enough for actionable triage; the dynamic
-version is a future enhancement when the script accumulates a known false-rank
-case.
+**Out of scope for v1:** dynamic reference-counted leverage. The class weights
+approximate it well enough for actionable triage; revisit when the script
+accumulates a known false-rank case.
 
 ## Output
 
@@ -339,64 +307,56 @@ Total: <bytes> bytes — soft threshold <K> KB (OK|OVER)
 _(skipped — <named reason>)_             (when no registry ran)
 ```
 
-The `## Injection surface` section lists each resolved component with its byte
-size, names any component that could not resolve on a `skipped:` line, and
-closes with the total against the soft threshold. When no component resolves at
-all it reads `_(not measured — no injection-surface component resolved)_`. The
-codex-native registry is **not** an injection-surface component: when one
-resolves, its size follows as a separate non-scoring informational line that is
-outside the total.
+When no injection-surface component resolves at all that section reads
+`_(not measured — no injection-surface component resolved)_`. The codex-native
+registry is **not** an injection-surface component: when one resolves, its size
+follows as a separate non-scoring informational line, outside the total.
 
 If `--json` is passed, the script emits a structured JSON object with
 `{total, unscored_count, pillars[name].score, pillars[name].unscored,
 pillars[name].notes, injection_surface, gaps[], codex_registry_bytes,
-operator_subgates}` — used
-by the upstream acceptance suite's `tests/self-audit.test.sh` to assert against
-specific scores. An UNSCORED pillar reports `score: 0, unscored: true`; the
-history helper records that 0 truthfully. `injection_surface` is `null` when no
-component resolved, else `{total_bytes, threshold_kb, warned, components[{name,
-path, bytes}], skipped[]}`. `codex_registry_bytes` is the codex-native
-registry's index size, reported informationally — appended last so pre-existing
-fields keep their positions; `null` only when no registry resolved or it holds
-no `MEMORY.md`. The measurement runs outside the memory pillar's scored path,
-so a codex-only install (memory pillar UNSCORED) still reports it.
-`operator_subgates` is likewise appended last: `null` whenever the sub-gate
-surface did not run (unset key, missing or empty registry, `--no-subgates`),
-else `{registry, timeout_seconds, scored: false, gates[{name, status,
-exit_code, detail}], dropped}`.
+operator_subgates}` — used by the upstream acceptance suite's
+`tests/self-audit.test.sh` to assert against specific scores. An UNSCORED pillar
+reports `score: 0, unscored: true`; the history helper records that 0 truthfully.
+`injection_surface` is `null` when no component resolved, else `{total_bytes,
+threshold_kb, warned, components[{name, path, bytes}], skipped[]}`.
+`codex_registry_bytes` and `operator_subgates` are appended last so pre-existing
+fields keep their positions, and each is `null` when its surface did not run — no
+registry or no `MEMORY.md` in it; unset key, missing or empty registry, or
+`--no-subgates`. `operator_subgates` otherwise carries `{registry,
+timeout_seconds, scored: false, gates[{name, status, exit_code, detail}],
+dropped}`. The codex measurement runs outside the memory pillar's scored path, so
+a codex-only install (memory pillar UNSCORED) still reports it.
 
 ## Limits
 
-- **No auto-remediation.** Self-audit never edits framework files, never
-  posts to Linear, never modifies the vault. The model invoking `/self-audit`
-  has only `Read`, `Bash`, `Glob` in its tool envelope — `Write`/`Edit` are
-  deliberately excluded. The scoring script writes a tracked artifact only when
-  `--save <path>` is passed explicitly; absent that flag, the audit is
-  transcript-only. The only other write surface is the trend-history `append`
-  step, which writes solely to the gitignored, operator-local history store
-  (never the framework tree) — see [Trend tracking](#trend-tracking). Gap
-  closure is the operator's call. One deliberate exception to "reads only":
-  the operator sub-gate registry (`AUDIT_SUBGATES_FILE`) is *executed* — its
-  commands are the operator's own, at hook trust level, and `--no-subgates`
-  turns execution off while still rendering the section as a named skip.
-- **Not a substitute for the PASS/FAIL gates.** `validate.sh`,
-  `check-drift.sh`, and — where the upstream acceptance suite is present —
-  `tests/run.sh` catch hard breakage. Self-audit catches thinning. Run both.
-- **Graceful degradation.** Missing the `linear` CLI, missing `OBSIDIAN_VAULT_PATH`,
-  missing `$CLAUDE_CONFIG_DIR` are skipped with a one-line note — the audit
-  scores what it can see and tells you what it could not.
-- **Operator-local state.** The scorecard reflects the operator's local
-  installed state (memory files, vault notes, Linear). Two operators of the
-  same agentic-os-template repo will see different scores.
+- **No auto-remediation.** Self-audit never edits framework files, never posts to
+  Linear, never modifies the vault; the model invoking `/self-audit` has only
+  `Read`, `Bash`, `Glob` in its tool envelope. Two write surfaces exist, both
+  explicit: `--save <path>` writes a tracked scorecard artifact (absent that flag
+  the audit is transcript-only), and the trend-history `append` step writes solely
+  to the gitignored, operator-local history store — see
+  [Trend tracking](#trend-tracking). Gap closure is the operator's call. One
+  deliberate exception to "reads only": the operator sub-gate registry
+  (`AUDIT_SUBGATES_FILE`) is *executed* — its commands are the operator's own, at
+  hook trust level, and `--no-subgates` turns execution off while still rendering
+  the section as a named skip.
+- **Not a substitute for the PASS/FAIL gates.** `validate.sh`, `check-drift.sh`,
+  and — where the upstream acceptance suite is present — `tests/run.sh` catch hard
+  breakage. Self-audit catches thinning. Run both.
+- **Graceful degradation.** A missing `linear` CLI, `OBSIDIAN_VAULT_PATH`, or
+  `$CLAUDE_CONFIG_DIR` is skipped with a one-line note — the audit scores what it
+  can see and tells you what it could not.
+- **Operator-local state.** The scorecard reflects the operator's local installed
+  state, so two operators of the same agentic-os-template repo see different
+  scores.
 
 ## Notes
 
-- The capability **does not auto-fire**. Only the session-start hook for
-  `session-agent` fires automatically; `/self-audit` is opt-in.
 - The verification gate `self-audit` (in `verification/self-audit.md`) covers
   the meta-question "does the audit produce a sane, actionable scorecard?"
   — answered by running the script against fixtures.
-- The capability is the framework's third `kind: native` spine entry. Spine
-  symmetry — every native capability has a realization for each harness it
-  declares in its `harnesses:` frontmatter (claude, codex, hermes, cursor) — is itself
-  one of the things Pillar 5 scores.
+- The capability is the framework's third `kind: native` spine entry, and spine
+  symmetry — every native capability has a realization for each harness it declares
+  in its `harnesses:` frontmatter (claude, codex, hermes, cursor) — is itself one of
+  the things Pillar 5 scores.

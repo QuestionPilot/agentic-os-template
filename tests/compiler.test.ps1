@@ -293,11 +293,17 @@ if (Test-Path -LiteralPath $plSettings -PathType Leaf) {
     $plStyle = & jq -r '.outputStyle // "null"' $plSettings 2>$null
     if ($plStyle -is [array]) { $plStyle = $plStyle -join '' }
     Assert-Eq 'compiler.test: fresh install ships no outputStyle (spine-only base)' 'null' "$plStyle"
+    $plTui = & jq -r '.tui // "null"' $plSettings 2>$null
+    if ($plTui -is [array]) { $plTui = $plTui -join '' }
+    Assert-Eq 'compiler.test: fresh install ships no tui (spine-only base)' 'null' "$plTui"
     # Operator enables a plugin, sets a notif preference, and sets cost/UI
-    # preferences (theme, effortLevel, outputStyle). theme uses a non-default
-    # ("dark") so the assertion proves the OPERATOR's value is carried, not a
-    # base default.
-    $plMutated = & jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true | .agentPushNotifEnabled = false | .theme = "dark" | .effortLevel = "xhigh" | .outputStyle = "Test Style"' $plSettings 2>$null
+    # preferences (theme, effortLevel, outputStyle, tui). theme uses a
+    # non-default ("dark") so the assertion proves the OPERATOR's value is
+    # carried, not a base default. `tui` is app-written (the harness writes it
+    # when the operator toggles TUI mode) and is in check-drift.ps1's soft-key
+    # allowlist, so a re-render that dropped it would restart the drift cycle
+    # the cure exists to end.
+    $plMutated = & jq '.enabledPlugins["claude-md-management@claude-plugins-official"] = true | .agentPushNotifEnabled = false | .theme = "dark" | .effortLevel = "xhigh" | .outputStyle = "Test Style" | .tui = "fullscreen"' $plSettings 2>$null
     if ($plMutated -is [array]) { $plMutated = $plMutated -join "`n" }
     Write-LfFile -Path $plSettings -Content $plMutated
     # Re-render: New-Settings must carry the local choices forward.
@@ -319,6 +325,9 @@ if (Test-Path -LiteralPath $plSettings -PathType Leaf) {
     $plStyleAfter = & jq -r '.outputStyle // "DROPPED"' $plSettings 2>$null
     if ($plStyleAfter -is [array]) { $plStyleAfter = $plStyleAfter -join '' }
     Assert-Eq 'compiler.test: re-render preserves operator outputStyle (preserve-live)' 'Test Style' "$plStyleAfter"
+    $plTuiAfter = & jq -r '.tui // "DROPPED"' $plSettings 2>$null
+    if ($plTuiAfter -is [array]) { $plTuiAfter = $plTuiAfter -join '' }
+    Assert-Eq 'compiler.test: re-render preserves app-written tui (preserve-live)' 'fullscreen' "$plTuiAfter"
     $plHook = & jq -r '.hooks.PreToolUse != null' $plSettings 2>$null
     if ($plHook -is [array]) { $plHook = $plHook -join '' }
     Assert-Eq 'compiler.test: re-render still wires PreToolUse hook' 'true' "$plHook"

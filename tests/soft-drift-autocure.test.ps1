@@ -99,6 +99,18 @@ _Skip 't-106.test: post-cure: agentPushNotifEnabled preserved through cure re-re
 _Skip 't-106.test: post-cure: inputNeededNotifEnabled preserved through cure re-render' $reason106cure
 _Skip 't-106.test: post-cure: drift check passes after notification-key cure' $reason106cure
 
+# ---------- Test 2d: app-written tui mode cures as soft drift ----------------
+# Mirrors the .sh twin: `tui` ("default" | "fullscreen") is written into the
+# live settings.json by the harness app when the operator toggles the TUI mode
+# — an operator-local preference of the same class as theme/effortLevel and the
+# notification flags. The cure must absorb it and the cure re-render must carry
+# it via preserve-live. DEFERRED on the PS lane — cure path, same CRLF cause as
+# Test 2 above. install.ps1's side of the contract (preserve-live carries `tui`
+# across a re-render) IS exercised on this lane, by compiler.test.ps1.
+_Skip 't-106.test: --cure-soft-drift absorbs the app-written tui mode' $reason106cure
+_Skip 't-106.test: post-cure: tui preserved through cure re-render' $reason106cure
+_Skip 't-106.test: post-cure: drift check passes after tui cure' $reason106cure
+
 Remove-Item -LiteralPath $Q106.Root -Recurse -Force -ErrorAction SilentlyContinue
 
 # ---------- Test 3: Real drift still errors even with --cure-soft-drift ------
@@ -250,3 +262,12 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 Remove-Item -LiteralPath $Q106K.Root -Recurse -Force -ErrorAction SilentlyContinue
+
+# ---------- Twin parity: the soft-key allowlists are byte-identical ----------
+# Mirrors the .sh twin: the cure path is deferred on non-Windows runners, so pin
+# check-drift.ps1's $softKeys to check-drift.sh's soft_keys on every lane.
+$q106kShPath = Join-Path (Split-Path -Parent $CHECK_DRIFT_PS1) 'check-drift.sh'
+$q106kSh = [regex]::Match((Get-Content -LiteralPath $q106kShPath -Raw), "soft_keys='(\[[^\]]*\])'").Groups[1].Value
+$q106kPs = [regex]::Match((Get-Content -LiteralPath $CHECK_DRIFT_PS1 -Raw), "\`$softKeys = '(\[[^\]]*\])'").Groups[1].Value
+Assert-Eq 't-106.test: soft-key allowlist is byte-identical across the bash and PowerShell twins' $q106kSh $q106kPs
+Assert-Contains 't-106.test: soft-key allowlist names tui' $q106kPs '"tui"'
