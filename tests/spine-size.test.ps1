@@ -99,6 +99,44 @@ if ($ssNowSrcCl -le $ssSrcCeilCl) {
         "now=$ssNowSrcCl ceiling=$ssSrcCeilCl baseline=$ssBaseSrcCl"
 }
 
+# --- (e) the moved Notes bullets survive in the reference doc -----------------
+# Twin of the bash (e) block. Slimming the compiled spine by MOVING prose only
+# helps if the prose actually lands somewhere: the six honesty / mode-economics
+# bullets left capabilities/session-agent.md for
+# capabilities/reference/session-agent.md, and a source-ceiling gate alone would
+# happily accept them being deleted outright. Source-level, no build needed.
+$ssRefSa = Join-Path $env:REPO_ROOT 'capabilities' 'reference' 'session-agent.md'
+Assert-File 'spine-size.test: session-agent reference doc exists' $ssRefSa
+if (Test-Path -LiteralPath $ssRefSa -PathType Leaf) {
+    $ssRefSaBody = Get-Content -Raw -LiteralPath $ssRefSa
+    foreach ($ssNote in @(
+        'Mode 1 fires once per session',
+        'Be honest on the Linear gate',
+        'Be honest on the Lessons line',
+        'Be honest on the Execution line',
+        'The gate enforces the first complete declaration per session',
+        'Mode 1 is expensive, Mode 2 is cheap'
+    )) {
+        Assert-Contains "spine-size.test: reference doc carries the moved Notes bullet '$ssNote'" `
+            $ssRefSaBody $ssNote
+    }
+    # Lead phrases alone only prove the six BOLD LEADS survived — a move that
+    # dropped every bullet's body would keep them all. Each bullet is therefore
+    # pinned a second time by a distinctive phrase from its TAIL, so the
+    # assertion pair brackets the whole bullet.
+    foreach ($ssTail in @(
+        'forces a Mode 1 re-run',
+        'defeats the protocol',
+        'use whichever is true',
+        'the panel the operator asked for',
+        'not a security boundary',
+        "Don't re-orient on every prompt"
+    )) {
+        Assert-Contains "spine-size.test: reference doc keeps the moved Notes bullet tail '$ssTail'" `
+            $ssRefSaBody $ssTail
+    }
+}
+
 # --- build a claude render (same temp-install pattern as compiler.test.ps1) ---
 $ssDir = Join-Path ([System.IO.Path]::GetTempPath()) ("spine-size-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $ssDir -Force | Out-Null
@@ -173,9 +211,11 @@ if ($ssBuild -and (Test-Path -LiteralPath $ssSa) -and (Test-Path -LiteralPath $s
     Assert-Contains 'spine-size.test: compiled session-agent carries the Execution declaration line' `
         $ssSaBody 'Execution: inline | delegated wave | delegated wave + panel'
     # Every execution shape R2b names, pinned WITH its cascade position. The bare
-    # values are satisfiable by an unrelated mention elsewhere in the body (the Notes
-    # honesty bullet names `inline`), so a value-only loop would not notice R2b
-    # losing a rule — nor the risk-before-size ORDER the numbering encodes.
+    # values are satisfiable by an unrelated mention elsewhere in the body — R2b's own
+    # opening sentence and the closing honesty paragraph both name `inline` — so a
+    # value-only loop would not notice R2b losing a rule, nor the risk-before-size
+    # ORDER the numbering encodes. (The full Notes bullets moved to
+    # capabilities/reference/session-agent.md; the (e) block above pins them there.)
     foreach ($exec in @('1. `delegated wave + panel`', '2. `delegated wave`', '3. `inline`')) {
         Assert-Contains ('spine-size.test: compiled session-agent keeps R2b cascade rule ' + $exec) `
             $ssSaBody $exec
@@ -208,6 +248,10 @@ if ($ssBuild -and (Test-Path -LiteralPath $ssSa) -and (Test-Path -LiteralPath $s
         $ssClBody 'Non-zero = do NOT write'
     Assert-Contains 'spine-size.test: compiled closeout keeps the 8-question walk header' `
         $ssClBody 'The 8 closeout questions'
+    # Q1b is the closeout-side consumer of R2b's Execution: line — without it the
+    # declared execution shape is never checked against what actually ran.
+    Assert-Contains 'spine-size.test: compiled closeout keeps the Q1b Execution-honored question' `
+        $ssClBody 'Q1b — Execution-honored check'
     Assert-Contains 'spine-size.test: compiled closeout keeps Q7a git status --porcelain' `
         $ssClBody 'git status --porcelain'
     Assert-Contains 'spine-size.test: compiled closeout keeps Q7a git diff --cached --quiet' `

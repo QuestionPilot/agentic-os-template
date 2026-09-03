@@ -53,7 +53,7 @@ _Routes that need operator-installed plugins/CLIs are listed in the operator ove
 
 - **Active work first:** check Linear before non-trivial work. See `@@AI_CONFIG_DIR@@/linear/linear-setup.md` §4 for the per-surface commands (linear CLI or Linear MCP).
 - **CLI > MCP:** before reaching for an MCP tool, check if `gh`, `curl`, `git`, `rg`, or a project script does the job. Token-cheap and faster.
-- **Built-ins are skills too:** `review`, `security-review`, `simplify`, `init`, `loop`, `schedule`, `claude-api`, `update-config`, `keybindings-help`, `fewer-permission-prompts` are first-class — prefer them over reinventing.
+- **Built-ins are skills too:** `code-review`, `security-review`, `simplify`, `init`, `loop`, `schedule`, `claude-api`, `update-config`, `keybindings-help`, `fewer-permission-prompts` are first-class — prefer them over reinventing.
 - **Verification before completion:** every meaningful change ends with a check from `@@AI_CONFIG_DIR@@/verification/` (code-change, ui-browser, deploy-live, high-risk).
 
 ---
@@ -71,7 +71,7 @@ The agentic OS's own capabilities, generated from `@@AI_CONFIG_DIR@@/capabilitie
 | Skill | Purpose | Use when |
 | --- | --- | --- |
 | `init` | Initialize Claude Code in a project | First time setting up in a repo |
-| `review` | Review the current branch / specified diff | Local pre-PR review |
+| `code-review` | Review the current diff, or a PR / branch / path, for bugs and cleanups | Local pre-PR review |
 | `security-review` | Security-focused review | Before merging auth, billing, secrets, or migration changes |
 | `simplify` | Review changed code for reuse, quality, efficiency | After implementation — find duplicated logic or dead code |
 | `loop` | Run a prompt or slash command on an interval | Polling status; recurring local task |

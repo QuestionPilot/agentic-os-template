@@ -214,8 +214,9 @@ If genuinely no capability fits, declare `ad-hoc — no specific capability`.
 
 ### R2b. Decide how the work executes — one line
 
-Questions and review-only tasks are `inline`. For a change, walk top-down; the first
-rule that fires wins, and it lands on the `Execution:` line at R5.
+Questions and review-only tasks are `inline` — decided before the walk starts. For a
+change, walk top-down; the first rule that fires wins, and it lands on the
+`Execution:` line at R5.
 
 1. `delegated wave + panel` — the change is framework or high-risk (auth /
    permissions / billing / migrations / secrets / public surfaces), whatever its
@@ -226,7 +227,8 @@ rule that fires wins, and it lands on the `Execution:` line at R5.
    subagents", discipline-kernel preamble included), executors build, and the
    orchestrator inspects every diff and reruns the proof itself — never a rubber
    stamp.
-3. `inline` — everything else: single-file fixes.
+3. `inline` — the residue: a change neither rule above claimed (single-file
+   fixes).
 
 Roles only — which models fill orchestrator, executor, and critic is the operator
 layer's call. The pre-edit gate does not check this line; it exists so the routing
@@ -278,21 +280,6 @@ Next action: <one sentence>
 
 After emitting, proceed with the work.
 
----
-
-## Notes
-
-- **Mode 1 fires once per session.** A mid-session pivot uses Mode 2; an operator
-  "re-orient" forces a Mode 1 re-run.
-- **Be honest on the Linear gate.** Splitting genuine multi-session work into
-  "single-step" to skip the gate defeats the protocol.
-- **Be honest on the Lessons line.** `none match` after an actual trigger scan is
-  valid; as a reflex to satisfy the gate it defeats the recall step — the line exists
-  because already-recorded rules kept getting skipped. `index unreachable` claims a
-  failure and `skipped — <reason>` a policy bound; use whichever is true.
-- **Be honest on the Execution line.** A value below the rule that fires skips the
-  wave or the panel the operator asked for.
-- **The gate enforces the first complete declaration per session.** Later Mode 2
-  routes re-declare by protocol; the hook does not re-police them — a discipline net
-  with a kill switch, not a security boundary.
-- **Mode 1 is expensive, Mode 2 is cheap.** Don't re-orient on every prompt.
+Declare honestly: `none match`, `none — single-step`, and `inline` are valid only
+after the scan or the walk actually ran — written by reflex they defeat the gate.
+Full notes: the reference doc.

@@ -67,6 +67,10 @@ if [ -f "$ep_build/SKILLS.md" ]; then
   assert_not_contains "generated SKILLS.md has no unresolved placeholders" "$skm" "@@"
   assert_contains "generated SKILLS.md keeps the live inventory"  "$skm" "Live Inventory"
   assert_contains "generated SKILLS.md substitutes the agentic-os-template path" "$skm" "$REPO_ROOT"
+  # The Claude built-in was renamed `review` -> `code-review`; the table-cell form
+  # is the needle so `security-review` / `cross-model-review` cannot satisfy it.
+  assert_not_contains "generated SKILLS.md drops the retired \`review\` built-in" "$skm" '| `review` |'
+  assert_contains "generated SKILLS.md routes pre-PR review to code-review" "$skm" '| `code-review` |'
 fi
 
 # --- the build manifest tracks the new generated + source files -----------

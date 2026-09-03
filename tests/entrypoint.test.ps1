@@ -96,6 +96,10 @@ if (Test-Path -LiteralPath $skillsMd) {
     Assert-NotContains 'entrypoint.test: generated SKILLS.md has no unresolved placeholders' $skm '@@'
     Assert-Contains 'entrypoint.test: generated SKILLS.md keeps the live inventory' $skm 'Live Inventory'
     Assert-Contains 'entrypoint.test: generated SKILLS.md substitutes the agentic-os-template path' $skm $env:REPO_ROOT
+    # The Claude built-in was renamed `review` -> `code-review`; the table-cell form
+    # is the needle so `security-review` / `cross-model-review` cannot satisfy it.
+    Assert-NotContains 'entrypoint.test: generated SKILLS.md drops the retired `review` built-in' $skm '| `review` |'
+    Assert-Contains 'entrypoint.test: generated SKILLS.md routes pre-PR review to code-review' $skm '| `code-review` |'
 }
 
 # --- the build manifest tracks the generated + source files ----------------

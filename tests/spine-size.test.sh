@@ -99,6 +99,46 @@ else
     "now=$SS_NOW_SRC_CL ceiling=$SS_SRC_CEIL_CL baseline=$SS_BASE_SRC_CL"
 fi
 
+# --- (e) the moved Notes bullets survive in the reference doc ------------------
+# Slimming the compiled spine by MOVING prose only helps if the prose actually
+# lands somewhere. The six honesty / mode-economics bullets left
+# capabilities/session-agent.md for capabilities/reference/session-agent.md; a
+# source-ceiling gate alone would happily accept them being deleted outright, so
+# each lead phrase is pinned at its new home. Source-level, no build needed.
+SS_REF_SA="$REPO_ROOT/capabilities/reference/session-agent.md"
+assert_file "spine-size: session-agent reference doc exists" "$SS_REF_SA"
+if [ -f "$SS_REF_SA" ]; then
+  SS_REF_SA_BODY="$(cat "$SS_REF_SA")"
+  while IFS= read -r _ss_note; do
+    [ -n "$_ss_note" ] || continue
+    assert_contains "spine-size: reference doc carries the moved Notes bullet '$_ss_note'" \
+      "$SS_REF_SA_BODY" "$_ss_note"
+  done <<'SS_NOTES'
+Mode 1 fires once per session
+Be honest on the Linear gate
+Be honest on the Lessons line
+Be honest on the Execution line
+The gate enforces the first complete declaration per session
+Mode 1 is expensive, Mode 2 is cheap
+SS_NOTES
+  # Lead phrases alone only prove the six BOLD LEADS survived — a move that
+  # dropped every bullet's body would keep them all. Each bullet is therefore
+  # pinned a second time by a distinctive phrase from its TAIL, so the assertion
+  # pair brackets the whole bullet.
+  while IFS= read -r _ss_tail; do
+    [ -n "$_ss_tail" ] || continue
+    assert_contains "spine-size: reference doc keeps the moved Notes bullet tail '$_ss_tail'" \
+      "$SS_REF_SA_BODY" "$_ss_tail"
+  done <<'SS_NOTE_TAILS'
+forces a Mode 1 re-run
+defeats the protocol
+use whichever is true
+the panel the operator asked for
+not a security boundary
+Don't re-orient on every prompt
+SS_NOTE_TAILS
+fi
+
 # --- build a claude render (same temp-install pattern as compiler.test.sh) ----
 SS_DIR="$(mktemp -d)"
 SS_OUT="$SS_DIR/out"; mkdir -p "$SS_OUT"
@@ -166,9 +206,11 @@ if [ -n "$SS_BUILD" ] && [ -f "$SS_SA" ] && [ -f "$SS_CL" ]; then
   assert_contains "spine-size: compiled session-agent carries the Execution declaration line" \
     "$SS_SA_BODY" "Execution: inline | delegated wave | delegated wave + panel"
   # Every execution shape R2b names, pinned WITH its cascade position. The bare
-  # values are satisfiable by an unrelated mention elsewhere in the body (the Notes
-  # honesty bullet names \`inline\`), so a value-only loop would not notice R2b
-  # losing a rule — nor the risk-before-size ORDER the numbering encodes.
+  # values are satisfiable by an unrelated mention elsewhere in the body — R2b's own
+  # opening sentence and the closing honesty paragraph both name \`inline\` — so a
+  # value-only loop would not notice R2b losing a rule, nor the risk-before-size
+  # ORDER the numbering encodes. (The full Notes bullets moved to
+  # capabilities/reference/session-agent.md; the (e) block above pins them there.)
   for _ss_exec in "1. \`delegated wave + panel\`" "2. \`delegated wave\`" "3. \`inline\`"; do
     assert_contains "spine-size: compiled session-agent keeps R2b cascade rule $_ss_exec" \
       "$SS_SA_BODY" "$_ss_exec"
@@ -211,6 +253,10 @@ if [ -n "$SS_BUILD" ] && [ -f "$SS_SA" ] && [ -f "$SS_CL" ]; then
     "$SS_CL_BODY" "Non-zero = do NOT write"
   assert_contains "spine-size: compiled closeout keeps the 8-question walk header" \
     "$SS_CL_BODY" "The 8 closeout questions"
+  # Q1b is the closeout-side consumer of R2b's Execution: line — without it the
+  # declared execution shape is never checked against what actually ran.
+  assert_contains "spine-size: compiled closeout keeps the Q1b Execution-honored question" \
+    "$SS_CL_BODY" "Q1b — Execution-honored check"
   assert_contains "spine-size: compiled closeout keeps Q7a git status --porcelain" \
     "$SS_CL_BODY" "git status --porcelain"
   assert_contains "spine-size: compiled closeout keeps Q7a git diff --cached --quiet" \

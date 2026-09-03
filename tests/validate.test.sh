@@ -755,4 +755,39 @@ assert_exit "validate.sh fails on a ./scripts/ path in a capability body" 1 -- \
 assert_contains "validate.sh names the ./-prefixed site" "$vcp_dot_out" \
   "bare scripts/ path in capabilities/session-agent.md:"
 rm -rf "$VCP_FIX"
-unset VCP_FIX vcp_out vcp_dot_out
+
+# A brace ref (`scripts/foo.{sh,ps1}`) names the same two scripts as two bare
+# refs and resolves no better — the suffix alternation must trip on it too.
+VCP_FIX="$(mktemp -d)"
+copy_repo_tracked "$VCP_FIX"
+printf '\nRun `scripts/foo.{sh,ps1}` against the memory dir.\n' >> "$VCP_FIX/capabilities/closeout.md"
+vcp_brace_out="$(bash "$VCP_FIX/scripts/validate.sh" 2>&1 || true)"
+assert_exit "validate.sh fails on a brace-ref scripts/ path in a capability body" 1 -- \
+  bash "$VCP_FIX/scripts/validate.sh"
+assert_contains "validate.sh names the brace-ref site" "$vcp_brace_out" \
+  "bare scripts/ path in capabilities/closeout.md:"
+rm -rf "$VCP_FIX"
+
+# RESTRAINT: the brace list is limited to script extensions. A documentation
+# brace naming non-script files is not an invocation and must NOT trip the check
+# — without this the alternation would flag any `foo.{a,b}` in prose.
+VCP_FIX="$(mktemp -d)"
+copy_repo_tracked "$VCP_FIX"
+printf '\nSee `scripts/example.{md,json}` for the fixture shapes.\n' >> "$VCP_FIX/capabilities/closeout.md"
+assert_exit "validate.sh accepts a non-script brace list in a capability body" 0 -- \
+  bash "$VCP_FIX/scripts/validate.sh"
+rm -rf "$VCP_FIX"
+
+# Harness capability realizations compile into the same skill bodies, so the
+# scan covers harnesses/*/capabilities/*.md too — and reports the site by its
+# repo-relative path, not a bare basename.
+VCP_FIX="$(mktemp -d)"
+copy_repo_tracked "$VCP_FIX"
+printf '\nRun `scripts/foo.sh` without `--memory-dir`.\n' >> "$VCP_FIX/harnesses/hermes/capabilities/session-agent.md"
+vcp_harness_out="$(bash "$VCP_FIX/scripts/validate.sh" 2>&1 || true)"
+assert_exit "validate.sh fails on a bare scripts/ path in a harness capability body" 1 -- \
+  bash "$VCP_FIX/scripts/validate.sh"
+assert_contains "validate.sh names the harness capability site repo-relatively" "$vcp_harness_out" \
+  "bare scripts/ path in harnesses/hermes/capabilities/session-agent.md:"
+rm -rf "$VCP_FIX"
+unset VCP_FIX vcp_out vcp_dot_out vcp_brace_out vcp_harness_out

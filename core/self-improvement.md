@@ -118,6 +118,16 @@ outcome is `no-action` with rationale and the rest of the walk is wasted.
    Record the recall failure explicitly in the session log's Lessons section —
    the `self-audit` recall-efficacy check counts these to measure the read
    side of this loop.
+
+   **Q1b — Execution-honored check.** Was the `Execution:` value declared at R5
+   (`inline` | `delegated wave` | `delegated wave + panel`) actually honored — the
+   wave ran, the panel ran, or the work truly stayed inline? If not, name which
+   step was skipped and why. Record a miss the way Q1a records a recall failure:
+   one line in the session log's Lessons section starting `**Execution miss**` (so
+   the recall counter, which keys on `**Recall failure`, never counts it) plus a
+   `feedback`-type memory note (`metadata.type: feedback`) naming the skipped step.
+   The lesson is about the skipped step, never a re-write of the R2b cascade that
+   chose the value — the cascade fired correctly; the execution is what drifted.
 2. Is the lesson already represented in the right source of truth?
 3. Can the lesson become a check or script instead of prose?
 

@@ -75,6 +75,14 @@ From `$AI_CONFIG_DIR/core/self-improvement.md` — answer each in 1–2 sentence
    surface failed: **not-loaded** (store silo / stale harness index / vault
    unreachable / lesson index skipped at O4) vs **loaded-but-ignored** (in context
    but acted against). Record it explicitly in the session log's Lessons section.
+
+   **Q1b — Execution-honored check.** Was the `Execution:` value declared at R5
+   honored (the wave ran, the panel ran, or the work truly stayed inline)? If not,
+   name which step was skipped and why. Record a miss the way Q1a records a recall
+   failure: one line in the session log's Lessons section starting
+   `**Execution miss**` (so the recall counter never counts it) plus a
+   `feedback`-type memory note (`metadata.type: feedback`) naming the skipped
+   step — never a re-write of the R2b cascade.
 2. Is the lesson already represented in the right source of truth?
 3. Can the lesson become a check or script instead of prose? **And — did this
    session run a successful, repeatable flow worth promoting to a permanent skill?**
@@ -200,7 +208,7 @@ healthy. Canonical contracts: `$AI_CONFIG_DIR/core/memory-model.md`. Three rules
    one-line pointer; after deleting or consolidating, remove the stale index line.
    An un-indexed note is invisible to the next session.
 3. **Frontmatter parser-safety.** Keep top-level scalar values quoted when they
-   contain ` #` or `: `. Run `scripts/check-memory-drift.{sh,ps1}` against the memory
+   contain ` #` or `: `. Run `$AI_CONFIG_DIR/scripts/check-memory-drift.{sh,ps1}` against the memory
    dir — one pass flags headline-vs-body drift, `MEMORY.md` bloat, AND parser-safety
    hazards. Fix what it surfaces in the notes THIS session touched; pre-existing
    findings in untouched notes route to a `consolidate-memory` follow-on, not a
@@ -241,7 +249,7 @@ skips the steps.
    two coexist by design (`core/memory-model.md` → Cache Contract).
 
 **Pre-wipe / pre-migration completeness guard.** Before a machine wipe or memory
-migration, run `scripts/check-distillation-completeness.{sh,ps1}` — it cross-checks
+migration, run `$AI_CONFIG_DIR/scripts/check-distillation-completeness.{sh,ps1}` — it cross-checks
 every `feedback_*` / `decision` note against the `## Source Notes` of the vault's
 `04-Lessons` and fails if any is undistilled. It is deliberately NOT part of
 `make verify`.
