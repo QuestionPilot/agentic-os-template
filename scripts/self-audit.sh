@@ -192,27 +192,94 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# mem_note_type <file> — echo the note's memory type from frontmatter: the first
-# `type:` line inside the first `---`-fenced block, top-level or nested under
-# `metadata:`. Lowercased; empty if absent (`node_type:` is NOT matched — the
-# regex anchors `type:` to the start after optional indent). Mirrors
-# check-distillation-completeness.sh + check-memory-drift.sh so every scanner
-# agrees on what a "project" note is — the store keeps the type in frontmatter,
-# not the filename (<TEAM>-353).
+# mem_note_type <file> — echo the note's memory type from frontmatter, scoped to
+# the first `---`-fenced block. Lowercased; empty if absent.
+#
+# WHICH `type:` WINS, and the nesting rule is load-bearing. A frontmatter block
+# can carry several `type:` keys under different parents — `source:` provenance
+# blocks are the common case — so "the first `type:` at any indent" reads the
+# WRONG one: a note whose `source:` names `type: project` above its real
+# `metadata: type: reference` was classified project. The rules are therefore:
+#   0. the block must CLOSE (a second `---`); an unclosed opening fence is not
+#      frontmatter at all, so a body line `type: project` classifies nothing;
+#   1. a `type:` nested as a DIRECT child of the top-level `metadata:` key wins
+#      — direct meaning at the first indentation level seen inside that block,
+#      so `metadata: source: type: …` belongs to `source:`, not to the note;
+#   2. else a TOP-LEVEL `type:` (column 0);
+#   3. a `type:` nested under any OTHER key is ignored entirely.
+# `node_type:` is still not matched (the key is compared whole), and matching is
+# case-SENSITIVE, so `Type:` does not classify.
+#
+# scripts/check-project-note-budget.sh carries the identical detector, so the
+# write-time budget gate and this audit can never disagree about which notes are
+# in scope. (check-memory-drift.sh + check-distillation-completeness.sh still
+# carry the older first-`type:`-at-any-indent form; they classify for different
+# purposes and are a separate follow-up.)
 mem_note_type() {
   LC_ALL=C awk '
+    # type_value <line> — the value half of a `type:` line: the key stripped,
+    # trailing whitespace gone, an inline YAML comment removed, one surrounding
+    # quote pair unwrapped, lowercased.
+    #
+    # QUOTED values are unwrapped by finding the CLOSING quote rather than by
+    # comparing the last character: `type: "project" # active arc` has a comment
+    # after the pair (so a last-character compare sees `c`, not `"`, and gives
+    # back the whole line), and a `#` INSIDE the quotes is literal, not a comment.
+    # Finding the close quote settles both. UNQUOTED values instead lose
+    # everything from a `#` that follows whitespace, per the YAML comment rule;
+    # `a#b` with no space keeps its hash.
+    function type_value(line,   v, q, i) {
+      v = line
+      sub(/^[[:space:]]*type:[[:space:]]*/, "", v)
+      sub(/[[:space:]]*$/, "", v)
+      q = substr(v, 1, 1)
+      if (q == "\"" || q == "\047") {
+        i = index(substr(v, 2), q)
+        if (i > 0) return tolower(substr(v, 2, i - 1))
+        # No closing quote — not a quoted scalar; fall through to the bare rules.
+      }
+      sub(/[[:space:]]+#.*$/, "", v)
+      sub(/[[:space:]]*$/, "", v)
+      return tolower(v)
+    }
+    # indent_of <line> — width of the leading whitespace run, in characters (a
+    # tab counts as one). Only ever called on a line already known to start with
+    # whitespace followed by a key.
+    function indent_of(line,   w) {
+      w = line
+      sub(/[^[:space:]].*$/, "", w)
+      return length(w)
+    }
     NR==1 {
       if (substr($0,1,3) == "\357\273\277") $0 = substr($0,4)   # strip UTF-8 BOM
       if ($0 !~ /^---[[:space:]]*$/) exit
     }
-    /^---[[:space:]]*$/ { saw_sep++; if (saw_sep==2) exit; next }
-    saw_sep==1 && /^[[:space:]]*type:[[:space:]]*/ {
-      v=$0; sub(/^[[:space:]]*type:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v)
-      # Strip one surrounding quote pair so `type: "project"` / `type: '\''project'\''`
-      # classify as project, not "project" (else a valid quoted note goes invisible).
-      if (length(v) >= 2 && ((substr(v,1,1)=="\"" && substr(v,length(v),1)=="\"") || (substr(v,1,1)=="\047" && substr(v,length(v),1)=="\047"))) v=substr(v,2,length(v)-2)
-      print tolower(v); exit
+    /^---[[:space:]]*$/ { saw_sep++; if (saw_sep==2) { closed=1; exit } next }
+    saw_sep==1 {
+      # A column-0 `<key>:` opens a top-level block. `type:` at column 0 IS the
+      # top-level type; any other key becomes the block an indented `type:`
+      # would belong to.
+      if ($0 ~ /^[A-Za-z0-9_.-]+:/) {
+        key = $0; sub(/:.*$/, "", key)
+        if (key == "type") { if (top == "") top = type_value($0); cur = "" }
+        else { cur = key; if (key == "metadata") meta_indent = -1 }
+        next
+      }
+      # An INDENTED `type:` counts only as a DIRECT child of `metadata:` — the
+      # first indentation level seen inside that block. A deeper `type:` belongs
+      # to a sub-key (`metadata: source: type: …`) and is somebody else'"'"'s field.
+      if (cur == "metadata" && $0 ~ /^[[:space:]]+[A-Za-z0-9_.-]+:/) {
+        w = indent_of($0)
+        if (meta_indent < 0) meta_indent = w
+        if (w == meta_indent && $0 ~ /^[[:space:]]+type:[[:space:]]*/) {
+          if (meta == "") meta = type_value($0)
+        }
+      }
     }
+    # An UNCLOSED block is not frontmatter at all: without a second fence the
+    # whole file is body, and a body line `type: project` must not classify the
+    # note. Only a closed block yields a type.
+    END { if (closed) { v = (meta != "") ? meta : top; if (v != "") print v } }
   ' "$1"
 }
 

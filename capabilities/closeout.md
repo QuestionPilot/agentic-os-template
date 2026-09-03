@@ -199,7 +199,7 @@ For each lesson, pick exactly one class and route it. The classes are defined in
 ## Memory-hygiene (on any memory write)
 
 Closeout is where memory writes happen, so it is also where the store is kept
-healthy. Canonical contracts: `$AI_CONFIG_DIR/core/memory-model.md`. Three rules:
+healthy. Canonical contracts: `$AI_CONFIG_DIR/core/memory-model.md`. Four rules:
 
 1. **Refresh, don't blindly append.** Before adding a note, classify the related
    existing notes with the Keep / Update / Consolidate / Replace / Delete lifecycle.
@@ -213,6 +213,10 @@ healthy. Canonical contracts: `$AI_CONFIG_DIR/core/memory-model.md`. Three rules
    hazards. Fix what it surfaces in the notes THIS session touched; pre-existing
    findings in untouched notes route to a `consolidate-memory` follow-on, not a
    blocked closeout.
+4. **Project-note budget.** A `type: project` note over `PROJECT_NOTE_BODY_WARN_KB`
+   (default 16 KB) BLOCKS closeout — the pre-write gate's `project-note-budget`
+   check fails on it. Trim by draining dated State Deltas to the vault project log
+   or the completed-arcs ledger, keeping the last three.
 
 ## Distill this session's feedback into the durable Lessons layer
 
@@ -381,14 +385,14 @@ $AI_CONFIG_DIR/scripts/closeout-gate.sh --draft <draft-path>
 ```
 
 One invocation runs the whole required set — the injection scan
-(`--injection-scan`), the wikilink check, and the machine-path scan — and returns one
-verdict. Exit 0 = every applicable check passed → write. **Non-zero = do NOT write**:
+(`--injection-scan`), the wikilink check, the machine-path scan, and the
+project-note budget — and returns one verdict. Exit 0 = every applicable check passed → write. **Non-zero = do NOT write**:
 a check failed, or a check's script is missing (a gate that cannot run has proven
 nothing, so it fails rather than skips). Remediate — move a flagged payload under
 `## Raw observations` or drop it, fix each unresolved link to its full vault-relative
 path, replace each machine path with an agnostic reference (repo-relative,
-home-relative, or vault-relative) — then re-run. An absent target surface (no vault configured, for the wikilink check) is a
-NAMED SKIP, not a failure. The script header documents each check and the
+home-relative, or vault-relative), trim the over-budget project note — then re-run.
+An absent target surface (no vault, no memory dir) is a NAMED SKIP, not a failure. The script header documents each check and the
 fail-closed contract; the rationale is in
 `$AI_CONFIG_DIR/capabilities/reference/closeout.md`.
 

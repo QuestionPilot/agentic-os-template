@@ -2473,6 +2473,54 @@ _test_project_note_body_budget() {
 }
 _test_project_note_body_budget
 
+# --- Pillar 2 sub-check 2.6: WHICH `type:` the classifier reads ----------------
+# A frontmatter block can carry several `type:` keys under different parents, so
+# "the first `type:` at any indent" reads the wrong one. Asserted through the
+# audit itself, not the helper, so the fix is proven where it is consumed. Both
+# directions, because either alone is satisfiable by a classifier that has simply
+# stopped working: a `source:`-nested `type: project` must NOT raise the
+# over-budget gap, and the same note with `metadata: type: project` MUST.
+_test_project_note_type_nesting() {
+  command -v jq >/dev/null 2>&1 || { _skip "project-note type nesting" "jq not installed"; return 0; }
+  local fixture; fixture="$(mktemp -d)" || return 1
+  _sa_mk_fixture_repo "$fixture"
+  local mem="$fixture/memory"; mkdir -p "$mem"
+  local pad; pad="$(LC_ALL=C awk 'BEGIN { while (i++ < 400) printf "%s\n", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }')"
+  # ~20 KB each, over the 16 KB default — size is never the variable here.
+  { printf -- '---\nsource:\n  type: project\nmetadata:\n  type: reference\n---\n'
+    printf '%s\n' "$pad"; } > "$mem/provenance-says-project.md"
+  { printf -- '---\nsource:\n  type: reference\nmetadata:\n  type: project\n---\n'
+    printf '%s\n' "$pad"; } > "$mem/metadata-says-project.md"
+  # An UNCLOSED opening fence is not frontmatter at all — the whole file is
+  # body, so a body line `type: project` must classify nothing.
+  { printf -- '---\ntitle: an arc\ntype: project\n'
+    printf '%s\n' "$pad"; } > "$mem/unclosed-says-project.md"
+  # An INLINE YAML COMMENT on the value is ordinary operator practice, and the
+  # old extractor handed back `project # active arc` — so the note a comment
+  # described as an active arc was the one the budget never measured.
+  { printf -- '---\nmetadata:\n  type: project # active arc\n---\n'
+    printf '%s\n' "$pad"; } > "$mem/commented-says-project.md"
+  printf 'provenance-says-project.md metadata-says-project.md unclosed-says-project.md commented-says-project.md\n' > "$mem/MEMORY.md"
+
+  local out detail
+  out="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+    --memory-dir "$mem" --json 2>/dev/null)"
+  detail="$(printf '%s' "$out" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail')"
+  assert_eq "type nesting: exactly two notes are classified project" \
+    "2" "$(printf '%s' "$out" | jq -r '.gaps[] | select(.title == "Project-type note body over budget") | .detail | capture("(?<n>[0-9]+) project-type") | .n')"
+  assert_contains "type nesting: a commented type: project value still classifies" \
+    "$detail" "commented-says-project.md"
+  assert_contains "type nesting: metadata.type: project is the one that classifies" \
+    "$detail" "metadata-says-project.md"
+  assert_not_contains "type nesting: a source-nested type: project does NOT classify" \
+    "$detail" "provenance-says-project.md"
+  assert_not_contains "type nesting: an UNCLOSED frontmatter block classifies nothing" \
+    "$detail" "unclosed-says-project.md"
+
+  rm -rf "$fixture"
+}
+_test_project_note_type_nesting
+
 # --- operator sub-gates: bounding an ADVERSARIAL gate --------------------------
 # The first bound here was an in-process `perl -e 'alarm N; exec …'`. It is not a
 # bound at all against two ordinary shell behaviours, and both were measured:

@@ -80,13 +80,17 @@ Three notes, three reasons:
    Operator Soul first"), and a prose pointer is an instruction *chain* agents skip.
    Naming the read as its own mandatory sub-step is the fix: the identity master
    must land every session, not only when the chain is followed.
-3. **The lesson index (`04-Lessons/_index.md`).** Lessons were previously
-   write-only in practice — sessions distilled lessons INTO the vault at closeout,
-   but no orient or routing step ever read one back OUT, so operators re-taught
-   rules that were already recorded. The **canonical** index is read rather than a
-   generated per-harness view because only the canonical one carries the Trigger
-   column; harness scope is applied later, at body-read time, from each matched
-   note's frontmatter `harness:` key.
+3. **The lesson triggers view (`04-Lessons/_triggers.md`).** Lessons were
+   previously write-only in practice — sessions distilled lessons INTO the vault at
+   closeout, but no orient or routing step ever read one back OUT, so operators
+   re-taught rules that were already recorded. O4 reads the **generated
+   triggers-only view** rather than the canonical `_index.md` because R1a matches on
+   exactly two fields — the note link and its Trigger — and the view carries only
+   those, saving roughly 5.8 KB of context per session over the full index for
+   identical matching power. Rows are never edited there: `_triggers.md` is
+   regenerated from `_index.md`, which stays the canonical index and the O4 fallback
+   when the view is absent. Harness scope is applied later, at body-read time, from
+   each matched note's frontmatter `harness:` key.
 
 ## Why R1a is bounded the way it is
 

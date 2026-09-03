@@ -244,6 +244,39 @@ if [ -n "$SS_BUILD" ] && [ -f "$SS_SA" ] && [ -f "$SS_CL" ]; then
     "$SS_SA_BODY" "scripts/orient.sh"
   assert_contains "spine-size: compiled session-agent keeps the projects-first cut" \
     "$SS_SA_BODY" "projects-first"
+  # O4 reads the GENERATED triggers-only lesson view, not the full canonical
+  # index — the compact view is what keeps the per-session vault read cheap, and
+  # a silent revert to _index.md would cost that back invisibly.
+  #
+  # ONE RELATIONAL anchor rather than a handful of substrings. Separate needles
+  # each pin a fragment — primary read, fallback clause, fallback target — but
+  # none of them can say whether the fragments still form one coherent
+  # instruction in the right order; a body that kept all three scattered across
+  # unrelated paragraphs satisfies every one. The needle is EXTRACTED from
+  # capabilities/session-agent.md instead of retyped here, so this test can never
+  # drift into asserting a paraphrase of what the source used to say. Both sides
+  # are whitespace-normalized because the bullet wraps mid-sentence.
+  ss_norm() { LC_ALL=C tr '\t\n' '  ' | LC_ALL=C tr -s ' '; }
+  SS_SRC_NORM="$(ss_norm < "$SS_SRC_SA")"
+  SS_O4_NEEDLE="${SS_SRC_NORM#*04-Lessons/_triggers.md}"
+  SS_O4_NEEDLE="04-Lessons/_triggers.md${SS_O4_NEEDLE%%absent.*}absent."
+  # A source that no longer carries the sentence yields a stub needle, and
+  # `assert_contains` on a stub passes for free — the extraction must itself be
+  # proven before the assertion it feeds means anything.
+  SS_O4_OK=0
+  case "$SS_O4_NEEDLE" in
+    *'`_index.md`'*"fallback when it is absent.") \
+      [ "${#SS_O4_NEEDLE}" -ge 120 ] && SS_O4_OK=1 ;;
+  esac
+  assert_eq "spine-size: the O4 needle was really extracted from the source body" \
+    "1" "$SS_O4_OK"
+  SS_SA_NORM="$(printf '%s' "$SS_SA_BODY" | ss_norm)"
+  assert_contains "spine-size: compiled session-agent carries the whole O4 triggers-view sentence" \
+    "$SS_SA_NORM" "$SS_O4_NEEDLE"
+  # Cheap presence check kept alongside it: it fails with a one-line message
+  # when the view is simply gone, without the reader parsing a 200-char needle.
+  assert_contains "spine-size: compiled session-agent names the triggers-only lesson view" \
+    "$SS_SA_BODY" "04-Lessons/_triggers.md"
 
   # closeout: the pre-write gate wrapper, the 8-question walk, Q7a's three git
   # commands, and the full 11-class routing table.
@@ -277,5 +310,6 @@ rm -rf "$SS_DIR"
 unset SS_BASELINE SS_BASE_SA SS_BASE_CL SS_BASE_COMBINED SS_CEILING SS_DIR SS_OUT \
       SS_ENV SS_BUILD SS_SA SS_CL SS_NOW_SA SS_NOW_CL SS_NOW_COMBINED SS_SA_BODY SS_CL_BODY \
       SS_FLOOR_SA SS_FLOOR_CL SS_SRC_SA SS_SRC_CL SS_BASE_SRC_SA SS_BASE_SRC_CL \
-      SS_SRC_CEIL_SA SS_SRC_CEIL_CL SS_NOW_SRC_SA SS_NOW_SRC_CL _ss_o1 _ss_o2 _ss_o3
-unset -f ss_pos
+      SS_SRC_CEIL_SA SS_SRC_CEIL_CL SS_NOW_SRC_SA SS_NOW_SRC_CL _ss_o1 _ss_o2 _ss_o3 \
+      SS_SRC_NORM SS_O4_NEEDLE SS_O4_OK SS_SA_NORM
+unset -f ss_pos ss_norm
