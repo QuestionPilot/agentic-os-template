@@ -229,11 +229,17 @@ skips the steps.
 3. **Record provenance.** Add the promoted note's name to that lesson's
    `## Source Notes` section — the linkage the completeness guard keys on.
 4. **Gate the write — scan at promotion, don't trust the past.** Run
-   `$AI_CONFIG_DIR/scripts/closeout-gate.sh --draft <path>` over BOTH the source note AND the
-   distilled `04-Lessons` note after folding, and confirm the vault audit stays clean
-   (`node bin/memory-vault-audit.js`). A non-zero gate exit or a non-clean audit
-   PAUSES the distillation: remediate before the output block reports it ran. Never
-   report a silent success.
+   `$AI_CONFIG_DIR/scripts/closeout-gate.sh --draft <lesson-path>` over the
+   distilled `04-Lessons` note after folding, and scan the memory-store source
+   note directly with `$AI_CONFIG_DIR/scripts/check-memory-drift.sh
+   --injection-scan <memory-note-path>` and
+   `$AI_CONFIG_DIR/scripts/check-machine-paths.sh --draft <memory-note-path>` —
+   not with the full gate: a memory note links by `[[slug]]` per the memory
+   index contract, and the vault wikilink check resolves vault paths, not memory
+   slugs, so it always fails there. Then confirm the vault audit stays clean
+   (`node bin/memory-vault-audit.js`). A non-zero exit from ANY command in this
+   step, or a non-clean audit, PAUSES the distillation: remediate before the
+   output block reports it ran. Never report a silent success.
 5. **Keep, don't delete, the native note.** The `feedback_*` note stays in the native
    store as the hot-recall copy; the `04-Lessons` note is now its durable home — they
    coexist by design (`core/memory-model.md` → Cache Contract).
