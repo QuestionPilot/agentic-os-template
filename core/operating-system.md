@@ -52,6 +52,10 @@ Default to the lowest autonomy level that solves the problem. Workflows beat age
 
 This principle is named because the framework rediscovered it twice during refactor passes: an early cross-model-review skill carried roughly 770 lines of orchestration scaffolding that collapsed cleanly into a roughly 120-line Shape C body once the question shifted from "how do we orchestrate this" to "what is the smallest critic loop that catches the bug"; the spine itself was later slimmed by removing vendored helpers that turned out to be wrappers around model judgment already living inside the native capabilities (today's spine is the three natives — session-agent, closeout, self-audit — each of which earned its slot). Both were correct decisions discovered late. Raising the question at design time — "would the system be worse if we did not build this?" — is cheaper than discovering it at redesign time. The closeout walk applies this gate per session via the EAD (Eliminate / Automate / Delegate) question in `capabilities/closeout.md` and `core/self-improvement.md`.
 
+## Effort
+
+Start at high reasoning effort. Calibrate downward on replay-safe work only — a reasoning step, a retrieval, a dry run, never a step with side effects: run that work again at medium, compare, and drop to a lower level only when quality holds on the comparison. Effort is a per-task-class property, not a standing setting, and a level that survives the comparison buys the same result for less. Raise it again — to high, or higher where the surface offers one — for difficult reasoning and for careful retrieval over a large or noisy context, because a cheaper setting fails quietly there, returning a confident partial answer rather than an obvious error. Levels use the generic ladder (low / medium / high / higher where offered) and attach to a role; mapping a role and level onto a vendor knob is the operator layer's call.
+
 ## Decision Authority
 
 The AI recommends; the user decides. Two models agreeing is signal, not a mandate — model agreement (for example, a cross-model-review consensus) never overrides a stated user direction. But user direction is not a license to proceed past a safety guardrail, a harness contract, or a technical impossibility: when verified evidence contradicts an instruction, surface the conflict and pause for the user rather than silently complying or silently overriding. This sharpens the Working Rule that user direction and current verified evidence both override repo defaults.
@@ -79,16 +83,32 @@ This serves Boring is Beautiful — it does not override it. Search to find the 
 
 ## Delegating to subagents
 
-When work fans out to a delegated executor — a parallel subagent, a headless one-shot run, a lower-capability model — the brief for each delegated step carries a four-line contract, because happy-path plans strand cheap delegates on the hard 20%:
+When work fans out to a delegated executor — a parallel subagent, a headless one-shot run, a lower-capability model — the brief for each delegated step carries a six-line contract, because happy-path plans strand cheap delegates on the hard 20%:
 
 1. **Success signal** — what the executor should see if the step worked.
 2. **Likeliest failure + countermove** — the most probable way it breaks, and the first move to make when it does.
 3. **Stop-when** — the conditions under which to stop and report rather than improvise around a blocker. The list adds task-specific tripwires on top of the standing default — an unlisted blocker, and any irreversible or outward-facing action the brief does not explicitly grant, is also a stop, never a license to improvise.
 4. **Flag the unverified** — name anything that could not be verified instead of presenting it as done.
+5. **Exact gates** — the literal commands that prove the step, copied into the brief in the order they run. Where no command applies (a research or review step), name the observable proof that stands in for one. "Run the tests" is not a gate: an executor left to guess the invocation guesses a cheaper one, and a green it invented proves nothing.
+6. **Report shape** — the fixed shape the executor's closing message takes: what changed and why; files touched; gate outcomes with counts; deviations, open questions, and decisions the orchestrator should review. A fixed shape is what makes a shortfall visible instead of buried in narration.
 
-The brief fixes the destination and the guardrails; it does not script every step. A delegate carrying these four lines returns a clean, reported failure on the hard part instead of quietly inventing a workaround — which is exactly the 20% a happy-path plan leaves uncovered.
+The brief fixes the destination and the guardrails; it does not script every step. A delegate carrying these six lines returns a clean, reported failure on the hard part instead of quietly inventing a workaround — which is exactly the 20% a happy-path plan leaves uncovered.
 
-Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kernel.md)) as the standard preamble for delegated work — a compact restatement of the operating gates for executors that do not carry the full spine (subagents, headless one-shot runs, smaller-model renders). Prepend only the kernel's gate block (the file marks where the preamble starts — the delegator-facing intro stays behind). The kernel sets the posture (scope with a check, evidence before reasoning, adversarial self-review, verify at the claim layer, authority boundary, calibrated reporting); the four-line brief above sets the destination and guardrails for the specific step. Do not inject the kernel into full-spine sessions, which already carry these gates. The session-agent routing declaration's `Execution:` line (`capabilities/session-agent.md` R2b) is where a task is assigned to this contract — `delegated wave` or `delegated wave + panel` — rather than run inline.
+Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kernel.md)) as the standard preamble for delegated work — a compact restatement of the operating gates for executors that do not carry the full spine (subagents, headless one-shot runs, smaller-model renders). Prepend only the kernel's gate block (the file marks where the preamble starts — the delegator-facing intro stays behind). The kernel sets the posture (scope with a check, evidence before reasoning, adversarial self-review, verify at the claim layer, authority boundary, calibrated reporting); the six-line brief above sets the destination and guardrails for the specific step. Do not inject the kernel into full-spine sessions, which already carry these gates. The session-agent routing declaration's `Execution:` line (`capabilities/session-agent.md` R2b) is where a task is assigned to this contract — `delegated wave` or `delegated wave + panel` — rather than run inline.
+
+**Inspecting an executor's diff.** The orchestrator's own review step, run before the work is accepted — the executor's self-report is a claim, not evidence:
+
+- Read every edit to an existing test before trusting a green gate: a new skip, a disabled case, a deleted test, or a weakened assertion is a failure until justified.
+- Open every untracked file — a plain diff hides them.
+- Re-run the gates yourself and read their own summary lines.
+- Hold the diff against the brief: scope creep, shortfall, and judgment calls made quietly.
+- Sweep for hardcoded success paths and fake fallbacks that turn a gate green without the behavior.
+- Sweep for broad catches that swallow a failure instead of surfacing it.
+- Confirm every API, flag, and option used exists in the versions actually installed.
+- Reject a second HTTP client, error idiom, or state mechanism alongside the one already there.
+- Cut uncalled helpers and scaffolding the step never needed.
+
+(Pattern source: the MIT-licensed `amElnagdy/delegate-skills` repo's `writing-the-brief.md` + `review-and-land.md` — concepts adopted and adapted; wording ours.)
 
 ## Internal vs Boundary
 

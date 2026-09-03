@@ -174,6 +174,68 @@ assert_exit "post-cure: drift check passes after notification-key cure" 0 -- \
 
 rm -rf "$Q106P_OUT"
 
+# ---------- Test 2d: app-written tui mode cures as soft drift ----------------
+#
+# The harness app writes `tui` ("default" | "fullscreen") into the live
+# settings.json when the operator toggles the TUI mode. The spine-only base
+# ships no such key and the classifier's canonical baseline is opinion-free, so
+# every machine whose operator has toggled the mode drifts on exactly this key.
+# It is an operator-local preference of the same class as theme/effortLevel and
+# the notification flags, so --cure-soft-drift must absorb it — and the cure
+# re-render must CARRY it via preserve-live, or the cure drops it, the app
+# re-writes it, and the drift cycle restarts on the next check.
+
+Q106T_OUT="$(mktemp -d)/target"; mkdir -p "$Q106T_OUT"
+Q106T_ENV="$(mktemp -d)/local.env"
+make_local_env "$Q106T_ENV" "$Q106T_OUT"
+AI_CONFIG_LOCAL_ENV="$Q106T_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+
+# The app writes the TUI mode into the live settings.json.
+jq '. + {tui: "fullscreen"}' \
+  "$Q106T_OUT/settings.json" > "$Q106T_OUT/settings.json.tmp"
+mv "$Q106T_OUT/settings.json.tmp" "$Q106T_OUT/settings.json"
+
+AI_CONFIG_LOCAL_ENV="$Q106T_ENV" assert_exit \
+  "--cure-soft-drift absorbs the app-written tui mode" 0 -- \
+  bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106T_OUT" --cure-soft-drift
+
+# The cure re-render must CARRY the key via preserve-live — a cure that dropped
+# it would let the app re-write it and restart the drift cycle on the next
+# check. Caveat: the cure deliberately re-renders via the MAIN repo's
+# install.sh when it runs from a linked worktree (Gate 4, pinned by Test 11),
+# so from a worktree this assertion measures MAIN's overlay rather than this
+# tree's. It is SKIPPED there with the reason named — never silently — and the
+# overlay itself is pinned by compiler.test's preserve-live round-trip, which
+# renders with THIS tree's install.sh. On a normal checkout (CI's clean clone)
+# the assertion runs for real.
+Q106T_TOP=""; Q106T_MAIN=""
+if command -v git >/dev/null 2>&1; then
+  Q106T_TOP="$(cd "$REPO_ROOT" && git rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$Q106T_TOP" ] && Q106T_TOP="$(cd "$Q106T_TOP" 2>/dev/null && pwd -P || true)"
+  Q106T_COMMON="$(cd "$REPO_ROOT" && git rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$Q106T_COMMON" ]; then
+    case "$Q106T_COMMON" in
+      /*) Q106T_COMMON="$(cd "$Q106T_COMMON" 2>/dev/null && pwd -P || true)" ;;
+      *)  Q106T_COMMON="$(cd "$REPO_ROOT" && cd "$Q106T_COMMON" 2>/dev/null && pwd -P || true)" ;;
+    esac
+  fi
+  [ -n "$Q106T_COMMON" ] && Q106T_MAIN="$(cd "$Q106T_COMMON/.." 2>/dev/null && pwd -P || true)"
+fi
+if [ -n "$Q106T_TOP" ] && [ -n "$Q106T_MAIN" ] && [ "$Q106T_TOP" != "$Q106T_MAIN" ]; then
+  _skip "post-cure: tui preserved through cure re-render" \
+    "linked worktree — the cure re-renders via the MAIN repo's install.sh, so this would measure main's preserve-live overlay, not this tree's (compiler.test pins this tree's overlay)"
+  _skip "post-cure: drift check passes after tui cure" \
+    "linked worktree — same reason: a pass here would measure main's render, not this tree's"
+else
+  assert_eq "post-cure: tui preserved through cure re-render" "fullscreen" \
+    "$(jq -r 'if has("tui") then (.tui | tostring) else "DROPPED" end' "$Q106T_OUT/settings.json")"
+  assert_exit "post-cure: drift check passes after tui cure" 0 -- \
+    bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106T_OUT"
+fi
+unset Q106T_TOP Q106T_MAIN Q106T_COMMON
+
+rm -rf "$Q106T_OUT"
+
 # ---------- Test 3: Real drift still errors even with --cure-soft-drift ------
 #
 # Add a non-soft-key mutation (mutate a hook command) — adding the flag must
@@ -501,3 +563,15 @@ else
 fi
 
 rm -rf "$Q106K_OUT"
+
+# ---------- Twin parity: the soft-key allowlists are byte-identical ----------
+#
+# The PowerShell cure path is deferred on non-Windows runners, so a typo in
+# check-drift.ps1's $softKeys would otherwise reach main unseen. Pin the two
+# JSON arrays to each other (and pin `tui` on the bash side, which IS exercised
+# above) so a one-sided allowlist edit fails here, on every lane.
+Q106K_SH="$(/usr/bin/grep -o "soft_keys='\[[^]]*\]'" "$REPO_ROOT/scripts/check-drift.sh" | sed "s/^soft_keys=//; s/'//g")"
+Q106K_PS="$(/usr/bin/grep -o "\$softKeys = '\[[^]]*\]'" "$REPO_ROOT/scripts/check-drift.ps1" | sed "s/^\$softKeys = //; s/'//g")"
+assert_eq "soft-key allowlist is byte-identical across the bash and PowerShell twins" "$Q106K_SH" "$Q106K_PS"
+assert_contains "soft-key allowlist names tui on the bash side" "$Q106K_SH" '"tui"'
+unset Q106K_SH Q106K_PS

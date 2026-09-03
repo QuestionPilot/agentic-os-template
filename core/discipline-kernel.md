@@ -1,6 +1,6 @@
 # Discipline Kernel
 
-**For the delegator — this paragraph is not part of the preamble.** Prepend everything below the divider, verbatim, to delegated work that does not carry the full spine — a subagent brief, a headless one-shot run, a smaller-model harness render. Full-spine sessions already carry these gates and do not need them repeated. Pair the kernel with the four-line brief contract in `core/operating-system.md` → "Delegating to subagents": the kernel sets the posture; the brief sets the destination, the proof bar, and the task-specific guardrails. Each gate compresses a rule the framework already enforces in `core/` and `verification/`.
+**For the delegator — this paragraph is not part of the preamble.** Prepend everything below the divider, verbatim, to delegated work that does not carry the full spine — a subagent brief, a headless one-shot run, a smaller-model harness render. Full-spine sessions already carry these gates and do not need them repeated. Pair the kernel with the six-line brief contract in `core/operating-system.md` → "Delegating to subagents": the kernel sets the posture; the brief sets the destination, the proof bar, and the task-specific guardrails. Each gate compresses a rule the framework already enforces in `core/` and `verification/`.
 
 ---
 

@@ -12,8 +12,8 @@ lifecycle: shipped
 # Session Agent — Session Kickoff Orient + Routing
 
 The spine of every non-trivial task. **It auto-fires at session start** (the
-framework session-start hook directs its invocation first), then
-re-invokes on every non-trivial prompt to route to the smallest useful chain.
+framework session-start hook directs its invocation first) and re-invokes on every
+later non-trivial prompt to route to the smallest useful chain.
 
 Conditional depth — why each rule exists, per-surface alternatives, the full
 orchestration walk, case studies — lives in
@@ -26,9 +26,7 @@ must-fire rule is inline below.
 | **Mode 2 — Route only** | Every subsequent invocation | Route only (R1–R5). Mode 1's findings are still live in context. |
 
 **Selection rule:** if you have not invoked `session-agent` earlier in this
-session, run Mode 1. Otherwise run Mode 2. Each harness realization
-(`harnesses/<h>/capabilities/session-agent.md`) documents how its hook detects
-prior invocation.
+session, run Mode 1. Otherwise run Mode 2.
 
 ---
 
@@ -69,9 +67,8 @@ The session-start hook surfaces the last 7–10 days of framework commits in
 `additionalContext`. Scan them for tracker issue identifiers — the
 `<PREFIX>-<number>` shape, where **`<PREFIX>` is your workspace's issue prefix**
 (`TRACKER_ISSUE_PREFIX` in `local.env`). `TEAM` is only the documentation
-placeholder; a literal `TEAM-\d+` match finds nothing in a real workspace and
-silently disables the step. For any identifier whose parent
-project's memory headline says `COMPLETE` / `CLOSED` / `DONE`, that is a
+placeholder — a literal `TEAM-\d+` match finds nothing and silently disables the
+step. For any identifier whose parent project's memory headline says `COMPLETE` / `CLOSED` / `DONE`, that is a
 contradiction — flag it in the first turn and dig before trusting the headline:
 memory captures what was true when written, the window what is true now. Model
 judgment over first-turn context — no tool calls.
@@ -91,9 +88,8 @@ From the emitted JSON: `projects[]` (with each project's open issues),
 **When `surfaces.linear` is absent or errored, tracker collection is still
 MANDATORY:** perform the same projects-first cut BY HAND via the installed surface
 (MCP, or direct `linear` CLI calls) per `$AI_CONFIG_DIR/linear/linear-setup.md` §4,
-which carries the command shapes. A degraded surface downgrades the METHOD,
-never the requirement — "the helper reported the surface down" is not a licence to
-skip O3.
+which carries the command shapes. A degraded surface downgrades the METHOD, never
+the requirement.
 
 ### O4. Vault orient — entrypoint, operator-identity master, AND lesson index
 
@@ -102,8 +98,8 @@ vault:
 
 - `Read` `$OBSIDIAN_VAULT_PATH/START.md` — the vault's working rules.
 - `Read` the **operator-identity master note** the vault entrypoint designates (the
-  `harness: all`-scoped identity note; path is vault-specific) — its own mandatory
-  sub-step, not an optional follow of START.md's pointer.
+  `harness: all`-scoped identity note; path is vault-specific) — a mandatory
+  sub-step in its own right.
 - `Read` `$OBSIDIAN_VAULT_PATH/04-Lessons/_triggers.md` — the generated
   triggers-only view (link + **Trigger** per row) R1a matches; `_index.md` is the
   fallback when it is absent. Keep it in context; Mode 2 re-scans without
@@ -120,9 +116,8 @@ feedback headlines as the only recall surface.
 
 For any cross-issue claims in O1's memory bodies (claims about *other* issues'
 states — "`<PREFIX>`-X is Done", "`<PREFIX>`-Y is gating"), verify against the
-tracker at kickoff regardless; such claims are not self-correcting at the body-read
-step. Query each concrete `<PREFIX>-<number>` and compare its `state` with the claim
-(read command per `$AI_CONFIG_DIR/linear/linear-setup.md` §4). Flag mismatches in the
+tracker at kickoff; the body-read step does not self-correct them. Query each
+concrete `<PREFIX>-<number>` and compare its `state` with the claim (read command per `$AI_CONFIG_DIR/linear/linear-setup.md` §4). Flag mismatches in the
 orient summary.
 
 ### Mode 1 output
@@ -147,11 +142,11 @@ Then proceed to R1–R5 — the orient summary and the routing declaration land 
 same first response.
 
 The **Safety posture** line reports what orient DETECTED (`.safety`), never declared
-policy: posture, each tightening's name, and, when guardrails are configured but not
-in force, the `unresolved` count, so broken wiring never reads as "none configured". It
-defaults to `safe` and only adds tightenings (contract:
+policy: posture, each tightening's name, and the `unresolved` count when guardrails
+are configured but not in force, so broken wiring never reads as "none configured".
+It defaults to `safe` and only adds tightenings (contract:
 `core/operating-system.md` → Per-Run Safety Posture). Enforcement strength is
-harness-dependent, so never let the line claim hard enforcement it cannot see.
+harness-dependent — never let the line claim enforcement it cannot see.
 
 ---
 
@@ -186,8 +181,8 @@ For each match, `Read` the note **body** before executing. Bounds:
 - **Vault unreachable** (index never loaded at O4): match the autoloaded headlines
   only and declare `Lessons: index unreachable`.
 - **Recall out of scope by policy** (a sandboxed run, a worktree with no vault
-  mount): declare `Lessons: skipped — <reason>` rather than faking `none match`
-  (which claims a scan) or `index unreachable` (which claims a failure).
+  mount): declare `Lessons: skipped — <reason>`; `none match` claims a scan and
+  `index unreachable` claims a failure.
 
 The result feeds the `Lessons:` line at R5. If the operator later corrects you with
 a rule a recall surface should have matched, that is a **recall failure** — record it
@@ -204,9 +199,9 @@ If several capabilities could apply, the task spans surfaces, the quick-referenc
 gives no clean primary, the user asks which capability to use, or risk is high (the
 R2b list), run the **orchestration sub-routine**: classify the surface, name
 risk/output/evidence constraints, consult the catalog, compose the chain, and confirm
-with the user only when routing is non-obvious or risk is high. **Pick the smallest
-useful chain — one primary, secondaries only for evidence, risk, or output format;
-don't load whole families.**
+with the user only when routing is non-obvious or risk is high. **Pick the smallest useful chain — one
+primary, secondaries only for evidence, risk, or output format; don't load whole
+families.**
 Full CO1–CO5 detail and composition rules:
 `$AI_CONFIG_DIR/capabilities/reference/session-agent.md`.
 
@@ -223,12 +218,15 @@ change, walk top-down; the first rule that fires wins, and it lands on the
    size: the wave below (one lane is enough for a small change) plus a cross-model
    critic panel on the diff before merge.
 2. `delegated wave` — a multi-file build or ≥2 independent lanes: the orchestrator
-   writes each lane's four-line brief (`core/operating-system.md` → "Delegating to
+   writes each lane's six-line brief (`core/operating-system.md` → "Delegating to
    subagents", discipline-kernel preamble included), executors build, and the
    orchestrator inspects every diff and reruns the proof itself — never a rubber
    stamp.
 3. `inline` — the residue: a change neither rule above claimed (single-file
    fixes).
+
+A delegated value may name the lanes' effort level once the Effort rule's calibration
+(`core/operating-system.md` → Effort) has settled below high; omit it to run at high.
 
 Roles only — which models fill orchestrator, executor, and critic is the operator
 layer's call. The pre-edit gate does not check this line; it exists so the routing
@@ -266,6 +264,9 @@ Verification: <gate name from $AI_CONFIG_DIR/verification/>
 Linear gate: <ISSUE-ID or URL> | none — single-step | none — drafted
 Execution: inline | delegated wave | delegated wave + panel
 ```
+
+A delegated value may append its effort level: `Execution: delegated wave (effort:
+medium)`.
 
 When the orchestration sub-routine fired, extend with:
 

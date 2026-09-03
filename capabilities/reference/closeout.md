@@ -223,6 +223,56 @@ heading-embedded payloads). The primary defense is the provenance + quarantine
 discipline in the body: do not paste untrusted text into a trusted section in the
 first place.
 
+## Detail moved out of the body (skill-authoring §16)
+
+The body states the goal, the done test, and the boundaries; the enumerations a
+reader can reconstruct from the pointed-at canonical file live here.
+
+### Inputs — what a "new durable on-disk artifact directory" looks like
+
+A fresh `cross-model-out/<YYYY-MM-DD>-<slug>/` run dir, a new `docs/plans/<name>.md`.
+
+### Q3 — the seven steps of the promotion trust contract
+
+Provenance -> synthesize a script -> fixture test -> temp staging -> test must
+pass -> **explicit user approval** -> atomic commit. The fixture-test and
+explicit-approval steps are non-optional; never auto-promote an unvetted flow into
+the trusted skill set. Canonical: `skills/skill-authoring.md` principle 11.
+
+### Q4 — what "full metadata at create time" means
+
+Project, deliberate priority, at least one label, assignee, a relation back to the
+spawning issue; the template's deliberately-projectless / deliberately-unassigned
+escapes apply. Closeout speed is how bare issues are born, which is why the
+follow-up issue conforms to the canonical standard rather than to whatever is
+quickest at 2am.
+
+### Q7 — worked classification examples
+
+- `keep-because-<reason>`: `keep-because-cross-model-out-run-dir`,
+  `keep-because-PR-artifact`.
+- `clean-by-<date-or-owner>`: `clean-by-2026-06-25`.
+
+Default-keep is forbidden — every created artifact gets one of the three
+classifications; silence is not an option.
+
+### Pre-write gate — what remediation looks like
+
+Move a flagged payload under `## Raw observations` or drop it, fix each unresolved
+link to its full vault-relative path, replace each machine path with an agnostic
+reference (repo-relative, home-relative, or vault-relative), trim the over-budget
+project note — then re-run.
+
+### Distillation — why the `## Source Notes` linkage is separator-tolerant
+
+The completeness guard normalizes separators, so either slug style
+(`feedback-foo-bar` / `feedback_foo_bar`) resolves against the same lesson.
+
+### Why the vault audit stays clean after a drain
+
+The vault's audit (`bin/memory-vault-audit.js`) stays clean after a drain: session
+logs are append-only archives, so its orphan check exempts `30-Archive/Sessions/`.
+
 ## Why closeout has no enforcement hook
 
 The prior auto-enforcement was a `Stop` hook with memory-path and Q7-cleanup

@@ -357,6 +357,32 @@ any review that flags a body as over-budget (§5): apply these levers before cut
 (Pattern source for §§13–15: the MIT-licensed `mattpocock/skills` repo's `writing-for-agents`
 reference — concepts adopted and adapted 2026-08-07; wording ours.)
 
+## 16. Goal, not steps
+
+**Rule.** A body states the **goal**, the **done test**, and the **hard boundaries** — then
+stops. Drop the step script a current model derives on its own: the ordered how-to a
+competent engineer would reconstruct from the goal ("open the file, find the section, edit
+it, re-run the check") is re-read on every tool call and teaches nothing — pure
+multiplicative cost (§5). Two things stay. **Hooks, scripts, and deterministic gates** are
+code, not prose: a gate belongs in a bundled script the body wires and in a structural
+contract test, never in narrated steps (§1, §4's structural-not-prose contract).
+**Rare-path and safety guardrails** stay too — §12 classes them as invariants and §15
+exempts them from no-op pruning, because the happy path never exercises their trigger.
+This rule is coarser than §15's levers: it cuts a whole derivable procedure where they
+cut a sentence, so reach for them first and this one last.
+
+**Done test for a trim:** every must-fire rule (§3) and every contract test (§4) still
+passes, and the body is smaller. A cut that needs a test edited or a gate reworded was
+substance, not a step script — restore it. Conditional depth worth keeping moves to the
+capability's reference file rather than disappearing (§5).
+
+**Apply when:** authoring a body, reviewing one that has grown, or acting on an
+over-budget finding. **Not when:** the ordering itself is load-bearing — a staged trust
+contract (§11) or a git-workflow state machine (§10), where the sequence IS the rule.
+
+(Rule adopted from a current model prompting guide's "state the goal, not the steps"
+guidance; wording ours.)
+
 ---
 
 ## Related

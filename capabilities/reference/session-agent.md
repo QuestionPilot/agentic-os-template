@@ -144,7 +144,7 @@ shows (Surface / Risk / Primary / Secondary / Verification / Next action).
 ## Why R2b asks HOW, not only WHICH
 
 The delegated-execution method — the orchestrator plans and writes each lane's
-four-line brief, executors build, the orchestrator inspects every diff and reruns the
+six-line brief, executors build, the orchestrator inspects every diff and reruns the
 proof itself, and a cross-model critic panel reads the diff for framework or
 high-risk work — lived only as an operator-layer FACT. A rule that is loaded but has
 no step consuming it gets re-taught every session; the durable fix is a declaration
@@ -175,7 +175,7 @@ That ordering is the whole reason the step is a walk rather than a menu. The bod
 carries the same three rules in the same order; if the two ever disagree, the body
 is the contract and this page is the explanation.
 
-The four-line brief contract is `core/operating-system.md` → "Delegating to
+The six-line brief contract is `core/operating-system.md` → "Delegating to
 subagents"; the executor preamble it prepends is `core/discipline-kernel.md`.
 
 ## Token cost

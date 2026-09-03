@@ -652,9 +652,11 @@ generate_settings() {
   # otherwise ship the authoring operator's xhigh cost setting to every downstream
   # user). Once an operator has a live settings.json, THEIR plugin choices
   # (enabledPlugins), notification preferences (agentPushNotifEnabled,
-  # inputNeededNotifEnabled — both app-written), and UI/cost
-  # preferences (theme, effortLevel, outputStyle, switchModelsOnFlag) must survive a re-render; otherwise every
-  # install reverts them to base — re-enabling plugins the operator disabled,
+  # inputNeededNotifEnabled — both app-written), and UI/cost preferences
+  # (theme, effortLevel, outputStyle, switchModelsOnFlag, tui — the last
+  # app-written when the operator toggles the TUI mode) must survive a
+  # re-render; otherwise every install reverts them to base — re-enabling
+  # plugins the operator disabled,
   # dropping the notification keys, and discarding the operator's theme/effortLevel.
   # Mirrors the tracker/vault model: the brain stays opinion-free, the operator's
   # choices live in their local config, and the renderer bridges them without
@@ -674,8 +676,8 @@ generate_settings() {
      && jq -e 'type == "object"' "$live" >/dev/null 2>&1; then
     # enabledPlugins is plugin-id -> boolean; keep only boolean-valued entries so
     # a malformed/hostile nested value can't ride through into the render. theme,
-    # effortLevel + outputStyle are scalar string preferences; preserve only when
-    # they parse as strings so a hostile non-string value can't ride through.
+    # effortLevel, outputStyle + tui are scalar string preferences; preserve only
+    # when they parse as strings so a hostile non-string value can't ride through.
     # switchModelsOnFlag is the boolean member of the same family — type-checked
     # the same way, and kept in lockstep with check-drift.sh's soft-key
     # allowlist so a key the gate tolerates is a key the cure preserves.
@@ -689,6 +691,7 @@ generate_settings() {
       + (if (has("effortLevel") and (.effortLevel | type == "string")) then {effortLevel} else {} end)
       + (if (has("outputStyle") and (.outputStyle | type == "string")) then {outputStyle} else {} end)
       + (if (has("switchModelsOnFlag") and (.switchModelsOnFlag | type == "boolean")) then {switchModelsOnFlag} else {} end)
+      + (if (has("tui") and (.tui | type == "string")) then {tui} else {} end)
     ' "$live")" || overlay='{}'
   fi
 
