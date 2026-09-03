@@ -92,6 +92,8 @@ When work fans out to a delegated executor — a parallel subagent, a headless o
 5. **Exact gates** — the literal commands that prove the step, copied into the brief in the order they run. Where no command applies (a research or review step), name the observable proof that stands in for one. "Run the tests" is not a gate: an executor left to guess the invocation guesses a cheaper one, and a green it invented proves nothing.
 6. **Report shape** — the fixed shape the executor's closing message takes: what changed and why; files touched; gate outcomes with counts; deviations, open questions, and decisions the orchestrator should review. A fixed shape is what makes a shortfall visible instead of buried in narration.
 
+A brief that expects a lane to reuse a canonical helper names it (`<file>:<symbol>`) and says "copy verbatim"; the inspection below diffs the copy either way.
+
 The brief fixes the destination and the guardrails; it does not script every step. A delegate carrying these six lines returns a clean, reported failure on the hard part instead of quietly inventing a workaround — which is exactly the 20% a happy-path plan leaves uncovered.
 
 Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kernel.md)) as the standard preamble for delegated work — a compact restatement of the operating gates for executors that do not carry the full spine (subagents, headless one-shot runs, smaller-model renders). Prepend only the kernel's gate block (the file marks where the preamble starts — the delegator-facing intro stays behind). The kernel sets the posture (scope with a check, evidence before reasoning, adversarial self-review, verify at the claim layer, authority boundary, calibrated reporting); the six-line brief above sets the destination and guardrails for the specific step. Do not inject the kernel into full-spine sessions, which already carry these gates. The session-agent routing declaration's `Execution:` line (`capabilities/session-agent.md` R2b) is where a task is assigned to this contract — `delegated wave` or `delegated wave + panel` — rather than run inline.
@@ -107,6 +109,7 @@ Prepend the **discipline kernel** ([`core/discipline-kernel.md`](discipline-kern
 - Confirm every API, flag, and option used exists in the versions actually installed.
 - Reject a second HTTP client, error idiom, or state mechanism alongside the one already there.
 - Cut uncalled helpers and scaffolding the step never needed.
+- When a lane's diff copies a canonical helper (a function the framework already ships) — planned or not — compare the copy against the canonical with comments stripped, code lines only; anything beyond a rename is justified or rejected. A trimmed guard passes a green suite; the diff is what catches it, and a positive control confirms it.
 
 (Pattern source: the MIT-licensed `amElnagdy/delegate-skills` repo's `writing-the-brief.md` + `review-and-land.md` — concepts adopted and adapted; wording ours.)
 
