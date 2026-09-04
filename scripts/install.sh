@@ -614,13 +614,13 @@ hook_for_class() {
     codex:pre-edit-gate)     echo "session-agent.sh PreToolUse apply_patch" ;;
     hermes:pre-edit-gate)    echo "session-agent.sh pre_tool_call write_file|patch|terminal" ;;
     # Cursor preToolUse matchers filter by TOOL TYPE. A file edit reports
-    # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`); `Delete`
-    # is in the docs' matcher list but has not been observed firing, so it is
-    # included on the cheap-breadth argument — an inert alternation costs
-    # nothing, a missing mutation path costs enforcement (U6 tracks whether it
-    # fires). `Shell` stays deliberately excluded (same posture as claude/codex)
-    # because gating every shell command would block the orient itself. Both
-    # decisions are recorded in harnesses/cursor/adapter.md Fact 2.
+    # tool_name "Write" and a deletion reports tool_name "Delete" — both
+    # live-verified 2026-08-18 (headless `agent -p`; adapter U6, RESOLVED), so
+    # `Write|Delete` is live coverage of both file-mutation paths, not inert
+    # breadth. `Shell` stays deliberately excluded (same posture as
+    # claude/codex) because gating every shell command would block the orient
+    # itself. Both decisions are recorded in harnesses/cursor/adapter.md Fact 2
+    # + U6.
     cursor:pre-edit-gate)    echo "session-agent.sh preToolUse Write|Delete" ;;
     *) return 1 ;;
   esac

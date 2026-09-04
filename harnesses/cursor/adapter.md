@@ -222,6 +222,36 @@ commits, and (b) the session-agent invocation directive (the auto-fire mechanism
 for the spine capability — see `capabilities/session-agent.md` Mode 1). The
 build wires it unconditionally.
 
+**Conversation-id side file and the deny message.** That hook also writes state:
+whenever the `sessionStart` payload carries a usable id it writes that id to
+`<config>/agentic-os/current-session` (temp file then `mv` in the same
+directory, so there are no torn reads). The file is **per config home and
+last-writer-wins** — two conversations under one Cursor config home overwrite
+each other, so reading it can hand you ANOTHER conversation's id. The write is
+attempted independently of the directive gating — only the hook's own kill
+switch, a missing `jq`, or a swallowed filesystem failure prevents it — but the
+sentence naming the file rides only inside the session-agent directive block
+(`SA_BLOCK`), which is emitted only when
+`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE` is not `1` **and** `composer_mode` is not
+`ask`, and only after the write really landed (`SIDE_WRITTEN=1`) — so an
+ask-mode or directive-skipped start still overwrites the side file silently:
+**"no sentence" never means "no side file"**. The deny path *compensates* for
+that; it does not cover it, because the gate hook has no knowledge of the side
+file — the precedence below is a reader rule. Once the conversation id has
+passed validation, a `deny` `user_message` names the exact marker path for the
+blocked call (`<config>/agentic-os/gate-<conversation_id>`); the exceptions are
+the pre-validation denies (no `jq`, an unreadable payload, a missing or unusable
+id), which name the cause and the kill switch instead, and the
+jq-encoding-failure fallback, which names only the state dir. **When a deny and
+the side file disagree the deny wins** — it was keyed on the payload of the call
+actually blocked. Hence the source order in `capabilities/session-agent.md`:
+(1) the `sessionStart` directive, which names the whole marker path; (2) only if
+the directive is gone, one deliberate gate-less `Write`, whose deny names the
+exact path for THIS call; (3) only if neither exists, the side file — and never
+as a marker key unless this conversation is the most recent one started in this
+config home; (4) `Shell`, which is the marker-WRITE fallback when `Write` is
+denied for an unreadable payload, not an id source.
+
 **Kickoff reconciliation contract.** The hook's commit window is the freshness
 signal at session start; memory captures what was true when written, the commit
 log captures what is true now. The contract requiring the model to cross-check

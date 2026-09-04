@@ -16,14 +16,15 @@ lifecycle: shipped
   fire-and-forget on Cursor — it *surfaces* the directive, it cannot compel it;
   the `preToolUse` gate below is the enforcement half.
 - **Enforcement:** class `pre-edit-gate` → the `preToolUse` hook
-  `hooks/session-agent.sh`, matcher `Write` (a file edit reports
-  `tool_name: "Write"` — live-verified 2026-08-18). Blocks the first
-  file-modifying tool use unless the gate is open for this conversation. `Shell`
-  is deliberately outside the matcher (mirroring the Claude and Codex gates), so
-  a shell-driven write is a known, accepted bypass — this is a discipline net,
-  not a security boundary. Safety net only; the primary auto-fire is the
-  `sessionStart` directive. Kill switch: env `CLAUDE_SKIP_SESSION_AGENT=1` —
-  same name on every harness.
+  `hooks/session-agent.sh`, matcher `Write|Delete` (a file edit reports
+  `tool_name: "Write"`, a deletion `tool_name: "Delete"` — both live-verified
+  2026-08-18; `Delete` is gated for the same reason: it is a file-modifying
+  tool). Blocks the first file-modifying tool use unless the gate is open for
+  this conversation. `Shell` is deliberately outside the matcher (mirroring the
+  Claude and Codex gates), so a shell-driven write is a known, accepted bypass —
+  this is a discipline net, not a security boundary. Safety net only; the
+  primary auto-fire is the `sessionStart` directive. Kill switch: env
+  `CLAUDE_SKIP_SESSION_AGENT=1` — same name on every harness.
 - **Gate declaration (Cursor-specific):** Cursor exposes a `transcript_path` to
   hooks and the transcript really is on disk (JSONL under
   `<CURSOR_CONFIG_DIR>/projects/<slug>/agent-transcripts/`), but its format is
@@ -36,7 +37,8 @@ lifecycle: shipped
     gate-less `Write` — the deny names the exact marker path for THIS call;
     (3) only if neither exists, `<CURSOR_CONFIG_DIR>/agentic-os/current-session`
     — never as a marker key unless this conversation is the most recent one
-    started in this config home; (4) `Shell` last.
+    started in this config home; (4) `Shell` last — the marker-write fallback,
+    not an id source.
   - that side file is per config home and last-writer-wins, so reading it can
     hand you ANOTHER conversation's id: when it and a deny disagree, THE DENY WINS.
   - content: the full R5 declaration block, including the `Linear gate:` and
