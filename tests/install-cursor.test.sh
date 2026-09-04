@@ -53,7 +53,7 @@ if command -v jq >/dev/null 2>&1; then
   assert_exit "cursor hooks.json is valid JSON" 0 -- jq empty "$IC_OUT/hooks.json"
   assert_eq "hooks.json declares schema version 1" "1" \
     "$(jq -r '.version' "$IC_OUT/hooks.json")"
-  # Matcher `Write|Delete` (panel fix A4): Delete is docs-listed, cheap breadth.
+  # Matcher `Write|Delete` (panel fix A4): Delete is live-verified (adapter U6).
   assert_eq "the pre-edit gate is wired on preToolUse with the Write|Delete matcher" "Write|Delete" \
     "$(jq -r '.hooks.preToolUse[0].matcher' "$IC_OUT/hooks.json")"
   # Command path is double-quoted (panel fix A2): unquoted splits on spaces.

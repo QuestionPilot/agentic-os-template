@@ -551,11 +551,11 @@ function Resolve-HookForClass {
         'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'apply_patch' }
         'hermes:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'pre_tool_call'; matcher = 'write_file|patch|terminal' }
         # cursor: preToolUse matchers filter by TOOL TYPE. A file edit reports
-        # tool_name "Write" (live-verified 2026-08-18, headless `agent -p`);
-        # `Delete` is docs-listed but unobserved, included on the cheap-breadth
-        # argument (an inert alternation costs nothing; a missing mutation path
-        # costs enforcement). `Shell` stays deliberately excluded, same posture
-        # as claude/codex. See harnesses/cursor/adapter.md Fact 2. Mirrors
+        # tool_name "Write" and a deletion reports tool_name "Delete" — both
+        # live-verified 2026-08-18 (headless `agent -p`; adapter U6, RESOLVED),
+        # so `Write|Delete` is live coverage of both file-mutation paths, not
+        # inert breadth. `Shell` stays deliberately excluded, same posture as
+        # claude/codex. See harnesses/cursor/adapter.md Fact 2 + U6. Mirrors
         # install.sh hook_for_class (cursor:pre-edit-gate).
         'cursor:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'preToolUse'; matcher = 'Write|Delete' }
     }
