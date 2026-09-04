@@ -36,6 +36,23 @@
     exit:   always 0 (fail-OPEN — a surfacing hook must never break a session;
             deliberately NOT wired failClosed)
 
+    SIDE EFFECT — the conversation-id side file. When the payload carries a
+    usable id, the hook also writes it (one line, trailing LF) to
+    <config>/agentic-os/current-session, so a model that lost the injected
+    directive can re-read the id instead of spending a sacrificial deny to
+    discover it. Two properties a reader must know:
+      - it is PER CONFIG HOME, not per conversation;
+      - it is LAST-WRITER-WINS — two conversations started under one Cursor
+        config home overwrite each other, so the file means "the most recently
+        started conversation", nothing stronger. When a gate deny names a
+        different marker path than this file implies, the DENY wins: it was
+        keyed on the payload of the call that was actually blocked.
+    Every failure on this path is swallowed — a fail-OPEN surfacing hook must
+    never change its exit or stdout because a state write failed. What the
+    failure DOES change is the directive: the sentence naming the side file is
+    emitted only after the write really landed, so the hook never points the
+    model at a path holding a stale id or nothing at all.
+
 .NOTES
     Cursor's sessionStart is fire-and-forget: the agent loop does not wait for
     or enforce a blocking response (docs 2026-08-18). It also never fires in a
@@ -94,12 +111,56 @@ if ($sessionId -match '[/\\]' -or $sessionId -match '\s' -or
     $sessionId -eq '.' -or $sessionId -eq '..') {
     $sessionId = ''
 }
+$sideFile = "$chome/agentic-os/current-session"
+$sideWritten = $false
 if ($sessionId) {
     $gateHint = "$chome/agentic-os/gate-$sessionId"
     $gateHintNote = ''
+    # Publish the id to the side file (see the SIDE EFFECT note in the header).
+    # Temp-file-then-move within the same directory so a reader never observes a
+    # half-written id. WriteAllText with a BOM-less UTF8Encoding + an explicit
+    # "`n" keeps the bytes LF/no-BOM identical to the bash twin's `printf`
+    # (per [[reference_ps_port_traps]] trap #3 — Set-Content would emit CRLF).
+    # Wrapped whole: no failure here may change the hook's exit or stdout.
+    #
+    # $sideWritten flips ONLY after Move-Item and a Test-Path on the DESTINATION
+    # confirm the file is really there — Move-Item runs under
+    # -ErrorAction SilentlyContinue, so its failure is otherwise invisible. The
+    # directive below is gated on it: telling the model "re-read the id from
+    # <path>" when the write was swallowed would send it to a stale id (another
+    # conversation's) or to a file that does not exist.
+    try {
+        $stateDir = Join-Path $chome 'agentic-os'
+        if (-not (Test-Path -LiteralPath $stateDir)) {
+            New-Item -ItemType Directory -Path $stateDir -Force -ErrorAction SilentlyContinue | Out-Null
+        }
+        $sidTmp = Join-Path $stateDir ('.current-session.' + $PID)
+        $sidDest = Join-Path $stateDir 'current-session'
+        [System.IO.File]::WriteAllText($sidTmp, "$sessionId`n", [System.Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $sidTmp -Destination $sidDest -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $sidTmp) {
+            Remove-Item -LiteralPath $sidTmp -Force -ErrorAction SilentlyContinue
+        } elseif (Test-Path -LiteralPath $sidDest) {
+            $sideWritten = $true
+        }
+    } catch { }
 } else {
     $gateHint = "$chome/agentic-os/gate-<conversation_id>"
     $gateHintNote = " — substituting this conversation's id"
+}
+
+# The side-file sentence is emitted only when there really is a side file
+# carrying THIS conversation's id — never on the placeholder branch, never after
+# a swallowed write failure. (A here-string drops the newline before its closing
+# terminator, so this matches the bash twin's SIDE_NOTE byte for byte.)
+$sideNote = ''
+if ($sideWritten) {
+    $sideNote = @"
+ If you lose this conversation's id, re-read it from
+``$sideFile`` — this hook wrote it there at session start (last-writer-wins
+across concurrent conversations in this config home, so trust the gate deny's
+path over it).
+"@
 }
 
 # --- 1. agentic-os-template git-log block ----------------------------------
@@ -206,7 +267,7 @@ route only — Mode 1's orient outputs are still live in context).
 Before your first file-modifying tool use, open the edit gate: write your R5
 routing declaration (including the ``Linear gate:`` and ``Lessons:`` lines) to
 ``$gateHint``$gateHintNote. The realization body in the capability spells out
-the contract.
+the contract.$sideNote
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env ``CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1``.

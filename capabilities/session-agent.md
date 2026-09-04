@@ -281,6 +281,9 @@ Next action: <one sentence>
 
 After emitting, proceed with the work.
 
+If a later turn changes the `Execution:` value (e.g. `inline` → `delegated
+wave`), re-emit the declaration carrying the new value.
+
 Declare honestly: `none match`, `none — single-step`, and `inline` are valid only
 after the scan or the walk actually ran — written by reflex they defeat the gate.
 Full notes: the reference doc.

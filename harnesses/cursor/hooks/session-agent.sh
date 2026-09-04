@@ -81,7 +81,29 @@ fi
 
 allow() { printf '{"permission":"allow"}\n'; exit 0; }
 
+# Config-home resolution: hooks are installed at <config>/hooks/, so the
+# script's own parent is the authoritative home; the env var is the fallback.
+# (Cursor's own CLI reads CURSOR_CONFIG_DIR for cli-config.json relocation; the
+# framework build target uses the same variable by design — adapter.md.)
+#
+# Resolved HERE, above every deny branch, rather than after the id checks: it has
+# no dependency on the payload, so keeping it next to the other payload-free
+# setup makes the ordering constraint obvious. GATE_FILE stays empty until an id
+# has been validated, and that emptiness — not the resolution order — is what
+# deny() below keys its two user_message shapes on.
+CHOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
+[[ -n "$CHOME" ]] || CHOME="${CURSOR_CONFIG_DIR:-$HOME/.cursor}"
+STATE_DIR="$CHOME/agentic-os"
+GATE_FILE=""
+
 # deny <reason> — emit a deny decision and stop.
+#
+# The `user_message` is the half the OPERATOR sees, so it carries the one thing
+# that unblocks the session. Once the conversation id is known that is the marker
+# path itself, named in full. Before then — no jq, unparseable payload, missing
+# or unusable id — no marker can key this call AT ALL, so no path would help:
+# the message names the cause and the kill switch instead of sending the reader
+# to a file that cannot resolve their problem (cross-model panel finding).
 #
 # FAIL-OPEN GUARD: on Cursor an exit 0 with EMPTY stdout is not a decision, so
 # the action proceeds. `jq` is present (checked above) but can still fail at
@@ -90,9 +112,14 @@ allow() { printf '{"permission":"allow"}\n'; exit 0; }
 # than letting an empty stdout become a silent allow. The static message is
 # JSON-safe by construction: no double quotes, backslashes, or newlines.
 deny() {
-  local out=""
-  out="$(jq -nc --arg r "$1" \
-    '{permission: "deny", user_message: "agentic-os session-agent gate: blocked (see the agent message for the fix).", agent_message: $r}' 2>/dev/null)" || out=""
+  local out="" um=""
+  if [[ -n "$GATE_FILE" ]]; then
+    um="agentic-os session-agent gate: blocked — open it by writing the routing declaration to $GATE_FILE (see the agent message)."
+  else
+    um="agentic-os session-agent gate: blocked — this call carried no usable conversation id, so no marker can key it; see the agent message (kill switch: env CLAUDE_SKIP_SESSION_AGENT=1)."
+  fi
+  out="$(jq -nc --arg r "$1" --arg um "$um" \
+    '{permission: "deny", user_message: $um, agent_message: $r}' 2>/dev/null)" || out=""
   if [[ -n "$out" ]]; then
     printf '%s\n' "$out"
   else
@@ -138,13 +165,8 @@ case "$CONV_ID" in
     deny "The session-agent enforcement hook refuses a conversation_id containing non-printable characters. The gate fails closed. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1." ;;
 esac
 
-# Config-home resolution: hooks are installed at <config>/hooks/, so the
-# script's own parent is the authoritative home; the env var is the fallback.
-# (Cursor's own CLI reads CURSOR_CONFIG_DIR for cli-config.json relocation; the
-# framework build target uses the same variable by design — adapter.md.)
-CHOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
-[[ -n "$CHOME" ]] || CHOME="${CURSOR_CONFIG_DIR:-$HOME/.cursor}"
-STATE_DIR="$CHOME/agentic-os"
+# The id survived validation, so the marker path is composable — set it, which
+# also switches deny()'s user_message onto the path-naming shape above.
 GATE_FILE="$STATE_DIR/gate-$CONV_ID"
 
 # Reap stale gate markers (old conversations); never fails the hook.

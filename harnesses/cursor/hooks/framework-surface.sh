@@ -26,6 +26,24 @@
 #         Cursor's default for a non-0/non-2 exit is fail-open anyway, and this
 #         hook is deliberately NOT wired failClosed)
 #
+# SIDE EFFECT — the conversation-id side file. When the payload carries a usable
+# id, the hook also writes it (one line, trailing newline) to
+# <config>/agentic-os/current-session, so a model that lost the injected
+# directive can re-read the id with a single `cat` instead of spending a
+# sacrificial deny to discover it. Two properties a reader must know:
+#   - it is PER CONFIG HOME, not per conversation;
+#   - it is LAST-WRITER-WINS — two conversations started under one Cursor config
+#     home overwrite each other, so the file means "the most recently started
+#     conversation", nothing stronger. When a gate deny names a different marker
+#     path than this file implies, the DENY wins: it was keyed on the payload of
+#     the call that was actually blocked.
+# Every failure on this path is swallowed. A surfacing hook that changed its
+# exit or its stdout because a state write failed would be a fail-OPEN hook
+# breaking sessions for a convenience feature. What the failure DOES change is
+# the directive: the sentence naming the side file is emitted only after the
+# write really landed, so the hook never points the model at a path holding a
+# stale id or nothing at all.
+#
 # Cursor note: `sessionStart` is fire-and-forget — the agent loop does not wait
 # for or enforce a blocking response, and `continue:false` does not block
 # session creation (docs 2026-08-18). This hook only surfaces context, which is
@@ -73,12 +91,47 @@ SESSION_ID="$(printf '%s' "$EVENT_JSON" | jq -r '.session_id // .conversation_id
 case "$SESSION_ID" in
   ''|*/*|*\\*|.|..|*[[:space:]]*|*[![:print:]]*) SESSION_ID="" ;;
 esac
+SIDE_FILE="${CHOME}/agentic-os/current-session"
+SIDE_WRITTEN=0
 if [[ -n "$SESSION_ID" ]]; then
   GATE_HINT="${CHOME}/agentic-os/gate-${SESSION_ID}"
   GATE_HINT_NOTE=""
+  # Publish the id to the side file (see the SIDE EFFECT note in the header).
+  # Temp-file-then-mv within the same directory so a reader never observes a
+  # half-written id; every step is silenced and none of them can change the
+  # hook's exit or stdout.
+  #
+  # SIDE_WRITTEN flips ONLY after the mv actually succeeded. The directive below
+  # is gated on it: a hook that told the model "re-read the id from <path>" while
+  # the write had been swallowed would send it to a stale id (another
+  # conversation's) or to a file that does not exist — worse than saying nothing.
+  if [[ -n "$CHOME" ]] && mkdir -p "${CHOME}/agentic-os" 2>/dev/null; then
+    SID_TMP="${CHOME}/agentic-os/.current-session.$$"
+    if printf '%s\n' "$SESSION_ID" > "$SID_TMP" 2>/dev/null; then
+      if mv -f "$SID_TMP" "$SIDE_FILE" 2>/dev/null; then
+        SIDE_WRITTEN=1
+      else
+        rm -f "$SID_TMP" 2>/dev/null
+      fi
+    else
+      rm -f "$SID_TMP" 2>/dev/null
+    fi
+    unset SID_TMP
+  fi
 else
   GATE_HINT="${CHOME}/agentic-os/gate-<conversation_id>"
   GATE_HINT_NOTE=" — substituting this conversation's id"
+fi
+
+# The side-file sentence is emitted only when there really is a side file
+# carrying THIS conversation's id — never on the placeholder branch, never after
+# a swallowed write failure.
+SIDE_NOTE=""
+if [[ "$SIDE_WRITTEN" == "1" ]]; then
+  SIDE_NOTE=" If you lose this conversation's id, re-read it from
+\`${SIDE_FILE}\` — this hook wrote it there at session start (last-writer-wins
+across concurrent conversations in this config home, so trust the gate deny's
+path over it)."
 fi
 
 # --- 1. agentic-os-template git-log block ----------------------------------
@@ -180,7 +233,7 @@ route only — Mode 1's orient outputs are still live in context).
 Before your first file-modifying tool use, open the edit gate: write your R5
 routing declaration (including the \`Linear gate:\` and \`Lessons:\` lines) to
 \`${GATE_HINT}\`${GATE_HINT_NOTE}. The realization body in the capability spells
-out the contract.
+out the contract.${SIDE_NOTE}
 
 Skip this directive if you have already invoked session-agent this session.
 Disable the directive entirely: env \`CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1\`."
