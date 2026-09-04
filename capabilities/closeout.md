@@ -236,10 +236,13 @@ skips the steps.
    `$AI_CONFIG_DIR/scripts/check-machine-paths.sh --draft <memory-note-path>` —
    not with the full gate: a memory note links by `[[slug]]` per the memory
    index contract, and the vault wikilink check resolves vault paths, not memory
-   slugs, so it always fails there. Then confirm the vault audit stays clean
-   (`node bin/memory-vault-audit.js`). A non-zero exit from ANY command in this
-   step, or a non-clean audit, PAUSES the distillation: remediate before the
-   output block reports it ran. Never report a silent success.
+   slugs, so it always fails there. Then confirm the vault audit stays clean —
+   from the vault root, run the audit command the vault's own `START.md`
+   Health Check block documents; the shipped scaffold's
+   `node bin/memory-vault-audit.js` is the fallback only when that block
+   documents none. A non-zero exit from ANY command in this step, or a
+   non-clean audit, PAUSES the distillation: remediate before the output
+   block reports it ran. Never report a silent success.
 5. **Keep, don't delete, the native note.** The `feedback_*` note stays in the native
    store as the hot-recall copy; the `04-Lessons` note is now its durable home — they
    coexist by design (`core/memory-model.md` → Cache Contract).
