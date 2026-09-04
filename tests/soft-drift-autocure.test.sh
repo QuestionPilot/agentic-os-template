@@ -118,7 +118,31 @@ AI_CONFIG_LOCAL_ENV="$Q106M_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null
 # Operator sets soft keys, then re-render so the manifest records them (preserve-live).
 jq '. + {theme: "dark", effortLevel: "xhigh"}' "$Q106M_OUT/settings.json" > "$Q106M_OUT/settings.json.tmp"
 mv "$Q106M_OUT/settings.json.tmp" "$Q106M_OUT/settings.json"
-AI_CONFIG_LOCAL_ENV="$Q106M_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>&1
+# Exit-checked. A swallowed re-render failure leaves the manifest at the FIRST
+# render while the live settings.json already carries the operator keys the
+# fixture itself just wrote — the "recorded before strip" assertion would then
+# pass without preserve-live ever running. (The PS twin's Invoke-Q106Reinstall
+# throws on a non-zero exit for exactly this reason.)
+AI_CONFIG_LOCAL_ENV="$Q106M_ENV" assert_exit "preserve-live re-render succeeds (exit 0)" 0 -- \
+  bash "$REPO_ROOT/scripts/install.sh"
+# "Recorded" is a claim about the MANIFEST, so read it from there, not from the
+# live file the fixture wrote. install.sh write_manifest stores generated outputs
+# as {path: sha256} — no values — so the manifest-side proof is that its
+# settings.json hash matches the live file's bytes (the re-render recorded THIS
+# file); the live file's operator key is then the second assertion below.
+# NOT skippable on a missing sha256 tool: the PS twin's Get-FileHash cannot
+# skip this witness, so a bash-side _skip would be a one-sided hole in the
+# twins. With neither tool present the hash resolves EMPTY and the assertion
+# FAILS loudly against the manifest's hex digest — a named red, not a silence.
+q106m_sha() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum < "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 < "$1" | cut -d' ' -f1
+  else printf ''; fi
+}
+assert_eq "preserve-live re-render recorded the live settings.json in the manifest" \
+  "$(jq -r '.generated["settings.json"] // "MISSING"' "$Q106M_OUT/.build-manifest.json")" \
+  "$(q106m_sha "$Q106M_OUT/settings.json")"
+unset -f q106m_sha
 assert_eq "preserve-live recorded operator effortLevel before strip" "xhigh" \
   "$(jq -r '.effortLevel // "MISSING"' "$Q106M_OUT/settings.json")"
 # The Claude Code app strips both soft keys from the live file.
@@ -470,16 +494,21 @@ rm -rf "$Q106L_OUT"
 
 if [ -d "$REPO_ROOT/.git" ] || [ -f "$REPO_ROOT/.git" ]; then
   # Resolve the main repo root the same way check-drift.sh does.
+  # Physical paths on BOTH sides (the Test 2d idiom): `pwd` is logical, so a
+  # symlinked checkout (macOS /var -> /private/var) yields two spellings of the
+  # same dir and the worktree/main comparison below — and the rendered-path
+  # assertions — compare unequal strings for equal directories.
   TOPLEVEL="$(cd "$REPO_ROOT" && git rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$TOPLEVEL" ] && TOPLEVEL="$(cd "$TOPLEVEL" 2>/dev/null && pwd -P || true)"
   COMMON_DIR="$(cd "$REPO_ROOT" && git rev-parse --git-common-dir 2>/dev/null || true)"
   if [ -n "$COMMON_DIR" ]; then
     case "$COMMON_DIR" in
-      /*) ;;
-      *)  COMMON_DIR="$(cd "$REPO_ROOT" && cd "$COMMON_DIR" 2>/dev/null && pwd || true)" ;;
+      /*) COMMON_DIR="$(cd "$COMMON_DIR" 2>/dev/null && pwd -P || true)" ;;
+      *)  COMMON_DIR="$(cd "$REPO_ROOT" && cd "$COMMON_DIR" 2>/dev/null && pwd -P || true)" ;;
     esac
   fi
   if [ -n "$COMMON_DIR" ]; then
-    MAIN_ROOT_EXPECTED="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || true)"
+    MAIN_ROOT_EXPECTED="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P || true)"
   else
     MAIN_ROOT_EXPECTED=""
   fi
@@ -496,6 +525,42 @@ if [ -d "$REPO_ROOT/.git" ] || [ -f "$REPO_ROOT/.git" ]; then
     AI_CONFIG_LOCAL_ENV="$Q106I_ENV" assert_exit \
       "worktree case: --cure-soft-drift sources install.sh from main repo (still cures)" 0 -- \
       bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$Q106I_OUT" --cure-soft-drift
+
+    # Exit 0 alone only proves SOME install.sh cured. Prove it was MAIN's:
+    # install.sh substitutes @@AI_CONFIG_DIR@@ with its OWN $repo_root into the
+    # rendered hook scripts, so hooks/framework-surface.sh carries the repo root
+    # of whichever install.sh ran. (settings.json cannot witness this — its hook
+    # commands are $TARGET-relative.) Two spellings of the worktree are excluded:
+    # the physical one, and $REPO_ROOT as spelled — the latter is what a broken
+    # Gate 4 would actually bake, since check-drift.sh derives its fallback
+    # install.sh path from its own logical location.
+    # Fail-loud pins FIRST. assert_contains with an empty needle is a tautology
+    # and assert_not_contains against an empty haystack is another, so an
+    # unresolved MAIN_ROOT_EXPECTED / TOPLEVEL or a missing hook file would green
+    # the main-root witness below. Pin every input non-empty, same shape as the
+    # Q106K_* allowlist-extraction pins.
+    Q106I_HOOK_PATH="$Q106I_OUT/hooks/framework-surface.sh"
+    assert_eq "worktree case: MAIN_ROOT_EXPECTED resolved non-empty" 1 \
+      "$([ -n "$MAIN_ROOT_EXPECTED" ] && echo 1 || echo 0)"
+    assert_eq "worktree case: TOPLEVEL resolved non-empty" 1 \
+      "$([ -n "$TOPLEVEL" ] && echo 1 || echo 0)"
+    assert_file "worktree case: cure rendered the framework-surface hook" "$Q106I_HOOK_PATH"
+    Q106I_HOOK="$(cat "$Q106I_HOOK_PATH" 2>/dev/null || true)"
+    assert_eq "worktree case: rendered hook body non-empty" 1 \
+      "$([ -n "$Q106I_HOOK" ] && echo 1 || echo 0)"
+    # Needles are the FULL delimited assignment, not a raw substring: the hook
+    # source line is `AI_CONFIG_DIR="@@AI_CONFIG_DIR@@"`, so the rendered form is
+    # AI_CONFIG_DIR="<root>" and the closing quote follows the path. A raw
+    # substring would false-RED a correct main root at .../os-template against a
+    # worktree at .../os, and false-GREEN a nested worktree whose path contains
+    # the main root.
+    assert_contains "worktree case: cured hook carries the MAIN repo root" \
+      "$Q106I_HOOK" "AI_CONFIG_DIR=\"$MAIN_ROOT_EXPECTED\""
+    assert_not_contains "worktree case: cured hook carries no worktree path (physical)" \
+      "$Q106I_HOOK" "AI_CONFIG_DIR=\"$TOPLEVEL\""
+    assert_not_contains "worktree case: cured hook carries no worktree path (as spelled in REPO_ROOT)" \
+      "$Q106I_HOOK" "AI_CONFIG_DIR=\"$REPO_ROOT\""
+    unset Q106I_HOOK Q106I_HOOK_PATH
 
     rm -rf "$Q106I_OUT"
   else
@@ -572,6 +637,14 @@ rm -rf "$Q106K_OUT"
 # above) so a one-sided allowlist edit fails here, on every lane.
 Q106K_SH="$(/usr/bin/grep -o "soft_keys='\[[^]]*\]'" "$REPO_ROOT/scripts/check-drift.sh" | sed "s/^soft_keys=//; s/'//g")"
 Q106K_PS="$(/usr/bin/grep -o "\$softKeys = '\[[^]]*\]'" "$REPO_ROOT/scripts/check-drift.ps1" | sed "s/^\$softKeys = //; s/'//g")"
+# Both extractions can match NOTHING (a renamed variable, a reformatted literal),
+# and "" == "" would then pass the equality assertion below while comparing two
+# absences. Pin each side non-empty first, so a silently-broken regex FAILS here
+# instead of greening the parity claim.
+assert_eq "soft-key allowlist extraction from check-drift.sh is non-empty" 1 \
+  "$([ -n "$Q106K_SH" ] && echo 1 || echo 0)"
+assert_eq "soft-key allowlist extraction from check-drift.ps1 is non-empty" 1 \
+  "$([ -n "$Q106K_PS" ] && echo 1 || echo 0)"
 assert_eq "soft-key allowlist is byte-identical across the bash and PowerShell twins" "$Q106K_SH" "$Q106K_PS"
 assert_contains "soft-key allowlist names tui on the bash side" "$Q106K_SH" '"tui"'
 unset Q106K_SH Q106K_PS

@@ -181,6 +181,17 @@ $settingsPath = Join-Path $Q106M.Out 'settings.json'
 Invoke-Jq-File -Path $settingsPath -Filter '. + {theme: "dark", effortLevel: "xhigh"}'
 # Re-render so the manifest records the operator soft keys (preserve-live).
 Invoke-Q106Reinstall -Target $Q106M
+# "Recorded" is a claim about the MANIFEST, so read it from there, not from the
+# live file the fixture wrote. The manifest stores generated outputs as
+# {path: sha256} — no values — so the manifest-side proof is that its
+# settings.json hash matches the live file's bytes (the re-render recorded THIS
+# file); the live file's operator key is then the second assertion below.
+# (Invoke-Q106Reinstall already throws on a non-zero re-render exit — the .sh
+# twin's `assert_exit ... 0` on its second install.sh run is that same guard.)
+$q106mManifest = Join-Path $Q106M.Out '.build-manifest.json'
+$q106mRecorded = Invoke-Jq-Read -Path $q106mManifest -Filter '.generated["settings.json"] // "MISSING"'
+$q106mLiveHash = (Get-FileHash -LiteralPath $settingsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Assert-Eq 't-106.test: preserve-live re-render recorded the live settings.json in the manifest' $q106mRecorded $q106mLiveHash
 Assert-Eq 't-106.test: preserve-live recorded operator effortLevel before strip' 'xhigh' (Invoke-Jq-Read -Path $settingsPath -Filter '.effortLevel // "MISSING"')
 
 # The Claude Code app strips both soft keys from the live file.
@@ -420,19 +431,24 @@ $inGitRepo = (Test-Path -LiteralPath $gitMarker1)
 if ($inGitRepo) {
     Push-Location $env:REPO_ROOT
     try {
+        # Physical paths on BOTH sides. Resolve-Path does NOT resolve symlinks,
+        # so a symlinked checkout (macOS /var -> /private/var) yields two
+        # spellings of the same dir and the worktree/main comparison below — and
+        # the rendered-path assertions — compare unequal strings for equal
+        # directories. Get-Q106PhysicalPath is the file's existing `pwd -P`
+        # equivalent, already used by Test 2d.
         $TOPLEVEL = & git rev-parse --show-toplevel 2>$null
         if ($TOPLEVEL -is [array]) { $TOPLEVEL = $TOPLEVEL -join '' }
+        $TOPLEVEL = Get-Q106PhysicalPath "$TOPLEVEL"
         $COMMON_DIR = & git rev-parse --git-common-dir 2>$null
         if ($COMMON_DIR -is [array]) { $COMMON_DIR = $COMMON_DIR -join '' }
         if ($COMMON_DIR -and -not [IO.Path]::IsPathRooted($COMMON_DIR)) {
-            $COMMON_DIR = (Resolve-Path -LiteralPath (Join-Path $env:REPO_ROOT $COMMON_DIR)).Path
+            $COMMON_DIR = Join-Path $env:REPO_ROOT $COMMON_DIR
         }
+        if ($COMMON_DIR) { $COMMON_DIR = Get-Q106PhysicalPath $COMMON_DIR }
         $MAIN_ROOT_EXPECTED = ''
         if ($COMMON_DIR) {
-            $parent = Split-Path -Parent $COMMON_DIR
-            if (Test-Path -LiteralPath $parent) {
-                $MAIN_ROOT_EXPECTED = (Resolve-Path -LiteralPath $parent).Path
-            }
+            $MAIN_ROOT_EXPECTED = Get-Q106PhysicalPath (Split-Path -Parent $COMMON_DIR)
         }
     } finally {
         Pop-Location
@@ -450,6 +466,40 @@ if ($inGitRepo) {
         } finally {
             Remove-Item Env:AI_CONFIG_LOCAL_ENV -ErrorAction SilentlyContinue
         }
+
+        # Exit 0 alone only proves SOME install script cured. Prove it was
+        # MAIN's: the install script substitutes @@AI_CONFIG_DIR@@ with its OWN
+        # repo root into the rendered hook scripts, so
+        # hooks/framework-surface.ps1 carries the repo root of whichever script
+        # ran. (settings.json cannot witness this — its hook commands are
+        # target-relative.) Two spellings of the worktree are excluded: the
+        # physical one, and REPO_ROOT as spelled — the latter is what a broken
+        # Gate 4 would actually bake, since check-drift.ps1 derives its fallback
+        # install-script path from its own location.
+        # Fail-loud pins FIRST. Assert-Contains with an empty needle is a
+        # tautology (String.Contains('') is always true) and Assert-NotContains
+        # against an empty haystack is another, so an unresolved
+        # MAIN_ROOT_EXPECTED / TOPLEVEL or a missing hook file would green the
+        # main-root witness below. Pin every input non-empty, same shape as the
+        # q106k* allowlist-extraction pins.
+        $q106iHookPath = Join-Path $Q106I.Out 'hooks' 'framework-surface.ps1'
+        Assert-Eq 't-106.test: worktree case: MAIN_ROOT_EXPECTED resolved non-empty' '1' ([string][int](([string]$MAIN_ROOT_EXPECTED).Length -gt 0))
+        Assert-Eq 't-106.test: worktree case: TOPLEVEL resolved non-empty' '1' ([string][int](([string]$TOPLEVEL).Length -gt 0))
+        Assert-File 't-106.test: worktree case: cure rendered the framework-surface hook' $q106iHookPath
+        $q106iHook = ''
+        if (Test-Path -LiteralPath $q106iHookPath) {
+            $q106iHook = [string](Get-Content -LiteralPath $q106iHookPath -Raw)
+        }
+        Assert-Eq 't-106.test: worktree case: rendered hook body non-empty' '1' ([string][int]($q106iHook.Length -gt 0))
+        # Needles are the FULL delimited assignment, not a raw substring: the PS
+        # hook source line is `$AI_CONFIG_DIR = '@@AI_CONFIG_DIR@@'`, so the
+        # rendered form is  $AI_CONFIG_DIR = '<root>'  and the closing quote
+        # follows the path. A raw substring would false-RED a correct main root
+        # at .../os-template against a worktree at .../os, and false-GREEN a
+        # nested worktree whose path contains the main root.
+        Assert-Contains 't-106.test: worktree case: cured hook carries the MAIN repo root' $q106iHook "`$AI_CONFIG_DIR = '$MAIN_ROOT_EXPECTED'"
+        Assert-NotContains 't-106.test: worktree case: cured hook carries no worktree path (physical)' $q106iHook "`$AI_CONFIG_DIR = '$TOPLEVEL'"
+        Assert-NotContains 't-106.test: worktree case: cured hook carries no worktree path (as spelled in REPO_ROOT)' $q106iHook "`$AI_CONFIG_DIR = '$env:REPO_ROOT'"
 
         Remove-Item -LiteralPath $Q106I.Root -Recurse -Force -ErrorAction SilentlyContinue
     } else {
@@ -502,5 +552,11 @@ Remove-Item -LiteralPath $Q106K.Root -Recurse -Force -ErrorAction SilentlyContin
 $q106kShPath = Join-Path (Split-Path -Parent $CHECK_DRIFT_PS1) 'check-drift.sh'
 $q106kSh = [regex]::Match((Get-Content -LiteralPath $q106kShPath -Raw), "soft_keys='(\[[^\]]*\])'").Groups[1].Value
 $q106kPs = [regex]::Match((Get-Content -LiteralPath $CHECK_DRIFT_PS1 -Raw), "\`$softKeys = '(\[[^\]]*\])'").Groups[1].Value
+# Both extractions can match NOTHING (a renamed variable, a reformatted literal),
+# and '' -ceq '' would then pass the equality assertion below while comparing two
+# absences. Pin each side non-empty first, so a silently-broken regex FAILS here
+# instead of greening the parity claim.
+Assert-Eq 't-106.test: soft-key allowlist extraction from check-drift.sh is non-empty' '1' ([string][int](([string]$q106kSh).Length -gt 0))
+Assert-Eq 't-106.test: soft-key allowlist extraction from check-drift.ps1 is non-empty' '1' ([string][int](([string]$q106kPs).Length -gt 0))
 Assert-Eq 't-106.test: soft-key allowlist is byte-identical across the bash and PowerShell twins' $q106kSh $q106kPs
 Assert-Contains 't-106.test: soft-key allowlist names tui' $q106kPs '"tui"'
