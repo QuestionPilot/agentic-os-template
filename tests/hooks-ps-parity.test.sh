@@ -651,6 +651,17 @@ if command -v pwsh >/dev/null 2>&1; then
       | jq -r '.permission // "none"' 2>/dev/null || printf 'invoke-failed'
   }
 
+  # The two halves of the decision: user_message is what the Cursor operator
+  # reads, agent_message is what the model reads.
+  hkcu_message() {
+    printf '%s' "$1" | pwsh -NoProfile -File "$hkcu_tmp/hooks/session-agent.ps1" 2>/dev/null \
+      | jq -r '.user_message // ""' 2>/dev/null || printf 'invoke-failed'
+  }
+  hkcu_agent_message() {
+    printf '%s' "$1" | pwsh -NoProfile -File "$hkcu_tmp/hooks/session-agent.ps1" 2>/dev/null \
+      | jq -r '.agent_message // ""' 2>/dev/null || printf 'invoke-failed'
+  }
+
   assert_eq "hooks-ps-parity: cursor gate .ps1 denies a Write before the gate is open" "deny" \
     "$(hkcu_decision '{"conversation_id":"'"$hkcu_cid"'","tool_name":"Write","tool_input":{"file_path":"/tmp/x.txt","content":"hi"},"cwd":"/tmp"}')"
 
@@ -709,9 +720,102 @@ Linear gate: none - single-step' --arg id "$hkcu_cid" \
   assert_eq "hooks-ps-parity: cursor framework-surface.ps1 kill switch silences it" "" \
     "$(printf '{"session_id":"x"}' | CLAUDE_SKIP_FRAMEWORK_SURFACE=1 pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null)"
 
+  # THE DENY NAMES THE MARKER PATH. `user_message` is the only half the operator
+  # sees; a fixed "blocked, see the agent message" text made every fresh
+  # conversation spend a sacrificial deny discovering where to write. BOTH halves
+  # must carry the path — the model reads agent_message, and that copy is what
+  # the realization's "one deliberate gate-less Write" step relies on.
+  hkcu_cid2="shtestconv02"
+  hkcu_deny_payload='{"conversation_id":"'"$hkcu_cid2"'","tool_name":"Write","tool_input":{"file_path":"/tmp/other.txt","content":"hi"},"cwd":"/tmp"}'
+  assert_contains "hooks-ps-parity: cursor deny .ps1 user_message names the literal gate path" \
+    "$(hkcu_message "$hkcu_deny_payload")" "$hkcu_tmp/agentic-os/gate-$hkcu_cid2"
+  assert_contains "hooks-ps-parity: cursor deny .ps1 agent_message names the same gate path" \
+    "$(hkcu_agent_message "$hkcu_deny_payload")" "$hkcu_tmp/agentic-os/gate-$hkcu_cid2"
+
+  # EARLY denies cannot key ANY marker — there is no usable conversation id, so
+  # no path would unblock the call. The message names the CAUSE and the kill
+  # switch instead of sending the reader to a dead-end file.
+  for hkcu_early in '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}' \
+                    '{"conversation_id":"../../etc","tool_name":"Write"}' \
+                    'not json at all'; do
+    hkcu_early_msg="$(hkcu_message "$hkcu_early")"
+    assert_contains "hooks-ps-parity: cursor early deny .ps1 names the no-usable-id cause" \
+      "$hkcu_early_msg" "no usable conversation id"
+    assert_contains "hooks-ps-parity: cursor early deny .ps1 names the kill switch" \
+      "$hkcu_early_msg" "CLAUDE_SKIP_SESSION_AGENT=1"
+  done
+
+  # The conversation-id side file. sessionStart publishes the id to
+  # <config>/agentic-os/current-session so a model that lost the injected
+  # directive can read it back. The write must never change this hook's exit or
+  # stdout — it is fail-OPEN, and a broken state write may not break a session.
+  hkcu_side="$hkcu_tmp/agentic-os/current-session"
+  rm -f "$hkcu_side"
+  hkcu_side_rc=0
+  hkcu_side_out="$(printf '{"session_id":"abc123","composer_mode":"agent"}' \
+    | pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null)" || hkcu_side_rc=$?
+  assert_eq "hooks-ps-parity: cursor framework-surface.ps1 exits 0 while writing the side file" "0" "$hkcu_side_rc"
+  assert_contains "hooks-ps-parity: cursor framework-surface.ps1 still emits additional_context" \
+    "$hkcu_side_out" "additional_context"
+  assert_eq "hooks-ps-parity: cursor framework-surface.ps1 writes session_id to the side file" "abc123" \
+    "$(cat "$hkcu_side" 2>/dev/null)"
+  # LF + no BOM + exactly one line: byte-identical to the bash twin's printf.
+  assert_eq "hooks-ps-parity: cursor .ps1 side file is 7 bytes, LF-terminated, no BOM" "7" \
+    "$(wc -c < "$hkcu_side" 2>/dev/null | tr -d ' ')"
+  assert_contains "hooks-ps-parity: cursor .ps1 directive names the side file as the id re-read path" \
+    "$hkcu_side_out" "agentic-os/current-session"
+
+  # OVERWRITE + the `conversation_id` spelling in one fixture: the file is NOT
+  # deleted between the two runs, so this also pins last-writer-wins — and on
+  # this twin it is the only coverage of PS `Move-Item -Force` over an EXISTING
+  # destination.
+  printf '{"conversation_id":"def456","composer_mode":"agent"}' \
+    | pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" >/dev/null 2>&1
+  assert_eq "hooks-ps-parity: cursor .ps1 second sessionStart overwrites the side file" "def456" \
+    "$(cat "$hkcu_side" 2>/dev/null)"
+  assert_eq "hooks-ps-parity: cursor .ps1 overwritten side file is 7 bytes, LF, no BOM" "7" \
+    "$(wc -c < "$hkcu_side" 2>/dev/null | tr -d ' ')"
+
+  # An id the gate would refuse never forms a usable marker path, so publishing
+  # it would hand the model a broken one — write nothing, and say nothing about
+  # a side file (a directive naming a path holding some OTHER conversation's id
+  # is worse than no sentence at all).
+  rm -f "$hkcu_side"
+  hkcu_side_rc=0
+  hkcu_side_out="$(printf '{"session_id":"a/b","composer_mode":"agent"}' \
+    | pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null)" || hkcu_side_rc=$?
+  assert_eq "hooks-ps-parity: cursor .ps1 unsafe session id still exits 0" "0" "$hkcu_side_rc"
+  assert_contains "hooks-ps-parity: cursor .ps1 unsafe session id still emits additional_context" \
+    "$hkcu_side_out" "additional_context"
+  assert_not_contains "hooks-ps-parity: cursor .ps1 unsafe session id emits no side-file sentence" \
+    "$hkcu_side_out" "current-session"
+  if [ -e "$hkcu_side" ]; then
+    _fail "hooks-ps-parity: cursor .ps1 unsafe session id is never published to the side file" \
+      "wrote: $(cat "$hkcu_side" 2>/dev/null)"
+  else
+    _pass "hooks-ps-parity: cursor .ps1 unsafe session id is never published to the side file"
+  fi
+
+  # WRITE FAILURE: a usable id whose write cannot land must not produce a
+  # directive claiming it did. Force it by putting a regular FILE where the
+  # state dir belongs, then restore the directory.
+  rm -rf "$hkcu_tmp/agentic-os"
+  : > "$hkcu_tmp/agentic-os"
+  hkcu_side_rc=0
+  hkcu_side_out="$(printf '{"session_id":"xyz789","composer_mode":"agent"}' \
+    | pwsh -NoProfile -File "$hkcu_tmp/hooks/framework-surface.ps1" 2>/dev/null)" || hkcu_side_rc=$?
+  assert_eq "hooks-ps-parity: cursor .ps1 failed side-file write still exits 0" "0" "$hkcu_side_rc"
+  assert_contains "hooks-ps-parity: cursor .ps1 failed side-file write still emits additional_context" \
+    "$hkcu_side_out" "additional_context"
+  assert_not_contains "hooks-ps-parity: cursor .ps1 failed side-file write claims no side file" \
+    "$hkcu_side_out" "current-session"
+  rm -f "$hkcu_tmp/agentic-os"
+  mkdir -p "$hkcu_tmp/agentic-os"
+
   rm -rf "$hkcu_tmp"
-  unset hkcu_tmp hkcu_cid hkcu_gatefile hkcu_decl hkcu_smuggle hkcu_fs hkcu_ctx hkcu_ask
-  unset -f hkcu_decision
+  unset hkcu_tmp hkcu_cid hkcu_cid2 hkcu_gatefile hkcu_decl hkcu_smuggle hkcu_fs hkcu_ctx hkcu_ask \
+        hkcu_early hkcu_early_msg hkcu_deny_payload hkcu_side hkcu_side_rc hkcu_side_out
+  unset -f hkcu_decision hkcu_message hkcu_agent_message
 else
   _pass "hooks-ps-parity: skipping cursor PS behavioral checks (pwsh not on PATH)"
 fi

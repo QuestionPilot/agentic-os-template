@@ -34,6 +34,23 @@
 # helpers, so no path can reach the end of the script silently.
 $ErrorActionPreference = 'SilentlyContinue'
 
+# Config-home resolution: hooks are installed at <config>\hooks\, so the
+# script's own parent is the authoritative home; env is the fallback. (Cursor's
+# own CLI reads CURSOR_CONFIG_DIR for cli-config.json relocation; the framework
+# build target uses the same variable by design — adapter.md.)
+#
+# Resolved HERE, above every Deny branch, rather than after the id checks: it has
+# no dependency on the payload, so it sits with the other payload-free setup.
+# $script:GateFile stays empty until an id has been validated, and that emptiness
+# — not the resolution order — is what Deny keys its two user_message shapes on.
+# Parity with the bash twin.
+$chome = Split-Path -Parent $PSScriptRoot
+if (-not $chome) {
+    $chome = if ($env:CURSOR_CONFIG_DIR) { $env:CURSOR_CONFIG_DIR } else { Join-Path $HOME '.cursor' }
+}
+$stateDir = Join-Path $chome 'agentic-os'
+$script:GateFile = ''
+
 # The last-resort deny, hand-written so it needs no serializer. Kept JSON-safe by
 # construction: no double quotes, backslashes, or newlines inside the values.
 $script:StaticDeny = '{"permission":"deny","user_message":"agentic-os session-agent gate: blocked and the hook could not encode its own reason.","agent_message":"The session-agent enforcement hook blocked this action but the JSON serializer failed while encoding the explanation. The gate fails closed. Open the gate by writing the per-conversation marker under the agentic-os state dir in your Cursor config home, or set env CLAUDE_SKIP_SESSION_AGENT=1 to bypass enforcement."}'
@@ -46,15 +63,26 @@ function Allow {
 }
 
 function Deny([string]$Reason) {
+    # The user_message is the half the OPERATOR sees, so it carries the one
+    # thing that unblocks the session: the marker path in full once the
+    # conversation id is known, and otherwise the CAUSE plus the kill switch —
+    # a call with no usable id cannot be keyed by any marker, so naming a path
+    # there would be a dead end (cross-model panel finding).
+    #
     # FAIL-OPEN GUARD: on Cursor an exit 0 with EMPTY stdout is not a decision,
     # so the action proceeds. ConvertTo-Json can fail (depth, encoding, a
     # pathological reason string) and under SilentlyContinue that failure is
     # silent — emit the static deny instead of nothing.
+    $um = if ($script:GateFile) {
+        "agentic-os session-agent gate: blocked - open it by writing the routing declaration to $($script:GateFile) (see the agent message)."
+    } else {
+        'agentic-os session-agent gate: blocked - this call carried no usable conversation id, so no marker can key it; see the agent message (kill switch: env CLAUDE_SKIP_SESSION_AGENT=1).'
+    }
     $json = $null
     try {
         $json = @{
             permission    = 'deny'
-            user_message  = 'agentic-os session-agent gate: blocked (see the agent message for the fix).'
+            user_message  = $um
             agent_message = $Reason
         } | ConvertTo-Json -Compress
     } catch { $json = $null }
@@ -99,16 +127,11 @@ if ($convId -match '[^\p{L}\p{N}\p{P}\p{S}]') {
     Deny 'The session-agent enforcement hook refuses a conversation_id containing non-printable characters. The gate fails closed. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1.'
 }
 
-# Config-home resolution: hooks are installed at <config>\hooks\, so the
-# script's own parent is the authoritative home; env is the fallback. (Cursor's
-# own CLI reads CURSOR_CONFIG_DIR for cli-config.json relocation; the framework
-# build target uses the same variable by design — adapter.md.)
-$chome = Split-Path -Parent $PSScriptRoot
-if (-not $chome) {
-    $chome = if ($env:CURSOR_CONFIG_DIR) { $env:CURSOR_CONFIG_DIR } else { Join-Path $HOME '.cursor' }
-}
-$stateDir = Join-Path $chome 'agentic-os'
+# The id survived validation, so the marker path is composable — set it, which
+# also switches Deny's user_message onto the path-naming shape above. ($chome /
+# $stateDir were resolved at the top of the script, above the early denies.)
 $gateFile = Join-Path $stateDir "gate-$convId"
+$script:GateFile = $gateFile
 
 # Reap stale gate markers (old conversations); never fails the hook.
 if (Test-Path -LiteralPath $stateDir) {

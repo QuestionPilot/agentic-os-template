@@ -164,6 +164,14 @@ if command -v jq >/dev/null 2>&1; then
     printf '%s' "$1" | bash "$IC_GATE" 2>/dev/null | jq -r '.permission // "none"'
   }
 
+  # ic_gate_msg / ic_gate_agent_msg <json> — the two halves of the decision.
+  ic_gate_msg() {
+    printf '%s' "$1" | bash "$IC_GATE" 2>/dev/null | jq -r '.user_message // ""'
+  }
+  ic_gate_agent_msg() {
+    printf '%s' "$1" | bash "$IC_GATE" 2>/dev/null | jq -r '.agent_message // ""'
+  }
+
   # 5a. a plain Write with no open gate → deny.
   assert_eq "gate denies a Write before the gate is open" "deny" \
     "$(ic_gate_decision '{"conversation_id":"'"$IC_CID"'","tool_name":"Write","tool_input":{"file_path":"/tmp/x.txt","content":"hi"},"cwd":"/tmp"}')"
@@ -251,6 +259,35 @@ Linear gate: none - single-step' --arg id "$IC_CID" \
     "$REPO_ROOT/harnesses/cursor/hooks/session-agent.ps1")"
   assert_eq "the cursor gate hook (.ps1) never emits permission ask" "0" "$ic_ask_hits_ps"
 
+  # 5g. THE DENY NAMES THE MARKER PATH. `user_message` is the only half the
+  # operator sees; a fixed "blocked, see the agent message" text made every
+  # fresh conversation spend a sacrificial deny discovering where to write. Once
+  # the conversation id is known BOTH halves must carry the literal gate path —
+  # the operator reads one and the model reads the other, and the model's copy
+  # is what the realization's "one deliberate gate-less Write" step relies on.
+  # A conversation id with no marker on disk, writing somewhere else → deny.
+  IC_CID2="testconv02"
+  ic_deny_payload='{"conversation_id":"'"$IC_CID2"'","tool_name":"Write","tool_input":{"file_path":"/tmp/other.txt","content":"hi"},"cwd":"/tmp"}'
+  assert_contains "the deny user_message names the literal gate-marker path" \
+    "$(ic_gate_msg "$ic_deny_payload")" "$IC_OUT/agentic-os/gate-$IC_CID2"
+  assert_contains "the deny agent_message names the same gate-marker path" \
+    "$(ic_gate_agent_msg "$ic_deny_payload")" "$IC_OUT/agentic-os/gate-$IC_CID2"
+
+  # 5h. EARLY denies cannot key ANY marker — there is no usable conversation id,
+  # so no path would unblock the call. The message names the CAUSE and the kill
+  # switch instead; pointing the reader at the side file here would be a dead end
+  # (cross-model panel finding).
+  for ic_early in '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}' \
+                  '{"conversation_id":"../../etc","tool_name":"Write"}' \
+                  'not json at all'; do
+    ic_early_msg="$(ic_gate_msg "$ic_early")"
+    assert_contains "an early deny names the no-usable-id cause" \
+      "$ic_early_msg" "no usable conversation id"
+    assert_contains "an early deny names the kill switch" \
+      "$ic_early_msg" "CLAUDE_SKIP_SESSION_AGENT=1"
+  done
+  unset ic_early ic_early_msg ic_deny_payload
+
   # --- T6: framework-surface (sessionStart) emits the auto-fire directive ---
   ic_fs="$(printf '{"session_id":"%s","is_background_agent":false,"composer_mode":"agent"}' "$IC_CID" \
     | bash "$IC_OUT/hooks/framework-surface.sh")"
@@ -272,10 +309,83 @@ Linear gate: none - single-step' --arg id "$IC_CID" \
   assert_eq "CLAUDE_SKIP_FRAMEWORK_SURFACE=1 silences the surfacing hook" "" \
     "$(printf '{"session_id":"x"}' | CLAUDE_SKIP_FRAMEWORK_SURFACE=1 bash "$IC_OUT/hooks/framework-surface.sh")"
 
-  unset -f ic_gate_decision
+  # --- T6b: the conversation-id side file ------------------------------------
+  # sessionStart publishes the id to <config>/agentic-os/current-session so a
+  # model that lost the injected directive can `cat` it instead of burning a
+  # deny to discover it. The write must never change this hook's exit or its
+  # stdout — it is fail-OPEN, and a broken state write may not break a session.
+  IC_SIDE="$IC_OUT/agentic-os/current-session"
+
+  # (a) a usable id publishes the file AND earns the directive sentence.
+  rm -f "$IC_SIDE"
+  ic_surface_rc=0
+  ic_surface_out="$(printf '{"session_id":"abc123","composer_mode":"agent"}' \
+    | bash "$IC_OUT/hooks/framework-surface.sh")" || ic_surface_rc=$?
+  assert_eq "sessionStart still exits 0 while writing the side file" "0" "$ic_surface_rc"
+  assert_contains "sessionStart still emits additional_context alongside the side file" \
+    "$ic_surface_out" "additional_context"
+  assert_eq "sessionStart writes session_id to the current-session side file" "abc123" \
+    "$(cat "$IC_SIDE" 2>/dev/null)"
+  # One line + a trailing newline, not a bare 6-byte token: `cat` in the
+  # realization's read step must not glue the id onto the next shell word.
+  assert_eq "the side file is one line with a trailing newline" "7" \
+    "$(wc -c < "$IC_SIDE" | tr -d ' ')"
+  assert_contains "the emitted directive names the side file as the id re-read path" \
+    "$ic_surface_out" "agentic-os/current-session"
+
+  # (b) OVERWRITE + the `conversation_id` spelling in one fixture: the file is
+  # NOT deleted between the two runs, so this also pins last-writer-wins — a
+  # second sessionStart under the same config home must replace the first id,
+  # not append to or leave the old one.
+  printf '{"conversation_id":"def456","composer_mode":"agent"}' \
+    | bash "$IC_OUT/hooks/framework-surface.sh" >/dev/null 2>&1
+  assert_eq "a second sessionStart overwrites the side file (conversation_id spelling)" "def456" \
+    "$(cat "$IC_SIDE" 2>/dev/null)"
+  assert_eq "the overwritten side file is also one line with a trailing newline" "7" \
+    "$(wc -c < "$IC_SIDE" | tr -d ' ')"
+
+  # (c) An id the gate would refuse never forms a usable marker path, so
+  # publishing it would hand the model a broken one. The hook must write nothing
+  # AND say nothing about a side file — a directive naming a path that holds
+  # some OTHER conversation's id is worse than no directive sentence at all.
+  rm -f "$IC_SIDE"
+  ic_surface_rc=0
+  ic_surface_out="$(printf '{"session_id":"a/b","composer_mode":"agent"}' \
+    | bash "$IC_OUT/hooks/framework-surface.sh")" || ic_surface_rc=$?
+  assert_eq "an unsafe session id still exits 0" "0" "$ic_surface_rc"
+  assert_contains "an unsafe session id still emits additional_context" \
+    "$ic_surface_out" "additional_context"
+  assert_not_contains "an unsafe session id emits no side-file sentence" \
+    "$ic_surface_out" "current-session"
+  if [ -e "$IC_SIDE" ]; then
+    _fail "an unsafe session id is never published to the side file" \
+      "wrote: $(cat "$IC_SIDE" 2>/dev/null)"
+  else
+    _pass "an unsafe session id is never published to the side file"
+  fi
+
+  # (d) WRITE FAILURE. A usable id whose write cannot land must not produce a
+  # directive claiming it did — that would send the model to a nonexistent path
+  # or, worse, to a stale id from another conversation. Force the failure by
+  # putting a regular FILE where the state dir belongs, so `mkdir -p` fails.
+  rm -rf "$IC_OUT/agentic-os"
+  : > "$IC_OUT/agentic-os"
+  ic_surface_rc=0
+  ic_surface_out="$(printf '{"session_id":"xyz789","composer_mode":"agent"}' \
+    | bash "$IC_OUT/hooks/framework-surface.sh")" || ic_surface_rc=$?
+  assert_eq "a failed side-file write still exits 0 (fail-OPEN)" "0" "$ic_surface_rc"
+  assert_contains "a failed side-file write still emits additional_context" \
+    "$ic_surface_out" "additional_context"
+  assert_not_contains "a failed side-file write claims no side file in the directive" \
+    "$ic_surface_out" "current-session"
+  rm -f "$IC_OUT/agentic-os"
+  mkdir -p "$IC_OUT/agentic-os"
+
+  unset -f ic_gate_decision ic_gate_msg ic_gate_agent_msg
 else
   _skip "cursor hook behavior suite" "jq not installed"
 fi
 
 rm -rf "${IC_OUT%/cursor-home}" "${IC_ENV%/local.env}" "${IC_VAULT%/vault}"
-unset IC_OUT IC_ENV IC_VAULT IC_GATE IC_CID IC_GATEFILE
+unset IC_OUT IC_ENV IC_VAULT IC_GATE IC_CID IC_CID2 IC_GATEFILE IC_SIDE \
+      ic_surface_rc ic_surface_out

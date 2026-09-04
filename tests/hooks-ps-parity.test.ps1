@@ -440,6 +440,21 @@ try {
         try { return ([string]$out | ConvertFrom-Json).permission } catch { return "unparseable:[$out]" }
     }
 
+    # The two halves of the decision: user_message is what the Cursor operator
+    # reads, agent_message is what the model reads.
+    function Get-CursorGateMessage {
+        param([string]$Payload)
+        $out = $Payload | & pwsh -NoProfile -File $hkcu_gatehook 2>$null
+        if ($out -is [array]) { $out = $out -join "`n" }
+        try { return [string]([string]$out | ConvertFrom-Json).user_message } catch { return "unparseable:[$out]" }
+    }
+    function Get-CursorGateAgentMessage {
+        param([string]$Payload)
+        $out = $Payload | & pwsh -NoProfile -File $hkcu_gatehook 2>$null
+        if ($out -is [array]) { $out = $out -join "`n" }
+        try { return [string]([string]$out | ConvertFrom-Json).agent_message } catch { return "unparseable:[$out]" }
+    }
+
     # 4a. plain Write, gate closed -> deny.
     $p = @{ conversation_id = $hkcu_cid; tool_name = 'Write'
             tool_input = @{ file_path = '/tmp/x.txt'; content = 'hi' }; cwd = '/tmp' } |
@@ -520,6 +535,103 @@ try {
         if ($fsQuiet -is [array]) { $fsQuiet = $fsQuiet -join "`n" }
         Assert-Eq 'hooks-ps-parity.test: cursor framework-surface kill switch silences it' '' ([string]$fsQuiet)
     } finally { Remove-Item Env:CLAUDE_SKIP_FRAMEWORK_SURFACE -ErrorAction SilentlyContinue }
+
+    # 4j. THE DENY NAMES THE MARKER PATH. `user_message` is the only half the
+    # operator sees; a fixed "blocked, see the agent message" text made every
+    # fresh conversation spend a sacrificial deny discovering where to write.
+    # BOTH halves must carry it — the model reads agent_message, and that copy is
+    # what the realization's "one deliberate gate-less Write" step relies on.
+    $hkcu_cid2 = 'pstestconv02'
+    $p = @{ conversation_id = $hkcu_cid2; tool_name = 'Write'
+            tool_input = @{ file_path = '/tmp/other.txt'; content = 'hi' }; cwd = '/tmp' } |
+        ConvertTo-Json -Compress -Depth 5
+    Assert-Contains 'hooks-ps-parity.test: cursor deny user_message names the literal gate-marker path' `
+        (Get-CursorGateMessage $p) (Join-Path $hkcu_state "gate-$hkcu_cid2")
+    Assert-Contains 'hooks-ps-parity.test: cursor deny agent_message names the same gate-marker path' `
+        (Get-CursorGateAgentMessage $p) (Join-Path $hkcu_state "gate-$hkcu_cid2")
+
+    # 4k. EARLY denies cannot key ANY marker — there is no usable conversation
+    # id, so no path would unblock the call. The message names the CAUSE and the
+    # kill switch instead of sending the reader to a dead-end file.
+    foreach ($hkcu_early in @(
+            '{"tool_name":"Write","tool_input":{"file_path":"/tmp/x"}}',
+            '{"conversation_id":"../../etc","tool_name":"Write"}',
+            'not json at all')) {
+        $hkcu_early_msg = Get-CursorGateMessage $hkcu_early
+        Assert-Contains 'hooks-ps-parity.test: cursor early deny names the no-usable-id cause' `
+            $hkcu_early_msg 'no usable conversation id'
+        Assert-Contains 'hooks-ps-parity.test: cursor early deny names the kill switch' `
+            $hkcu_early_msg 'CLAUDE_SKIP_SESSION_AGENT=1'
+    }
+
+    # 4l. the conversation-id side file. sessionStart publishes the id to
+    # <config>/agentic-os/current-session so a model that lost the injected
+    # directive can read it back. The write must never change this hook's exit
+    # or stdout — it is fail-OPEN, and a broken state write may not break a
+    # session.
+    $hkcu_side = Join-Path $hkcu_state 'current-session'
+    Remove-Item -LiteralPath $hkcu_side -Force -ErrorAction SilentlyContinue
+    $sideOut = '{"session_id":"abc123","composer_mode":"agent"}' | & pwsh -NoProfile -File $hkcu_fs 2>$null
+    $sideRc = $LASTEXITCODE
+    if ($sideOut -is [array]) { $sideOut = $sideOut -join "`n" }
+    Assert-Eq 'hooks-ps-parity.test: cursor sessionStart still exits 0 while writing the side file' '0' "$sideRc"
+    Assert-Contains 'hooks-ps-parity.test: cursor sessionStart still emits additional_context' `
+        ([string]$sideOut) 'additional_context'
+    $sideBytes = @()
+    if (Test-Path -LiteralPath $hkcu_side) { $sideBytes = [System.IO.File]::ReadAllBytes($hkcu_side) }
+    Assert-Eq 'hooks-ps-parity.test: cursor sessionStart writes session_id to the side file' 'abc123' `
+        (([string]([System.Text.Encoding]::UTF8.GetString($sideBytes))).TrimEnd("`n"))
+    # LF + no BOM + exactly one line: byte-identical to the bash twin's printf.
+    Assert-Eq 'hooks-ps-parity.test: cursor side file is 7 bytes, LF-terminated, no BOM' '7' "$($sideBytes.Count)"
+    Assert-Contains 'hooks-ps-parity.test: cursor directive names the side file as the id re-read path' `
+        ([string]$sideOut) 'agentic-os/current-session'
+
+    # OVERWRITE + the preToolUse spelling in one fixture: the file is NOT deleted
+    # between the two runs, so this also pins last-writer-wins — and it is the
+    # only coverage of `Move-Item -Force` over an EXISTING destination.
+    '{"conversation_id":"def456","composer_mode":"agent"}' | & pwsh -NoProfile -File $hkcu_fs 2>$null | Out-Null
+    $sideBytes2 = @()
+    if (Test-Path -LiteralPath $hkcu_side) { $sideBytes2 = [System.IO.File]::ReadAllBytes($hkcu_side) }
+    Assert-Eq 'hooks-ps-parity.test: cursor second sessionStart overwrites the side file' 'def456' `
+        (([string]([System.Text.Encoding]::UTF8.GetString($sideBytes2))).TrimEnd("`n"))
+    Assert-Eq 'hooks-ps-parity.test: cursor overwritten side file is 7 bytes, LF, no BOM' '7' `
+        "$($sideBytes2.Count)"
+
+    # An id the gate would refuse never forms a usable marker path, so
+    # publishing it would hand the model a broken one — write nothing, and say
+    # nothing about a side file (a directive naming a path holding some OTHER
+    # conversation's id is worse than no sentence at all).
+    Remove-Item -LiteralPath $hkcu_side -Force -ErrorAction SilentlyContinue
+    $badOut = '{"session_id":"a/b","composer_mode":"agent"}' | & pwsh -NoProfile -File $hkcu_fs 2>$null
+    $badRc = $LASTEXITCODE
+    if ($badOut -is [array]) { $badOut = $badOut -join "`n" }
+    Assert-Eq 'hooks-ps-parity.test: cursor unsafe session id still exits 0' '0' "$badRc"
+    Assert-Contains 'hooks-ps-parity.test: cursor unsafe session id still emits additional_context' `
+        ([string]$badOut) 'additional_context'
+    Assert-NotContains 'hooks-ps-parity.test: cursor unsafe session id emits no side-file sentence' `
+        ([string]$badOut) 'current-session'
+    if (Test-Path -LiteralPath $hkcu_side) {
+        _Fail 'hooks-ps-parity.test: cursor unsafe session id is never published to the side file' `
+            "wrote: $([System.IO.File]::ReadAllText($hkcu_side))"
+    } else {
+        _Pass 'hooks-ps-parity.test: cursor unsafe session id is never published to the side file'
+    }
+
+    # WRITE FAILURE: a usable id whose write cannot land must not produce a
+    # directive claiming it did. Force it by putting a regular FILE where the
+    # state dir belongs, then restore the directory.
+    Remove-Item -LiteralPath $hkcu_state -Recurse -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($hkcu_state, '', [System.Text.UTF8Encoding]::new($false))
+    $failOut = '{"session_id":"xyz789","composer_mode":"agent"}' | & pwsh -NoProfile -File $hkcu_fs 2>$null
+    $failRc = $LASTEXITCODE
+    if ($failOut -is [array]) { $failOut = $failOut -join "`n" }
+    Assert-Eq 'hooks-ps-parity.test: cursor failed side-file write still exits 0' '0' "$failRc"
+    Assert-Contains 'hooks-ps-parity.test: cursor failed side-file write still emits additional_context' `
+        ([string]$failOut) 'additional_context'
+    Assert-NotContains 'hooks-ps-parity.test: cursor failed side-file write claims no side file' `
+        ([string]$failOut) 'current-session'
+    Remove-Item -LiteralPath $hkcu_state -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $hkcu_state -Force | Out-Null
 } finally {
     Remove-Item -LiteralPath $hkcu_tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
