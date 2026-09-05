@@ -27,3 +27,5 @@ For changes inside this repository, run `make verify` from the repo root — run
 ## Closeout
 
 State changed-surface proof, skipped checks, independent review decision, and residual risk.
+
+A green verdict belongs to the artifact state it ran on — name that state (commit or digest) with the verdict. Any later change to the artifact needs fresh proof. A run that follows a failure names which earlier failure it supersedes, and it supersedes only a failure on a check it re-ran green.
