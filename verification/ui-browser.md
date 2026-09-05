@@ -17,6 +17,7 @@ Before any screenshot, recording, or rendered-state check counts as evidence, pr
 - Run accessibility checks when relevant.
 - Check console errors and failed requests when running a browser flow.
 - Use screenshots or videos when visual quality is a material requirement.
+- When scroll position drives a visual change beyond the page itself moving — scroll-driven animation, a pinned sequence that plays while the page holds, parallax, reveal-on-scroll — capture each such section at its opening, at an intermediate position, and at its resolved exit (or where it stops changing), at a desktop viewport and at a mobile viewport, each with and without reduced motion enabled, and keep the captures. A page that merely scrolls, sticky header or sticky table head included, is out of scope. Where pointer position also drives the section, capture it with the pointer outside the section and at the positions that move things, and compare. In the normal-motion pass, a span where nothing changes between captures is dead scroll — call it out. Under reduced motion the check is that the section resolves to a complete, readable state, not that it moves. Where text or controls sit over the composited frame, measure contrast on the capture — what is on screen at that point — not on the static stylesheet.
 
 ## Emulation Is Not Device Proof
 
