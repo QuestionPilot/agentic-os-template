@@ -211,12 +211,16 @@ linear issue query --all-teams --assignee <displayName> -s started --json
 # Read full issue detail (state/assignee arrive as objects here)
 linear issue view TEAM-NN --json
 
-# Create an issue — full metadata at create time, per linear/issue-template.md
+# Create an issue — full metadata at create time, per linear/issue-template.md;
+# the markdown body comes from a FILE (--description-file), not from stdin
 linear issue create -t "Title" --team <TEAM_KEY> --project <PROJECT> \
-  --label "label-a" --priority 3 --assignee <user> -d "Markdown body"
+  --label "label-a" --priority 3 --assignee <user> --description-file issue.md
 
-# Comment on an issue (stdin body: --body -)
-linear issue comment add TEAM-NN -b "Markdown comment"
+# Comment on an issue — markdown bodies go in a FILE. `--body -` is NOT stdin:
+# CLI 2.5.0 posts a literal "-" (observed 2026-09-06). After every write, re-read
+# the comment listing and confirm the full saved body (linear-cli-usage.md).
+linear issue comment add TEAM-NN --body-file comment.md
+linear issue comment add TEAM-NN -b "one-line comment"
 
 # Update issue state, title, etc.
 linear issue update TEAM-NN --state started
