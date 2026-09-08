@@ -238,10 +238,10 @@ Output: markdown by default. -Json emits a structured object for tests:
 
     `orientation_surface` is INFORMATIONAL, in its own key + its own markdown
     section, and likewise never contributes to `total`, a pillar score, or
-    `gaps`. It measures the EFFECTIVE Mode 1 kickoff surface per rendered
+    `gaps`. It measures a static Mode 1 kickoff subtotal per rendered
     harness home — the static entrypoint PLUS the compiled spine capability
-    bodies (session-agent + closeout) the kickoff mandates PLUS the vault
-    lesson index read at every orient. `injection_surface` measures a
+    body (session-agent) the kickoff mandates PLUS the vault lesson trigger
+    view read at every orient. `injection_surface` measures a
     different thing (the auto-injected component budget); an entrypoint
     appearing in both is not a double-count, because the two keys answer two
     different questions.
@@ -831,7 +831,7 @@ function Invoke-Pillar1 {
     # CLI's project slug != memory filename, so match the project NAME in note
     # bodies, not filenames.
     # <TEAM>-366: notes are collected across ALL scanned stores — a project note in
-    # ANY store satisfies the handshake (the old single-store scan demanded the
+    # ANY store satisfies the cache coverage check (the old single-store scan demanded the
     # note in whichever store the picker happened to select).
     if ($linearCliAvail -eq 1 -and $memoryAvail -eq 1 -and (Test-Command 'jq')) {
         $ran = 1
@@ -853,9 +853,9 @@ function Invoke-Pillar1 {
             if (-not $matched) {
                 Use-Deduct $key 4
                 Add-Gap 1 8 `
-                    'No memory note for active Linear project' `
-                    "Active project `"$pname`" has no project-type memory note in any scanned memory store ($($MemoryDirs -join ' ')) — active projects should land a memory note at kickoff" `
-                    "Create a note in the project's memory store with 'type: project' frontmatter naming the project + its Linear URL"
+                    'Project note not matched in scanned harness cache' `
+                    "Active project `"$pname`" has no project-type note in any scanned memory store ($($MemoryDirs -join ' ')) — this is a harness cache coverage check; durable handoff completeness is not established by this check" `
+                    'Check the vault Handshake and native-memory consolidation status; refresh the harness cache only if needed. Do not infer a missing durable handoff from this result.'
             }
         }
     }
@@ -1764,10 +1764,9 @@ function Get-CurrentnessMarkdown {
 # The pillars and `injection_surface` both measure STATIC entrypoint files. That
 # undercounts what a Mode 1 kickoff actually reads: the compiled `session-agent`
 # body (the spine capability the SessionStart hook mandates as the first action),
-# the compiled `closeout` body it hands off to, and the vault lesson index read
-# at every orient. A slimmed CLAUDE.md can therefore look like a shrinking
-# kickoff surface while the effective read grew. This section measures the
-# EFFECTIVE surface per rendered harness home and reports it — nothing here
+# and the vault lesson trigger view it reads at every orient. A slimmed CLAUDE.md can therefore look like a shrinking
+# kickoff subtotal while the static estimate grew. This section reports that
+# static subtotal per rendered harness home — nothing here
 # moves $total, a pillar score, or $gaps.
 #
 # Home resolution mirrors scripts/check-drift.ps1 --auto / check-drift.sh --auto:
@@ -1778,8 +1777,9 @@ function Get-CurrentnessMarkdown {
 # dir the rest of this audit already resolved. `agents` is the codex pass's
 # .agents co-render — skills only, no entrypoint of its own.
 
-# The vault-relative lesson index every orient reads (core/self-improvement.md
-# Promotion Rule -> the ONE cross-store recall surface).
+# Mode 1 reads the generated triggers view first. The full index is its explicit
+# fallback when that view is absent.
+$oriLessonTriggersRel = '04-Lessons/_triggers.md'
 $oriLessonIndexRel = '04-Lessons/_index.md'
 
 $oriMeasured = $false
@@ -1791,6 +1791,7 @@ $oriLiPath = ''
 $oriLiBytes = -1        # -1 = unmeasured (a distinct state from a 0-byte file)
 $oriLiLines = 0
 $oriLiStatus = ''
+$oriLiSource = ''
 
 function Get-OriBytes {
     param([string]$Path)
@@ -1811,20 +1812,26 @@ function Get-OriLines {
     if (-not $normalized.EndsWith("`n")) { $n++ }
     return $n
 }
-
 function Measure-OrientationSurface {
     if ([string]::IsNullOrEmpty($VaultDir)) {
         $script:oriLiStatus = 'unmeasured — no vault configured (OBSIDIAN_VAULT_PATH unset)'
     } else {
-        $liPath = Join-Path $VaultDir '04-Lessons' '_index.md'
-        # Report the path exactly as the bash twin does ("$VaultDir/$rel"), so the
-        # two emit the same string under the parity test's `\` -> `/` normalization.
-        $liReport = "$VaultDir/$($script:oriLessonIndexRel)"
-        if (-not (Test-Path -LiteralPath $liPath -PathType Leaf)) {
-            $script:oriLiPath = $liReport
-            $script:oriLiStatus = "unmeasured — not found at $liReport"
+        $triggerPath = Join-Path $VaultDir '04-Lessons' '_triggers.md'
+        $indexPath = Join-Path $VaultDir '04-Lessons' '_index.md'
+        if (Test-Path -LiteralPath $triggerPath -PathType Leaf) {
+            $script:oriLiPath = "$VaultDir/$($script:oriLessonTriggersRel)"
+            $script:oriLiSource = 'triggers'
+            $liPath = $triggerPath
+        } elseif (Test-Path -LiteralPath $indexPath -PathType Leaf) {
+            $script:oriLiPath = "$VaultDir/$($script:oriLessonIndexRel)"
+            $script:oriLiSource = 'index fallback'
+            $liPath = $indexPath
         } else {
-            $script:oriLiPath = $liReport
+            $script:oriLiPath = "$VaultDir/$($script:oriLessonTriggersRel)"
+            $script:oriLiStatus = "unmeasured — neither triggers view nor index found at $VaultDir/04-Lessons"
+            $liPath = $null
+        }
+        if ($null -ne $liPath) {
             $script:oriLiBytes = Get-OriBytes $liPath
             $script:oriLiLines = Get-OriLines $liPath
             $script:oriLiStatus = 'measured'
@@ -1877,7 +1884,7 @@ function Measure-OrientationSurface {
         }
 
         $spBytes = 0; $spLines = 0
-        foreach ($cap in @('session-agent', 'closeout')) {
+        foreach ($cap in @('session-agent')) {
             $capPath = Join-Path $home_ 'skills' $cap 'SKILL.md'
             if (Test-Path -LiteralPath $capPath -PathType Leaf) {
                 $spBytes += Get-OriBytes $capPath
@@ -1917,24 +1924,25 @@ Measure-OrientationSurface
 function Get-OrientationMarkdown {
     $lines = New-Object System.Collections.Generic.List[string]
     $liCell = if ($oriLiBytes -ge 0) { "$oriLiBytes bytes" } else { 'unmeasured' }
+    $liSourceLabel = if ($oriLiSource -eq '') { 'unselected' } else { $oriLiSource }
     if (-not $oriMeasured) {
         $lines.Add('_(not measured — no rendered harness home resolved)_')
     } else {
         foreach ($r in $oriRows) {
             $epName = if ($null -eq $r.entrypoint) { 'none' } else { $r.entrypoint }
-            $lines.Add(('- {0} ({1} via {2}): entrypoint {3}={4} bytes, spine (session-agent+closeout)={5} bytes, lesson index={6} — effective {7} bytes / {8} lines' -f `
-                $r.harness, $r.home, $r.src, $epName, $r.entrypoint_bytes, $r.spine_bytes, $liCell, $r.effective_total_bytes, $r.effective_total_lines))
+            $lines.Add(('- {0} ({1} via {2}): static estimate — entrypoint {3}={4} bytes, kickoff spine (session-agent)={5} bytes, lesson view ({6})={7} — subtotal {8} bytes / {9} lines' -f `
+                $r.harness, $r.home, $r.src, $epName, $r.entrypoint_bytes, $r.spine_bytes, $liSourceLabel, $liCell, $r.effective_total_bytes, $r.effective_total_lines))
             if (@($r.missing).Count -gt 0) {
                 $lines.Add('  - absent components: ' + (@($r.missing) -join ','))
             }
         }
     }
-    $lines.Add("- lesson index: $oriLiStatus")
+    $lines.Add("- lesson view ($liSourceLabel): $oriLiStatus")
     if (@($oriSkipped).Count -gt 0) {
         $lines.Add('- skipped: ' + (@($oriSkipped) -join ', '))
     }
     if ($oriMeasured) {
-        $lines.Add(('Effective kickoff surface: {0} bytes / {1} lines across {2} harness render(s) — the lesson index is counted once per harness because each kickoff reads it. Informational only; never scored.' -f `
+        $lines.Add(('Static kickoff estimate: {0} bytes / {1} lines across {2} harness render(s) — the lesson view is counted once per harness because each kickoff reads it. This is not actual session consumption or a token count. Informational only; never scored.' -f `
             $oriTotalBytes, $oriTotalLines, @($oriRows).Count))
     } else {
         $lines.Add('Informational only; never scored.')
@@ -2513,6 +2521,7 @@ function Get-JsonOutput {
         lesson_index = [ordered]@{
             path   = $(if ($oriLiPath -eq '') { $null } else { $oriLiPath })
             bytes  = $(if ($oriLiBytes -ge 0) { $oriLiBytes } else { $null })
+            source = $(if ($oriLiSource -eq '') { $null } else { $oriLiSource })
             status = $oriLiStatus
         }
         harnesses    = $oriHarnesses

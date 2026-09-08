@@ -115,9 +115,13 @@ outcome is `no-action` with rationale and the rest of the walk is wasted.
      lesson index row) but the session acted against it (trigger phrased too
      vaguely to match at R1a, headline not actionable): rephrase the lesson's
      Trigger / the note's headline so the next R1a scan matches.
-   Record the recall failure explicitly in the session log's Lessons section —
-   the `self-audit` recall-efficacy check counts these to measure the read
-   side of this loop.
+   Record the recall failure explicitly in the session log's Lessons section as
+   one top-level canonical line: `**Recall failure, class not-loaded:** <what
+   was missed>` or `**Recall failure, class loaded-but-ignored:** <what was
+   ignored>`. This is the writer contract for `scripts/recall-report.*`; legacy
+   records are normalized conservatively, but examples and negations are not
+   records. The `self-audit` recall-efficacy check counts these to measure the
+   read side of this loop.
 
    **Q1b — Execution-honored check.** Was the `Execution:` value declared at R5
    (`inline` | `delegated wave` | `delegated wave + panel`) actually honored — the

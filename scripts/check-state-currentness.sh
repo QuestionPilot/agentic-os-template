@@ -438,12 +438,46 @@ scan_claims() {
       return (lc(t) ~ STATEBARE) ? st : ""
     }
     function is_conjunction(w,   t) {
-      t = lc(w); gsub(/[[:space:],;\/&*_`()-]|and|plus|through|thru|then/, "", t)
+      t = lc(w); gsub(/[[:space:],;\/&*_`-]|and|plus|through|thru|then/, "", t)
       return (t == "")
     }
     function date_in(s) {
       if (match(s, /20[0-9][0-9]-[01][0-9]-[0-3][0-9]/)) return substr(s, RSTART, RLENGTH)
       return ""
+    }
+    # A state label distributes across top-level list items. Item annotations
+    # may contain prose, but a parenthetical cross-reference is not an item and
+    # a sentence end stops the list. A balanced parenthetical annotation is
+    # dropped before the conjunction test ("ABC-1 (memory note) and ABC-2"), and
+    # a period counts as a sentence end only before whitespace/end ("v2.0,").
+    function label_reaches(i,   start, end, j, c, depth, boundary, tail, next_id, item_has_id) {
+      if (i == 1) return 1
+      start = pos[1] + len[1]
+      end = pos[i] - 1
+      depth = 0; boundary = start - 1; next_id = 2; item_has_id = 1
+      for (j = start; j <= end; j++) {
+        if (next_id < i && j == pos[next_id]) {
+          if (depth == 0) {
+            tail = substr(line, boundary + 1, j - boundary - 1)
+            gsub(idre, "", tail); gsub(/\([^()]*\)/, "", tail)
+            if (!is_conjunction(tail)) return 0
+            item_has_id = 1
+          }
+          next_id++
+        }
+        c = substr(line, j, 1)
+        if (c == "(") depth++
+        else if (c == ")") { if (depth == 0) return 0; depth-- }
+        else if (depth == 0 && c ~ /[.!?]/ && substr(line, j + 1, 1) ~ /^[[:space:]]?$/) return 0
+        else if (depth == 0 && (c == "," || c == ";")) {
+          if (!item_has_id) return 0
+          boundary = j; item_has_id = 0
+        }
+      }
+      if (depth != 0) return 0
+      tail = substr(line, boundary + 1, end - boundary)
+      gsub(idre, "", tail); gsub(/\([^()]*\)/, "", tail)
+      return is_conjunction(tail)
     }
     # One awk invocation scans EVERY file, so per-file state must reset at each
     # file boundary — a note ending inside a history section (or an unclosed
@@ -476,6 +510,7 @@ scan_claims() {
       # Section-level history detection only covers it when the writer used a
       # recognized heading; this covers the bullet wherever it lands.
       if (line ~ /^[[:space:]*_>#-]*20[0-9][0-9]-[01][0-9]-[0-3][0-9]/) next
+      if (lc(line) ~ /^[[:space:]*_>#-]*delta[[:space:]*:]*20[0-9][0-9]-[01][0-9]-[0-3][0-9]/) next
       n = 0; rest = line; base = 0
       while (match(rest, idre)) {
         n++
@@ -498,7 +533,7 @@ scan_claims() {
         wend = (i < n) ? pos[i+1] - 1 : length(line)
         win = (wend >= wstart) ? substr(line, wstart, wend - wstart + 1) : ""
         st = adjacent_state(win)
-        if (st == "" && dflt != "") st = dflt
+        if (st == "" && dflt != "" && label_reaches(i)) st = dflt
         if (st == "" && i < n && is_conjunction(win)) {
           for (j = i + 1; j <= n; j++) {
             js = pos[j] + len[j]

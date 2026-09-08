@@ -115,6 +115,25 @@ function New-SaTmp {
     return $p
 }
 
+# Put a fixture-local `linear` first on PATH for non-isolated audit fixtures.
+# It returns the empty project-list payload, records every attempted invocation,
+# and prevents a test from reaching the operator's live tracker. Keep local.env
+# resolution enabled: these tests exercise the registry through that path.
+function New-SaEmptyLinearCli {
+    param([string]$Root)
+    $bin = Join-Path $Root 'bin'
+    New-Item -ItemType Directory -Path $bin -Force | Out-Null
+    if ($IsWindows) {
+        $stub = Join-Path $bin 'linear.cmd'
+        Write-LfFile $stub "@echo off`necho %*>> `"%SELF_AUDIT_LINEAR_STUB_LOG%`"`necho {`"nodes`":[]}`n"
+    } else {
+        $stub = Join-Path $bin 'linear'
+        Write-LfFile $stub "#!/bin/sh`nprintf '%s\n' `"`$*`" >> `"`$SELF_AUDIT_LINEAR_STUB_LOG`"`nprintf '%s\n' '{`"nodes`":[]}'`n"
+        & chmod +x $stub
+    }
+    return $bin
+}
+
 # --- semantic currentness (<TEAM>-522) ---------------------------------------
 # The advisory semantic check is wired in via $env:SELF_AUDIT_CURRENTNESS_BIN so
 # the assertions are hermetic: a stub .ps1 stands in for
@@ -650,6 +669,63 @@ if ($jqAvail) {
         '20' "$score_iso"
 } else {
     _Skip 'self-audit.test: isolation env-leak test' 'jq not installed'
+}
+
+# --- Pillar 1.1: a missing project-type note measures the scanned harness cache.
+# A valid vault Handshake proves this wording must not claim that the durable
+# handoff is absent. The matching score remains the existing 4-point deduction.
+if ($jqAvail) {
+    $fixture = New-SaTmp
+    New-SaFixtureRepo $fixture
+    $bin = Join-Path $fixture 'bin'
+    $mem = Join-Path $fixture 'mem'
+    $vault = Join-Path $fixture 'vault'
+    New-Item -ItemType Directory -Path $bin, $mem, (Join-Path $vault '01-Projects') -Force | Out-Null
+    Write-LfFile (Join-Path $mem 'project-other.md') "---`nname: project-other`nmetadata:`n  type: project`n---`nUnrelated context.`n"
+    Write-LfFile (Join-Path $vault '01-Projects' 'widget-arc.md') "---`nlinear: https://linear.app/example/project/widget-arc`n---`n`n# Widget Arc`n`nDurable handoff exists in the vault.`n"
+    if ($IsWindows) {
+        Write-LfFile (Join-Path $bin 'linear.cmd') "@echo off`nif `"%1`"==`"project`" (echo {`"nodes`": [{`"id`": `"p1`", `"name`": `"Widget Arc`"}]} & exit /b 0)`nif `"%1`"==`"issue`" (echo {`"nodes`": [{`"identifier`": `"ABC-1`"}]} & exit /b 0)`nexit /b 1`n"
+    } else {
+        Write-LfFile (Join-Path $bin 'linear') "#!/bin/sh`nif [ `"`$1`" = project ]; then printf '%s\n' '{`"nodes`": [{`"id`": `"p1`", `"name`": `"Widget Arc`"}]}'; exit 0; fi`nif [ `"`$1`" = issue ]; then printf '%s\n' '{`"nodes`": [{`"identifier`": `"ABC-1`"}]}'; exit 0; fi`nexit 1`n"
+        & chmod +x (Join-Path $bin 'linear')
+    }
+    $savedPath = $env:PATH
+    try {
+        $env:PATH = $bin + [IO.Path]::PathSeparator + $env:PATH
+        $out = Invoke-SelfAudit @('--repo-root', $fixture, '--memory-dir', $mem, '--vault-dir', $vault, '--json')
+        $obj = $out | ConvertFrom-Json
+        $cacheGap = @($obj.gaps | Where-Object { $_.title -eq 'Project note not matched in scanned harness cache' })[0]
+        $vaultGap = @($obj.gaps | Where-Object { $_.title -eq 'No vault handshake for active Linear project' })
+        $p1 = Get-SaPillarScore $out 'cross-layer-handoffs'
+        Remove-Item -LiteralPath (Join-Path $vault '01-Projects' 'widget-arc.md') -Force
+        $vaultMissOut = Invoke-SelfAudit @('--repo-root', $fixture, '--memory-dir', $mem, '--vault-dir', $vault, '--json')
+        $vaultMissObj = $vaultMissOut | ConvertFrom-Json
+        $vaultMissGaps = @($vaultMissObj.gaps | Where-Object { $_.title -eq 'No vault handshake for active Linear project' })
+        $vaultMissP1 = Get-SaPillarScore $vaultMissOut 'cross-layer-handoffs'
+        Write-LfFile (Join-Path $vault '01-Projects' 'widget-arc.md') "---`nlinear: https://linear.app/example/project/widget-arc`n---`n`n# Widget Arc`n`nDurable handoff exists in the vault.`n"
+        Write-LfFile (Join-Path $mem 'project-widget.md') "---`nname: project-widget`nmetadata:`n  type: project`n---`nWidget Arc is cached for this harness.`n"
+        $matchedOut = Invoke-SelfAudit @('--repo-root', $fixture, '--memory-dir', $mem, '--vault-dir', $vault, '--json')
+        $matchedObj = $matchedOut | ConvertFrom-Json
+        $matchedCacheGaps = @($matchedObj.gaps | Where-Object { $_.title -eq 'Project note not matched in scanned harness cache' })
+        $matchedP1 = Get-SaPillarScore $matchedOut 'cross-layer-handoffs'
+    } finally {
+        $env:PATH = $savedPath
+        Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Assert-Eq 'self-audit.test: missing project-type note is labelled as a scanned harness-cache mismatch' `
+        'Project note not matched in scanned harness cache' $cacheGap.title
+    Assert-Contains 'self-audit.test: cache mismatch detail does not claim a missing durable handoff' `
+        $cacheGap.detail 'this is a harness cache coverage check; durable handoff completeness is not established by this check'
+    Assert-Contains 'self-audit.test: cache mismatch advice checks the vault and native-memory consolidation before refresh' `
+        $cacheGap.fix 'Check the vault Handshake and native-memory consolidation status; refresh the harness cache only if needed. Do not infer a missing durable handoff from this result.'
+    Assert-Eq 'self-audit.test: valid vault Handshake remains distinct from the cache mismatch' '0' "$($vaultGap.Count)"
+    Assert-Eq 'self-audit.test: cache mismatch keeps the existing 4-point Pillar 1 deduction' '16' "$p1"
+    Assert-Eq 'self-audit.test: missing vault Handshake records the distinct vault gap' '1' "$($vaultMissGaps.Count)"
+    Assert-Eq 'self-audit.test: missing cache and vault Handshake keep both 4-point Pillar 1 deductions' '12' "$vaultMissP1"
+    Assert-Eq 'self-audit.test: matching project cache removes the cache gap' '0' "$($matchedCacheGaps.Count)"
+    Assert-Eq 'self-audit.test: matching project cache restores Pillar 1 to 20' '20' "$matchedP1"
+} else {
+    _Skip 'self-audit.test: harness-cache label test' 'jq not installed'
 }
 
 # --- Codex missing-test: vendored capability does not require harness realizations.
@@ -1696,13 +1772,13 @@ if ($jqAvail) {
 
 # --- orientation surface (<TEAM>-524) ----------------------------------------
 # Windows-native twin of the tests/self-audit.test.sh orientation-surface block.
-# The effective Mode 1 kickoff surface = static entrypoint + the compiled spine
-# capability bodies (session-agent + closeout) the kickoff mandates + the vault
-# lesson index read at every orient. Its OWN section, its OWN JSON key, and —
+# The static Mode 1 kickoff estimate = static entrypoint + the compiled
+# session-agent body + the vault triggers view, with the full index only as the
+# documented fallback. Its OWN section, its OWN JSON key, and —
 # the load-bearing part — it NEVER moves total, a pillar score, or gaps.
 
 # New-SaOrientHome — a rendered harness home fixture: an entrypoint file plus the
-# two compiled spine skill bodies.
+# compiled skills. Only session-agent is a kickoff input.
 function New-SaOrientHome {
     param([string]$Home_, [string]$Entry)
     Write-LfFile (Join-Path $Home_ $Entry) "entrypoint body`nsecond line`n"
@@ -1719,12 +1795,12 @@ New-SaFixtureRepo $oriFixture
 $oriCfg = Join-Path $oriFixture 'config'
 $oriVault = Join-Path $oriFixture 'vault'
 New-SaOrientHome $oriCfg 'CLAUDE.md'
-Write-LfFile (Join-Path $oriVault '04-Lessons' '_index.md') "| Trigger | Lesson |`n| --- | --- |`n| before a fetch | use the CLI |`n"
+Write-LfFile (Join-Path $oriVault '04-Lessons' '_triggers.md') "| Trigger | Lesson |`n| --- | --- |`n| before a fetch | use the CLI |`n"
+Write-LfFile (Join-Path $oriVault '04-Lessons' '_index.md') "full index body that must not be selected when triggers exist`n"
 
 $oriEpB = Get-SaFileBytes (Join-Path $oriCfg 'CLAUDE.md')
-$oriSpB = (Get-SaFileBytes (Join-Path $oriCfg 'skills' 'session-agent' 'SKILL.md')) +
-          (Get-SaFileBytes (Join-Path $oriCfg 'skills' 'closeout' 'SKILL.md'))
-$oriLiB = Get-SaFileBytes (Join-Path $oriVault '04-Lessons' '_index.md')
+$oriSpB = Get-SaFileBytes (Join-Path $oriCfg 'skills' 'session-agent' 'SKILL.md')
+$oriLiB = Get-SaFileBytes (Join-Path $oriVault '04-Lessons' '_triggers.md')
 $oriWant = $oriEpB + $oriSpB + $oriLiB
 
 $oriJson = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture,
@@ -1742,14 +1818,14 @@ Assert-Eq 'self-audit.test: orientation surface entrypoint_bytes matches the com
     "$oriEpB" ([string]$oriJson.orientation_surface.harnesses[0].entrypoint_bytes)
 # The whole point of <TEAM>-524: the mandatory capability bodies are counted,
 # not just the static entrypoint file.
-Assert-Eq 'self-audit.test: orientation surface spine_bytes covers session-agent + closeout, not the entrypoint alone' `
+Assert-Eq 'self-audit.test: orientation surface spine_bytes covers the kickoff session-agent body, not closeout' `
     "$oriSpB" ([string]$oriJson.orientation_surface.harnesses[0].spine_bytes)
-Assert-Eq 'self-audit.test: orientation surface the vault lesson index is measured, not silently dropped' `
+Assert-Eq 'self-audit.test: orientation surface the vault triggers view is measured, not silently dropped' `
     "$oriLiB" ([string]$oriJson.orientation_surface.harnesses[0].lesson_index_bytes)
-Assert-Eq 'self-audit.test: orientation surface effective_total_bytes = entrypoint + spine + lesson index' `
+Assert-Eq 'self-audit.test: orientation surface effective_total_bytes = entrypoint + session-agent + triggers view' `
     "$oriWant" ([string]$oriJson.orientation_surface.harnesses[0].effective_total_bytes)
-Assert-Eq 'self-audit.test: orientation surface lesson index status is measured' `
-    'measured' $oriJson.orientation_surface.lesson_index.status
+Assert-Eq 'self-audit.test: orientation surface triggers view has priority over the full index' `
+    'triggers' $oriJson.orientation_surface.lesson_index.source
 Assert-Eq 'self-audit.test: orientation surface aggregate total_bytes sums the harness rows' `
     "$oriWant" ([string]$oriJson.orientation_surface.total_bytes)
 Assert-Contains 'self-audit.test: orientation surface an unresolved harness home is a named skip' `
@@ -1757,6 +1833,15 @@ Assert-Contains 'self-audit.test: orientation surface an unresolved harness home
 Assert-Contains 'self-audit.test: orientation surface markdown has its own section' $oriMd '## Orientation surface'
 Assert-Contains 'self-audit.test: orientation surface markdown states the informational boundary' `
     $oriMd 'Informational only; never scored.'
+
+# closeout is manual. Its size must have no effect on the kickoff estimate.
+Add-Content -LiteralPath (Join-Path $oriCfg 'skills' 'closeout' 'SKILL.md') -Value 'manual closeout payload that must not count'
+$oriCloseoutChanged = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture,
+    '--config-dir', $oriCfg, '--vault-dir', $oriVault, '--json')) | ConvertFrom-Json
+Assert-Eq 'self-audit.test: orientation surface closeout size is irrelevant to the kickoff estimate' `
+    "$($oriJson.orientation_surface.total_bytes)" "$($oriCloseoutChanged.orientation_surface.total_bytes)"
+Assert-Contains 'self-audit.test: orientation surface markdown labels this as a static estimate, not actual consumption' `
+    $oriMd 'This is not actual session consumption or a token count.'
 
 # Non-scoring proof. Same fixture, same config dir, same vault — the ONLY
 # difference is the size of the compiled spine bodies (no pillar reads
@@ -1790,27 +1875,46 @@ Assert-Contains 'self-audit.test: orientation surface an absent spine body is na
 
 Remove-Item -LiteralPath $oriFixture -Recurse -Force -ErrorAction SilentlyContinue
 
-# Lesson index: an unmeasured index is NAMED, never a silent 0.
+# Lesson view: triggers are preferred; the full index is the fallback. Missing
+# both views is named, never a silent 0.
 $oriFixture2 = New-SaTmp
 New-SaFixtureRepo $oriFixture2
 $oriCfg2 = Join-Path $oriFixture2 'config'
 $oriVault2 = Join-Path $oriFixture2 'vault'
 New-SaOrientHome $oriCfg2 'CLAUDE.md'
-New-Item -ItemType Directory -Path (Join-Path $oriVault2 '04-Lessons') -Force | Out-Null  # index absent
+New-Item -ItemType Directory -Path (Join-Path $oriVault2 '04-Lessons') -Force | Out-Null  # both views absent
 
 $oriNoVaultRaw = Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture2, '--config-dir', $oriCfg2, '--json')
 $oriNoVault = $oriNoVaultRaw | ConvertFrom-Json
 $oriWithVault = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture2,
     '--config-dir', $oriCfg2, '--vault-dir', $oriVault2, '--json')) | ConvertFrom-Json
+Write-LfFile (Join-Path $oriVault2 '04-Lessons' '_index.md') "full index fallback`n"
+$oriFallbackB = Get-SaFileBytes (Join-Path $oriVault2 '04-Lessons' '_index.md')
+$oriFallbackTotal = (Get-SaFileBytes (Join-Path $oriCfg2 'CLAUDE.md')) +
+                    (Get-SaFileBytes (Join-Path $oriCfg2 'skills' 'session-agent' 'SKILL.md')) + $oriFallbackB
+$oriFallback = (Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture2,
+    '--config-dir', $oriCfg2, '--vault-dir', $oriVault2, '--json')) | ConvertFrom-Json
+$oriFallbackMd = Invoke-SelfAudit @('--isolated', '--repo-root', $oriFixture2,
+    '--config-dir', $oriCfg2, '--vault-dir', $oriVault2)
 
 Assert-Contains 'self-audit.test: orientation surface no vault → lesson_index_bytes is null (unmeasured, not 0)' `
     $oriNoVaultRaw '"lesson_index_bytes": null'
 Assert-Contains 'self-audit.test: orientation surface no vault is a NAMED unmeasured state' `
     $oriNoVault.orientation_surface.lesson_index.status 'unmeasured — no vault configured'
-Assert-Contains 'self-audit.test: orientation surface a vault without the index names the missing path' `
-    $oriWithVault.orientation_surface.lesson_index.status 'unmeasured — not found at'
-Assert-Eq 'self-audit.test: orientation surface a vault without the index still reports null bytes' `
+Assert-Contains 'self-audit.test: orientation surface a vault without either lesson view names both missing choices' `
+    $oriWithVault.orientation_surface.lesson_index.status 'unmeasured — neither triggers view nor index found'
+Assert-Eq 'self-audit.test: orientation surface a vault without either lesson view still reports null bytes' `
     'True' ([string]($null -eq $oriWithVault.orientation_surface.lesson_index.bytes))
+Assert-Eq 'self-audit.test: orientation surface full index is selected only as the triggers fallback' `
+    'index fallback' $oriFallback.orientation_surface.lesson_index.source
+Assert-Eq 'self-audit.test: orientation surface selected fallback retains the compatible measured status' `
+    'measured' $oriFallback.orientation_surface.lesson_index.status
+Assert-Eq 'self-audit.test: orientation surface fallback lesson_index_bytes uses the actual full-index bytes' `
+    "$oriFallbackB" "$($oriFallback.orientation_surface.harnesses[0].lesson_index_bytes)"
+Assert-Eq 'self-audit.test: orientation surface fallback effective total uses the actual fixture bytes' `
+    "$oriFallbackTotal" "$($oriFallback.orientation_surface.harnesses[0].effective_total_bytes)"
+Assert-Contains 'self-audit.test: orientation surface fallback markdown names the selected index source' `
+    $oriFallbackMd '- lesson view (index fallback): measured'
 
 Remove-Item -LiteralPath $oriFixture2 -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -1906,6 +2010,12 @@ Remove-Item -LiteralPath $oriFixture4 -Recurse -Force -ErrorAction SilentlyConti
 $sgFixture = New-SaTmp
 New-SaFixtureRepo $sgFixture
 $sgReg = Join-Path $sgFixture 'subgates.txt'
+$sgLinearLog = Join-Path $sgFixture 'linear-calls.log'
+$sgSavedPath = $env:PATH
+$sgSavedLinearLog = $env:SELF_AUDIT_LINEAR_STUB_LOG
+$sgLinearBin = New-SaEmptyLinearCli $sgFixture
+$env:PATH = $sgLinearBin + [IO.Path]::PathSeparator + $env:PATH
+$env:SELF_AUDIT_LINEAR_STUB_LOG = $sgLinearLog
 # Quoted, like every other path fixture here (see D2/D1c): an UNQUOTED value
 # takes the bash-%q backslash-collapse branch in Get-SaLocalEnvValue, which
 # destroys a Windows temp path (`D:\a\...` → `D:a...`) and skipped this whole
@@ -1921,6 +2031,10 @@ no command here
 "@
 
 $sgOut = Invoke-SelfAudit @('--repo-root', $sgFixture, '--json') | ConvertFrom-Json
+Assert-Eq 'self-audit.test: operator sub-gates fixture intercepts the non-isolated Linear project query' `
+    'project list --json' ((Get-Content -LiteralPath $sgLinearLog -Raw).Trim())
+Assert-Eq 'self-audit.test: operator sub-gates fixture Linear response leaves valid JSON for assertions' `
+    'True' "$($null -ne $sgOut)"
 Assert-Eq 'self-audit.test: operator sub-gates a passing gate reports pass with exit 0' `
     'map check|pass|0' `
     ("$($sgOut.operator_subgates.gates[0].name)|$($sgOut.operator_subgates.gates[0].status)|$($sgOut.operator_subgates.gates[0].exit_code)")
@@ -2033,6 +2147,8 @@ Assert-Eq 'self-audit.test: operator sub-gates no pre-existing JSON key moved' `
     'date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates' `
     ((($sgUnset.PSObject.Properties | ForEach-Object { $_.Name }) -join ','))
 Remove-Item -LiteralPath $sgFixture -Recurse -Force -ErrorAction SilentlyContinue
+if ($null -eq $sgSavedPath) { Remove-Item Env:PATH -ErrorAction SilentlyContinue } else { $env:PATH = $sgSavedPath }
+if ($null -eq $sgSavedLinearLog) { Remove-Item Env:SELF_AUDIT_LINEAR_STUB_LOG -ErrorAction SilentlyContinue } else { $env:SELF_AUDIT_LINEAR_STUB_LOG = $sgSavedLinearLog }
 
 # --- Pillar 2 sub-check 2.6: project-note body budget -------------------------
 # The recall caps bound the INDEX; nothing bounded the note BODIES the index
@@ -2154,6 +2270,12 @@ Remove-Item -LiteralPath $ptnFixture -Recurse -Force -ErrorAction SilentlyContin
 $sgbFixture = New-SaTmp
 New-SaFixtureRepo $sgbFixture
 $sgbReg = Join-Path $sgbFixture 'subgates.txt'
+$sgbLinearLog = Join-Path $sgbFixture 'linear-calls.log'
+$sgbSavedPath = $env:PATH
+$sgbSavedLinearLog = $env:SELF_AUDIT_LINEAR_STUB_LOG
+$sgbLinearBin = New-SaEmptyLinearCli $sgbFixture
+$env:PATH = $sgbLinearBin + [IO.Path]::PathSeparator + $env:PATH
+$env:SELF_AUDIT_LINEAR_STUB_LOG = $sgbLinearLog
 # Quoted — same Windows backslash-collapse trap as the fixture above.
 Write-LfFile (Join-Path $sgbFixture 'local.env') ('AUDIT_SUBGATES_FILE="' + $sgbReg + '"' + "`n")
 
@@ -2173,6 +2295,10 @@ function Invoke-SaSubgate {
 # this pins is that no shape of early exit ever lands on `pass`.
 Write-LfFile $sgbReg "crasher = exit 7`n"
 $sgbCrash = Invoke-SaSubgate '30'
+Assert-Eq 'self-audit.test: sub-gate bounding fixture intercepts the non-isolated Linear project query' `
+    'project list --json' ((Get-Content -LiteralPath $sgbLinearLog -Raw).Trim())
+Assert-Eq 'self-audit.test: sub-gate bounding fixture Linear response leaves valid JSON for assertions' `
+    'True' "$($null -ne $sgbCrash)"
 Assert-NotContains 'self-audit.test: sub-gate bounding a job with no exit status is never reported as pass' `
     "$($sgbCrash.operator_subgates.gates[0].status)" 'pass'
 Assert-Eq 'self-audit.test: sub-gate bounding a nonzero gate is fail or error, never silently clean' `
@@ -2219,6 +2345,8 @@ $sgbCapMd = Invoke-SelfAudit @('--repo-root', $sgbFixture)
 Assert-Contains 'self-audit.test: sub-gate bounding the cap is a NAMED skip line in the markdown' `
     $sgbCapMd 'registry capped at 64 gate(s); 6 further entr(y/ies) not run'
 Remove-Item -LiteralPath $sgbFixture -Recurse -Force -ErrorAction SilentlyContinue
+if ($null -eq $sgbSavedPath) { Remove-Item Env:PATH -ErrorAction SilentlyContinue } else { $env:PATH = $sgbSavedPath }
+if ($null -eq $sgbSavedLinearLog) { Remove-Item Env:SELF_AUDIT_LINEAR_STUB_LOG -ErrorAction SilentlyContinue } else { $env:SELF_AUDIT_LINEAR_STUB_LOG = $sgbSavedLinearLog }
 
 # --- knob arithmetic: an over-large budget must not WRAP -----------------------
 # The bash twin computes `$(( KB * 1024 ))` in 64-bit signed arithmetic, where

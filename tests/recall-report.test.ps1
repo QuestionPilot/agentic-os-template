@@ -196,12 +196,43 @@ Assert-Eq 'recall-report.test: --window 1 scans exactly the newest log' `
 Assert-Eq 'recall-report.test: window selection ignores mtime (filename order is the clock)' `
     (Get-RrExpect 2 5 5 2 0 2 0) (Get-RrCounts $RR_WIN @('--window', '2'))
 
-# === 4. RESTRAINT — real-corpus prose shapes that must NOT be counted.
+# === 4. LEGACY RECORDS and RESTRAINT.
 #
-# Each fixture pairs ONE restraint line with ONE true-positive record and
-# asserts the counts are EXACTLY the true positive's. The paired true positive
-# is what makes the assertion non-vacuous: a scanner that had simply stopped
-# matching anything would fail these, not pass them.
+# These six forms are present in the live archive. They must count even though
+# the current writer prefers the canonical bold/comma form. An unknown class in
+# a genuine record stays visible as unclassified.
+$RR_LEGACY = Join-Path $RR_TMP 'legacy'
+New-RrLog $RR_LEGACY '2026-01-01-000000-host-aaaaaaaa.md' @(
+    'Q1: The `template` note was in context. **Recall failure — loaded-but-ignored:** the executor used HTTP 200 as proof.',
+    '- [no-action] **Recall failure — loaded-but-ignored:** the lesson-index warning was not applied.',
+    '[agent-summary] Recall failure: loaded-but-ignored persistence instruction. The agent stopped early; no execution miss.',
+    '1. The driver corrected the probe. **Recall failure — not-loaded at the executor runtime probe:** existing guidance was not used.',
+    '- **Recall failure — loaded-but-ignored:** HTML identity was mistaken for production-header proof.',
+    '[no-action] **Recall failure — loaded-but-ignored:** CLI-first guidance was not applied.',
+    '**Recall failure — wrong-shelf:** malformed class must remain visible.')
+Assert-Eq 'recall-report.test: genuine legacy prefixes and em-dash classes are counted; malformed class is visible' `
+    (Get-RrExpect 20 1 1 1 1 5 1) (Get-RrCounts $RR_LEGACY)
+
+# POSITIVE CONTROLS the restraint rules must not swallow: a canonical record
+# whose prose opens with "None", and prose-led records with nothing but the
+# prefix before the marker (the sentence-boundary rule's bare-prefix branch).
+$RR_NONE_OPENER = Join-Path $RR_TMP 'none-opener'
+New-RrLog $RR_NONE_OPENER '2026-01-01-000000-host-aaaaaaaa.md' @(
+    '**Recall failure, class not-loaded:** None of the loaded lessons covered this trigger.',
+    '1) **Recall failure, class not-loaded:** the note was never read.',
+    'Q2: **Recall failure — loaded-but-ignored:** the rule was in context and skipped.')
+Assert-Eq 'recall-report.test: a canonical record opening with None and bare-prefix prose-led records still count' `
+    (Get-RrExpect 20 1 1 1 2 1 0) (Get-RrCounts $RR_NONE_OPENER)
+
+# Each restraint fixture pairs ONE excluded line with ONE true-positive record.
+$RR_PROSE_CODE = Join-Path $RR_TMP 'prose-code'
+New-RrLog $RR_PROSE_CODE '2026-01-01-000000-host-aaaaaaaa.md' @(
+    'Q1: The `template` note was in context. **Recall failure — loaded-but-ignored:** it did not fire.')
+Assert-Eq 'recall-report.test: a genuine prose record after closed inline code still counts' `
+    (Get-RrExpect 20 1 1 1 0 1 0) (Get-RrCounts $RR_PROSE_CODE)
+
+#
+# The paired true positive prevents a scanner that stopped matching from passing.
 function Test-RrRestraint {
     param([string]$Slug, [string]$Label, [string]$Line)
     $dir = Join-Path $RR_TMP ('restraint-' + $Slug)
@@ -214,6 +245,50 @@ Test-RrRestraint 'negation-none' `
     "a bulleted 'Recall failure: none' negation is not a record" `
     '- Recall failure: none — the vault decision and operations lesson were loaded and applied.'
 
+Test-RrRestraint 'negation-none-capitalized' `
+    "a capitalized 'Recall failure: None' negation is not a record" `
+    '- Recall failure: None this session.'
+
+Test-RrRestraint 'hyphenated-nonrecord' `
+    "a hyphenated 'Recall failure-free' phrase is not a record" `
+    '- Recall failure-free session today.'
+
+Test-RrRestraint 'inline-code-example' `
+    'a directly backticked record example is not a record' `
+    '- `**Recall failure, class not-loaded:**`'
+
+Test-RrRestraint 'inline-code-unbolded-example' `
+    'a directly backticked unbolded record example is not a record' `
+    '1. See `Recall failure, class not-loaded`'
+
+Test-RrRestraint 'list-example-prose' `
+    'a list item that introduces an example is not a record' `
+    '- For example, **Recall failure — not-loaded:** shape only.'
+
+Test-RrRestraint 'list-template-prose' `
+    'a list item that describes the template is not a record' `
+    '- The docs ask for a **Recall failure, class not-loaded:** line here.'
+
+Test-RrRestraint 'numbered-template-prose' `
+    'a numbered instruction that runs the marker into an unfinished sentence is not a record' `
+    '1. The docs ask for a **Recall failure, class not-loaded:** line here.'
+
+Test-RrRestraint 'q1-template-prose' `
+    'a Q1 answer that restates the record shape mid-sentence is not a record' `
+    'Q1: Record it as **Recall failure, class not-loaded:** when the index was not loaded.'
+
+Test-RrRestraint 'numbered-example-prose' `
+    'a numbered item that introduces an example is not a record' `
+    '1. For example, **Recall failure — not-loaded:** shape only.'
+
+Test-RrRestraint 'spaced-hyphen-prose' `
+    'a spaced ASCII hyphen after the marker is a prose dash, not a class delimiter' `
+    '- [follow-up] Recall failure - not-loaded items were re-reviewed.'
+
+Test-RrRestraint 'emdash-bullet' `
+    'an em-dash bullet is not a legacy list marker' `
+    '— **Recall failure — not-loaded:** shape only.'
+
 Test-RrRestraint 'negation-no-action' `
     "a '[no-action] No recall failure occurred' line is not a record" `
     '- [no-action] No recall failure occurred; the existing session and review rules were loaded and applied.'
@@ -221,10 +296,6 @@ Test-RrRestraint 'negation-no-action' `
 Test-RrRestraint 'negation-inline' `
     'a negation buried mid-sentence is not a record' `
     '- [no-action] No new operating rule was needed. Recall failure: none this session.'
-
-Test-RrRestraint 'old-bulleted-classified' `
-    'the OLDER bulleted classified format is deliberately not counted (documented under-report)' `
-    '- [check] Recall failure, loaded-but-ignored: the lesson index already named the three-layer check.'
 
 Test-RrRestraint 'reversed-order' `
     "a reversed '[loaded-but-ignored recall failure]' bracket tag is not a record" `
@@ -262,12 +333,45 @@ Test-RrRestraint 'mid-line-marker' `
     'a record marker quoted mid-line is not a record' `
     'The template asks for a **Recall failure, class not-loaded:** line here.'
 
+Test-RrRestraint 'prefixed-example' `
+    'a list-prefixed quoted example is not a record' `
+    '- Example: **Recall failure — not-loaded:** prose illustrating the required record shape.'
+
+# The code-fence check needs a multi-line fixture, including a genuine record,
+# so it cannot use Test-RrRestraint's one-line shape.
+$RR_FENCED = Join-Path $RR_TMP 'fenced-example'
+New-RrLog $RR_FENCED '2026-01-01-000000-host-aaaaaaaa.md' @(
+    '```markdown',
+    '**Recall failure, class not-loaded:** example only.',
+    '```',
+    $RR_TP_IGNORED)
+Assert-Eq 'recall-report.test: restraint — a fenced canonical record example is not counted' `
+    (Get-RrExpect 20 1 1 1 0 1 0) (Get-RrCounts $RR_FENCED)
+
+$RR_MIXED_FENCE = Join-Path $RR_TMP 'mixed-fence'
+New-RrLog $RR_MIXED_FENCE '2026-01-01-000000-host-aaaaaaaa.md' @(
+    '````markdown',
+    '**Recall failure, class not-loaded:** example remains fenced.',
+    '```',
+    '**Recall failure, class not-loaded:** still fenced after a shorter same-character close.',
+    '~~~',
+    '**Recall failure, class loaded-but-ignored:** still fenced after mismatched close.',
+    '````',
+    $RR_TP_IGNORED)
+Assert-Eq 'recall-report.test: restraint — mismatched or short fences do not reopen a code sample' `
+    (Get-RrExpect 20 1 1 1 0 1 0) (Get-RrCounts $RR_MIXED_FENCE)
+
 # Every restraint line together in ONE log, still alongside one true positive.
 $RR_ALL_FP = Join-Path $RR_TMP 'restraint-combined'
 New-RrLog $RR_ALL_FP '2026-01-01-000000-host-aaaaaaaa.md' @(
     '- Recall failure: none — the lesson was loaded and applied.',
+    '- Recall failure: None this session.',
+    '- Recall failure-free session today.',
+    '- `**Recall failure, class not-loaded:**`',
+    '- For example, **Recall failure — not-loaded:** shape only.',
+    '- The docs ask for a **Recall failure, class not-loaded:** line here.',
+    '— **Recall failure — not-loaded:** shape only.',
     '- [no-action] No recall failure occurred; existing rules covered the work.',
-    '- [check] Recall failure, loaded-but-ignored: the older bulleted format.',
     '- [loaded-but-ignored recall failure] reversed bracket tag.',
     '- [inferred] The misses were loaded-but-ignored recall failures.',
     '## Lessons (Q1a recall-failure record)',
@@ -277,6 +381,7 @@ New-RrLog $RR_ALL_FP '2026-01-01-000000-host-aaaaaaaa.md' @(
     'Recall failure, class not-loaded: unbolded line start.',
     '  **Recall failure, class not-loaded:** indented.',
     'The template asks for a **Recall failure, class not-loaded:** line.',
+    '- Example: **Recall failure — not-loaded:** prose illustrating the required record shape.',
     $RR_TP_IGNORED)
 Assert-Eq 'recall-report.test: restraint — every false-positive shape at once still counts only the true positive' `
     (Get-RrExpect 20 1 1 1 0 1 0) (Get-RrCounts $RR_ALL_FP)

@@ -42,21 +42,19 @@
     different heading is invisible to the denominator AND to the numerator, so
     it cannot skew the rate in either direction — but it does shrink the sample.
 
-    THE EXTRACTION CONTRACT, biased hard toward UNDER-reporting.
-    A recall-failure RECORD is a line that begins with the bold record marker:
+    THE EXTRACTION CONTRACT, biased hard toward excluding prose.
+    The writer's canonical record is a line beginning with the bold marker:
 
         **Recall failure, class not-loaded:** <prose>
         **Recall failure, class loaded-but-ignored:** <prose>
 
-    Only `^\*\*Recall failure` at the start of a line is a record at all. Prose
-    ABOUT recall failures is not a record, and the corpus is full of prose that
-    a looser scanner reads as one — negations ("Recall failure: none"),
-    bulleted older formats, reversed word order, parenthetical classes,
-    headings, and a bare class token used as a noun mid-sentence. Every one of
-    those shapes is pinned as a restraint fixture in
-    tests/recall-report.test.ps1. The cost of the strictness is real (older
-    bulleted records are NOT counted, so early windows under-report); the cost
-    of the alternative is a number nobody trusts.
+    Older logs also contain genuine records with a top-level list/number/tag/Q1
+    prefix, optional bold marker, and either colon or em-dash class punctuation.
+    Those bounded legacy forms are accepted. A quoted example or arbitrary prose
+    before the marker is not. Negations ("Recall failure: none"), reversed word
+    order, parenthetical classes, headings, and a bare class token used as a noun
+    mid-sentence are excluded. Every shape is pinned in
+    tests/recall-report.test.ps1.
 
     A record whose class token is not one of the two known classes is NOT
     guessed at. It lands in a separate `unclassified` informational count, so a
@@ -177,8 +175,7 @@ $repoRoot = Split-Path -Parent $scriptDir
 $SESSIONS_REL = '30-Archive/Sessions'
 # Line-anchored, exact heading (trailing whitespace tolerated).
 $MEANINGFUL_RE = '^##[ ]Issues this session[ \t]*$'
-# ONLY a line starting with this is a recall-failure record.
-$RECORD_RE = '^\*\*Recall failure'
+$RECORD_RE = 'Recall failure'
 
 # Get-RrLocalEnvValue — read ONE key from local.env as DATA, without importing
 # the whole file. Byte-parity with self-audit.ps1's Get-SaLocalEnvValue and with
@@ -297,12 +294,16 @@ $scannedFiles = $meaningful.GetRange($start, $meaningfulTotal - $start)
 $scanned = $scannedFiles.Count
 
 # --- extract ------------------------------------------------------------------
-# Class resolution: the token immediately after `, class ` must be a KNOWN class
-# and must end at a non-class character, so `loaded-but-ignored + no act-time
-# gate` still resolves to `loaded-but-ignored` while a longer unknown token
-# (e.g. `not-loaded-ish`) does NOT masquerade as a known one.
-$reNotLoaded = '^\*\*Recall failure, class not-loaded([^A-Za-z0-9-]|$)'
-$reIgnored   = '^\*\*Recall failure, class loaded-but-ignored([^A-Za-z0-9-]|$)'
+# List/tag prefixes must be followed immediately by the record marker. Numbered
+# and Q1 records retain their observed prose-led legacy form.
+$reRecord = '^(?:\*\*Recall failure|[-*+]\s+(?:\[[^\]]+\]\s+)?\*{0,2}Recall failure|\[[^\]]+\]\s+\*{0,2}Recall failure|(?:\d+[.)]|Q\d+[A-Za-z]?:)\s+.*?\*{0,2}Recall failure)'
+$reProseLed = '^(?:\d+[.)]|Q\d+[A-Za-z]?:)\s+.*?\*{0,2}Recall failure'
+# Class resolution accepts canonical `, class X`, legacy `, X`, `: X`, and
+# em-dash `— X` forms. A longer class token stays unclassified.
+# A spaced ASCII hyphen is a prose dash, not a delimiter; only em/en dash forms serialize a class.
+$reDelimiter = 'Recall failure\s*(?:,\s*(?:class\s+)?|:\s*|(?:—|–)\s+)'
+$reNotLoaded = '^not-loaded([^A-Za-z0-9-]|$)'
+$reIgnored   = '^loaded-but-ignored([^A-Za-z0-9-]|$)'
 
 $nNotLoaded = 0
 $nIgnored = 0
@@ -316,12 +317,42 @@ foreach ($f in $scannedFiles) {
         [Console]::Error.WriteLine("recall-report: SCAN ERROR — a session log could not be read: $f")
         exit 2
     }
+    $inFence = $false
+    $fenceChar = ''
+    $fenceLength = 0
     for ($k = 0; $k -lt $lines.Count; $k++) {
         $ln = $lines[$k]
+        $fenceLine = $ln.TrimStart()
+        if (-not $inFence -and $fenceLine -cmatch '^(?<run>`{3,}|~{3,})') {
+            $fenceChar = $matches['run'][0]
+            $fenceLength = $matches['run'].Length
+            $inFence = $true
+            continue
+        }
+        if ($inFence) {
+            $runLength = 0
+            while ($runLength -lt $fenceLine.Length -and $fenceLine[$runLength] -ceq $fenceChar) { $runLength++ }
+            # CommonMark-style close: same character, at least the opening
+            # length, and no trailing info text. A mismatched fence stays inside.
+            if ($runLength -ge $fenceLength -and $fenceLine.Substring($runLength) -cmatch '^\s*$') { $inFence = $false }
+            continue
+        }
         if ($ln -cnotmatch $RECORD_RE) { continue }
+        if ($ln -cnotmatch $reRecord) { continue }
+        $isProseLed = $ln -cmatch $reProseLed
+        $delimiter = [regex]::Match($ln, $reDelimiter, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+        if (-not $delimiter.Success) { continue }
+        $before = $ln.Substring(0, $delimiter.Index)
+        if ($isProseLed -and $before -match '(^|[^A-Za-z0-9_])example([^A-Za-z0-9_]|$)') { continue }
+        # A prose-led record starts a new sentence: the prose before the marker is
+        # either just the prefix or ends at a sentence boundary (twin of the sh rule).
+        if ($isProseLed -and $before -cnotmatch '^(?:\d+[.)]|Q\d+[A-Za-z]?:)\s+(?:\*\*)?$' -and $before -cnotmatch '[.!?:]\s*(?:\*\*)?$') { continue }
+        if ($before -cmatch '`(?:\*\*)?$') { continue }
+        $tail = $ln.Substring($delimiter.Index + $delimiter.Length) -replace '^\*\*', ''
+        if ($tail -match '^none([^A-Za-z0-9-]|$)') { continue }
         $cls = 'unclassified'
-        if ($ln -cmatch $reNotLoaded)      { $cls = 'not-loaded' }
-        elseif ($ln -cmatch $reIgnored)    { $cls = 'loaded-but-ignored' }
+        if ($tail -cmatch $reNotLoaded)      { $cls = 'not-loaded' }
+        elseif ($tail -cmatch $reIgnored)    { $cls = 'loaded-but-ignored' }
         switch ($cls) {
             'not-loaded'         { $nNotLoaded++ }
             'loaded-but-ignored' { $nIgnored++ }
@@ -376,7 +407,7 @@ if ($records.Count -gt 0) {
 Write-Host ''
 Write-Host 'INFORMATIONAL — this is a rolling rate, not a scored or graded metric.'
 Write-Host 'Nothing here passes, fails, or grades anything, and there is no target'
-Write-Host 'number. The extractor is deliberately strict (only line-leading'
-Write-Host '`**Recall failure, class <X>` records count), so the true count can only'
-Write-Host 'be HIGHER than what is reported here, never lower.'
+Write-Host 'number. The extractor accepts the canonical record and bounded legacy'
+Write-Host 'top-level forms, while excluding examples and prose. It can still miss'
+Write-Host 'unrecognized records and does not establish a true failure rate.'
 exit 0

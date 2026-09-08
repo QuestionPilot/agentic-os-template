@@ -59,10 +59,11 @@
 #
 # `orientation_surface` is INFORMATIONAL, in its own key + its own markdown
 # section, and likewise never contributes to `total`, a pillar score, or `gaps`.
-# It measures the EFFECTIVE Mode 1 kickoff surface per rendered harness home —
-# the static entrypoint PLUS the compiled spine capability bodies (session-agent
-# + closeout) the kickoff mandates PLUS the vault lesson index read at every
-# orient. `injection_surface` measures a different thing (the auto-injected
+# It measures a static Mode 1 kickoff subtotal per rendered harness home —
+# the static entrypoint PLUS the compiled session-agent body PLUS the vault
+# lesson trigger view read at every orient, with the full index as fallback.
+# This is a static subtotal, not actual session consumption or a token count.
+# `injection_surface` measures a different thing (the auto-injected
 # component budget); an entrypoint appearing in both is not a double-count,
 # because the two keys answer two different questions.
 #
@@ -702,7 +703,7 @@ score_cross_layer_handoffs() {
   # Project-type memory notes (frontmatter type: project, not a filename glob —
   # <TEAM>-353), collected once for the 1.1 name-match. Space-safe (NUL find).
   # <TEAM>-366: collected across ALL scanned stores — a project note in ANY store
-  # satisfies the handshake (the old single-store scan demanded the note in
+  # satisfies the cache coverage check (the old single-store scan demanded the note in
   # whichever store the picker happened to select).
   local proj_note_files=()
   if [ "$memory_avail" -eq 1 ]; then
@@ -730,9 +731,9 @@ score_cross_layer_handoffs() {
         if [ "$matched" -eq 0 ]; then
           deduct "$key" 4
           record_gap 1 8 \
-            "No memory note for active Linear project" \
-            "Active project \"$pname\" has no project-type memory note in any scanned memory store (${MEMORY_DIRS[*]}) — active projects should land a memory note at kickoff" \
-            "Create a note in the project's memory store with 'type: project' frontmatter naming the project + its Linear URL"
+            "Project note not matched in scanned harness cache" \
+            "Active project \"$pname\" has no project-type note in any scanned memory store (${MEMORY_DIRS[*]}) — this is a harness cache coverage check; durable handoff completeness is not established by this check" \
+            "Check the vault Handshake and native-memory consolidation status; refresh the harness cache only if needed. Do not infer a missing durable handoff from this result."
         fi
       done
     fi
@@ -1632,10 +1633,9 @@ emit_currentness_markdown() {
 # The pillars and `injection_surface` both measure STATIC entrypoint files. That
 # undercounts what a Mode 1 kickoff actually reads: the compiled `session-agent`
 # body (the spine capability the SessionStart hook mandates as the first action),
-# the compiled `closeout` body it hands off to, and the vault lesson index read
-# at every orient. A slimmed CLAUDE.md can therefore look like a shrinking
-# kickoff surface while the effective read grew. This section measures the
-# EFFECTIVE surface per rendered harness home and reports it — nothing here
+# and the vault lesson trigger view it reads at every orient. A slimmed CLAUDE.md can therefore look like a shrinking
+# kickoff subtotal while the static estimate grew. This section reports that
+# static subtotal per rendered harness home — nothing here
 # moves `total`, a pillar score, or `gaps`.
 #
 # Home resolution mirrors scripts/check-drift.sh --auto: the same four
@@ -1659,9 +1659,11 @@ ORI_TOTAL_LINES=0
 ORI_LI_PATH=""
 ORI_LI_BYTES=-1          # -1 = unmeasured (a distinct state from a 0-byte file)
 ORI_LI_STATUS=""
+ORI_LI_SOURCE=""
 
-# The vault-relative lesson index every orient reads (core/self-improvement.md
-# Promotion Rule → the ONE cross-store recall surface).
+# Mode 1 reads the generated triggers view first. The full index is its explicit
+# fallback when that view is absent.
+ORI_LESSON_TRIGGERS_REL="04-Lessons/_triggers.md"
 ORI_LESSON_INDEX_REL="04-Lessons/_index.md"
 
 # Both helpers ALWAYS print a decimal integer, on every path. The `[ -f ]` guard
@@ -1689,20 +1691,24 @@ _ori_lines() {
   [ -f "$1" ] || { printf '0'; return 1; }
   _ori_num_or_zero "$(LC_ALL=C awk 'END{print NR+0}' "$1" 2>/dev/null | tr -d ' \r')"
 }
-
 measure_orientation_surface() {
-  # Lesson index — measured once; every harness reads the same file, so each row
-  # carries it and the aggregate counts it once per harness (that is the honest
-  # per-kickoff read, and the markdown says so).
+  # Lesson trigger view — measured once; every harness reads the same file, so
+  # each row carries it and the aggregate counts it once per kickoff.
   if [ -z "$VAULT_DIR" ]; then
     ORI_LI_STATUS="unmeasured — no vault configured (OBSIDIAN_VAULT_PATH unset)"
-  elif [ ! -f "$VAULT_DIR/$ORI_LESSON_INDEX_REL" ]; then
-    ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_INDEX_REL"
-    ORI_LI_STATUS="unmeasured — not found at $ORI_LI_PATH"
   else
-    ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_INDEX_REL"
-    ORI_LI_BYTES="$(_ori_bytes "$ORI_LI_PATH")"
-    ORI_LI_STATUS="measured"
+    if [ -f "$VAULT_DIR/$ORI_LESSON_TRIGGERS_REL" ]; then
+      ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_TRIGGERS_REL"; ORI_LI_SOURCE="triggers"
+    elif [ -f "$VAULT_DIR/$ORI_LESSON_INDEX_REL" ]; then
+      ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_INDEX_REL"; ORI_LI_SOURCE="index fallback"
+    else
+      ORI_LI_PATH="$VAULT_DIR/$ORI_LESSON_TRIGGERS_REL"
+      ORI_LI_STATUS="unmeasured — neither triggers view nor index found at $VAULT_DIR/04-Lessons"
+    fi
+    if [ -n "$ORI_LI_SOURCE" ]; then
+      ORI_LI_BYTES="$(_ori_bytes "$ORI_LI_PATH")"
+      ORI_LI_STATUS="measured"
+    fi
   fi
 
   local pair name var entry home src ep_b ep_l sp_b sp_l missing cap cap_f li_add tot_b tot_l
@@ -1749,7 +1755,7 @@ measure_orientation_surface() {
     fi
 
     sp_b=0; sp_l=0
-    for cap in session-agent closeout; do
+    for cap in session-agent; do
       cap_f="$home/skills/$cap/SKILL.md"
       if [ -f "$cap_f" ]; then
         sp_b=$(( sp_b + $(_ori_bytes "$cap_f") ))
@@ -1793,10 +1799,11 @@ emit_orientation_markdown() {
     printf '_(not measured — no rendered harness home resolved)_\n'
   else
     for i in "${!ORI_H_NAMES[@]}"; do
-      printf -- '- %s (%s via %s): entrypoint %s=%s bytes, spine (session-agent+closeout)=%s bytes, lesson index=%s — effective %s bytes / %s lines\n' \
+      printf -- '- %s (%s via %s): static estimate — entrypoint %s=%s bytes, kickoff spine (session-agent)=%s bytes, lesson view (%s)=%s — subtotal %s bytes / %s lines\n' \
         "${ORI_H_NAMES[$i]}" "${ORI_H_HOMES[$i]}" "${ORI_H_SRCS[$i]}" \
         "${ORI_H_EP_NAMES[$i]:-none}" "${ORI_H_EP_BYTES[$i]}" \
         "${ORI_H_SPINE_BYTES[$i]}" \
+        "${ORI_LI_SOURCE:-unselected}" \
         "$( [ "$ORI_LI_BYTES" -ge 0 ] && printf '%s bytes' "$ORI_LI_BYTES" || printf 'unmeasured' )" \
         "${ORI_H_TOT_BYTES[$i]}" "${ORI_H_TOT_LINES[$i]}"
       if [ -n "${ORI_H_MISSING[$i]}" ]; then
@@ -1804,7 +1811,7 @@ emit_orientation_markdown() {
       fi
     done
   fi
-  printf -- '- lesson index: %s\n' "$ORI_LI_STATUS"
+  printf -- '- lesson view (%s): %s\n' "${ORI_LI_SOURCE:-unselected}" "$ORI_LI_STATUS"
   if [ "${#ORI_SKIPPED[@]}" -gt 0 ]; then
     skip_line=""
     for s in "${ORI_SKIPPED[@]}"; do
@@ -1814,7 +1821,7 @@ emit_orientation_markdown() {
     printf -- '- skipped: %s\n' "$skip_line"
   fi
   if [ "$ORI_MEASURED" -eq 1 ]; then
-    printf 'Effective kickoff surface: %s bytes / %s lines across %s harness render(s) — the lesson index is counted once per harness because each kickoff reads it. Informational only; never scored.\n' \
+    printf 'Static kickoff estimate: %s bytes / %s lines across %s harness render(s) — the lesson view is counted once per harness because each kickoff reads it. This is not actual session consumption or a token count. Informational only; never scored.\n' \
       "$ORI_TOTAL_BYTES" "$ORI_TOTAL_LINES" "${#ORI_H_NAMES[@]}"
   else
     printf 'Informational only; never scored.\n'
@@ -2352,9 +2359,10 @@ emit_json() {
   local ori_li_json
   ori_li_json="$(jq -n \
     --arg path "$ORI_LI_PATH" \
+    --arg source "$ORI_LI_SOURCE" \
     --argjson bytes "$ori_li_bytes" \
     --arg status "$ORI_LI_STATUS" \
-    '{path: (if $path == "" then null else $path end), bytes: $bytes, status: $status}')"
+    '{path: (if $path == "" then null else $path end), bytes: $bytes, source: (if $source == "" then null else $source end), status: $status}')"
   local ori_measured=false ori_tb='null' ori_tl='null'
   if [ "$ORI_MEASURED" -eq 1 ]; then
     ori_measured=true; ori_tb="$ORI_TOTAL_BYTES"; ori_tl="$ORI_TOTAL_LINES"
