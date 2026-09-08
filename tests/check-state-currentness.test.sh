@@ -393,6 +393,67 @@ _csc_case 'ABC-1 is currently Backlog.'         claim 'an adverb after the copul
 _csc_case 'ABC-1 has been blocked.'             claim 'a perfect auxiliary ("has been blocked")'
 _csc_case 'ABC-1 was set to Backlog.'           claim 'an auxiliary + transition verb ("was set to")'
 
+# POSITIVE CONTROLS — direct claims and conjunction inheritance remain claims.
+_csc_case 'ABC-1 is Backlog.'                   claim 'a direct claim remains attributable'
+_csc_case 'ABC-1 and ABC-2 remain Backlog.'     claim 'a conjunction list inherits its shared state'
+_csc_case '(parent ABC-1, In Progress)'          claim 'an ordinary parent claim remains attributable'
+
+# Label distribution reaches annotated top-level list items, but not a
+# parenthetical cross-reference. Use --list to prove each extracted claim.
+printf '%s\n' '[{"identifier":"ABC-1","state":"In Progress"},{"identifier":"ABC-2","state":"In Progress"},{"identifier":"ABC-3","state":"In Progress"},{"identifier":"ABC-4","state":"In Progress"}]' > "$DA/list.json"
+printf '%s\n' 'Done: ABC-1 memory note; ABC-2 routing note.' 'Done: ABC-1 (residual -> ABC-4), ABC-2.' 'ABC-3 is In Progress.' > "$MA/case.md"
+o="$(run_csc "$DA" "$MA" --no-projects --list)"; rc=$?
+assert_eq "check-state-currentness: label list claims both identifiers (exit 1)" 1 "$rc"
+assert_contains "check-state-currentness: label list claims ABC-1" "$o" "$(printf 'claim\tstale-claim\tABC-1\tDone')"
+assert_contains "check-state-currentness: label list claims ABC-2" "$o" "$(printf 'claim\tstale-claim\tABC-2\tDone')"
+assert_not_contains "check-state-currentness: label does not claim parenthetical ABC-4" "$o" "ABC-4"
+
+# ADVERSE CONTROLS — a close parenthesis stops conjunction inheritance, a label
+# stops at prose, and a dated Delta bullet is history outside a Delta heading.
+printf '%s\n' '[{"identifier":"ABC-1","state":"In Progress"},{"identifier":"ABC-2","state":"In Progress"},{"identifier":"ABC-3","state":"In Progress"},{"identifier":"ABC-4","state":"Backlog"}]' > "$DA/list.json"
+printf '%s\n' \
+  'ABC-1 DONE 2026-09-04 (bounded program closed; residual work points to ABC-4), ABC-2 DONE 2026-09-07.' \
+  'Done: ABC-2. Residual work points to ABC-4.' \
+  '- **Delta 2026-09-06:** (parent ABC-4, In Progress).' \
+  'ABC-3 is In Progress.' > "$MA/case.md"
+o="$(run_csc "$DA" "$MA" --no-projects)"; rc=$?
+assert_eq "check-state-currentness: direct dated claims remain comparable (exit 1)" 1 "$rc"
+assert_contains "check-state-currentness: dated direct claim still names ABC-1" "$o" "ABC-1"
+assert_contains "check-state-currentness: dated direct sibling still names ABC-2" "$o" "ABC-2"
+assert_not_contains "check-state-currentness: residual target does not inherit through a closing parenthesis or prose" "$o" "ABC-4"
+
+# Test each boundary on its own so another line cannot mask a failed rule.
+for text in \
+  'Done: ABC-1 memory note; ABC-2 routing note.' \
+  'Done: ABC-1 and ABC-2.' \
+  'Done: ABC-1, ABC-2 (residual -> ABC-4).' \
+  'Done: ABC-1 (residual -> ABC-4), ABC-2.' \
+  'Done: ABC-1 (memory note) and ABC-2.' \
+  'Done: ABC-1 to v2.0, ABC-2.'; do
+  printf '%s\n' "$text" > "$MA/case.md"
+  o="$(run_csc "$DA" "$MA" --no-projects --list)"
+  assert_contains "check-state-currentness: bounded list keeps first claim: $text" "$o" "$(printf 'claim\tstale-claim\tABC-1\tDone')"
+  assert_contains "check-state-currentness: bounded list keeps second claim: $text" "$o" "$(printf 'claim\tstale-claim\tABC-2\tDone')"
+  assert_not_contains "check-state-currentness: bounded list excludes reference: $text" "$o" "ABC-4"
+done
+for text in \
+  'Done: ABC-1 note; residual points to ABC-4.' \
+  'Done: ABC-1; the rest waits for ABC-4, ABC-4.' \
+  'Done: ABC-1; the rest waits, ABC-4.' \
+  'Done: ABC-1! ABC-4.' \
+  'Done: ABC-1? ABC-4.'; do
+  printf '%s\n' "$text" > "$MA/case.md"
+  o="$(run_csc "$DA" "$MA" --no-projects --list)"
+  assert_contains "check-state-currentness: prose boundary keeps first claim: $text" "$o" "$(printf 'claim\tstale-claim\tABC-1\tDone')"
+  assert_not_contains "check-state-currentness: prose boundary excludes reference: $text" "$o" "ABC-4"
+done
+for delta in '- **Delta 2026-09-06:** (parent ABC-4, In Progress).' '- **Delta:** 2026-09-06 (parent ABC-4, In Progress).'; do
+  printf '%s\n' "$delta" 'ABC-3 is In Progress.' > "$MA/case.md"
+  o="$(run_csc "$DA" "$MA" --no-projects --list)"; rc=$?
+  assert_eq "check-state-currentness: standalone Delta is ignored with a comparable current control: $delta" 0 "$rc"
+  assert_not_contains "check-state-currentness: standalone Delta emits no old parent claim: $delta" "$o" "ABC-4"
+done
+
 # TWIN PARITY — a non-breaking space must not make one twin see a claim the other
 # misses; awk [[:space:]] is ASCII-only where .NET \s matches U+00A0.
 printf 'ABC-1\xc2\xa0is\xc2\xa0Backlog.\nABC-3 is In Progress.\n' > "$MA/case.md"

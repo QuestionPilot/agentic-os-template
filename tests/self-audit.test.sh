@@ -86,6 +86,20 @@ EOF
 EOF
 }
 
+# The sub-gate fixtures must retain their fixture-local local.env so the
+# registry and its watchdog are exercised. --isolated would skip that registry,
+# but a non-isolated audit would otherwise discover the operator's real Linear
+# CLI. Put an empty tracker at the fixture boundary instead: it records the
+# call and returns an empty project set, so no live tracker request can occur.
+_sa_mk_empty_linear_cli() { # _sa_mk_empty_linear_cli <fixture>
+  local root="$1"
+  mkdir -p "$root/bin"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'printf "%s\n" "$*" >> "${SELF_AUDIT_LINEAR_STUB_LOG:?}"' \
+    'printf "[]\n"' > "$root/bin/linear"
+  chmod +x "$root/bin/linear"
+}
+
 # Helper: pull a single pillar's score from --json output.
 _sa_pillar_score() {
   printf '%s' "$1" | jq -r ".pillars[\"$2\"].score"
@@ -705,8 +719,8 @@ _test_crlf_jq_pillar1() {
   command -v jq >/dev/null 2>&1 || { _skip "CRLF jq Pillar 1 test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
-  local bin="$fixture/bin" mem="$fixture/mem" mem_miss="$fixture/mem-miss"
-  mkdir -p "$bin" "$mem" "$mem_miss"
+  local bin="$fixture/bin" mem="$fixture/mem" mem_miss="$fixture/mem-miss" vault="$fixture/vault"
+  mkdir -p "$bin" "$mem" "$mem_miss" "$vault/01-Projects"
   mk_crlf_jq "$bin"
   cat > "$bin/linear" <<'STUB'
 #!/usr/bin/env bash
@@ -742,25 +756,50 @@ metadata:
 
 Something else entirely.
 EOF
+  cat > "$vault/01-Projects/widget-arc.md" <<'EOF'
+---
+linear: https://linear.app/example/project/widget-arc
+---
+
+# Widget Arc
+
+Durable handoff exists in the vault.
+EOF
 
   local out
   # Matching note: the active project's name must be FOUND despite CRLF jq.
   out="$(env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME \
           PATH="$bin:$PATH" bash "$REPO_ROOT/scripts/self-audit.sh" \
           --repo-root "$fixture" --memory-dir "$mem" --json 2>/dev/null)"
-  assert_not_contains "self-audit: CRLF jq — active project with a matching note raises no handshake gap" \
-    "$out" "No memory note for active Linear project"
+  assert_not_contains "self-audit: CRLF jq — active project with a matching note raises no harness-cache gap" \
+    "$out" "Project note not matched in scanned harness cache"
 
   # Detection control (vacuous-ALLOW guard): with no matching note the gap MUST
   # still fire and name the CLEAN project string — proving the Linear lane ran.
   # The zero-open project stays filtered even under CRLF ("0" compare survives).
   out="$(env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME \
           PATH="$bin:$PATH" bash "$REPO_ROOT/scripts/self-audit.sh" \
-          --repo-root "$fixture" --memory-dir "$mem_miss" --json 2>/dev/null)"
-  assert_contains "self-audit: CRLF jq — the handshake gap still fires without a matching note" \
-    "$out" "No memory note for active Linear project"
-  assert_contains "self-audit: CRLF jq — the gap names the project with no embedded carriage return" \
-    "$out" 'Active project \"Widget Arc\" has no project-type memory note'
+          --repo-root "$fixture" --memory-dir "$mem_miss" --vault-dir "$vault" --json 2>/dev/null)"
+  assert_contains "self-audit: CRLF jq — absent typed note is labelled as a scanned harness-cache mismatch" \
+    "$out" "Project note not matched in scanned harness cache"
+  assert_contains "self-audit: CRLF jq — cache detail names the project with no embedded carriage return" \
+    "$out" 'Active project \"Widget Arc\" has no project-type note'
+  assert_contains "self-audit: CRLF jq — cache detail does not claim a durable-handoff finding" \
+    "$out" "this is a harness cache coverage check; durable handoff completeness is not established by this check"
+  assert_contains "self-audit: CRLF jq — cache advice checks the vault and native-memory consolidation before refresh" \
+    "$out" "Check the vault Handshake and native-memory consolidation status; refresh the harness cache only if needed. Do not infer a missing durable handoff from this result."
+  assert_not_contains "self-audit: CRLF jq — valid vault handshake remains distinct from the cache mismatch" \
+    "$out" "No vault handshake for active Linear project"
+  assert_eq "self-audit: CRLF jq — cache mismatch keeps the existing 4-point Pillar 1 deduction" \
+    "16" "$(_sa_pillar_score "$out" "cross-layer-handoffs")"
+  rm -f "$vault/01-Projects/widget-arc.md"
+  out="$(env -u CLAUDE_CONFIG_DIR -u OBSIDIAN_VAULT_PATH -u CODEX_HOME \
+          PATH="$bin:$PATH" bash "$REPO_ROOT/scripts/self-audit.sh" \
+          --repo-root "$fixture" --memory-dir "$mem_miss" --vault-dir "$vault" --json 2>/dev/null)"
+  assert_contains "self-audit: CRLF jq — missing vault Handshake records the distinct vault gap" \
+    "$out" "No vault handshake for active Linear project"
+  assert_eq "self-audit: CRLF jq — missing cache and vault Handshake keep both 4-point Pillar 1 deductions" \
+    "12" "$(_sa_pillar_score "$out" "cross-layer-handoffs")"
   assert_not_contains "self-audit: CRLF jq — a zero-open-issue project is still filtered out" \
     "$out" "Closed Arc"
   rm -rf "$fixture"
@@ -1936,14 +1975,14 @@ _test_codex_only_install_still_reports_registry() {
 _test_codex_only_install_still_reports_registry
 
 # --- orientation surface (<TEAM>-524) ----------------------------------------
-# The effective Mode 1 kickoff surface = static entrypoint + the compiled spine
-# capability bodies (session-agent + closeout) the kickoff mandates + the vault
-# lesson index read at every orient. Reported in its OWN section and its OWN
+# The static Mode 1 kickoff estimate = static entrypoint + the compiled
+# session-agent body + the vault triggers view, with the full index only as the
+# documented fallback. Reported in its OWN section and its OWN
 # JSON key; informational only — it must never move `total`, a pillar score, or
 # `gaps`.
 
 # _sa_mk_orient_home <dir> <entrypoint-name> — a rendered harness home fixture:
-# an entrypoint file plus the two compiled spine skill bodies.
+# an entrypoint file plus compiled skills. Only session-agent is a kickoff input.
 _sa_mk_orient_home() {
   local home="$1" entry="$2"
   mkdir -p "$home/skills/session-agent" "$home/skills/closeout"
@@ -1959,13 +1998,13 @@ _test_orientation_surface_measures_spine_and_lesson_index() {
   local cfg="$fixture/config" vault="$fixture/vault"
   _sa_mk_orient_home "$cfg" "CLAUDE.md"
   mkdir -p "$vault/04-Lessons"
-  printf '| Trigger | Lesson |\n| --- | --- |\n| before a fetch | use the CLI |\n' > "$vault/04-Lessons/_index.md"
+  printf '| Trigger | Lesson |\n| --- | --- |\n| before a fetch | use the CLI |\n' > "$vault/04-Lessons/_triggers.md"
+  printf 'full index body that must not be selected when triggers exist\n' > "$vault/04-Lessons/_index.md"
 
   local ep_b sp_b li_b want_total
   ep_b="$(LC_ALL=C wc -c < "$cfg/CLAUDE.md" | tr -d ' ')"
-  sp_b=$(( $(LC_ALL=C wc -c < "$cfg/skills/session-agent/SKILL.md" | tr -d ' ') \
-         + $(LC_ALL=C wc -c < "$cfg/skills/closeout/SKILL.md" | tr -d ' ') ))
-  li_b="$(LC_ALL=C wc -c < "$vault/04-Lessons/_index.md" | tr -d ' ')"
+  sp_b="$(LC_ALL=C wc -c < "$cfg/skills/session-agent/SKILL.md" | tr -d ' ')"
+  li_b="$(LC_ALL=C wc -c < "$vault/04-Lessons/_triggers.md" | tr -d ' ')"
   want_total=$(( ep_b + sp_b + li_b ))
 
   local out md
@@ -1973,7 +2012,6 @@ _test_orientation_surface_measures_spine_and_lesson_index() {
           --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
   md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --config-dir "$cfg" --vault-dir "$vault" 2>/dev/null)"
-  rm -rf "$fixture"
 
   assert_eq "orientation surface: measured against a rendered harness home" \
     "true" "$(printf '%s' "$out" | jq -r '.orientation_surface.measured')"
@@ -1985,16 +2023,16 @@ _test_orientation_surface_measures_spine_and_lesson_index() {
     "$ep_b" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].entrypoint_bytes')"
   # The whole point of <TEAM>-524: the mandatory capability bodies are counted,
   # not just the static entrypoint file.
-  assert_eq "orientation surface: spine_bytes covers session-agent + closeout, not the entrypoint alone" \
+  assert_eq "orientation surface: spine_bytes covers the kickoff session-agent body, not closeout" \
     "$sp_b" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].spine_bytes')"
-  assert_eq "orientation surface: the vault lesson index is measured, not silently dropped" \
+  assert_eq "orientation surface: the vault triggers view is measured, not silently dropped" \
     "$li_b" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].lesson_index_bytes')"
-  assert_eq "orientation surface: effective_total_bytes = entrypoint + spine + lesson index" \
+  assert_eq "orientation surface: effective_total_bytes = entrypoint + session-agent + triggers view" \
     "$want_total" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].effective_total_bytes')"
   assert_eq "orientation surface: effective_total_bytes is numeric, not a string" \
     "number" "$(printf '%s' "$out" | jq -r '.orientation_surface.harnesses[0].effective_total_bytes | type')"
-  assert_eq "orientation surface: lesson index status is measured" \
-    "measured" "$(printf '%s' "$out" | jq -r '.orientation_surface.lesson_index.status')"
+  assert_eq "orientation surface: triggers view has priority over the full index" \
+    "triggers" "$(printf '%s' "$out" | jq -r '.orientation_surface.lesson_index.source')"
   assert_eq "orientation surface: aggregate total_bytes sums the harness rows" \
     "$want_total" "$(printf '%s' "$out" | jq -r '.orientation_surface.total_bytes')"
   # Unresolved harness homes are NAMED, never silently absent.
@@ -2003,6 +2041,18 @@ _test_orientation_surface_measures_spine_and_lesson_index() {
   assert_contains "orientation surface: markdown has its own section" "$md" "## Orientation surface"
   assert_contains "orientation surface: markdown states the informational boundary" \
     "$md" "Informational only; never scored."
+  assert_contains "orientation surface: markdown labels this as a static estimate, not actual consumption" \
+    "$md" "This is not actual session consumption or a token count."
+
+  # closeout is manual. Its size must have no effect on the kickoff estimate.
+  printf 'manual closeout payload that must not count\n' >> "$cfg/skills/closeout/SKILL.md"
+  local closeout_changed
+  closeout_changed="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  assert_eq "orientation surface: closeout size is irrelevant to the kickoff estimate" \
+    "$(printf '%s' "$out" | jq -r '.orientation_surface.total_bytes')" \
+    "$(printf '%s' "$closeout_changed" | jq -r '.orientation_surface.total_bytes')"
+  rm -rf "$fixture"
 }
 _test_orientation_surface_measures_spine_and_lesson_index
 
@@ -2060,19 +2110,28 @@ _test_orientation_surface_never_scores() {
 }
 _test_orientation_surface_never_scores
 
-_test_orientation_surface_lesson_index_unmeasured() {
+_test_orientation_surface_lesson_view_fallback_and_missing() {
   command -v jq >/dev/null 2>&1 || { _skip "orientation-surface lesson-index test" "jq not installed"; return 0; }
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
   local cfg="$fixture/config" vault="$fixture/vault"
   _sa_mk_orient_home "$cfg" "CLAUDE.md"
-  mkdir -p "$vault/04-Lessons"   # vault exists, index does NOT
+  mkdir -p "$vault/04-Lessons"   # vault exists, neither view exists
 
-  local no_vault with_vault
+  local no_vault with_vault fallback fallback_md fallback_b fallback_total ep_b sp_b
   no_vault="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --config-dir "$cfg" --json 2>/dev/null)"
   with_vault="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
           --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  printf 'full index fallback\n' > "$vault/04-Lessons/_index.md"
+  fallback_b="$(LC_ALL=C wc -c < "$vault/04-Lessons/_index.md" | tr -d ' ')"
+  ep_b="$(LC_ALL=C wc -c < "$cfg/CLAUDE.md" | tr -d ' ')"
+  sp_b="$(LC_ALL=C wc -c < "$cfg/skills/session-agent/SKILL.md" | tr -d ' ')"
+  fallback_total=$(( ep_b + sp_b + fallback_b ))
+  fallback="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" --json 2>/dev/null)"
+  fallback_md="$(bash "$REPO_ROOT/scripts/self-audit.sh" --isolated --repo-root "$fixture" \
+          --config-dir "$cfg" --vault-dir "$vault" 2>/dev/null)"
   rm -rf "$fixture"
 
   assert_eq "orientation surface: no vault → lesson_index_bytes is null (unmeasured, not 0)" \
@@ -2080,13 +2139,23 @@ _test_orientation_surface_lesson_index_unmeasured() {
   assert_contains "orientation surface: no vault is a NAMED unmeasured state" \
     "$(printf '%s' "$no_vault" | jq -r '.orientation_surface.lesson_index.status')" \
     "unmeasured — no vault configured"
-  assert_contains "orientation surface: a vault without the index names the missing path" \
+  assert_contains "orientation surface: a vault without either lesson view names both missing choices" \
     "$(printf '%s' "$with_vault" | jq -r '.orientation_surface.lesson_index.status')" \
-    "unmeasured — not found at"
-  assert_eq "orientation surface: a vault without the index still reports null bytes" \
+    "unmeasured — neither triggers view nor index found"
+  assert_eq "orientation surface: a vault without either lesson view still reports null bytes" \
     "null" "$(printf '%s' "$with_vault" | jq -r '.orientation_surface.lesson_index.bytes')"
+  assert_eq "orientation surface: full index is selected only as the triggers fallback" \
+    "index fallback" "$(printf '%s' "$fallback" | jq -r '.orientation_surface.lesson_index.source')"
+  assert_eq "orientation surface: selected fallback retains the compatible measured status" \
+    "measured" "$(printf '%s' "$fallback" | jq -r '.orientation_surface.lesson_index.status')"
+  assert_eq "orientation surface: fallback lesson_index_bytes uses the actual full-index bytes" \
+    "$fallback_b" "$(printf '%s' "$fallback" | jq -r '.orientation_surface.harnesses[0].lesson_index_bytes')"
+  assert_eq "orientation surface: fallback effective total uses the actual fixture bytes" \
+    "$fallback_total" "$(printf '%s' "$fallback" | jq -r '.orientation_surface.harnesses[0].effective_total_bytes')"
+  assert_contains "orientation surface: fallback markdown names the selected index source" \
+    "$fallback_md" "- lesson view (index fallback): measured"
 }
-_test_orientation_surface_lesson_index_unmeasured
+_test_orientation_surface_lesson_view_fallback_and_missing
 
 _test_orientation_surface_no_home_resolves() {
   command -v jq >/dev/null 2>&1 || { _skip "orientation-surface no-home test" "jq not installed"; return 0; }
@@ -2221,16 +2290,16 @@ _test_orientation_surface_unreadable_component() {
     "number" "$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].entrypoint_bytes | type')"
   assert_eq "orientation surface: an unreadable component is not reported as absent" \
     "0" "$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].missing | length')"
-  # The READABLE spine body is still counted — one unreadable file must not zero
-  # the whole row.
+  # session-agent is the only kickoff spine body. When it is unreadable, its
+  # static estimate is zero; closeout remains excluded from this subtotal.
   local ctrl_sp locked_sp
   ctrl_sp="$(printf '%s' "$ctrl" | jq -r '.orientation_surface.harnesses[0].spine_bytes')"
   locked_sp="$(printf '%s' "$locked" | jq -r '.orientation_surface.harnesses[0].spine_bytes')"
-  if [ -n "$locked_sp" ] && [ "$locked_sp" != "null" ] && [ "$locked_sp" -gt 0 ] && [ "$locked_sp" -lt "$ctrl_sp" ]; then
-    _pass "orientation surface: the readable spine body still counts when its sibling is unreadable"
+  if [ -n "$locked_sp" ] && [ "$locked_sp" = "0" ] && [ "$ctrl_sp" -gt 0 ]; then
+    _pass "orientation surface: an unreadable kickoff spine measures 0 while closeout remains excluded"
   else
-    _fail "orientation surface: the readable spine body still counts when its sibling is unreadable" \
-      "expected 0 < locked < control, got locked=[$locked_sp] control=[$ctrl_sp]"
+    _fail "orientation surface: an unreadable kickoff spine measures 0 while closeout remains excluded" \
+      "expected locked=0 < control, got locked=[$locked_sp] control=[$ctrl_sp]"
   fi
 }
 _test_orientation_surface_unreadable_component
@@ -2255,6 +2324,10 @@ _test_operator_subgates() {
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
   local reg="$fixture/subgates.txt"
+  local linear_log="$fixture/linear-calls" old_path="$PATH"
+  _sa_mk_empty_linear_cli "$fixture"
+  export SELF_AUDIT_LINEAR_STUB_LOG="$linear_log"
+  PATH="$fixture/bin:$PATH"
   printf 'AUDIT_SUBGATES_FILE=%s\n' "$reg" > "$fixture/local.env"
 
   # Happy path: a passing gate, a failing gate, a comment, a blank line, and a
@@ -2288,6 +2361,8 @@ _test_operator_subgates() {
     "3" "$(printf '%s' "$out" | jq -r '.operator_subgates.gates | length')"
   assert_eq "operator sub-gates: the JSON key carries a literal scored:false" \
     "false" "$(printf '%s' "$out" | jq -r '.operator_subgates.scored')"
+  assert_eq "operator sub-gates: fixture tracker intercepts the non-isolated audit" \
+    "project list --json" "$(sed -n '1p' "$linear_log")"
 
   # THE load-bearing property: informational means informational. Compared
   # against the SAME fixture with the registry disabled, so score-neutrality is
@@ -2395,6 +2470,8 @@ _test_operator_subgates() {
     "date,total,unscored_count,pillars,injection_surface,gaps,skipped,codex_registry_bytes,semantic_currentness,orientation_surface,recall_failures,operator_subgates" \
     "$(printf '%s' "$unset_json" | jq -r 'keys_unsorted | join(",")')"
 
+  PATH="$old_path"
+  unset SELF_AUDIT_LINEAR_STUB_LOG
   rm -rf "$fixture"
 }
 _test_operator_subgates
@@ -2537,6 +2614,10 @@ _test_operator_subgates_bounding() {
   local fixture; fixture="$(mktemp -d)" || return 1
   _sa_mk_fixture_repo "$fixture"
   local reg="$fixture/subgates.txt"
+  local linear_log="$fixture/linear-calls" old_path="$PATH"
+  _sa_mk_empty_linear_cli "$fixture"
+  export SELF_AUDIT_LINEAR_STUB_LOG="$linear_log"
+  PATH="$fixture/bin:$PATH"
   printf 'AUDIT_SUBGATES_FILE=%s\n' "$reg" > "$fixture/local.env"
 
   local run_json t0 elapsed out rc
@@ -2548,6 +2629,8 @@ _test_operator_subgates_bounding() {
   t0="$(date +%s)"
   out="$(run_json 2)"
   elapsed=$(( $(date +%s) - t0 ))
+  assert_eq "sub-gate bounding: fixture tracker intercepts the non-isolated watchdog audit" \
+    "project list --json" "$(sed -n '1p' "$linear_log")"
   assert_eq "sub-gate bounding: a SIGALRM-ignoring gate is still bounded and reported as a timeout" \
     "trapper|error|timed out after 2s" \
     "$(printf '%s' "$out" | jq -r '.operator_subgates.gates[0] | "\(.name)|\(.status)|\(.detail)"')"
@@ -2628,6 +2711,8 @@ _test_operator_subgates_bounding() {
   assert_contains "sub-gate bounding: the cap is a NAMED skip line in the markdown" \
     "$md" "registry capped at 64 gate(s); 6 further entr(y/ies) not run"
 
+  PATH="$old_path"
+  unset SELF_AUDIT_LINEAR_STUB_LOG
   rm -rf "$fixture"
   unset -f run_json
 }

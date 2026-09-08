@@ -564,7 +564,7 @@ function Get-LabelState([string]$lead) {
 
 function Test-Conjunction([string]$w) {
     $t = $w.ToLowerInvariant()
-    $t = [regex]::Replace($t, '[\s,;/&*_`()\-]|and|plus|through|thru|then', '')
+    $t = [regex]::Replace($t, '[\s,;/&*_`\-]|and|plus|through|thru|then', '')
     return ($t -eq '')
 }
 
@@ -572,6 +572,43 @@ function Get-DateIn([string]$s) {
     $m = [regex]::Match($s, '20[0-9][0-9]-[01][0-9]-[0-3][0-9]')
     if ($m.Success) { return $m.Value }
     return ''
+}
+
+# A state label distributes across top-level list items. Item annotations may
+# contain prose, but a parenthetical cross-reference is not an item and a
+# sentence end stops the list. A balanced parenthetical annotation is dropped
+# before the conjunction test, and a period is a sentence end only before
+# whitespace/end (twin of the sh rule).
+function Test-LabelReaches([object[]]$IssueMatches, [int]$ix, [string]$line, [string]$idPattern) {
+    if ($ix -eq 0) { return $true }
+    $start = $IssueMatches[0].Index + $IssueMatches[0].Length
+    $end = $IssueMatches[$ix].Index - 1
+    $depth = 0; $boundary = $start - 1; $nextId = 1; $itemHasId = $true
+    for ($jx = $start; $jx -le $end; $jx++) {
+        if ($nextId -lt $ix -and $jx -eq $IssueMatches[$nextId].Index) {
+            if ($depth -eq 0) {
+                $tail = $line.Substring($boundary + 1, $jx - $boundary - 1)
+                $tail = [regex]::Replace($tail, $idPattern, '')
+                $tail = [regex]::Replace($tail, '\([^()]*\)', '')
+                if (-not (Test-Conjunction $tail)) { return $false }
+                $itemHasId = $true
+            }
+            $nextId++
+        }
+        $char = $line[$jx]
+        if ($char -eq '(') { $depth++ }
+        elseif ($char -eq ')') { if ($depth -eq 0) { return $false }; $depth-- }
+        elseif ($depth -eq 0 -and $char -in @('.', '!', '?') -and ($jx + 1 -ge $line.Length -or [char]::IsWhiteSpace($line[$jx + 1]))) { return $false }
+        elseif ($depth -eq 0 -and ($char -eq ',' -or $char -eq ';')) {
+            if (-not $itemHasId) { return $false }
+            $boundary = $jx; $itemHasId = $false
+        }
+    }
+    if ($depth -ne 0) { return $false }
+    $tail = $line.Substring($boundary + 1, $end - $boundary)
+    $tail = [regex]::Replace($tail, $idPattern, '')
+    $tail = [regex]::Replace($tail, '\([^()]*\)', '')
+    return (Test-Conjunction $tail)
 }
 
 # Get-Claims <path> <idPattern> — one record per resolved claim:
@@ -606,6 +643,7 @@ function Get-Claims([string]$path, [string]$idPattern) {
         # Section-level history detection only covers it when the writer used a
         # recognized heading; this covers the bullet wherever it lands.
         if ($line -cmatch '^[\s*_>#\-]*20[0-9][0-9]-[01][0-9]-[0-3][0-9]') { continue }
+        if ($line.ToLowerInvariant() -cmatch '^[\s*_>#\-]*delta[\s*:]*20[0-9][0-9]-[01][0-9]-[0-3][0-9]') { continue }
 
         $ms = @([regex]::Matches($line, $idPattern))
         if ($ms.Count -eq 0) { continue }
@@ -621,7 +659,7 @@ function Get-Claims([string]$path, [string]$idPattern) {
             $wend = if ($ix -lt $ms.Count - 1) { $ms[$ix + 1].Index - 1 } else { $line.Length - 1 }
             $win = if ($wend -ge $wstart) { $line.Substring($wstart, $wend - $wstart + 1) } else { '' }
             $st = Get-AdjacentState $win
-            if ($st -eq '' -and $dflt -ne '') { $st = $dflt }
+            if ($st -eq '' -and $dflt -ne '' -and (Test-LabelReaches $ms $ix $line $idPattern)) { $st = $dflt }
             if ($st -eq '' -and $ix -lt $ms.Count - 1 -and (Test-Conjunction $win)) {
                 for ($jx = $ix + 1; $jx -lt $ms.Count; $jx++) {
                     $js = $ms[$jx].Index + $ms[$jx].Length

@@ -38,20 +38,18 @@
 # different heading is invisible to the denominator AND to the numerator, so it
 # cannot skew the rate in either direction — but it does shrink the sample.
 #
-# THE EXTRACTION CONTRACT, biased hard toward UNDER-reporting.
-# A recall-failure RECORD is a line that begins with the bold record marker:
+# THE EXTRACTION CONTRACT, biased hard toward excluding prose.
+# The writer's canonical record is a line beginning with the bold marker:
 #
 #     **Recall failure, class not-loaded:** <prose>
 #     **Recall failure, class loaded-but-ignored:** <prose>
 #
-# Only `^\*\*Recall failure` at the start of a line is a record at all. Prose
-# ABOUT recall failures is not a record, and the corpus is full of prose that a
-# looser scanner reads as one — negations ("Recall failure: none"), bulleted
-# older formats, reversed word order, parenthetical classes, headings, and a
-# bare class token used as a noun mid-sentence. Every one of those shapes is
-# pinned as a restraint fixture in tests/recall-report.test.sh. The cost of the
-# strictness is real (older bulleted records are NOT counted, so early windows
-# under-report); the cost of the alternative is a number nobody trusts.
+# Older logs also contain genuine records with a top-level list/number/tag/Q1
+# prefix, optional bold marker, and either colon or em-dash class punctuation.
+# Those bounded legacy forms are accepted. A quoted example or arbitrary prose
+# before the marker is not. Negations ("Recall failure: none"), reversed word
+# order, parenthetical classes, headings, and a bare class token used as a noun
+# mid-sentence are excluded. Every shape is pinned in tests/recall-report.test.sh.
 #
 # A record whose class token is not one of the two known classes is NOT guessed
 # at. It lands in a separate `unclassified` informational count, so a typo or a
@@ -115,8 +113,6 @@ SESSIONS_REL="30-Archive/Sessions"
 # The meaningful-log marker. Line-anchored, exact heading (trailing whitespace
 # tolerated). See the header for why this marker and not `## TL;DR`.
 MEANINGFUL_RE='^## Issues this session[[:space:]]*$'
-# The record marker. ONLY a line starting with this is a recall-failure record.
-RECORD_RE='^\*\*Recall failure'
 
 SESSIONS_DIR=""
 WINDOW=20
@@ -284,51 +280,73 @@ SCANNED_FILES=("${MEANINGFUL[@]:$START}")
 SCANNED="${#SCANNED_FILES[@]}"
 
 # --- extract ------------------------------------------------------------------
-# ONE grep pass over the window (line-anchored on the bold record marker), then
-# ONE awk pass to classify. No per-line subshell pipelines.
+# ONE awk pass over the window applies the writer/legacy record grammar and
+# classifies with file/line context. Reading the complete files also lets the
+# extractor reject fenced examples instead of mistaking code samples for records.
 #
-# Class resolution: the token immediately after `, class ` must be a KNOWN class
-# and must end at a non-class character, so `loaded-but-ignored + no act-time
-# gate` still resolves to `loaded-but-ignored` while a longer unknown token
-# (e.g. `not-loaded-ish`) does NOT masquerade as a known one.
-RAW="$(LC_ALL=C grep -nE "$RECORD_RE" "${SCANNED_FILES[@]}" 2>/dev/null)"
-_grc=$?
-# Same loud-read contract as the meaningful pass: 1 = no records (expected),
-# >=2 = a selected file could not be read — never a silently understated count.
-if [ "$_grc" -ge 2 ]; then
+# Class resolution accepts canonical `, class X`, legacy `, X`, `: X`, and
+# em-dash `— X` forms. A class token that merely prefixes a known class remains
+# unclassified, so malformed records are visible without being guessed.
+CLASSIFIED="$(LC_ALL=C awk '
+  FNR == 1 { in_fence = 0; fence_char = ""; fence_len = 0 }
+  {
+    fence_line = $0
+    sub(/^[[:space:]]*/, "", fence_line)
+    if (!in_fence && (fence_line ~ /^```/ || fence_line ~ /^~~~/)) {
+      fence_char = substr(fence_line, 1, 1); fence_len = 0
+      while (substr(fence_line, fence_len + 1, 1) == fence_char) fence_len++
+      in_fence = 1; next
+    }
+    if (in_fence) {
+      run_len = 0
+      while (substr(fence_line, run_len + 1, 1) == fence_char) run_len++
+      # CommonMark-style close: same character, at least the opening length,
+      # and no trailing info text. A mismatched fence stays inside the sample.
+      if (run_len >= fence_len && substr(fence_line, run_len + 1) ~ /^[[:space:]]*$/) in_fence = 0
+      next
+    }
+  }
+  /Recall failure/ {
+    body = $0
+    # Optional bold is written `\*?\*?`, not the POSIX-optional `{0,2}` interval —
+    # mawk without --re-interval and BusyBox awk read braces literally (same rule
+    # as the validate.sh fence grammar).
+    # List/tag prefixes must be followed immediately by the record marker.
+    # Numbered and Q1 records retain their observed prose-led legacy form.
+    is_prose_led = (body ~ /^([0-9]+[.)][[:space:]]+|Q[0-9]+[A-Za-z]?:[[:space:]]+).*\*?\*?Recall failure/)
+    if (body !~ /^\*\*Recall failure/ && body !~ /^[-*+][[:space:]]+(\[[^]]+\][[:space:]]+)?\*?\*?Recall failure/ && body !~ /^\[[^]]+\][[:space:]]+\*?\*?Recall failure/ && !is_prose_led) next
+
+    # Find only a serialization delimiter. Parenthetical/reversed prose has no
+    # delimiter and is therefore not a record. `none` is an explicit negation.
+    # A spaced ASCII hyphen is a prose dash ("Recall failure - items were
+    # re-reviewed"), not a delimiter; only the em/en dash forms serialize a class.
+    if (!match(body, /Recall failure[[:space:]]*(,[[:space:]]*(class[[:space:]]+)?|:[[:space:]]*|(—|–)[[:space:]]+)/)) next
+    before = substr(body, 1, RSTART - 1)
+    # A top-level prefix can still introduce a quoted contract example. Keep
+    # those examples out without suppressing a genuine record that later says
+    # "no execution miss" or other ordinary prose.
+    if (is_prose_led && tolower(before) ~ /(^|[^A-Za-z0-9_])example([^A-Za-z0-9_]|$)/) next
+    # A prose-led record starts a new sentence: the prose before the marker is
+    # either just the prefix or ends at a sentence boundary. "1. The docs ask
+    # for a **Recall failure, class X:** line here" runs the marker into an
+    # unfinished sentence and is an instruction, not a record.
+    if (is_prose_led && before !~ /^([0-9]+[.)]|Q[0-9]+[A-Za-z]?:)[[:space:]]+(\*\*)?$/ && before !~ /[.!?:][[:space:]]*(\*\*)?$/) next
+    if (before ~ /`(\*\*)?$/) next
+    tail = substr(body, RSTART + RLENGTH)
+    sub(/^\*\*/, "", tail)
+    if (tolower(tail) ~ /^none([^A-Za-z0-9-]|$)/) next
+
+    cls = "unclassified"
+    if (tail ~ /^not-loaded([^A-Za-z0-9-]|$)/) cls = "not-loaded"
+    else if (tail ~ /^loaded-but-ignored([^A-Za-z0-9-]|$)/) cls = "loaded-but-ignored"
+    print cls "\t" FILENAME ":" FNR
+  }
+' "${SCANNED_FILES[@]}" 2>/dev/null)"
+_arc=$?
+if [ "$_arc" -ne 0 ]; then
   printf 'recall-report: SCAN ERROR — a session log could not be read while extracting from %s\n' "$SESSIONS_DIR" >&2
   exit 2
 fi
-
-# grep prefixes `file:line:` only when given 2+ files; with exactly one file it
-# prints `line:` alone. Normalize by telling awk how many files were scanned.
-CLASSIFIED="$(printf '%s' "$RAW" | LC_ALL=C awk -v multi="$( [ "$SCANNED" -gt 1 ] && printf 1 || printf 0 )" -v single="${SCANNED_FILES[0]}" '
-  BEGIN { FS = ":"; OFS = "\t" }
-  length($0) == 0 { next }
-  {
-    if (multi == 1) {
-      # file may itself contain ":" — even ":<digits>:" (a directory named
-      # "run:12:archive" is a valid POSIX path). Every scanned path ends in
-      # ".md" (the find -name filter), so anchor the separator search on
-      # ".md:<digits>:" instead of the first bare ":<digits>:". A DIRECTORY
-      # component containing ".md:<digits>:" could still mis-anchor; that is
-      # an accepted residual, strictly narrower than the bare form.
-      if (match($0, /\.md:[0-9]+:/)) {
-        loc = substr($0, 1, RSTART + 2) ":" substr($0, RSTART + 4, RLENGTH - 5)
-        body = substr($0, RSTART + RLENGTH)
-      } else { next }
-    } else {
-      if (match($0, /^[0-9]+:/)) {
-        loc = single ":" substr($0, 1, RLENGTH - 1)
-        body = substr($0, RLENGTH + 1)
-      } else { next }
-    }
-    cls = "unclassified"
-    if (body ~ /^\*\*Recall failure, class not-loaded([^A-Za-z0-9-]|$)/)            cls = "not-loaded"
-    else if (body ~ /^\*\*Recall failure, class loaded-but-ignored([^A-Za-z0-9-]|$)/) cls = "loaded-but-ignored"
-    print cls, loc
-  }
-')"
 
 N_NOT_LOADED=0
 N_IGNORED=0
@@ -386,7 +404,7 @@ fi
 
 printf '\nINFORMATIONAL — this is a rolling rate, not a scored or graded metric.\n'
 printf 'Nothing here passes, fails, or grades anything, and there is no target\n'
-printf 'number. The extractor is deliberately strict (only line-leading\n'
-printf '`**Recall failure, class <X>` records count), so the true count can only\n'
-printf 'be HIGHER than what is reported here, never lower.\n'
+printf 'number. The extractor accepts the canonical record and bounded legacy\n'
+printf 'top-level forms, while excluding examples and prose. It can still miss\n'
+printf 'unrecognized records and does not establish a true failure rate.\n'
 exit 0

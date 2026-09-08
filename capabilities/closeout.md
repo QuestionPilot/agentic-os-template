@@ -69,7 +69,11 @@ From `$AI_CONFIG_DIR/core/self-improvement.md` — answer each in 1–2 sentence
    file this session? If yes, that is a **recall failure** — the lesson to classify
    is about the recall surface, never a duplicate re-write of the rule. Name which
    surface failed: **not-loaded** vs **loaded-but-ignored** (in context but acted
-   against). Record it explicitly in the session log's Lessons section.
+   against). Record it explicitly in the session log's Lessons section as one
+   top-level canonical line: `**Recall failure, class not-loaded:** <what was
+   missed>` or `**Recall failure, class loaded-but-ignored:** <what was
+   ignored>`. This is the writer contract for `recall-report`; do not write an
+   example, negation, or `**Execution miss**` line in that form.
 
    **Q1b — Execution-honored check.** Was the `Execution:` value declared at R5
    honored (the wave ran, the panel ran, or the work truly stayed inline)? If not,
