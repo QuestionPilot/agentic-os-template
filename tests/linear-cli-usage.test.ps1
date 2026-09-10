@@ -51,9 +51,17 @@ if ($lcuLiveVersion -and ("v$lcuLiveVersion" -eq $lcuPin)) {
     $lcuHelp = (& linear --help 2>&1 | Out-String) -replace $ansi, ''
     foreach ($grp in @('auth', 'issue', 'team', 'user', 'project', 'project-update',
                        'cycle', 'milestone', 'initiative', 'initiative-update',
-                       'label', 'document', 'completions', 'config', 'schema', 'api')) {
+                       'label', 'document', 'completions', 'config', 'schema', 'api', 'markdown')) {
         Assert-Contains "linear-cli-usage.test: pinned binary still exposes command group: $grp" $lcuHelp $grp
     }
+    # The fixture's --no-pager matrix: acceptance is a parse-time property, so it
+    # needs no auth or network — `issue list --help` documents the flag, and
+    # `project list --no-pager` is rejected before any request is made (exit 2).
+    $lcuIssueListHelp = (& linear issue list --help 2>&1 | Out-String) -replace $ansi, ''
+    Assert-Contains 'linear-cli-usage.test: pinned binary documents --no-pager on issue list (fixture claim)' $lcuIssueListHelp '--no-pager'
+    Assert-Exit 'linear-cli-usage.test: pinned binary rejects --no-pager on project list with exit 2 (fixture claim)' 2 -- linear project list --no-pager
+    Assert-Exit 'linear-cli-usage.test: pinned binary rejects --no-pager on project view with exit 2 (fixture claim)' 2 -- linear project view --no-pager
+    Assert-Exit 'linear-cli-usage.test: pinned binary rejects --no-pager on issue comment list with exit 2 (fixture claim)' 2 -- linear issue comment list TEAM-0 --no-pager
     $lcuIssueHelp = (& linear issue --help 2>&1 | Out-String) -replace $ansi, ''
     foreach ($sub in @('query', 'view', 'create', 'update', 'comment', 'relation')) {
         Assert-Contains "linear-cli-usage.test: pinned binary still exposes issue subcommand: $sub" $lcuIssueHelp $sub
