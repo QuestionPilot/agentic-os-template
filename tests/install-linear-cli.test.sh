@@ -167,22 +167,26 @@ else
 fi
 LC_SUMS_BODY="$(cat "$LC_SUMS_REAL" 2>/dev/null || printf '')"
 assert_contains "install-linear-cli: the pin file pins the default tag for linux x86_64" \
-  "$LC_SUMS_BODY" "v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz"
+  "$LC_SUMS_BODY" "v2.6.0/linear-x86_64-unknown-linux-gnu.tar.xz"
 assert_contains "install-linear-cli: the pin file pins the default tag for linux aarch64" \
-  "$LC_SUMS_BODY" "v2.5.0/linear-aarch64-unknown-linux-gnu.tar.xz"
+  "$LC_SUMS_BODY" "v2.6.0/linear-aarch64-unknown-linux-gnu.tar.xz"
 assert_contains "install-linear-cli: the pin file pins the default tag for macos arm64" \
-  "$LC_SUMS_BODY" "v2.5.0/linear-aarch64-apple-darwin.tar.xz"
+  "$LC_SUMS_BODY" "v2.6.0/linear-aarch64-apple-darwin.tar.xz"
 assert_contains "install-linear-cli: the pin file pins the default tag for macos x86_64" \
-  "$LC_SUMS_BODY" "v2.5.0/linear-x86_64-apple-darwin.tar.xz"
+  "$LC_SUMS_BODY" "v2.6.0/linear-x86_64-apple-darwin.tar.xz"
 assert_contains "install-linear-cli: the pin file pins the default tag for windows x86_64" \
-  "$LC_SUMS_BODY" "v2.5.0/linear-x86_64-pc-windows-msvc.zip"
+  "$LC_SUMS_BODY" "v2.6.0/linear-x86_64-pc-windows-msvc.zip"
+# Old entries are the rollback path (linear-setup.md §3.2); a "cleanup" that
+# strips the previous tag must break loudly, not pass every default-tag check.
+assert_contains "install-linear-cli: the pin file retains the previous tag for rollback" \
+  "$LC_SUMS_BODY" "v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz"
 assert_contains "install-linear-cli: the pin file names the re-vet procedure" \
   "$LC_SUMS_BODY" "linear/linear-setup.md"
 # The default pin is declared exactly once in the script, and it is the tag the
 # pin file covers — a bump that edits one and not the other must break loudly.
 LC_SCRIPT_BODY="$(cat "$LC_SCRIPT" 2>/dev/null || printf '')"
 assert_contains "install-linear-cli: the script declares the default pinned tag" \
-  "$LC_SCRIPT_BODY" 'LINEAR_CLI_DEFAULT_VERSION="v2.5.0"'
+  "$LC_SCRIPT_BODY" 'LINEAR_CLI_DEFAULT_VERSION="v2.6.0"'
 
 if [ -z "$LC_ASSET" ]; then
   # No prebuilt asset for this host: the install-path cases cannot be exercised
@@ -262,7 +266,7 @@ else
   assert_not_contains "install-linear-cli: the trust-root warnings go to STDERR" \
     "$LC_STDOUT" "WARNING non-default trust root"
   assert_contains "install-linear-cli: a non-default tag is announced as such" \
-    "$LC_STDOUT" "note: installing non-default tag $LC_VER (current default: v2.5.0)"
+    "$LC_STDOUT" "note: installing non-default tag $LC_VER (current default: v2.6.0)"
   # POSITIVE fixture for the post-move re-hash: if this line never appeared, the
   # TOCTOU re-verify could be dead code and nothing here would notice.
   assert_contains "install-linear-cli: the installed file is re-hashed in place after the move" \

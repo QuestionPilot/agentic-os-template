@@ -79,7 +79,7 @@
 set -euo pipefail
 
 # The pinned default lives here and ONLY here.
-LINEAR_CLI_DEFAULT_VERSION="v2.5.0"
+LINEAR_CLI_DEFAULT_VERSION="v2.6.0"
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

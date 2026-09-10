@@ -217,7 +217,7 @@ linear issue create -t "Title" --team <TEAM_KEY> --project <PROJECT> \
   --label "label-a" --priority 3 --assignee <user> --description-file issue.md
 
 # Comment on an issue — markdown bodies go in a FILE. `--body -` is NOT stdin:
-# CLI 2.5.0 posts a literal "-" (observed 2026-09-06). After every write, re-read
+# CLI 2.5.0–2.6.0 post a literal "-" (observed 2026-09-06; 2.6.0 diff has no stdin change). After every write, re-read
 # the comment listing and confirm the full saved body (linear-cli-usage.md).
 linear issue comment add TEAM-NN --body-file comment.md
 linear issue comment add TEAM-NN -b "one-line comment"
@@ -253,7 +253,7 @@ Refer to each plugin's documentation for the exact tool names and argument shape
 
 Both surfaces return Linear's underlying object model: `id`, `identifier` (e.g. `ABC-123`), `title`, `description`, `priority`, `assignee`, `team`, `labels`, `url`, plus relations and comments where requested. Scripts should query against `.identifier` for the human-readable issue ID and `.id` (UUID) for relations and update calls.
 
-**`linear` CLI shapes — verified on v2.5.0:**
+**`linear` CLI shapes — verified on v2.5.0, re-verified unchanged on v2.6.0 (2026-09-10):**
 
 | Call | Payload | Notes |
 | --- | --- | --- |
