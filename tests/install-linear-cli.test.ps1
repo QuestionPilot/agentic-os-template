@@ -218,21 +218,24 @@ if ($LC_REAL_ENTRIES -ge 5) {
     _Fail 'install-linear-cli.test: the shipped pin file carries well-formed entries' `
         @("expected >=5 '<sha256>  <tag>/<asset>' lines, found $LC_REAL_ENTRIES")
 }
-Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for linux x86_64' $LC_SUMS_BODY 'v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz'
-Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for linux aarch64' $LC_SUMS_BODY 'v2.5.0/linear-aarch64-unknown-linux-gnu.tar.xz'
-Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for macos arm64' $LC_SUMS_BODY 'v2.5.0/linear-aarch64-apple-darwin.tar.xz'
-Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for macos x86_64' $LC_SUMS_BODY 'v2.5.0/linear-x86_64-apple-darwin.tar.xz'
-Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for windows x86_64' $LC_SUMS_BODY 'v2.5.0/linear-x86_64-pc-windows-msvc.zip'
+Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for linux x86_64' $LC_SUMS_BODY 'v2.6.0/linear-x86_64-unknown-linux-gnu.tar.xz'
+Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for linux aarch64' $LC_SUMS_BODY 'v2.6.0/linear-aarch64-unknown-linux-gnu.tar.xz'
+Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for macos arm64' $LC_SUMS_BODY 'v2.6.0/linear-aarch64-apple-darwin.tar.xz'
+Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for macos x86_64' $LC_SUMS_BODY 'v2.6.0/linear-x86_64-apple-darwin.tar.xz'
+Assert-Contains 'install-linear-cli.test: the pin file pins the default tag for windows x86_64' $LC_SUMS_BODY 'v2.6.0/linear-x86_64-pc-windows-msvc.zip'
+# Old entries are the rollback path (linear-setup.md §3.2); a "cleanup" that
+# strips the previous tag must break loudly, not pass every default-tag check.
+Assert-Contains 'install-linear-cli.test: the pin file retains the previous tag for rollback' $LC_SUMS_BODY 'v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz'
 Assert-Contains 'install-linear-cli.test: the pin file names the re-vet procedure' $LC_SUMS_BODY 'linear/linear-setup.md'
 
 # The default pin is declared exactly once in each twin, and both must name the
 # same tag — a bump that edits one and not the other must break loudly.
 $LC_PS_BODY = [System.IO.File]::ReadAllText($LC_SCRIPT)
 Assert-Contains 'install-linear-cli.test: the PS twin declares the default pinned tag' `
-    $LC_PS_BODY "`$LinearCliDefaultVersion = 'v2.5.0'"
+    $LC_PS_BODY "`$LinearCliDefaultVersion = 'v2.6.0'"
 $LC_SH_BODY = [System.IO.File]::ReadAllText((Join-Path $env:REPO_ROOT 'scripts' 'install-linear-cli.sh'))
 Assert-Contains 'install-linear-cli.test: the bash twin declares the same default pinned tag' `
-    $LC_SH_BODY 'LINEAR_CLI_DEFAULT_VERSION="v2.5.0"'
+    $LC_SH_BODY 'LINEAR_CLI_DEFAULT_VERSION="v2.6.0"'
 
 $LC_INSTALL_LABELS = @(
     'install-linear-cli.test: a correct checksum exits 0',
@@ -336,7 +339,7 @@ if ($LC_SKIP_REASON -ne '') {
     Assert-NotContains 'install-linear-cli.test: the trust-root warnings go to STDERR' `
         $lcOk.StdOut 'WARNING non-default trust root'
     Assert-Contains 'install-linear-cli.test: a non-default tag is announced as such' `
-        $lcOk.StdOut "note: installing non-default tag $LC_VER (current default: v2.5.0)"
+        $lcOk.StdOut "note: installing non-default tag $LC_VER (current default: v2.6.0)"
     # POSITIVE fixture for the post-move re-hash: if this line never appeared,
     # the TOCTOU re-verify could be dead code and nothing here would notice.
     Assert-Contains 'install-linear-cli.test: the installed file is re-hashed in place after the move' `

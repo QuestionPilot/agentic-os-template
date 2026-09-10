@@ -114,7 +114,7 @@ foreach ($arg in $Rest) {
 }
 
 # The pinned default lives here and ONLY here (mirrors the .sh twin).
-$LinearCliDefaultVersion = 'v2.5.0'
+$LinearCliDefaultVersion = 'v2.6.0'
 
 $selfDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 

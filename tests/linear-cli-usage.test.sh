@@ -57,7 +57,7 @@ if [ -n "$_lcu_live_version" ] && [ "v$_lcu_live_version" = "$_lcu_pin" ]; then
   _lcu_help="$(linear --help 2>&1 | LC_ALL=C sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')"
   for _lcu_grp in auth issue team user project project-update cycle milestone \
                   initiative initiative-update label document completions config \
-                  schema api; do
+                  schema api markdown; do
     assert_contains "pinned binary still exposes command group: $_lcu_grp" \
       "$_lcu_help" "$_lcu_grp"
   done

@@ -15,3 +15,16 @@ c8ddd7fb478ff23cd752026eb609f25ef91cc36cb1b55900db9f182f4aeb47b5  v2.5.0/linear-
 f57c7acc974c1bc01c0ac141658a2fd380e36776b85f15da9fcbf2e824c0823c  v2.5.0/linear-x86_64-apple-darwin.tar.xz
 3cc9c14d4fa9855544be84454cdd9cb8d9d3b65a51f2ababc7bcd8d5c4a392bf  v2.5.0/linear-x86_64-pc-windows-msvc.zip
 62accf1eb36c31e897f8490e826182f012b9a4b3a2c0d3bf8c8dde906039c3ea  v2.5.0/linear-x86_64-unknown-linux-gnu.tar.xz
+#
+# v2.6.0 vetted 2026-09-10: hashes computed locally from the downloaded assets
+# AND cross-checked against upstream's published sha256.sum manifest (both
+# sources agreed). Source diff v2.5.0...v2.6.0 reviewed (tag commits
+# dcbb7ab372692906243a521a86d6d8b24e5811af -> 196315343d2bc58f30ca5d5ab40f4eb6a449fd71):
+# no new hosts, no new dependencies; subprocess sites are the pre-existing
+# `gh pr create` and a new `git rev-parse --show-toplevel` (fixed argv, stderr
+# discarded, output only read as a path). Adopted under the toolkit re-vet.
+b9abdd4b5aec14459e434a2899203757de8ae847f055eae4f1faee7bb1fbc078  v2.6.0/linear-aarch64-apple-darwin.tar.xz
+55cc4a6b2489a403ad9eb80f612dfa841287bfa16b98390bb4d4e072d79e2361  v2.6.0/linear-aarch64-unknown-linux-gnu.tar.xz
+08aba19af4f00629e5e89ab04017d31d18573fbc9dc922280828702fdae27a3f  v2.6.0/linear-x86_64-apple-darwin.tar.xz
+a215b1c4e89af509e94a5618193b61a55d4b12fd3c63d065e4d1fffcdcbc0f57  v2.6.0/linear-x86_64-pc-windows-msvc.zip
+bbcb9d365308bc3728a1ec9913ad1880f88c0ce68767383297e348c057f35b8d  v2.6.0/linear-x86_64-unknown-linux-gnu.tar.xz

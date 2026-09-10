@@ -1,4 +1,4 @@
-# `linear` CLI — static usage reference (pinned v2.5.0)
+# `linear` CLI — static usage reference (pinned v2.6.0)
 
 Load THIS instead of running `--help` chains — it is the full command surface at
 the pinned version, kept honest by the drift check `tests/linear-cli-usage.test.sh`.
@@ -15,7 +15,7 @@ priority as a number with sibling `.priorityLabel`.
 ```
 auth      login | logout [ws] | list | default [ws] | token | whoami | migrate
 issue     mine/list | query | view [-j] | create | update | delete | start | id |
-          title | url | describe | commits | pull-request | attach | link |
+          title | url | describe | commits | pull-request [-T <file>] | attach | link |
           comment (add|update|delete|list) | relation (add|list|delete) |
           agent-session
 project   list | view | create | update | delete
@@ -27,7 +27,7 @@ milestone list | view | create | update | delete
 initiative / initiative-update
 label     list | create
 document  create | view | update | delete
-config    (interactive .linear.toml)  ·  completions  ·  schema  ·  api [query]
+config    (interactive .linear.toml)  ·  completions  ·  schema  ·  api [query]  ·  markdown (mention/collapsible syntax ref)
 ```
 
 ## The cuts framework scripts use
@@ -44,7 +44,7 @@ linear issue view TEAM-NN --json                     # single issue object
 linear issue create -t "Title" --team KEY --project <P> --label L --priority 3 \
   --assignee <user> -d "body"                        # priority: 1 urgent…4 low
 linear issue update TEAM-NN --state started          # state by type or name
-linear issue comment add TEAM-NN --body-file <path>   # markdown bodies: a file, never `-b -` (CLI 2.5.0 posts a literal "-", it does not read stdin)
+linear issue comment add TEAM-NN --body-file <path>   # markdown bodies: a file, never `-b -` (CLI 2.5.0–2.6.0 post a literal "-", they do not read stdin)
 linear issue relation add|delete TEAM-X <type> TEAM-Y   # types: blocks, blocked-by,
 linear issue relation list TEAM-X                       # related, duplicate
 linear api '<graphql>'                               # escape hatch; `linear schema`
@@ -57,4 +57,5 @@ completed canceled), `--assignee`, `-U/--unassigned`, `--project`,
 `--limit` (0 = unlimited), `--sort manual|priority`.
 
 Auth: OS keyring via `linear auth login`; headless via `LINEAR_API_KEY` env var
-(takes precedence). Errors: exit 1 user, 2 unknown command/option.
+(takes precedence). `LINEAR_IGNORE_ENV_FILE=1` skips `.env` loading.
+Errors: exit 1 user, 2 unknown command/option.
