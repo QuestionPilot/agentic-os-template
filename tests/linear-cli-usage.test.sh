@@ -61,6 +61,17 @@ if [ -n "$_lcu_live_version" ] && [ "v$_lcu_live_version" = "$_lcu_pin" ]; then
     assert_contains "pinned binary still exposes command group: $_lcu_grp" \
       "$_lcu_help" "$_lcu_grp"
   done
+  # The fixture's --no-pager matrix: acceptance is a parse-time property, so it
+  # needs no auth or network — `issue list --help` documents the flag, and
+  # `project list --no-pager` is rejected before any request is made (exit 2).
+  assert_contains "pinned binary documents --no-pager on issue list (fixture claim)" \
+    "$(linear issue list --help 2>&1 | LC_ALL=C sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')" "--no-pager"
+  assert_exit "pinned binary rejects --no-pager on project list with exit 2 (fixture claim)" 2 \
+    -- linear project list --no-pager
+  assert_exit "pinned binary rejects --no-pager on project view with exit 2 (fixture claim)" 2 \
+    -- linear project view --no-pager
+  assert_exit "pinned binary rejects --no-pager on issue comment list with exit 2 (fixture claim)" 2 \
+    -- linear issue comment list TEAM-0 --no-pager
   _lcu_ihelp="$(linear issue --help 2>&1 | LC_ALL=C sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g')"
   for _lcu_sub in query view create update comment relation; do
     assert_contains "pinned binary still exposes issue subcommand: $_lcu_sub" \

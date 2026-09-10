@@ -59,3 +59,7 @@ completed canceled), `--assignee`, `-U/--unassigned`, `--project`,
 Auth: OS keyring via `linear auth login`; headless via `LINEAR_API_KEY` env var
 (takes precedence). `LINEAR_IGNORE_ENV_FILE=1` skips `.env` loading.
 Errors: exit 1 user, 2 unknown command/option.
+`--no-pager` is per-command (v2.6.0): `issue list|view|query` take it; `issue comment list` and
+`project list|view` reject it at parse time (`error: Unknown option` on stderr, usage on stdout,
+exit 2) — omit it there; piped output is not paged. Verify a write by re-reading and grepping
+the new content, not by exit 0 alone.
