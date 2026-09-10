@@ -45,10 +45,17 @@ check_file AGENTS.md
 check_cmd rg
 check_cmd node
 
-if rg -n --hidden --glob '!.git/**' 'sk-[A-Za-z0-9_-]{20,}|-----BEGIN .*PRIVATE KEY-----' .; then
+if ! command -v rg >/dev/null 2>&1; then
+  fail "required scanner unavailable: rg"
+elif rg -n --hidden --glob '!.git/**' 'sk-[A-Za-z0-9_-]{20,}|-----BEGIN .*PRIVATE KEY-----' .; then
   fail "likely secret pattern found"
 else
-  pass "secret pattern scan clean"
+  scan_status=$?
+  if [ "$scan_status" -eq 1 ]; then
+    pass "secret pattern scan clean"
+  else
+    fail "secret pattern scan error (exit $scan_status)"
+  fi
 fi
 
 printf '\nSummary: %s pass, %s warn, %s fail\n' "$PASS" "$WARN" "$FAIL"
