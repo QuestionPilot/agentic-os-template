@@ -299,14 +299,15 @@ degrades **per surface**:
 | Desktop IDE / Agent Chat | **fires — live-verified** (U3) | **fires and blocks — live-verified** (U3) |
 | **Cloud Agents** | **never fires** (documented) | project hooks only |
 
-Note the shape of that table: it is the **inverse** of the Codex situation. On
-Codex the interactive TUI is the documented-but-unproven surface and
-`codex exec` provably runs no hooks at all; on Cursor the **headless lane and
-the desktop IDE are both proven** and only the interactive TUI (same binary as
-the proven headless lane) remains unexercised. A Cursor automation lane
-therefore has full enforcement parity today — the opposite of the caveat a
-reader carrying Codex habits would expect. Do not copy the Codex "headless
-runs no hooks" warning onto this harness.
+Note the shape of that table: it differs from the Codex evidence. On Codex the
+interactive TUI is the documented-but-unproven surface; `codex exec` v0.153.4
+fires `SessionStart` and `PreToolUse` in a fresh `CODEX_HOME` with
+`--dangerously-bypass-hook-trust`, while persisted-trust behavior is unverified.
+On Cursor the **headless lane and the desktop IDE are both proven** and only the
+interactive TUI (same binary as the proven headless lane) remains unexercised. A
+Cursor automation lane therefore has full enforcement parity today. Do not infer
+behavior across the two harnesses: each claim is limited to its named version,
+surface, and trust configuration.
 
 Cloud Agents are the documented hard gap: they run **project**
 (`.cursor/hooks.json`, in-repo) command hooks plus team/enterprise-managed hooks
@@ -466,7 +467,7 @@ Two consequences worth stating plainly, because they invert the intuition a
 reader carrying Codex habits would bring:
 
 - **The headless lane has full enforcement parity today.** Do not write, or
-  copy over, a Codex-style "non-interactive runs no hooks" caveat here. On this
+  copy over, a caveat from a different harness or untested run mode. On this
   harness the desktop IDE is now proven too and only the *interactive TUI*
   remains unexercised (U3).
 - **Compat skill discovery is real, which makes coexistence the concern, not

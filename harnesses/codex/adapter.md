@@ -70,7 +70,9 @@ allowed-tools: <comma-separated tool list, when the capability restricts tools>
 Codex's hook system runs hooks at named lifecycle events and, per the v0.132
 docs and config schema, **can block** at them in the interactive `codex` TUI —
 it is not a prose-only harness. (Interactive blocking is documented but not yet
-verified end-to-end here; `codex exec` does not fire hooks at all — see the
+verified end-to-end here. `codex exec` behavior is version- and trust-mode-specific:
+v0.132 did not fire hooks, while v0.153.4 fired `SessionStart` and `PreToolUse`
+with `--dangerously-bypass-hook-trust` in a fresh `CODEX_HOME`; see the
 enforcement-parity note at the end of this Fact.) Events: `SessionStart`,
 `PreToolUse`, `PermissionRequest`,
 `PostToolUse`, `UserPromptSubmit`, `Stop`. Hooks are wired in a dedicated,
@@ -174,28 +176,33 @@ still bypass the gate before the `jq` check is reached.
 `$CODEX_HOME/hooks.json`, the user must run the interactive `/hooks` command once
 to review and trust the generated hooks; the trust decision is persisted. The
 build cannot trust hooks on the user's behalf — `install.sh` surfaces this as a
-manual step, and the bootstrap smoke test calls it out. Hook trust only applies
-to the interactive TUI; `codex exec` does not run `hooks.json` hooks at all
-(verified — see the enforcement-parity note below), so its
-`--dangerously-bypass-hook-trust` flag changes nothing about hook firing.
+manual step, and the bootstrap smoke test calls it out. For `codex exec`,
+v0.153.4 fired hooks in a fresh `CODEX_HOME` when invoked with
+`--dangerously-bypass-hook-trust`; behavior with persisted trust and without that
+flag is unverified. See the enforcement-parity note below for the version-scoped
+evidence and audit limitation.
 
-**Enforcement parity — interactive TUI only.** The framework's design
-anticipated a harness with *no* lifecycle interception, on which a hard hook
-gate would degrade to a strong instruction in the entrypoint and the build
-would emit a loud warning.
-Codex CLI v0.132's blocking hook system reaches **enforcement parity with Claude
-Code in the interactive `codex` TUI** — and only there.
+**Enforcement parity — version- and trust-mode-specific.** The framework's
+design anticipates a harness with *no* lifecycle interception, on which a hard
+hook gate degrades to a strong instruction in the entrypoint and the build emits
+a loud warning. Where hooks do not fire, the pre-edit gate has **soft
+enforcement**: the entrypoint and capability bodies still require the protocol.
+Codex CLI v0.132 documentation describes blocking hooks in the interactive
+`codex` TUI. The framework treats that documented design as enforcement parity
+with Claude Code; end-to-end TUI behavior remains unverified below. The v0.132 `codex exec` result remains
+historical evidence only: a minimal marker-writing hook did not
+run across repeated invocations, including with `--enable hooks` and
+`--dangerously-bypass-hook-trust`.
 
-**`codex exec` runs no hooks (verified).** Non-interactive `codex exec` does
-*not* fire `hooks.json` hooks. This was confirmed empirically against v0.132: a
-minimal marker-writing hook never ran across repeated `codex exec` invocations,
-including with `--enable hooks` and `--dangerously-bypass-hook-trust`. The
-official docs are silent on exec-mode hooks; hook firing appears to be
-interactive-TUI-only. So under `codex exec` the `pre-edit-gate` enforcement
-class degrades to **soft enforcement** — the capability bodies and `AGENTS.md`
-still instruct the protocol, but nothing blocks a violation. This is exactly the
-design's documented fallback for a hook-less harness; for Codex it is reached
-**per run mode**, not per harness.
+**`codex exec` fires hooks on v0.153.4 under the tested trust configuration.**
+On 2026-09-10, v0.153.4 in a fresh `CODEX_HOME`, invoked with
+`--dangerously-bypass-hook-trust`, fired both `SessionStart` and `PreToolUse` from
+`hooks.json`; Codex honored the `PreToolUse` deny and created no file. Behavior
+with persisted hook trust and without the bypass flag is unverified. In those
+v0.153.4 probes, a hook-blocked or sandbox-denied action left no
+`CommandExecution` item in the `--json` stream or rollout; its failure text was
+in `custom_tool_call_output`. Post-hoc audits of those sessions must therefore
+parse tool outputs as well as item events.
 
 **Interactive `codex` TUI hook firing — UNVERIFIED (documented gap).** The
 v0.132 docs and config schema state hooks block in the interactive TUI, and the
