@@ -1773,8 +1773,8 @@ main() {
   if [ "$HARNESS" = cursor ]; then
     printf 'install.sh: NOTE — Cursor hot-reloads %s/hooks.json; no trust step is needed.\n' "$TARGET" >&2
     printf '            Cloud Agents run NEITHER user-level hooks NOR sessionStart, so the\n' >&2
-    printf '            spine is instruction-only there. Hook firing in the Cursor IDE and\n' >&2
-    printf '            the interactive CLI is UNVERIFIED — see harnesses/cursor/adapter.md.\n' >&2
+    printf '            spine is instruction-only there. In the Cursor IDE, sessionStart fires and\n' >&2
+    printf '            preToolUse fires and blocks (live-verified). Only the interactive TUI is UNVERIFIED — see harnesses/cursor/adapter.md.\n' >&2
   fi
 
   # The hermes build is inert until the operator merges the generated wiring

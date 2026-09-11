@@ -47,6 +47,14 @@ Write-CursorEnvFixture -EnvFile $IC_ENV -CursorConfigDir $IC_OUT -VaultDir $IC_V
 try {
     $r = Invoke-CursorInstall -EnvFile $IC_ENV
     Assert-Eq 'install-cursor.test: install.ps1 --harness cursor builds clean' '0' "$($r.exit)"
+    Assert-Contains 'install-cursor.test: cursor installer states IDE sessionStart proof' `
+        $r.err 'In the Cursor IDE, sessionStart fires'
+    Assert-Contains 'install-cursor.test: cursor installer states IDE preToolUse blocking proof' `
+        $r.err 'preToolUse fires and blocks (live-verified).'
+    Assert-Contains 'install-cursor.test: cursor installer scopes UNVERIFIED to the interactive TUI' `
+        $r.err 'Only the interactive TUI is UNVERIFIED'
+    Assert-NotContains 'install-cursor.test: cursor installer omits the stale IDE-unverified wording' `
+        $r.err 'Hook firing in the Cursor IDE and'
 
     # --- T1: build output map (.ps1 hooks on the Windows lane) ---------------
     foreach ($f in @(

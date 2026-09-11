@@ -2169,8 +2169,8 @@ try {
     if ($Harness -eq 'cursor') {
         [Console]::Error.WriteLine("install.ps1: NOTE - Cursor hot-reloads $TARGET/hooks.json; no trust step is needed.")
         [Console]::Error.WriteLine('            Cloud Agents run NEITHER user-level hooks NOR sessionStart, so the')
-        [Console]::Error.WriteLine('            spine is instruction-only there. Hook firing in the Cursor IDE and')
-        [Console]::Error.WriteLine('            the interactive CLI is UNVERIFIED - see harnesses/cursor/adapter.md.')
+        [Console]::Error.WriteLine('            spine is instruction-only there. In the Cursor IDE, sessionStart fires and')
+        [Console]::Error.WriteLine('            preToolUse fires and blocks (live-verified). Only the interactive TUI is UNVERIFIED - see harnesses/cursor/adapter.md.')
     }
 
     if ($Harness -eq 'hermes') {
