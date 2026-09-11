@@ -57,9 +57,11 @@ lifecycle: shipped
   skills under `<CURSOR_CONFIG_DIR>/skills/`.
 - **Surface notes.** The headless Agent CLI (`agent -p --trust`) fires both
   hooks and the gate really blocks (live-verified 2026-08-18) — this harness has
-  full enforcement parity in an automation lane, unlike Codex, whose
-  non-interactive mode runs no hooks at all. The IDE and interactive-TUI
-  surfaces are expected to fire but are not yet confirmed (adapter U3). A Cursor
+  full enforcement parity in an automation lane. Separately, a Codex v0.153.4
+  `codex exec` run fired `SessionStart` and `PreToolUse` in a fresh
+  `CODEX_HOME` with `--dangerously-bypass-hook-trust`; persisted-trust behavior
+  is unverified. The desktop IDE also fired and blocked in the recorded August 18, 2026
+  probe; the interactive TUI remains unverified (adapter U3). A Cursor
   **Cloud Agent** (and any private-worker surface) runs neither user-level hooks
   nor `sessionStart` at all (documented): no auto-fire directive and no edit
   gate, so the conversation id is not discoverable there — a side file may exist

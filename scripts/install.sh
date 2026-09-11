@@ -1763,8 +1763,8 @@ main() {
   # behalf, so it surfaces the step (adapter.md Fact 2 documents it as surfaced).
   if [ "$HARNESS" = codex ]; then
     printf 'install.sh: NEXT STEP — run the interactive `/hooks` command in codex once\n' >&2
-    printf '            to review and trust %s/hooks.json; until trusted, the\n' "$TARGET" >&2
-    printf '            enforcement hooks will not run. (codex exec runs no hooks at all.)\n' >&2
+    printf '            to review and trust %s/hooks.json; this interactive step\n' "$TARGET" >&2
+    printf '            remains required. (v0.153.4 observation: codex exec fired hooks with --dangerously-bypass-hook-trust in a fresh CODEX_HOME; persisted trust is unverified.)\n' >&2
   fi
 
   # Cursor hot-reloads hooks.json, so there is no trust/merge step like codex or

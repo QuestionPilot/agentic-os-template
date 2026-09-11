@@ -2155,8 +2155,8 @@ try {
     # install.sh:1200-1204.
     if ($Harness -eq 'codex') {
         [Console]::Error.WriteLine('install.ps1: NEXT STEP — run the interactive `/hooks` command in codex once')
-        [Console]::Error.WriteLine("            to review and trust $TARGET\hooks.json; until trusted, the")
-        [Console]::Error.WriteLine('            enforcement hooks will not run. (codex exec runs no hooks at all.)')
+        [Console]::Error.WriteLine("            to review and trust $TARGET\hooks.json; this interactive step")
+        [Console]::Error.WriteLine('            remains required. (v0.153.4 observation: codex exec fired hooks with --dangerously-bypass-hook-trust in a fresh CODEX_HOME; persisted trust is unverified.)')
     }
 
     # The hermes build is inert until the operator merges the generated wiring into
