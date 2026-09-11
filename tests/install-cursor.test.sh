@@ -20,11 +20,24 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 IC_OUT="$(mktemp -d)/cursor-home"; mkdir -p "$IC_OUT"
 IC_ENV="$(mktemp -d)/local.env"
 IC_VAULT="$(mktemp -d)/vault"
+IC_ERR="$(mktemp)"
 cp -R "$REPO_ROOT/obsidian/vault-scaffolding" "$IC_VAULT"
 make_cursor_env "$IC_ENV" "$IC_OUT" "$IC_VAULT"
 
 assert_exit "install.sh --harness cursor builds clean" 0 -- \
-  env AI_CONFIG_LOCAL_ENV="$IC_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness cursor
+  sh -c 'env AI_CONFIG_LOCAL_ENV="$1" bash "$2/scripts/install.sh" --harness cursor 2>"$3"' \
+  _ "$IC_ENV" "$REPO_ROOT" "$IC_ERR"
+
+ic_install_err="$(cat "$IC_ERR" 2>/dev/null || printf '')"
+assert_contains "cursor installer states IDE sessionStart proof" \
+  "$ic_install_err" "In the Cursor IDE, sessionStart fires"
+assert_contains "cursor installer states IDE preToolUse blocking proof" \
+  "$ic_install_err" "preToolUse fires and blocks (live-verified)."
+assert_contains "cursor installer scopes UNVERIFIED to the interactive TUI" \
+  "$ic_install_err" "Only the interactive TUI is UNVERIFIED"
+assert_not_contains "cursor installer omits the stale IDE-unverified wording" \
+  "$ic_install_err" "Hook firing in the Cursor IDE and"
+rm -f "$IC_ERR"
 
 # --- T1: build output map ---
 for f in \
