@@ -4,7 +4,7 @@ Use this playbook before autonomous work, recurring automations, broad improveme
 
 ## Goal Anchors
 
-Every goal-run needs seven anchors.
+Every goal-run needs eight anchors.
 
 | Anchor | Requirement |
 | --- | --- |
@@ -15,8 +15,11 @@ Every goal-run needs seven anchors.
 | Stop condition | Define what done enough means. |
 | Safety cap | Limit time, turns, files, retries, spend, or scope. |
 | Input provenance | For autonomous runs: declare which material decision inputs the agent supplied on the absent operator's behalf, and carry that declaration into the proof artifact. |
+| Consumer + cadence | For recurring runs: name who adjudicates each output (a person, a tracker issue, or a downstream job that decides accept / hold / reject — a folder or sync target is not a consumer) and on what review cadence, in the same brief that schedules the run. A recurring run with no scheduled adjudicator piles up output nobody decides on. |
 
 The input-provenance anchor applies when the run makes discretionary choices without the operator present. A brief the agent wrote for itself must be stamped as self-authored, not interviewed, and that stamp must survive into the final report.
+
+The Consumer + cadence anchor applies when the run recurs. It is distinct from the stop condition and the safety cap, which bound one run; this anchor binds the series. A scheduled producer whose output nobody is scheduled to read has no consumer, whatever its per-run caps; naming the adjudicator and the cadence is part of scheduling it.
 
 ## Steps
 
