@@ -208,8 +208,32 @@ enforcement surface.
   because already-recorded rules kept getting skipped. `index unreachable` claims a
   failure and `skipped — <reason>` a policy bound; use whichever is true.
 - **Be honest on the Execution line.** A value below the rule that fires skips the
-  wave or the panel the operator asked for.
+  wave the operator asked for. The panel is owed by PATH, not by the value on the
+  line: R2b rule 1 attaches it to framework / high-risk work, so a re-emit to
+  `inline` never cancels the panel the operator asked for — the re-emit's reason
+  line must carry that debt.
+  The body's mid-task checkpoint is where that honesty gets forced.
 - **The gate enforces the first complete declaration per session.** Later Mode 2
   routes re-declare by protocol; the hook does not re-police them — a discipline net
   with a kill switch, not a security boundary.
 - **Mode 1 is expensive, Mode 2 is cheap.** Don't re-orient on every prompt.
+
+## The mid-task Execution checkpoint — counting rule
+
+The body pins the trigger; this is the definition list behind it.
+
+- **What counts.** A file-modifying tool call made by the driver itself on task
+  content — the change the task is about, its tests, its fixtures. Three of them
+  since the declaration is the checkpoint.
+- **What does not count.** Writing a lane's delegation brief, re-emitting the R5
+  declaration, and reading or searching anything: those are the checkpoint's own
+  machinery, not the work, and they do not count. Once the brief is written the
+  driver stops editing task content altogether — the lane owns it from there.
+- **When the count resets.** On a new R5 declaration, and only there. A re-emit
+  starts a fresh count, so a fourth edit with neither a brief nor a re-emit is a
+  second miss, and the checkpoint recurs every three further edits.
+- **Which value the re-emit carries.** `inline`, when the driver keeps the work —
+  the enum is unchanged (`inline | delegated wave | delegated wave + panel`) and
+  there is no `inline + panel` value. The still-owed panel lives in the reason
+  line, because R2b rule 1 keys the panel to the path the change takes, not to
+  the word on the Execution line.
