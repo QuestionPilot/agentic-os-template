@@ -284,6 +284,15 @@ After emitting, proceed with the work.
 If a later turn changes the `Execution:` value (e.g. `inline` → `delegated
 wave`), re-emit the declaration carrying the new value.
 
+**Mid-task Execution checkpoint.** On a task declared `delegated wave` or
+`delegated wave + panel`, the driver's third inline edit — a file-modifying call
+on task content since the declaration; brief and re-emit do not count — is the
+checkpoint: write the lane's brief (then stop editing task content) or re-emit R5
+as Mode 2. Keeping the work re-emits `inline`; R2b rule 1 keys the panel to the
+PATH, so the reason line carries the still-owed panel and the re-emit never
+cancels it. A fourth edit with neither is a second miss; it recurs every three
+edits. Q1b records a stale declaration. Definitions: reference doc.
+
 Declare honestly: `none match`, `none — single-step`, and `inline` are valid only
 after the scan or the walk actually ran — written by reflex they defeat the gate.
 Full notes: the reference doc.

@@ -132,6 +132,13 @@ outcome is `no-action` with rationale and the rest of the walk is wasted.
    `feedback`-type memory note (`metadata.type: feedback`) naming the skipped step.
    The lesson is about the skipped step, never a re-write of the R2b cascade that
    chose the value — the cascade fired correctly; the execution is what drifted.
+   The forcing step is the session-agent R5 mid-task checkpoint — the driver's third
+   inline file edit on a task declared `delegated wave` or `delegated wave + panel`.
+   When the task was declared delegated and the driver did reach that third inline
+   edit, the miss is a **checkpoint miss** (the checkpoint never fired, or fired and
+   was ignored). A miss below that threshold — the task finished in one or two edits
+   — or a first declaration that was false when written is a **declaration miss**
+   instead. Name which of the two the `**Execution miss**` line records.
 2. Is the lesson already represented in the right source of truth?
 3. Can the lesson become a check or script instead of prose?
 

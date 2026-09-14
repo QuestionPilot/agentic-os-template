@@ -321,3 +321,34 @@ Assert-Contains 'closeout-format.test: vault-guide.md keeps curated notes propos
 # core/self-improvement.md notes the always-on drain alongside the lesson classes.
 Assert-Contains 'closeout-format.test: self-improvement.md notes the always-on session-log drain' `
     $SI_CONTENT 'session log'
+
+# --- 13. Q7b Running State probe + the R5 mid-task Execution checkpoint.
+# Mirror of tests/closeout-format.test.sh section 13 — same short, wrap-safe needles.
+$SAR_CONTENT = Get-Content -LiteralPath (Join-Path $env:REPO_ROOT 'capabilities' 'reference' 'session-agent.md') -Raw
+
+Assert-Contains 'closeout-format.test: closeout.md carries the Q7b Running State probe' `
+    $CL_CONTENT 'Q7b'
+Assert-Contains 'closeout-format.test: closeout.md Q7b names pgrep -fl as a forbidden form' `
+    $CL_CONTENT 'pgrep -fl'
+Assert-Contains 'closeout-format.test: closeout.md Q7b names ps -E as a forbidden form' `
+    $CL_CONTENT 'ps -E'
+Assert-Contains 'closeout-format.test: closeout.md Q7b names the full-argv violation' `
+    $CL_CONTENT 'full-argv'
+Assert-Contains 'closeout-format.test: closeout.md Q7b names the safe same-name pattern probe' `
+    $CL_CONTENT 'pgrep -f <pattern>'
+
+Assert-Contains 'closeout-format.test: session-agent.md carries the mid-task Execution checkpoint' `
+    $SA_CONTENT 'Mid-task Execution checkpoint'
+Assert-Contains 'closeout-format.test: session-agent.md pins the third inline edit as the checkpoint' `
+    $SA_CONTENT 'third inline'
+Assert-Contains 'closeout-format.test: session-agent.md excludes the brief and the re-emit from the count' `
+    $SA_CONTENT 'do not count'
+Assert-NotContains 'closeout-format.test: session-agent.md adds no ''inline + panel'' enum value' `
+    $SA_CONTENT 'inline + panel'
+Assert-Contains 'closeout-format.test: reference/session-agent.md defines what does not count' `
+    $SAR_CONTENT 'do not count'
+
+Assert-Contains 'closeout-format.test: self-improvement.md Q1b names the checkpoint-miss class' `
+    $SI_CONTENT 'checkpoint miss'
+Assert-Contains 'closeout-format.test: self-improvement.md Q1b names the declaration-miss class' `
+    $SI_CONTENT 'declaration miss'

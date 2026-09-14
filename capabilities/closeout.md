@@ -159,6 +159,20 @@ From `$AI_CONFIG_DIR/core/self-improvement.md` — answer each in 1–2 sentence
    the State Deltas line (e.g. `operator-main has 1 staged file: core/tool-use.md
    (uncommitted)`). **Silent claims of `clean` are forbidden.**
 
+   **Q7b — Running State probe.** Argv carries secrets: desktop-app helpers are
+   launched with their environment spelled into the command line, so API keys and
+   OAuth tokens sit in argv. A raw full-argv listing is therefore itself the
+   violation, not a step to be scrubbed afterwards — `pgrep -fl`, `pgrep -a`,
+   `ps -E`, `ps aux`, `ps -ef`, any full-argv form — because the output lands in the
+   terminal and the session log before anything can scrub it, and from there in
+   `## Running State`, the operator reply, a tracker comment, or a delegation
+   packet. Probe by NAME instead: `pgrep -l <name>`, `ps -o pid,comm`,
+   `lsof +D <dir>`. For same-named helpers (node, python), match on the pattern
+   without printing it — `pgrep -f <pattern>` prints PIDs only (no `-l`) — then
+   `ps -o pid,comm -p <pid>` for the name and `lsof -p <pid> -d cwd` for the
+   directory. (Q7b is a probe method, not a yes/no answer, and never
+   short-circuits — it binds every process claim the session makes.)
+
 If every answer is "no", classify as `no-action` with a single reason line and skip
 to Output. (Q7 itself never short-circuits — even a `no-action` session enumerates
 its created files; the only valid Q7 answer for a session that created none is

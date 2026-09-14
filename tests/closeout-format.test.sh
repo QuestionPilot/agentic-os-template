@@ -363,3 +363,37 @@ assert_contains "vault-guide.md keeps curated notes propose-don't-write" \
 # core/self-improvement.md notes the always-on drain alongside the lesson classes.
 assert_contains "self-improvement.md notes the always-on session-log drain" \
   "$SI_CONTENT" "session log"
+
+# --- 13. Q7b Running State probe + the R5 mid-task Execution checkpoint.
+# Two closeout-found lessons ported into the framework: a step-shaped Execution
+# value must be re-read mid-task, and a process listing must never leak argv.
+# Needles are SHORT tokens on purpose — a mid-clause phrase can be split by a
+# future re-wrap and turn a real guard into a phantom FAIL.
+SAR_CONTENT="$(cat "$REPO_ROOT/capabilities/reference/session-agent.md")"
+
+assert_contains "closeout.md carries the Q7b Running State probe" \
+  "$CL_CONTENT" "Q7b"
+assert_contains "closeout.md Q7b names pgrep -fl as a forbidden form" \
+  "$CL_CONTENT" "pgrep -fl"
+assert_contains "closeout.md Q7b names ps -E as a forbidden form" \
+  "$CL_CONTENT" "ps -E"
+assert_contains "closeout.md Q7b names the full-argv violation" \
+  "$CL_CONTENT" "full-argv"
+assert_contains "closeout.md Q7b names the safe same-name pattern probe" \
+  "$CL_CONTENT" "pgrep -f <pattern>"
+
+assert_contains "session-agent.md carries the mid-task Execution checkpoint" \
+  "$SA_CONTENT" "Mid-task Execution checkpoint"
+assert_contains "session-agent.md pins the third inline edit as the checkpoint" \
+  "$SA_CONTENT" "third inline"
+assert_contains "session-agent.md excludes the brief and the re-emit from the count" \
+  "$SA_CONTENT" "do not count"
+assert_not_contains "session-agent.md adds no 'inline + panel' enum value" \
+  "$SA_CONTENT" "inline + panel"
+assert_contains "reference/session-agent.md defines what does not count" \
+  "$SAR_CONTENT" "do not count"
+
+assert_contains "self-improvement.md Q1b names the checkpoint-miss class" \
+  "$SI_CONTENT" "checkpoint miss"
+assert_contains "self-improvement.md Q1b names the declaration-miss class" \
+  "$SI_CONTENT" "declaration miss"
