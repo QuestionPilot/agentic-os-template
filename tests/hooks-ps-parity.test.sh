@@ -395,8 +395,104 @@ HKPS_CLAUDE_STUB
     _fail "hooks-ps-parity: hermes session-agent.ps1 should ALLOW with the full marker on disk" "got: $hkps_out"
   fi
 
+  # --- 3h3. hermes framework-surface.ps1 — delegated-child branch -----------
+  # The Hermes delegated-child orient fix: a delegate_task child (identified in
+  # the pre_llm_call payload by parent_session_id / extra.platform == subagent)
+  # must receive ONLY the Mode 2 route-only directive, while a parent keeps the
+  # Mode 1 kickoff directive. Copied into a temp home so $PSScriptRoot/.. is a
+  # throwaway install dir; @@AI_CONFIG_DIR@@ stays unsubstituted so the git block
+  # is empty (same posture as the claude rows in 3c/3d), and the freshness probe
+  # is disabled for a deterministic directive-only payload.
+  hkps_hfs="$hkps_tmpdir/hermes-fs-home"
+  mkdir -p "$hkps_hfs/hooks"
+  cp "$REPO_ROOT/harnesses/hermes/hooks/framework-surface.ps1" "$hkps_hfs/hooks/"
+  hkps_out="$(printf '%s' '{"hook_event_name":"pre_llm_call","session_id":"ps-child-01","parent_session_id":"ps-parent-01","extra":{"is_first_turn":true,"platform":"subagent"}}' \
+    | CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 pwsh -NoProfile -File "$hkps_hfs/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *"delegated child (Mode 2: route only)"*)
+      case "$hkps_out" in
+        *"Mode 1: kickoff orient"*)
+          _fail "hooks-ps-parity: hermes framework-surface.ps1 should withhold Mode 1 from a delegated child" \
+                "leaked kickoff text: $hkps_out" ;;
+        *)
+          _pass "hooks-ps-parity: hermes framework-surface.ps1 emits the Mode 2 child directive on a delegated child's first turn" ;;
+      esac ;;
+    *)
+      _fail "hooks-ps-parity: hermes framework-surface.ps1 should emit the Mode 2 child directive on a delegated child's first turn" \
+            "got: $hkps_out" ;;
+  esac
+  hkps_out="$(printf '%s' '{"hook_event_name":"pre_llm_call","session_id":"ps-parent-02","extra":{"is_first_turn":true,"platform":"desktop"}}' \
+    | CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 pwsh -NoProfile -File "$hkps_hfs/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *"Mode 1: kickoff orient"*)
+      case "$hkps_out" in
+        *"delegated child (Mode 2: route only)"*)
+          _fail "hooks-ps-parity: hermes framework-surface.ps1 should keep a parent session on the Mode 1 directive" \
+                "leaked child text: $hkps_out" ;;
+        *)
+          _pass "hooks-ps-parity: hermes framework-surface.ps1 keeps the Mode 1 kickoff directive for a parent session" ;;
+      esac ;;
+    *)
+      _fail "hooks-ps-parity: hermes framework-surface.ps1 should keep a parent session on the Mode 1 directive" \
+            "got: $hkps_out" ;;
+  esac
+
+  # Type-guard + case parity (panel finding, fixture-confirmed): an array-shaped
+  # extra must NOT read as a child (PowerShell member enumeration would otherwise
+  # find .platform on each element), and "Subagent" is not Hermes's literal.
+  hkps_out="$(printf '%s' '{"hook_event_name":"pre_llm_call","session_id":"ps-parent-03","extra":[{"is_first_turn":true,"platform":"subagent"}]}' \
+    | CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 pwsh -NoProfile -File "$hkps_hfs/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *"delegated child (Mode 2: route only)"*)
+      _fail "hooks-ps-parity: hermes framework-surface.ps1 should treat an array-shaped extra as a parent session" \
+            "child block on array extra: $hkps_out" ;;
+    *)
+      _pass "hooks-ps-parity: hermes framework-surface.ps1 treats an array-shaped extra as a parent session" ;;
+  esac
+  hkps_out="$(printf '%s' '{"hook_event_name":"pre_llm_call","session_id":"ps-parent-06","parent_session_id":"\n \t","extra":{"is_first_turn":true,"platform":"desktop"}}' \
+    | CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 pwsh -NoProfile -File "$hkps_hfs/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *"delegated child (Mode 2: route only)"*)
+      _fail "hooks-ps-parity: hermes framework-surface.ps1 should treat a whitespace-only parent_session_id as absent" \
+            "child block on whitespace parent id: $hkps_out" ;;
+    *)
+      _pass "hooks-ps-parity: hermes framework-surface.ps1 treats a whitespace-only parent_session_id as absent" ;;
+  esac
+  hkps_out="$(printf '%s' '{"hook_event_name":"pre_llm_call","session_id":"ps-parent-04","extra":{"is_first_turn":true,"platform":"Subagent"}}' \
+    | CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 pwsh -NoProfile -File "$hkps_hfs/hooks/framework-surface.ps1" 2>/dev/null)"
+  case "$hkps_out" in
+    *"Mode 1: kickoff orient"*)
+      _pass "hooks-ps-parity: hermes framework-surface.ps1 platform compare is case-sensitive (Subagent stays Mode 1)" ;;
+    *)
+      _fail "hooks-ps-parity: hermes framework-surface.ps1 platform compare should be case-sensitive (Subagent stays Mode 1)" \
+            "got: $hkps_out" ;;
+  esac
+  # Byte parity: the child block's context string must be IDENTICAL across the
+  # twins for the same payload (same install dir, so the gate path matches too).
+  if command -v jq >/dev/null 2>&1; then
+    cp "$REPO_ROOT/harnesses/hermes/hooks/framework-surface.sh" "$hkps_hfs/hooks/"
+    hkps_child_payload='{"hook_event_name":"pre_llm_call","session_id":"ps-child-05","parent_session_id":"ps-parent-01","extra":{"is_first_turn":true,"platform":"subagent"}}'
+    hkps_ctx_sh="$(printf '%s' "$hkps_child_payload" | bash "$hkps_hfs/hooks/framework-surface.sh" 2>/dev/null | jq -r '.context')"
+    hkps_ctx_ps="$(printf '%s' "$hkps_child_payload" \
+      | CLAUDE_SKIP_FRESHNESS_CHECK=1 CLAUDE_SKIP_DISTILLATION_NUDGE=1 pwsh -NoProfile -File "$hkps_hfs/hooks/framework-surface.ps1" 2>/dev/null | jq -r '.context')"
+    if [ -n "$hkps_ctx_sh" ] && [ "$hkps_ctx_sh" = "$hkps_ctx_ps" ]; then
+      _pass "hooks-ps-parity: hermes framework-surface child block is byte-identical across the .sh/.ps1 twins"
+    else
+      _fail "hooks-ps-parity: hermes framework-surface child block should be byte-identical across the .sh/.ps1 twins" \
+            "sh=${#hkps_ctx_sh}B ps1=${#hkps_ctx_ps}B"
+    fi
+    case "$hkps_ctx_ps" in
+      *"$hkps_hfs/agentic-os/gate-ps-child-05"*)
+        _pass "hooks-ps-parity: hermes framework-surface.ps1 child block names the install-dir gate path" ;;
+      *)
+        _fail "hooks-ps-parity: hermes framework-surface.ps1 child block should name the install-dir gate path" \
+              "got: $hkps_ctx_ps" ;;
+    esac
+    unset hkps_child_payload hkps_ctx_sh hkps_ctx_ps
+  fi
+
   rm -rf "$hkps_tmpdir"
-  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs hkps_sa365 hkps_sa365_fix hkps_sa365_sid hkps_sa365_gate hkps_wpayload hkps_hm hkps_hm_sid hkps_hm_gate
+  unset hkps_tmpdir hkps_codex_sa hkps_trans hkps_out hkps_fs hkps_sg hkps_stub hkps_fs2 hkps_cxfs hkps_sa365 hkps_sa365_fix hkps_sa365_sid hkps_sa365_gate hkps_wpayload hkps_hm hkps_hm_sid hkps_hm_gate hkps_hfs
   unset -f hkps_hm_payload
 else
   _pass "hooks-ps-parity: skipping pwsh behavioral parity (pwsh not on PATH)"
