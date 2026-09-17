@@ -72,6 +72,18 @@ function New-OspCaseMap([string]$d) {
 '@)
 }
 
+# New-OspTwoColumnMap <dir> <with-final-pipe> — the minimum accepted Skill /
+# Where schema, with either trailing-pipe form.
+function New-OspTwoColumnMap([string]$d, [bool]$WithFinalPipe) {
+    $suffix = if ($WithFinalPipe) { ' |' } else { '' }
+    [IO.File]::WriteAllText((Join-Path $d 'Capability Map.md'), @"
+| Skill | Where$suffix
+| :--- | :---$suffix
+| ``alpha`` | all$suffix
+| ``session-agent`` | all$suffix
+"@)
+}
+
 # Invoke-Osp — run the script in a child pwsh against a fixture. Sets the
 # SKILL_PARITY_* env vars for the child and clears them afterwards.
 # AI_CONFIG_LOCAL_ENV points at a nonexistent file so the operator's real
@@ -366,3 +378,89 @@ $o = Invoke-Osp -Dir $D21 -Canonical (Join-Path $D21 'canonical') -Mirrors "m1=$
 Assert-Eq       'operator-skill-parity: missing Hermes plus no-work exits 1' '1' "$script:OspRc"
 Assert-Contains 'operator-skill-parity: missing Hermes plus no-work FAILs' $o "FAIL Hermes skill root missing: $(Join-Path $D21 'absent-hermes/skills')"
 Remove-Item -Recurse -Force $D21
+
+# The Capability Map is required for the exact lowercase Hermes label. A
+# missing map must fail, while a real map and in-sync subset pass.
+$D22 = New-OspTmp; New-OspFixture $D22
+New-Item -ItemType Directory -Path (Join-Path $D22 'hermes/skills/alpha') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $D22 'hermes/skills/alpha/SKILL.md'), "alpha body`n")
+$o = Invoke-Osp -Dir $D22 -Mirrors "m1=$(Join-Path $D22 'm1/skills'),hermes=$(Join-Path $D22 'hermes/skills')" -Map (Join-Path $D22 'missing-map.md')
+Assert-Eq       'operator-skill-parity: missing Hermes map exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: missing Hermes map fails loudly' $o 'FAIL Hermes Capability Map missing'
+New-OspMap $D22
+$o = Invoke-Osp -Dir $D22 -Mirrors "m1=$(Join-Path $D22 'm1/skills'),hermes=$(Join-Path $D22 'hermes/skills')" -Map (Join-Path $D22 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: present Hermes map positive control exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: present Hermes map reports subset count' $o 'NOTE   Hermes expected subset: 2 skill(s)'
+Remove-Item -Recurse -Force $D22
+
+# A readable table with no Hermes/all skill rows is also a failure. A populated
+# table is the paired control above, so this cannot pass by skipping the parser.
+$D23 = New-OspTmp; New-OspFixture $D23
+New-Item -ItemType Directory -Path (Join-Path $D23 'hermes/skills') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $D23 'Capability Map.md'), @'
+| Skill | What | Where |
+| --- | --- | --- |
+| `beta` | other harnesses | codex |
+'@)
+$o = Invoke-Osp -Dir $D23 -Mirrors "m1=$(Join-Path $D23 'm1/skills'),hermes=$(Join-Path $D23 'hermes/skills')" -Map (Join-Path $D23 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: empty Hermes expected subset exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: empty Hermes expected subset fails loudly' $o 'FAIL Hermes Capability Map has no expected skills'
+Remove-Item -Recurse -Force $D23
+
+# Variant labels must resolve to canonical or an exact configured mirror label.
+$D24 = New-OspTmp; New-OspFixture $D24
+$o = Invoke-Osp -Dir $D24 -Mirrors "m1=$(Join-Path $D24 'm1/skills')" -Variants 'm1/alpha=unknown/alpha'
+Assert-Eq       'operator-skill-parity: unknown variant source label exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: unknown variant source label fails loudly' $o 'FAIL variant source missing: unknown/alpha'
+$o = Invoke-Osp -Dir $D24 -Mirrors "m1=$(Join-Path $D24 'm1/skills')" -Variants 'm1/alpha=canonical/alpha'
+Assert-Eq       'operator-skill-parity: known variant source positive control exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: known variant source is compared' $o 'VARIANT m1       alpha (matched canonical/alpha)'
+Remove-Item -Recurse -Force $D24
+
+# Every map skill must have a canonical source before Hermes can compare it.
+$D25 = New-OspTmp; New-OspFixture $D25
+New-Item -ItemType Directory -Path (Join-Path $D25 'hermes/skills/gamma') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $D25 'hermes/skills/gamma/SKILL.md'), "gamma body`n")
+[IO.File]::WriteAllText((Join-Path $D25 'Capability Map.md'), @'
+| Skill | What | Where |
+| --- | --- | --- |
+| `gamma` | missing canonical source | hermes |
+'@)
+$o = Invoke-Osp -Dir $D25 -Mirrors "m1=$(Join-Path $D25 'm1/skills'),hermes=$(Join-Path $D25 'hermes/skills')" -Map (Join-Path $D25 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: map skill absent from canonical exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: map skill absent from canonical is reported' $o 'MISSING canonical gamma'
+foreach ($root in (Join-Path $D25 'home a/skills'), (Join-Path $D25 'm1/skills'), (Join-Path $D25 'm2/skills')) {
+    New-Item -ItemType Directory -Path (Join-Path $root 'gamma') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $root 'gamma/SKILL.md'), "gamma body`n")
+}
+$o = Invoke-Osp -Dir $D25 -Mirrors "m1=$(Join-Path $D25 'm1/skills'),m2=$(Join-Path $D25 'm2/skills'),hermes=$(Join-Path $D25 'hermes/skills')" -Map (Join-Path $D25 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: canonical map skill recovery exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: canonical map skill recovery preserves count' $o '7 comparison(s) across 3 of 3 mirror root(s)'
+Remove-Item -Recurse -Force $D25
+
+# A two-column map with an omitted final pipe and aligned separator accepts the
+# minimum schema in both twins. Literal mixed-case/punctuated names also work.
+# The report count is contractual; diagnostic-line order is not.
+$D26 = New-OspTmp; New-OspFixture $D26; New-OspTwoColumnMap $D26 $false
+New-Item -ItemType Directory -Path (Join-Path $D26 'hermes/skills/alpha') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $D26 'hermes/skills/alpha/SKILL.md'), "alpha body`n")
+foreach ($skill in 'Alpha-1', 'zeta_2') {
+    foreach ($root in (Join-Path $D26 'home a/skills'), (Join-Path $D26 'm1/skills'), (Join-Path $D26 'm2/skills')) {
+        New-Item -ItemType Directory -Path (Join-Path $root $skill) -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $root "$skill/SKILL.md"), "$skill body`n")
+    }
+}
+$d26Mirrors = "m1=$(Join-Path $D26 'm1/skills'),m2=$(Join-Path $D26 'm2/skills'),hermes=$(Join-Path $D26 'hermes/skills')"
+$o = Invoke-Osp -Dir $D26 -Mirrors $d26Mirrors -Map (Join-Path $D26 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: mixed-case punctuated skills exit 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: two-column omitted final pipe loads Hermes subset' $o 'NOTE   Hermes expected subset: 2 skill(s)'
+Assert-Contains 'operator-skill-parity: mixed-case punctuated skills preserve count' $o '9 comparison(s) across 3 of 3 mirror root(s)'
+New-OspTwoColumnMap $D26 $true
+$o = Invoke-Osp -Dir $D26 -Mirrors $d26Mirrors -Map (Join-Path $D26 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: two-column final pipe exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: two-column final pipe preserves count' $o '9 comparison(s) across 3 of 3 mirror root(s)'
+[IO.File]::WriteAllText((Join-Path $D26 'm2/skills/Alpha-1/SKILL.md'), "Alpha-1 changed`n")
+$o = Invoke-Osp -Dir $D26 -Mirrors $d26Mirrors -Map (Join-Path $D26 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: mixed-case punctuated drift exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: mixed-case punctuated drift names literal skill' $o 'DRIFT   m2       Alpha-1'
+Remove-Item -Recurse -Force $D26

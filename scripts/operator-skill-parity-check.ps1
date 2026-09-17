@@ -14,8 +14,14 @@
 # Hermes uses the Capability Map's machine-readable Skill/Where rows for its
 # expected operator-skill subset. Explicit variants compare to their declared
 # source pair rather than merely being excused by an allowlist.
+# Capability Map tables need only `Skill` and `Where` columns. Rows may include
+# or omit their final `|`, with standard or alignment-marked separator rows.
+# Header and `Where` tokens are case-insensitive, while skill names keep their
+# literal case. Individual diagnostic-line order is not contractual; labels,
+# exit status, and reported comparison counts are.
 #
-# Output tokens (byte-parity with the bash twin):
+# Output tokens (shared semantics with the bash twin; whole-output byte order
+# is not contractual):
 #   SKIP / MISSING / DRIFT / VARIANT / PASS / FAIL — see the bash twin's header.
 #
 # Configuration (env var first, then local.env read as DATA — never imported):
