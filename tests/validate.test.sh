@@ -39,6 +39,23 @@ assert_exit "validate.sh passes from \$REPO_ROOT" 0 -- \
 VAL_GUARD_FIX="$(mktemp -d)"
 copy_repo_tracked "$VAL_GUARD_FIX"
 
+# --- Symlink root: direct and symlink invocations share the scan contract ---
+# `find <symlink>` does not descend by default. Keep this fixture outside the
+# working tree so a seeded .DS_Store is both hermetic and non-committable.
+VAL_GUARD_ALIAS="${VAL_GUARD_FIX}.alias"
+ln -s "$VAL_GUARD_FIX" "$VAL_GUARD_ALIAS"
+assert_exit "validate.sh passes on a clean hermetic fixture" 0 -- \
+  bash "$VAL_GUARD_FIX/scripts/validate.sh"
+assert_exit "validate.sh passes through a symlinked clean fixture" 0 -- \
+  bash "$VAL_GUARD_ALIAS/scripts/validate.sh"
+touch "$VAL_GUARD_FIX/.DS_Store"
+assert_exit "validate.sh detects .DS_Store in a direct hermetic fixture" 1 -- \
+  bash "$VAL_GUARD_FIX/scripts/validate.sh"
+assert_exit "validate.sh detects .DS_Store through a symlinked fixture" 1 -- \
+  bash "$VAL_GUARD_ALIAS/scripts/validate.sh"
+rm -f "$VAL_GUARD_FIX/.DS_Store"
+rm -f "$VAL_GUARD_ALIAS"
+
 # --- Test 2: hand-edit-only child rejected ---
 # Differentiator under current code: validate FAILs because.claude/ exists at
 # all. After the fix: validate FAILs because the sentinel is not in the

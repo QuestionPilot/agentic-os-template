@@ -11,7 +11,8 @@ if (-not (Get-Command Assert-Exit -ErrorAction SilentlyContinue)) { [Console]::E
 # control); allowlisted pair → VARIANT + exit 0; a skill absent from a mirror →
 # MISSING + exit 1; no mirror root present → FAIL (never a silent PASS);
 # manifest-managed skills excluded; a missing canonical root → FAIL; a path
-# containing a space handled intact.
+# containing a space handled intact. Hermes consumes the Capability Map subset,
+# declared variants use their named source pair, and an absent Hermes root fails.
 #
 # Dot-sourced by tests/run.ps1; uses Assert-* from tests/lib.ps1.
 
@@ -49,13 +50,35 @@ function New-OspFixture([string]$d) {
     }
 }
 
+# New-OspMap <dir> — alpha is expected on Hermes; beta's absence is intentional.
+function New-OspMap([string]$d) {
+    [IO.File]::WriteAllText((Join-Path $d 'Capability Map.md'), @'
+| Skill | What | Where |
+| --- | --- | --- |
+| `alpha` | expected | all |
+| `beta` | intentional absence | claude, codex |
+| `session-agent` | managed | all |
+'@)
+}
+
+# New-OspCaseMap <dir> — mixed-case headers and Hermes/All Where tokens.
+function New-OspCaseMap([string]$d) {
+    [IO.File]::WriteAllText((Join-Path $d 'Capability Map.md'), @'
+| sKiLl | What | wHeRe |
+| --- | --- | --- |
+| `alpha` | Hermes casing | HeRmEs |
+| `beta` | All casing | ALL |
+| `session-agent` | managed | aLl |
+'@)
+}
+
 # Invoke-Osp — run the script in a child pwsh against a fixture. Sets the
 # SKILL_PARITY_* env vars for the child and clears them afterwards.
 # AI_CONFIG_LOCAL_ENV points at a nonexistent file so the operator's real
 # local.env can never leak into a fixture run. Returns the combined output;
 # $script:OspRc carries the exit code.
 function Invoke-Osp {
-    param([string]$Dir, [string]$Allow = '', [string]$Mirrors = '', [string]$Canonical = '')
+    param([string]$Dir, [string]$Allow = '', [string]$Mirrors = '', [string]$Canonical = '', [string]$Map = '', [string]$Variants = '')
     if ([string]::IsNullOrEmpty($Mirrors)) {
         $Mirrors = "m1=$(Join-Path $Dir 'm1/skills'),m2=$(Join-Path $Dir 'm2/skills')"
     }
@@ -64,6 +87,8 @@ function Invoke-Osp {
     $env:SKILL_PARITY_CANONICAL  = $Canonical
     $env:SKILL_PARITY_MIRRORS    = $Mirrors
     $env:SKILL_PARITY_ALLOWLIST  = $Allow
+    $env:SKILL_PARITY_CAPABILITY_MAP = $Map
+    $env:SKILL_PARITY_VARIANTS   = $Variants
     try {
         $out = (& pwsh -NoProfile -File $OSP 2>&1 | Out-String)
         $script:OspRc = $LASTEXITCODE
@@ -72,6 +97,8 @@ function Invoke-Osp {
         Remove-Item Env:SKILL_PARITY_CANONICAL -ErrorAction SilentlyContinue
         Remove-Item Env:SKILL_PARITY_MIRRORS   -ErrorAction SilentlyContinue
         Remove-Item Env:SKILL_PARITY_ALLOWLIST -ErrorAction SilentlyContinue
+        Remove-Item Env:SKILL_PARITY_CAPABILITY_MAP -ErrorAction SilentlyContinue
+        Remove-Item Env:SKILL_PARITY_VARIANTS  -ErrorAction SilentlyContinue
     }
     return $out
 }
@@ -197,3 +224,145 @@ $o = Invoke-Osp -Dir $D7 -Mirrors "m1=$(Join-Path $D7 'm1/skills')"
 Assert-Eq       'operator-skill-parity: nothing unmanaged exits 0' '0' "$script:OspRc"
 Assert-Contains 'operator-skill-parity: nothing unmanaged SKIPs'   $o 'SKIP   no unmanaged skills to compare'
 Remove-Item -Recurse -Force $D7
+
+# --- Hermes consumes the Capability Map, not the canonical full roster ------
+$D8 = New-OspTmp; New-OspFixture $D8; New-OspMap $D8
+New-Item -ItemType Directory -Path (Join-Path $D8 'hermes/skills/alpha') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $D8 'hermes/skills/alpha/SKILL.md'), "alpha body`n")
+$hermesMirrors = "m1=$(Join-Path $D8 'm1/skills'),m2=$(Join-Path $D8 'm2/skills'),hermes=$(Join-Path $D8 'hermes/skills')"
+$mapPath = Join-Path $D8 'Capability Map.md'
+$o = Invoke-Osp -Dir $D8 -Mirrors $hermesMirrors -Map $mapPath
+Assert-Eq 'operator-skill-parity: Hermes intentional absence exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: Hermes subset reports its map source' $o "NOTE   Hermes expected subset: 2 skill(s) from $mapPath"
+Assert-NotContains 'operator-skill-parity: map-omitted Hermes skill is not missing' $o 'MISSING hermes   beta'
+
+Remove-Item -Recurse -Force (Join-Path $D8 'hermes/skills/alpha')
+$o = Invoke-Osp -Dir $D8 -Mirrors $hermesMirrors -Map $mapPath
+Assert-Eq 'operator-skill-parity: expected Hermes skill missing exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: expected Hermes skill is reported' $o 'MISSING hermes   alpha'
+Remove-Item -Recurse -Force $D8
+
+# The Hermes alpha variant must match its declared Codex source pair.
+$D9 = New-OspTmp; New-OspFixture $D9; New-OspMap $D9
+[IO.File]::WriteAllText((Join-Path $D9 'm1/skills/alpha/SKILL.md'), "codex variant`n")
+New-Item -ItemType Directory -Path (Join-Path $D9 'hermes/skills/alpha') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $D9 'hermes/skills/alpha/SKILL.md'), "codex variant`n")
+$variantMirrors = "codex=$(Join-Path $D9 'm1/skills'),hermes=$(Join-Path $D9 'hermes/skills')"
+$o = Invoke-Osp -Dir $D9 -Allow 'codex/alpha' -Mirrors $variantMirrors -Map (Join-Path $D9 'Capability Map.md') -Variants 'hermes/alpha=codex/alpha'
+Assert-Eq 'operator-skill-parity: declared Hermes variant exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: declared Hermes variant names its source pair' $o 'VARIANT hermes   alpha (matched codex/alpha)'
+
+# A declared pair is enforcement, not an allowlist: a mismatch stays red and
+# names the source pair it was required to match.
+[IO.File]::WriteAllText((Join-Path $D9 'hermes/skills/alpha/SKILL.md'), "wrong variant`n")
+$o = Invoke-Osp -Dir $D9 -Allow 'codex/alpha' -Mirrors $variantMirrors -Map (Join-Path $D9 'Capability Map.md') -Variants 'hermes/alpha=codex/alpha'
+Assert-Eq 'operator-skill-parity: declared Hermes variant mismatch exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: declared Hermes variant mismatch names expected source' $o 'DRIFT   hermes   alpha (expected codex/alpha)'
+Remove-Item -Recurse -Force $D9
+
+# A configured Hermes home cannot disappear while another mirror still passes.
+$D10 = New-OspTmp; New-OspFixture $D10; New-OspMap $D10
+$o = Invoke-Osp -Dir $D10 -Mirrors "m1=$(Join-Path $D10 'm1/skills'),hermes=$(Join-Path $D10 'absent-hermes/skills')" -Map (Join-Path $D10 'Capability Map.md')
+Assert-Eq 'operator-skill-parity: absent Hermes home exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: absent Hermes home fails loudly' $o "FAIL Hermes skill root missing: $(Join-Path $D10 'absent-hermes/skills')"
+Assert-NotContains 'operator-skill-parity: absent Hermes home cannot PASS' $o 'PASS operator-skill parity'
+Remove-Item -Recurse -Force $D10
+
+# Capability Map header and Where tokens are case-insensitive in both twins.
+$D11 = New-OspTmp; New-OspFixture $D11; New-OspCaseMap $D11
+foreach ($s in 'alpha', 'beta') {
+    New-Item -ItemType Directory -Path (Join-Path $D11 "hermes/skills/$s") -Force | Out-Null
+}
+[IO.File]::WriteAllText((Join-Path $D11 'hermes/skills/alpha/SKILL.md'), "alpha body`n")
+[IO.File]::WriteAllText((Join-Path $D11 'hermes/skills/beta/SKILL.md'), "beta body`n")
+$o = Invoke-Osp -Dir $D11 -Mirrors "m1=$(Join-Path $D11 'm1/skills'),hermes=$(Join-Path $D11 'hermes/skills')" -Map (Join-Path $D11 'Capability Map.md')
+Assert-Eq 'operator-skill-parity: mixed-case Hermes and All map tokens exit 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: mixed-case map finds all expected skills' $o "NOTE   Hermes expected subset: 3 skill(s) from $(Join-Path $D11 'Capability Map.md')"
+Remove-Item -Recurse -Force $D11
+
+# The PowerShell twin also preserves the no-work result for an empty canonical root.
+$D12 = New-OspTmp
+New-Item -ItemType Directory -Path (Join-Path $D12 'canonical'), (Join-Path $D12 'm1/skills') -Force | Out-Null
+$o = Invoke-Osp -Dir $D12 -Canonical (Join-Path $D12 'canonical') -Mirrors "m1=$(Join-Path $D12 'm1/skills')"
+Assert-Eq 'operator-skill-parity: empty canonical root exits 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: empty canonical root SKIPs cleanly' $o 'SKIP   no unmanaged skills to compare'
+Remove-Item -Recurse -Force $D12
+
+# Reject the same extra-slash pair shapes as the Bash twin.
+$D13 = New-OspTmp; New-OspFixture $D13
+$o = Invoke-Osp -Dir $D13 -Mirrors "m1=$(Join-Path $D13 'm1/skills')" -Variants 'm1/alpha/extra=canonical/alpha'
+Assert-Eq 'operator-skill-parity: extra-slash variant target exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: extra-slash variant target is rejected' $o 'FAIL invalid variant target: m1/alpha/extra'
+$o = Invoke-Osp -Dir $D13 -Mirrors "m1=$(Join-Path $D13 'm1/skills')" -Variants 'm1/alpha=canonical/alpha/extra'
+Assert-Eq 'operator-skill-parity: extra-slash variant source exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: extra-slash variant source is rejected' $o 'FAIL invalid variant source: canonical/alpha/extra'
+Remove-Item -Recurse -Force $D13
+
+# A target can have exactly one case-sensitive mapping. Do not choose the first
+# pair (Bash) or overwrite it with the last pair (PowerShell).
+$D14 = New-OspTmp; New-OspFixture $D14
+$o = Invoke-Osp -Dir $D14 -Mirrors "target=$(Join-Path $D14 'm1/skills'),good=$(Join-Path $D14 'm2/skills')" -Variants 'target/alpha=good/alpha,target/alpha=canonical/alpha'
+Assert-Eq       'operator-skill-parity: duplicate variant target exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: duplicate variant target fails loudly' $o 'FAIL duplicate variant target: target/alpha'
+Remove-Item -Recurse -Force $D14
+
+# A literal self-pair would make the comparison vacuous before it reaches the
+# filesystem. It must fail in both twins.
+$D15 = New-OspTmp; New-OspFixture $D15
+$o = Invoke-Osp -Dir $D15 -Mirrors "target=$(Join-Path $D15 'm1/skills')" -Variants 'target/alpha=target/alpha'
+Assert-Eq       'operator-skill-parity: literal self-pair exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: literal self-pair fails loudly' $o 'FAIL variant source matches target: target/alpha'
+Remove-Item -Recurse -Force $D15
+
+# A different label may still lead to the same skill directory through a link.
+# That comparison is equally vacuous and must not mask canonical drift.
+$D16 = New-OspTmp; New-OspFixture $D16
+[IO.File]::WriteAllText((Join-Path $D16 'm1/skills/alpha/SKILL.md'), "alias-only copy`n")
+New-Item -ItemType Directory -Path (Join-Path $D16 'source/skills') -Force | Out-Null
+New-Item -ItemType SymbolicLink -Path (Join-Path $D16 'source/skills/alpha') -Target (Join-Path $D16 'm1/skills/alpha') | Out-Null
+$o = Invoke-Osp -Dir $D16 -Mirrors "target=$(Join-Path $D16 'm1/skills'),source=$(Join-Path $D16 'source/skills')" -Variants 'target/alpha=source/alpha'
+Assert-Eq       'operator-skill-parity: physical self-alias exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: physical self-alias fails loudly' $o 'FAIL variant source aliases target: target/alpha = source/alpha'
+Remove-Item -Recurse -Force $D16
+
+# Separate labels can directly name the same directory without a symlink.
+$D17 = New-OspTmp; New-OspFixture $D17
+$o = Invoke-Osp -Dir $D17 -Mirrors "target=$(Join-Path $D17 'm1/skills'),source=$(Join-Path $D17 'm1/skills')" -Variants 'target/alpha=source/alpha'
+Assert-Eq       'operator-skill-parity: direct physical self-alias exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: direct physical self-alias fails loudly' $o 'FAIL variant source aliases target: target/alpha = source/alpha'
+Remove-Item -Recurse -Force $D17
+
+# A symlinked mirror root has the same physical target as the direct root.
+$D18 = New-OspTmp; New-OspFixture $D18
+[IO.File]::WriteAllText((Join-Path $D18 'm1/skills/alpha/SKILL.md'), "alias-only copy`n")
+New-Item -ItemType SymbolicLink -Path (Join-Path $D18 'source-skills') -Target (Join-Path $D18 'm1/skills') | Out-Null
+$o = Invoke-Osp -Dir $D18 -Mirrors "target=$(Join-Path $D18 'm1/skills'),source=$(Join-Path $D18 'source-skills')" -Variants 'target/alpha=source/alpha'
+Assert-Eq       'operator-skill-parity: symlink-root self-alias exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: symlink-root self-alias fails loudly' $o 'FAIL variant source aliases target: target/alpha = source/alpha'
+Remove-Item -Recurse -Force $D18
+
+# Pair keys are case-sensitive in both twins. These distinct labels must not be
+# misread as a duplicate mapping during configuration parsing.
+$D19 = New-OspTmp; New-OspFixture $D19
+$o = Invoke-Osp -Dir $D19 -Mirrors "lower=$(Join-Path $D19 'm1/skills'),Lower=$(Join-Path $D19 'm2/skills')" -Variants 'lower/alpha=canonical/alpha,Lower/alpha=canonical/alpha'
+Assert-Eq       'operator-skill-parity: case-distinct variant targets exit 0' '0' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: case-distinct variant targets PASS' $o 'PASS operator-skill parity'
+Remove-Item -Recurse -Force $D19
+
+# Mirror labels are case-sensitive. An uppercase Hermes label is ordinary and
+# must compare the full canonical roster instead of taking the Hermes subset.
+$D20 = New-OspTmp; New-OspFixture $D20
+[IO.File]::WriteAllText((Join-Path $D20 'm2/skills/alpha/SKILL.md'), "uppercase label drift`n")
+$o = Invoke-Osp -Dir $D20 -Mirrors "m1=$(Join-Path $D20 'm1/skills'),Hermes=$(Join-Path $D20 'm2/skills')"
+Assert-Eq       'operator-skill-parity: uppercase Hermes label detects drift' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: uppercase Hermes label is ordinary mirror' $o 'DRIFT   Hermes   alpha'
+Remove-Item -Recurse -Force $D20
+
+# A missing Hermes root must stay failed when an empty canonical root leaves no
+# comparisons. The no-work result cannot overwrite an accumulated failure.
+$D21 = New-OspTmp; New-OspMap $D21
+New-Item -ItemType Directory -Path (Join-Path $D21 'canonical'), (Join-Path $D21 'm1/skills') -Force | Out-Null
+$o = Invoke-Osp -Dir $D21 -Canonical (Join-Path $D21 'canonical') -Mirrors "m1=$(Join-Path $D21 'm1/skills'),hermes=$(Join-Path $D21 'absent-hermes/skills')" -Map (Join-Path $D21 'Capability Map.md')
+Assert-Eq       'operator-skill-parity: missing Hermes plus no-work exits 1' '1' "$script:OspRc"
+Assert-Contains 'operator-skill-parity: missing Hermes plus no-work FAILs' $o "FAIL Hermes skill root missing: $(Join-Path $D21 'absent-hermes/skills')"
+Remove-Item -Recurse -Force $D21
