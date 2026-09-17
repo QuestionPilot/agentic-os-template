@@ -49,11 +49,43 @@ function New-DriftTarget {
     return @{ Root = $tmp; Out = $out }
 }
 
+# --- malformed or empty manifests must never read as clean ------------------
+$dr0Root = Join-Path ([IO.Path]::GetTempPath()) ('drift-coverage-' + [Guid]::NewGuid().Guid.Substring(0,8))
+$dr0Out = Join-Path $dr0Root 'target'
+$dr0Hash = '0123456789abcdef' * 4
+New-Item -ItemType Directory -Path $dr0Out -Force | Out-Null
+function Assert-NoManifestCoverage {
+    param([string]$Name, [string]$Content)
+    Write-LfFile (Join-Path $dr0Out '.build-manifest.json') ($Content + "`n")
+    $output = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $dr0Out 2>&1) -join "`n"
+    $code = $LASTEXITCODE
+    Assert-Eq "drift.test: $Name exits non-zero" '1' "$code"
+    Assert-Contains "drift.test: $Name names the coverage failure" $output 'no generated-file coverage'
+}
+Assert-NoManifestCoverage 'empty generated inventory' '{"generated":{}}'
+Assert-NoManifestCoverage 'missing generated inventory' '{"harness":"claude"}'
+Assert-NoManifestCoverage 'null generated inventory' '{"generated":null}'
+Assert-NoManifestCoverage 'array generated inventory' '{"generated":[]}'
+Assert-NoManifestCoverage 'scalar generated inventory' '{"generated":"not-an-object"}'
+Assert-NoManifestCoverage 'malformed manifest JSON' 'not valid json {{{'
+Assert-NoManifestCoverage 'multiple JSON documents' "{`"generated`":{}}`n{`"generated`":{`"skills/example/SKILL.md`":`"$dr0Hash`"}}"
+Assert-NoManifestCoverage 'invalid generated hash' '{"generated":{"skills/example/SKILL.md":"not-a-sha256"}}'
+Assert-NoManifestCoverage 'trailing-newline generated hash' ('{"generated":{"skills/example/SKILL.md":"' + $dr0Hash + '\n"}}')
+Assert-NoManifestCoverage 'unsafe generated path' ('{"generated":{"../outside":"' + $dr0Hash + '"}}')
+Assert-NoManifestCoverage 'control-character generated path' ('{"generated":{"skills/\u0001bad/SKILL.md":"' + $dr0Hash + '"}}')
+Remove-Item -LiteralPath $dr0Root -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item Function:Assert-NoManifestCoverage -ErrorAction SilentlyContinue
+
 # --- Build a clean target ---
 $dr = New-DriftTarget
 
 # Clean target: drift check passes.
 Assert-Exit 'drift.test: drift check passes on a clean build' 0 -- pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $dr.Out
+$drCleanOut = (& pwsh -NoProfile -File $CHECK_DRIFT_PS1 --manifest $dr.Out 2>&1) -join "`n"
+$drCleanCode = $LASTEXITCODE
+$drGeneratedCount = & jq -r '.generated | length' (Join-Path $dr.Out '.build-manifest.json')
+Assert-Eq 'drift.test: clean build denominator command exits 0' '0' "$drCleanCode"
+Assert-Contains 'drift.test: clean build reports the exact generated-file denominator' $drCleanOut "($drGeneratedCount generated files checked)"
 
 # Hand-edit a generated skill file: drift check must fail.
 # Codex F-2 (MEDIUM): use AppendAllText + UTF8NoBOM for byte-deterministic
