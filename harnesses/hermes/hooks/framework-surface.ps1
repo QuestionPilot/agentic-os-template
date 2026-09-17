@@ -13,9 +13,23 @@
 #   CLAUDE_SKIP_DISTILLATION_NUDGE=1, CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1,
 #   CLAUDE_FRAMEWORK_SINCE_DAYS=N
 #
-# stdin:  pre_llm_call event JSON — .session_id, .cwd, .extra.is_first_turn
+# stdin:  pre_llm_call event JSON — .session_id, .cwd, .extra.is_first_turn and,
+#         for a delegated child, .parent_session_id + .extra.platform
 # stdout: on the first turn only, {"context": "..."}; silent on later turns
 # exit:   always 0 (fail-open; surfacing hook)
+#
+# Delegated children (and WHY). A `delegate_task` child is a full Hermes session
+# with its own session_id, so before this branch existed every child received the
+# full Mode 1 kickoff directive and re-ran the whole orient (memory, tracker,
+# vault, reconciliation) before reading its brief — duplicated work, since the
+# parent already oriented and the brief IS the child's orient. The pre_llm_call
+# payload already carries the child identity: a non-empty top-level
+# `parent_session_id` and/or `extra.platform` exactly `subagent`. On a child's
+# first turn this hook emits ONLY a Mode 2 route-only directive — no git-log
+# block, no freshness/distillation nudges, no Mode 1 directive. The
+# `pre_tool_call` payload carries NO child marker, so the edit gate
+# (hooks/session-agent.ps1) cannot tell a child from a parent and is unchanged —
+# the child still declares its own gate file with one write.
 
 $ErrorActionPreference = 'SilentlyContinue'
 
@@ -57,6 +71,82 @@ if ($isFirst -ieq 'false') {
     if (-not $gateDir -or -not $sessionId) { exit 0 }
     $sentinel = Join-Path $gateDir 'agentic-os' "surfaced-$sessionId"
     if (Test-Path -LiteralPath $sentinel) { exit 0 }
+}
+
+# --- 1a. Delegated-child branch ---------------------------------------------
+# See the header note. isChild = non-empty top-level .parent_session_id OR
+# .extra.platform exactly 'subagent'. Both reads are type-guarded (`-is [string]`)
+# so a non-string value is treated as absent — the byte-for-byte twin of the bash
+# side's `(… | type) == "string"` guard, and stricter than a bare [string] cast
+# which would stringify a number or object into a truthy value. The platform
+# compare is -ceq (case-SENSITIVE): Hermes sets the literal 'subagent'.
+$childParent = ''
+$childPlatform = ''
+try {
+    $childObj = $inputRaw | ConvertFrom-Json
+    if ($childObj.parent_session_id -is [string]) { $childParent = ([string]$childObj.parent_session_id).Trim() }
+    # extra must be an OBJECT: ConvertFrom-Json yields Object[] for a JSON array,
+    # and member enumeration would then read .platform off each element — the
+    # bash twin's `(.extra | type) == "object"` guard rejects that shape.
+    if ($childObj.extra -is [System.Management.Automation.PSCustomObject] -and $childObj.extra.platform -is [string]) {
+        $childPlatform = [string]$childObj.extra.platform
+    }
+} catch { }
+if ($childParent -or $childPlatform -ceq 'subagent') {
+    # The child block IS the session-agent directive, so the directive kill
+    # switch silences it — as does the whole-hook switch (handled at the top).
+    if ($env:CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE -eq '1') { exit 0 }
+    $childParentLabel = if ($childParent) { $childParent } else { 'unknown' }
+    $childGate = ''
+    if ($sessionId) {
+        $childInstallDir = Split-Path -Parent $PSScriptRoot
+        if ($childInstallDir) { $childGate = Join-Path $childInstallDir 'agentic-os' "gate-$sessionId" }
+    }
+    $childBlock = @"
+## Session-agent — delegated child (Mode 2: route only)
+
+You are a delegate_task child of Hermes session $childParentLabel. Your parent already ran
+the Mode 1 kickoff orient and routed this work; the brief in your task prompt is
+your orient. Do NOT re-run the kickoff orient: no scripts/orient.sh, no
+/session-agent invocation, no commit reconciliation, no vault START.md / identity /
+lesson-index reads, and no memory or tracker reads beyond the ones the brief itself
+asks for.
+
+Before your first file-modifying tool call:
+1. Read the brief. Its outcome, exact gates, and stop conditions bound this task.
+2. Declare the route from the brief in your reply:
+   Routing: <one sentence from the brief>
+   Primary skill: <the skill the brief names, or "ad-hoc — brief-scoped">
+   Lessons: <lesson names the brief carries> | skipped — delegated child, parent owns recall
+   Verification: <the brief's exact gates>
+   Linear gate: <the issue id the brief names> | inherited — parent-owned
+   Execution: inline
+"@
+    if ($childGate) {
+        # A here-string's first newline is the delimiter, so the leading blank
+        # line below IS the separator newline (same convention as $saBlock).
+        $childBlock += @"
+
+3. Write that declaration as the content of the file ``$childGate`` via the write_file
+   tool. The edit gate opens on it; this is the only orientation write you make.
+"@
+    }
+    $childBlock += @"
+
+
+Then do the work and end with the handoff shape the brief asks for. A blocker the
+brief did not anticipate is a stop-and-report, never a license to improvise.
+"@
+    # Sentinel dedup applies only when the first-turn signal was absent (above).
+    if ($sentinel) {
+        try {
+            $csdir = Split-Path -Parent $sentinel
+            if (-not (Test-Path -LiteralPath $csdir)) { New-Item -ItemType Directory -Force -Path $csdir | Out-Null }
+            Set-Content -LiteralPath $sentinel -Value '' -NoNewline
+        } catch { }
+    }
+    @{ context = $childBlock } | ConvertTo-Json -Compress
+    exit 0
 }
 
 # --- 1. agentic-os-template git-log block ---------------------------------

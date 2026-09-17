@@ -352,6 +352,101 @@ Linear gate: none — single-step',NULL,5);"
   ih_fs_strfalse="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":{"is_first_turn":"False"}}' "$IH_SID" \
     | bash "$IH_OUT/hooks/framework-surface.sh")"
   assert_eq "framework-surface treats stringified False as not-first-turn (silent)" "" "$ih_fs_strfalse"
+
+  # --- T6b: delegated-child branch (the Hermes delegated-child orient fix) ---
+  # A delegate_task child is a full Hermes session with its own session_id; the
+  # pre_llm_call payload identifies it via parent_session_id / extra.platform.
+  # Such a child must get ONLY the Mode 2 route-only directive — the parent
+  # already ran the kickoff orient, so the Mode 1 directive and the git-log
+  # block are withheld.
+  ih_fs_child="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess01","parent_session_id":"parentsess01","extra":{"is_first_turn":true,"platform":"subagent"}}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  if [ -n "$ih_fs_child" ]; then
+    _pass "framework-surface emits a child block on a delegated child's first turn"
+  else
+    _fail "framework-surface emits a child block on a delegated child's first turn" "empty stdout"
+  fi
+  assert_exit "framework-surface child block is a JSON string context" 0 -- \
+    sh -c "printf '%s' '$(printf '%s' "$ih_fs_child" | sed "s/'/'\\\\''/g")' | jq -e '.context | type == \"string\"' >/dev/null"
+  assert_contains "framework-surface child block carries the Mode 2 route-only directive" \
+    "$ih_fs_child" "delegated child (Mode 2: route only)"
+  assert_contains "framework-surface child block names the parent session" \
+    "$ih_fs_child" "parentsess01"
+  assert_contains "framework-surface child block names the child's own gate file" \
+    "$ih_fs_child" "gate-childsess01"
+  assert_not_contains "framework-surface child block withholds the Mode 1 directive" \
+    "$ih_fs_child" "Mode 1: kickoff orient"
+  assert_not_contains "framework-surface child block withholds the git-log block" \
+    "$ih_fs_child" "Recent agentic-os-template"
+  # platform alone (no parent_session_id key at all) is enough to detect a child.
+  ih_fs_child_plat="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess02","extra":{"is_first_turn":true,"platform":"subagent"}}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_contains "framework-surface detects a child from extra.platform alone" \
+    "$ih_fs_child_plat" "delegated child (Mode 2: route only)"
+  assert_not_contains "framework-surface platform-only child withholds the Mode 1 directive" \
+    "$ih_fs_child_plat" "Mode 1: kickoff orient"
+  # The first-turn gate still rules: a child's LATER turn stays silent.
+  ih_fs_child_later="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess03","parent_session_id":"parentsess01","extra":{"is_first_turn":false,"platform":"subagent"}}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_eq "framework-surface stays silent on a delegated child's later turn" "" "$ih_fs_child_later"
+  # An EMPTY parent_session_id + a non-subagent platform is a PARENT session —
+  # it must still get the ordinary Mode 1 directive.
+  ih_fs_parent="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","parent_session_id":"","extra":{"is_first_turn":true,"platform":"desktop"}}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_contains "framework-surface treats an empty parent_session_id as a parent session" \
+    "$ih_fs_parent" "Mode 1: kickoff orient"
+  assert_not_contains "framework-surface parent session gets no child block" \
+    "$ih_fs_parent" "delegated child (Mode 2: route only)"
+  # The child block IS the session-agent directive, so its kill switch silences it.
+  ih_fs_child_off="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess04","parent_session_id":"parentsess01","extra":{"is_first_turn":true,"platform":"subagent"}}' \
+    | CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1 bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_eq "CLAUDE_SKIP_SESSION_AGENT_DIRECTIVE=1 silences the child block" "" "$ih_fs_child_off"
+  # parent_session_id ALONE (no extra key at all) is enough to detect a child —
+  # the OR's left side, exercised standalone.
+  ih_fs_child_pid="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess05","parent_session_id":"parentsess01","is_first_turn":true}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_contains "framework-surface detects a child from parent_session_id alone" \
+    "$ih_fs_child_pid" "delegated child (Mode 2: route only)"
+  # Type guards (panel): a non-object extra (array) and a non-string
+  # parent_session_id (number) are treated as ABSENT — parent session, Mode 1.
+  ih_fs_arr="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":[{"platform":"subagent","is_first_turn":true}]}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_not_contains "framework-surface treats an array-shaped extra as a parent session (no child block)" \
+    "$ih_fs_arr" "delegated child (Mode 2: route only)"
+  ih_fs_numpid="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","parent_session_id":42,"extra":{"is_first_turn":true,"platform":"desktop"}}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_contains "framework-surface ignores a non-string parent_session_id (Mode 1)" \
+    "$ih_fs_numpid" "Mode 1: kickoff orient"
+  assert_not_contains "framework-surface non-string parent_session_id gets no child block" \
+    "$ih_fs_numpid" "delegated child (Mode 2: route only)"
+  # A whitespace-only parent_session_id is ABSENT on both twins (explicit trim).
+  ih_fs_wspid="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","parent_session_id":"\\n \\t","extra":{"is_first_turn":true,"platform":"desktop"}}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_not_contains "framework-surface treats a whitespace-only parent_session_id as absent (no child block)" \
+    "$ih_fs_wspid" "delegated child (Mode 2: route only)"
+  # The platform compare is case-SENSITIVE: "Subagent" is not Hermes's literal.
+  ih_fs_case="$(printf '{"hook_event_name":"pre_llm_call","session_id":"%s","extra":{"is_first_turn":true,"platform":"Subagent"}}' "$IH_SID" \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_contains "framework-surface platform compare is case-sensitive (Subagent stays Mode 1)" \
+    "$ih_fs_case" "Mode 1: kickoff orient"
+  # Cross-hook contract: the gate path the child block names is the path the
+  # edit gate (session-agent.sh) opens on for the same session id — a write_file
+  # of the sanctioned abbreviated declaration to that path passes through.
+  ih_fs_child_gate="$(printf '%s' "$ih_fs_child" | jq -r '.context' | sed -n 's/.*the file `\([^`]*\)` via the write_file.*/\1/p' | head -1)"
+  assert_eq "framework-surface child block names the edit gate's own gate path" \
+    "$IH_OUT/agentic-os/gate-childsess01" "$ih_fs_child_gate"
+  ih_sa_child="$(jq -nc --arg p "$ih_fs_child_gate" '{hook_event_name:"pre_tool_call",session_id:"childsess01",tool_name:"write_file",tool_input:{path:$p,content:"Routing: from the brief\nPrimary skill: ad-hoc — brief-scoped\nLessons: skipped — delegated child, parent owns recall\nVerification: brief gates\nLinear gate: inherited — parent-owned\nExecution: inline"}}' \
+    | bash "$IH_OUT/hooks/session-agent.sh")"
+  assert_eq "session-agent.sh accepts the child's abbreviated declaration at the named gate path" "" "$ih_sa_child"
+  # Sentinel dedup: with is_first_turn ABSENT, a child gets the block once and
+  # is silent on the next call for the same session.
+  ih_fs_child_s1="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess06","parent_session_id":"parentsess01","extra":{"platform":"subagent"}}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  ih_fs_child_s2="$(printf '{"hook_event_name":"pre_llm_call","session_id":"childsess06","parent_session_id":"parentsess01","extra":{"platform":"subagent"}}' \
+    | bash "$IH_OUT/hooks/framework-surface.sh")"
+  assert_contains "framework-surface child block fires once when is_first_turn is absent" \
+    "$ih_fs_child_s1" "delegated child (Mode 2: route only)"
+  assert_eq "framework-surface child block dedups via the sentinel on the next call" "" "$ih_fs_child_s2"
 else
   _skip "hermes hook behavior suite" "jq not installed"
 fi

@@ -129,6 +129,19 @@ call, the hook self-gates to the session's first turn via `extra.is_first_turn`
 that signal is ever absent), so the directive injects exactly once. Wired
 unconditionally by the build.
 
+**Delegated children.** A `delegate_task` child is a full Hermes session with its
+own `session_id`, and the `pre_llm_call` payload carries its child identity: a
+non-empty top-level `parent_session_id` and/or `extra.platform == "subagent"`.
+`framework-surface.{sh,ps1}` recognises either signal (Hermes sets both) and, on a child's first turn,
+emits ONLY the Mode 2 route-only delegated-child directive — the parent already
+ran the kickoff orient and the brief in the child's task prompt IS its orient, so
+the Mode 1 directive, the git-log block and the freshness/distillation nudges are
+all withheld (without this, every child re-ran the whole orient before reading
+its brief). The `pre_tool_call` payload carries NO child marker, so the edit gate
+(`hooks/session-agent.{sh,ps1}`) cannot tell a child from a parent and is
+unchanged — the child declares its own gate file with one write, exactly like a
+parent.
+
 **`config.yaml` is user-owned — wiring is a surfaced manual step.** The build
 cannot write `config.yaml` (it carries operator model/provider/platform
 config). Instead it generates `<config>/hooks/hooks.yaml` — the exact `hooks:`

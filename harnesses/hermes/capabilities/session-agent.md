@@ -14,6 +14,16 @@ lifecycle: shipped
   action (Mode 1). It rides `pre_llm_call` — **not** `on_session_start`, whose
   return Hermes discards (`adapter.md` Fact 2) — and self-gates to the first turn
   via `.extra.is_first_turn`, so it fires exactly once per session.
+- **Delegated children (Hermes-specific).** A `delegate_task` child does NOT run
+  Mode 1 and does NOT invoke `/session-agent`: the parent already oriented, and the
+  brief in the child's task prompt is the child's orient. The `pre_llm_call` hook
+  recognises a child (`parent_session_id` / `extra.platform == "subagent"`) and
+  injects the Mode 2 route-only directive instead of the Mode 1 one. A child
+  declares R5 from its brief — `Lessons: skipped — delegated child, parent owns
+  recall` is the sanctioned value when the brief names no lessons, and `Linear
+  gate: inherited — parent-owned` when it names no issue — and then writes its own
+  gate file (below), since the `pre_tool_call` edit gate cannot see that it is a
+  child.
 - **Orient (Mode 1) memory pathing — Hermes-specific.** Hermes injects its native
   memory (`$HERMES_HOME/memories/MEMORY.md` + `USER.md`) as a frozen snapshot into
   the system prompt — it is ALREADY in your context. For O1, read that snapshot; do
