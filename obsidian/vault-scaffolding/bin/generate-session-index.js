@@ -80,7 +80,8 @@
 //
 // Exit codes:
 //   0  view written, or (with --check) the shipped view matches regeneration
-//   1  (--check only) the view has drifted from regeneration
+//   1  (--check only) the view has drifted from regeneration, or another
+//      mutating generator owns the view lock
 //   2  corpus integrity failure — distinct from drift so a human and the audit
 //      can tell "the index is stale" from "the archive is unreadable"
 //
@@ -99,6 +100,7 @@ const root = process.env.VAULT_AUDIT_ROOT
 
 const SESSIONS_DIR = "30-Archive/Sessions";
 const VIEW_PATH = "90-Indexes/Session Index.md";
+const LOCK_PATH = "90-Indexes/.session-index.lock";
 const CONFIG_PATH = path.join(__dirname, "session-index.local.json");
 
 // Loaded once in main(), inside the exit-2 error boundary — see LOCAL CONFIG
@@ -453,32 +455,112 @@ function renderView(logs) {
   return lines.join("\n");
 }
 
+// The session archive is append-only source data. Its generated view has one
+// writer at a time, from collection through replacement, so an older snapshot
+// cannot overwrite a newer writer's view. A leftover lock is a loud refusal:
+// a later operator must confirm that its owner is stale before removal.
+function acquireViewLock() {
+  const lockAbs = path.join(root, LOCK_PATH);
+  const token = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+  let fd;
+  try {
+    fd = fs.openSync(lockAbs, "wx", 0o600);
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      const contention = new Error(
+        `another session index generator owns ${LOCK_PATH}; wait or remove a confirmed-stale lock manually`,
+      );
+      contention.exitCode = 1;
+      throw contention;
+    }
+    throw err;
+  }
+  try {
+    fs.writeSync(fd, `${token}\n`);
+  } catch (err) {
+    throw new Error(`could not record ownership for ${LOCK_PATH}; it was left in place for manual inspection: ${err.message}`);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return { lockAbs, token };
+}
+
+function releaseViewLock(lock) {
+  try {
+    const owner = fs.readFileSync(lock.lockAbs, "utf8").trim();
+    if (owner !== lock.token) {
+      console.error(`SESSION INDEX: WARNING left ${LOCK_PATH} because its owner token changed`);
+      return;
+    }
+    fs.unlinkSync(lock.lockAbs);
+  } catch (err) {
+    console.error(`SESSION INDEX: WARNING could not release ${LOCK_PATH}: ${err.message}`);
+  }
+}
+
+function writeViewAtomically(viewAbs, contents) {
+  let targetMode = null;
+  if (fs.existsSync(viewAbs)) {
+    const prior = fs.statSync(viewAbs);
+    if (!prior.isFile()) {
+      throw new Error(`session index view is not a regular file: ${VIEW_PATH}`);
+    }
+    targetMode = prior.mode & 0o777;
+  }
+  const temp = path.join(
+    path.dirname(viewAbs),
+    `.session-index.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`,
+  );
+  try {
+    fs.writeFileSync(temp, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    // A replacement keeps its public mode. A first generated view follows the
+    // caller's normal umask, as fs.writeFileSync would have done before this
+    // atomic write path.
+    fs.chmodSync(temp, targetMode === null ? (0o666 & ~process.umask()) : targetMode);
+    fs.renameSync(temp, viewAbs);
+  } catch (err) {
+    try {
+      if (fs.existsSync(temp)) fs.unlinkSync(temp);
+    } catch {
+      // Keep the original write error while leaving any residue visible.
+    }
+    throw err;
+  }
+}
+
 function main() {
   const checkMode = process.argv.includes("--check");
   const viewAbs = path.join(root, VIEW_PATH);
-  let want;
+  let lock = null;
+  let exitCode = 0;
   try {
+    if (!checkMode) lock = acquireViewLock();
     LOCAL = loadLocalConfig();
-    want = renderView(collectLogs());
+    const snapshot = renderView(collectLogs());
+    const have = fs.existsSync(viewAbs) ? fs.readFileSync(viewAbs, "utf8") : null;
+    // Source session logs can land while this owner holds the view lock. Read
+    // them again immediately before the replacement so a receipt that arrived
+    // during collection is reconciled into this write rather than requiring a
+    // later generator run. --check stays read-only and uses its one snapshot.
+    const want = checkMode ? snapshot : renderView(collectLogs());
+    if (have === want) {
+      if (checkMode) console.log("session index matches regeneration");
+    } else if (checkMode) {
+      console.error(
+        `DRIFT ${VIEW_PATH} — regenerate with node bin/generate-session-index.js`,
+      );
+      exitCode = 1;
+    } else {
+      writeViewAtomically(viewAbs, want);
+      console.log(`WROTE ${VIEW_PATH}`);
+    }
   } catch (err) {
-    // Corpus-integrity failures exit 2 — distinct from drift (1) so the audit
-    // and a human can tell "the index is stale" from "the archive is gone".
     console.error(`SESSION INDEX: ${err.message}`);
-    process.exit(2);
+    exitCode = err.exitCode || 2;
+  } finally {
+    if (lock) releaseViewLock(lock);
   }
-  const have = fs.existsSync(viewAbs) ? fs.readFileSync(viewAbs, "utf8") : null;
-  if (have === want) {
-    if (checkMode) console.log("session index matches regeneration");
-    return;
-  }
-  if (checkMode) {
-    console.error(
-      `DRIFT ${VIEW_PATH} — regenerate with node bin/generate-session-index.js`,
-    );
-    process.exit(1);
-  }
-  fs.writeFileSync(viewAbs, want);
-  console.log(`WROTE ${VIEW_PATH}`);
+  if (exitCode) process.exitCode = exitCode;
 }
 
 main();

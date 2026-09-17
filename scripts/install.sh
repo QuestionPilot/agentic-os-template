@@ -250,7 +250,48 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
   BUILD="$(mktemp -d "$TARGET/.install-build.XXXXXX")"
 fi
-trap 'rm -rf "$BUILD"' EXIT
+# Every mutating installer run owns a physical target before it touches its
+# recovery or backup state. Bash noclobber creates the lock file with O_EXCL;
+# install.ps1 uses FileMode.CreateNew for the same cross-shell protocol. A
+# leftover lock is deliberately a loud refusal because we cannot prove that its
+# prior owner is dead. Each owner writes a unique token and releases only a
+# matching token.
+INSTALL_LOCK_PATHS=()
+INSTALL_LOCK_TOKENS=()
+acquire_install_lock() {
+  local lock_target="$1" lock_context="${2:-}" lock_path token owner
+  lock_target="$(CDPATH= cd "$lock_target" && pwd -P)"
+  lock_path="$lock_target/.install-lock"
+  token="$$.${RANDOM}.${RANDOM}"
+  # A directory, symlink (including dangling), FIFO, or other non-regular
+  # object is already a lock-shaped state. Refuse it before opening so no
+  # special-file behavior can block or redirect the installer.
+  if [ -e "$lock_path" ] || [ -L "$lock_path" ]; then
+    die "another installer owns physical target $lock_target; lock exists at $lock_path — wait for it to finish or inspect and remove a confirmed-stale lock manually${lock_context}"
+  fi
+  if ! (umask 077; set -C; : > "$lock_path") 2>/dev/null; then
+    die "another installer owns physical target $lock_target; lock exists at $lock_path — wait for it to finish or inspect and remove a confirmed-stale lock manually${lock_context}"
+  fi
+  if ! printf '%s\n' "$token" > "$lock_path"; then
+    die "could not record ownership for installer lock $lock_path; it was left in place for manual inspection"
+  fi
+  INSTALL_LOCK_PATHS+=("$lock_path")
+  INSTALL_LOCK_TOKENS+=("$token")
+}
+release_install_locks() {
+  local i lock_path token owner
+  for ((i=${#INSTALL_LOCK_PATHS[@]} - 1; i>=0; i--)); do
+    lock_path="${INSTALL_LOCK_PATHS[$i]}"
+    token="${INSTALL_LOCK_TOKENS[$i]}"
+    owner="$(cat "$lock_path" 2>/dev/null || true)"
+    if [ "$owner" = "$token" ]; then
+      rm -f "$lock_path" 2>/dev/null || warn "could not remove installer lock $lock_path"
+    else
+      warn "left installer lock $lock_path because its owner token changed"
+    fi
+  done
+}
+trap 'release_install_locks; rm -rf "$BUILD"' EXIT
 mkdir -p "$BUILD/skills" "$BUILD/hooks"
 
 # Accumulators filled by compile_* and emitted by generate_settings.
@@ -1045,6 +1086,10 @@ corender_agents() {
     return 0
   fi
 
+  # The mirror is a second physical mutation target. Give it the same owned
+  # lock contract as the harness home before staging or replacing skills.
+  mkdir -p "$adir" || die ".agents co-render: cannot create $adir"
+  acquire_install_lock "$adir" "; codex target $TARGET is already updated; .agents mirror was not touched"
   mkdir -p "$adir/skills" || die ".agents co-render: cannot create $adir/skills"
 
   # Stage the full copy before touching any live subdir, so a mid-copy failure
@@ -1581,6 +1626,12 @@ classify_state() {
 
 # --- main flow -----------------------------------------------------------
 main() {
+  # A normal install can read live settings while compiling (for preference
+  # preservation), so own the target before compilation as well as recovery and
+  # swap. Read-only and inspect-only modes intentionally take no lock.
+  if [ "$DRY_RUN" -eq 0 ] && [ "$BUILD_ONLY" -eq 0 ]; then
+    acquire_install_lock "$TARGET"
+  fi
   local cap base fm harnesses kind
   for cap in "$repo_root"/capabilities/*.md; do
     base="$(basename "$cap" .md)"
