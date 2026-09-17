@@ -12,7 +12,9 @@ declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh 
 #
 # Verified here: in-sync → PASS with the right denominator; planted content
 # drift → DRIFT + exit 1 (positive control); allowlisted pair → VARIANT + exit 0;
-# a skill absent from a mirror → MISSING + exit 1; no mirror root present → FAIL
+# a skill absent from a mirror → MISSING + exit 1; no mirror root present → FAIL;
+# Hermes consumes the Capability Map subset, declared variants use their named
+# source pair, and an absent Hermes root cannot pass through another mirror.
 # (never a silent PASS); manifest-managed skills excluded from the comparison;
 # a missing canonical root → FAIL; a path containing a space handled intact.
 #
@@ -43,16 +45,44 @@ osp_fixture() {
   done
 }
 
-# osp_run <dir> [ALLOWLIST] [MIRRORS-override] — run the script against a fixture.
+# osp_map <dir> — minimal Capability Map schema used by the Hermes lane. alpha
+# is expected on Hermes; beta's absence is intentional because its Where cell
+# excludes Hermes. session-agent proves managed skills remain excluded.
+osp_map() {
+  local d="$1"
+  printf '%s\n' \
+    '| Skill | What | Where |' \
+    '| --- | --- | --- |' \
+    '| `alpha` | expected | all |' \
+    '| `beta` | intentional absence | claude, codex |' \
+    '| `session-agent` | managed | all |' \
+    > "$d/Capability Map.md"
+}
+
+# osp_case_map <dir> — same schema with mixed-case headers and Where tokens.
+osp_case_map() {
+  local d="$1"
+  printf '%s\n' \
+    '| sKiLl | What | wHeRe |' \
+    '| --- | --- | --- |' \
+    '| `alpha` | Hermes casing | HeRmEs |' \
+    '| `beta` | All casing | ALL |' \
+    '| `session-agent` | managed | aLl |' \
+    > "$d/Capability Map.md"
+}
+
+# osp_run <dir> [ALLOWLIST] [MIRRORS-override] [MAP] [VARIANTS] — run against a fixture.
 # AI_CONFIG_LOCAL_ENV points at a nonexistent file so the operator's real
 # local.env can never leak into a fixture run.
 osp_run() {
-  local d="$1" allow="${2:-}" mirrors="${3:-}"
+  local d="$1" allow="${2:-}" mirrors="${3:-}" map="${4:-}" variants="${5:-}"
   [ -n "$mirrors" ] || mirrors="m1=$d/m1/skills,m2=$d/m2/skills"
   env AI_CONFIG_LOCAL_ENV="$d/no-such-local.env" \
       SKILL_PARITY_CANONICAL="$d/home a/skills" \
       SKILL_PARITY_MIRRORS="$mirrors" \
       SKILL_PARITY_ALLOWLIST="$allow" \
+      SKILL_PARITY_CAPABILITY_MAP="$map" \
+      SKILL_PARITY_VARIANTS="$variants" \
       bash "$OSP" 2>&1
 }
 
@@ -178,3 +208,146 @@ o="$(osp_run "$D7" "" "m1=$D7/m1/skills")"; rc=$?
 assert_eq       "operator-skill-parity: nothing unmanaged exits 0"  0 "$rc"
 assert_contains "operator-skill-parity: nothing unmanaged SKIPs"    "$o" "SKIP   no unmanaged skills to compare"
 rm -rf "$D7"
+
+# --- Hermes consumes the Capability Map, not the canonical full roster ------
+D8="$(mktemp -d)"; osp_fixture "$D8"; osp_map "$D8"
+mkdir -p "$D8/hermes/skills/alpha"
+printf 'alpha body\n' > "$D8/hermes/skills/alpha/SKILL.md"
+o="$(osp_run "$D8" "" "m1=$D8/m1/skills,m2=$D8/m2/skills,hermes=$D8/hermes/skills" "$D8/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: Hermes intentional absence exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: Hermes subset reports its map source" "$o" "NOTE   Hermes expected subset: 2 skill(s) from $D8/Capability Map.md"
+assert_not_contains "operator-skill-parity: map-omitted Hermes skill is not missing" "$o" "MISSING hermes   beta"
+
+rm -rf "$D8/hermes/skills/alpha"
+o="$(osp_run "$D8" "" "m1=$D8/m1/skills,m2=$D8/m2/skills,hermes=$D8/hermes/skills" "$D8/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: expected Hermes skill missing exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: expected Hermes skill is reported" "$o" "MISSING hermes   alpha"
+rm -rf "$D8"
+
+# A declared Hermes variant must match its declared Codex source, not merely
+# escape a canonical-root comparison. The Codex copy itself remains allowlisted.
+D9="$(mktemp -d)"; osp_fixture "$D9"; osp_map "$D9"
+printf 'codex variant\n' > "$D9/m1/skills/alpha/SKILL.md"
+mkdir -p "$D9/hermes/skills/alpha"
+printf 'codex variant\n' > "$D9/hermes/skills/alpha/SKILL.md"
+o="$(osp_run "$D9" "codex/alpha" "codex=$D9/m1/skills,hermes=$D9/hermes/skills" "$D9/Capability Map.md" "hermes/alpha=codex/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: declared Hermes variant exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: declared Hermes variant names its source pair" "$o" "VARIANT hermes   alpha (matched codex/alpha)"
+
+# A declared pair is enforcement, not an allowlist: a Hermes body that differs
+# from its named Codex source must stay red and name that expected source.
+printf 'wrong variant\n' > "$D9/hermes/skills/alpha/SKILL.md"
+o="$(osp_run "$D9" "codex/alpha" "codex=$D9/m1/skills,hermes=$D9/hermes/skills" "$D9/Capability Map.md" "hermes/alpha=codex/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: declared Hermes variant mismatch exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: declared Hermes variant mismatch names expected source" "$o" "DRIFT   hermes   alpha (expected codex/alpha)"
+rm -rf "$D9"
+
+# A configured Hermes home cannot disappear while another mirror still passes.
+D10="$(mktemp -d)"; osp_fixture "$D10"; osp_map "$D10"
+o="$(osp_run "$D10" "" "m1=$D10/m1/skills,hermes=$D10/absent-hermes/skills" "$D10/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: absent Hermes home exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: absent Hermes home fails loudly" "$o" "FAIL Hermes skill root missing: $D10/absent-hermes/skills"
+assert_not_contains "operator-skill-parity: absent Hermes home cannot PASS" "$o" "PASS operator-skill parity"
+rm -rf "$D10"
+
+# Capability Map header and Where tokens are case-insensitive in both twins.
+D11="$(mktemp -d)"; osp_fixture "$D11"; osp_case_map "$D11"
+mkdir -p "$D11/hermes/skills/alpha" "$D11/hermes/skills/beta"
+printf 'alpha body\n' > "$D11/hermes/skills/alpha/SKILL.md"
+printf 'beta body\n' > "$D11/hermes/skills/beta/SKILL.md"
+o="$(osp_run "$D11" "" "m1=$D11/m1/skills,hermes=$D11/hermes/skills" "$D11/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: mixed-case Hermes and All map tokens exit 0" 0 "$rc"
+assert_contains "operator-skill-parity: mixed-case map finds all expected skills" "$o" "NOTE   Hermes expected subset: 3 skill(s) from $D11/Capability Map.md"
+rm -rf "$D11"
+
+# A canonical root with no skill dirs is a normal no-work result on macOS Bash 3.2.
+D12="$(mktemp -d)"
+mkdir -p "$D12/canonical" "$D12/m1/skills"
+o="$(env AI_CONFIG_LOCAL_ENV="$D12/no-such-local.env" SKILL_PARITY_CANONICAL="$D12/canonical" SKILL_PARITY_MIRRORS="m1=$D12/m1/skills" bash "$OSP" 2>&1)"; rc=$?
+assert_eq       "operator-skill-parity: empty canonical root exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: empty canonical root SKIPs cleanly" "$o" "SKIP   no unmanaged skills to compare"
+rm -rf "$D12"
+
+# Bash rejects the same extra-slash pair shapes as the PowerShell twin.
+D13="$(mktemp -d)"; osp_fixture "$D13"
+o="$(osp_run "$D13" "" "m1=$D13/m1/skills" "" "m1/alpha/extra=canonical/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: extra-slash variant target exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: extra-slash variant target is rejected" "$o" "FAIL invalid variant target: m1/alpha/extra"
+o="$(osp_run "$D13" "" "m1=$D13/m1/skills" "" "m1/alpha=canonical/alpha/extra")"; rc=$?
+assert_eq       "operator-skill-parity: extra-slash variant source exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: extra-slash variant source is rejected" "$o" "FAIL invalid variant source: canonical/alpha/extra"
+rm -rf "$D13"
+
+# A target can have exactly one case-sensitive mapping. Do not choose the first
+# pair (Bash) or overwrite it with the last pair (PowerShell).
+D14="$(mktemp -d)"; osp_fixture "$D14"
+o="$(osp_run "$D14" "" "target=$D14/m1/skills,good=$D14/m2/skills" "" "target/alpha=good/alpha,target/alpha=canonical/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: duplicate variant target exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: duplicate variant target fails loudly" "$o" "FAIL duplicate variant target: target/alpha"
+rm -rf "$D14"
+
+# A literal self-pair would make the comparison vacuous before it reaches the
+# filesystem. It must fail in both twins.
+D15="$(mktemp -d)"; osp_fixture "$D15"
+o="$(osp_run "$D15" "" "target=$D15/m1/skills" "" "target/alpha=target/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: literal self-pair exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: literal self-pair fails loudly" "$o" "FAIL variant source matches target: target/alpha"
+rm -rf "$D15"
+
+# A different label may still lead to the same skill directory through a link.
+# That comparison is equally vacuous and must not mask canonical drift.
+D16="$(mktemp -d)"; osp_fixture "$D16"
+printf 'alias-only copy\n' > "$D16/m1/skills/alpha/SKILL.md"
+mkdir -p "$D16/source/skills"
+ln -s "$D16/m1/skills/alpha" "$D16/source/skills/alpha"
+o="$(osp_run "$D16" "" "target=$D16/m1/skills,source=$D16/source/skills" "" "target/alpha=source/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: physical self-alias exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: physical self-alias fails loudly" "$o" "FAIL variant source aliases target: target/alpha = source/alpha"
+rm -rf "$D16"
+
+# Separate labels can directly name the same directory without a symlink.
+D17="$(mktemp -d)"; osp_fixture "$D17"
+o="$(osp_run "$D17" "" "target=$D17/m1/skills,source=$D17/m1/skills" "" "target/alpha=source/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: direct physical self-alias exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: direct physical self-alias fails loudly" "$o" "FAIL variant source aliases target: target/alpha = source/alpha"
+rm -rf "$D17"
+
+# A symlinked mirror root has the same physical target as the direct root.
+D18="$(mktemp -d)"; osp_fixture "$D18"
+printf 'alias-only copy\n' > "$D18/m1/skills/alpha/SKILL.md"
+ln -s "$D18/m1/skills" "$D18/source-skills"
+o="$(osp_run "$D18" "" "target=$D18/m1/skills,source=$D18/source-skills" "" "target/alpha=source/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: symlink-root self-alias exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: symlink-root self-alias fails loudly" "$o" "FAIL variant source aliases target: target/alpha = source/alpha"
+rm -rf "$D18"
+
+# Pair keys are case-sensitive in both twins. These distinct labels must not be
+# misread as a duplicate mapping during configuration parsing.
+D19="$(mktemp -d)"; osp_fixture "$D19"
+o="$(osp_run "$D19" "" "lower=$D19/m1/skills,Lower=$D19/m2/skills" "" "lower/alpha=canonical/alpha,Lower/alpha=canonical/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: case-distinct variant targets exit 0" 0 "$rc"
+assert_contains "operator-skill-parity: case-distinct variant targets PASS" "$o" "PASS operator-skill parity"
+rm -rf "$D19"
+
+# Mirror labels are case-sensitive. An uppercase Hermes label is ordinary and
+# must compare the full canonical roster instead of taking the Hermes subset.
+D20="$(mktemp -d)"; osp_fixture "$D20"
+printf 'uppercase label drift\n' > "$D20/m2/skills/alpha/SKILL.md"
+o="$(osp_run "$D20" "" "m1=$D20/m1/skills,Hermes=$D20/m2/skills")"; rc=$?
+assert_eq       "operator-skill-parity: uppercase Hermes label detects drift" 1 "$rc"
+assert_contains "operator-skill-parity: uppercase Hermes label is ordinary mirror" "$o" "DRIFT   Hermes   alpha"
+rm -rf "$D20"
+
+# A missing Hermes root must stay failed when an empty canonical root leaves no
+# comparisons. The no-work result cannot overwrite an accumulated failure.
+D21="$(mktemp -d)"; osp_map "$D21"
+mkdir -p "$D21/canonical" "$D21/m1/skills"
+o="$(env AI_CONFIG_LOCAL_ENV="$D21/no-such-local.env" \
+    SKILL_PARITY_CANONICAL="$D21/canonical" \
+    SKILL_PARITY_MIRRORS="m1=$D21/m1/skills,hermes=$D21/absent-hermes/skills" \
+    SKILL_PARITY_CAPABILITY_MAP="$D21/Capability Map.md" \
+    SKILL_PARITY_VARIANTS="" \
+    bash "$OSP" 2>&1)"; rc=$?
+assert_eq       "operator-skill-parity: missing Hermes plus no-work exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: missing Hermes plus no-work FAILs" "$o" "FAIL Hermes skill root missing: $D21/absent-hermes/skills"
+rm -rf "$D21"

@@ -49,6 +49,20 @@ $VAL_GUARD_FIX = Join-Path ([IO.Path]::GetTempPath()) ('val-guard-' + [Guid]::Ne
 Copy-RepoTracked $VAL_GUARD_FIX
 $GUARD_VALIDATE = Join-Path $VAL_GUARD_FIX 'scripts' 'validate.ps1'
 
+# --- Symlink root: direct and symlink invocations share the scan contract ---
+# Keep the fixture outside the working tree so the seeded .DS_Store is
+# hermetic and non-committable. This is the PowerShell twin of the bash test.
+$VAL_GUARD_ALIAS = "$VAL_GUARD_FIX.alias"
+New-Item -ItemType SymbolicLink -Path $VAL_GUARD_ALIAS -Target $VAL_GUARD_FIX -ErrorAction Stop | Out-Null
+$GUARD_VALIDATE_ALIAS = Join-Path $VAL_GUARD_ALIAS 'scripts' 'validate.ps1'
+Assert-Exit 'validate.test: validate.ps1 passes on a clean hermetic fixture' 0 -- pwsh -NoProfile -File $GUARD_VALIDATE
+Assert-Exit 'validate.test: validate.ps1 passes through a symlinked clean fixture' 0 -- pwsh -NoProfile -File $GUARD_VALIDATE_ALIAS
+Write-LfFile (Join-Path $VAL_GUARD_FIX '.DS_Store') ''
+Assert-Exit 'validate.test: validate.ps1 detects .DS_Store in a direct hermetic fixture' 1 -- pwsh -NoProfile -File $GUARD_VALIDATE
+Assert-Exit 'validate.test: validate.ps1 detects .DS_Store through a symlinked fixture' 1 -- pwsh -NoProfile -File $GUARD_VALIDATE_ALIAS
+Remove-Item -LiteralPath (Join-Path $VAL_GUARD_FIX '.DS_Store') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $VAL_GUARD_ALIAS -Force -ErrorAction Stop
+
 # --- Test 2: hand-edit-only child rejected ---
 $VAL_HAND_EDIT = ".test-t60-hand-edit-$(Get-VtSuffix)"
 $claudeDir = Join-Path $VAL_GUARD_FIX '.claude'

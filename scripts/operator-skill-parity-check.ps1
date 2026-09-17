@@ -11,6 +11,9 @@
 # every existing gate stays green because nothing in the tree is being compared.
 # This script closes it by diffing the content of every UNMANAGED skill in a
 # canonical render home against each mirror render home.
+# Hermes uses the Capability Map's machine-readable Skill/Where rows for its
+# expected operator-skill subset. Explicit variants compare to their declared
+# source pair rather than merely being excused by an allowlist.
 #
 # Output tokens (byte-parity with the bash twin):
 #   SKIP / MISSING / DRIFT / VARIANT / PASS / FAIL — see the bash twin's header.
@@ -19,11 +22,17 @@
 #   SKILL_PARITY_CANONICAL  canonical skills root. Default <CLAUDE_CONFIG_DIR>/skills.
 #   SKILL_PARITY_MIRRORS    comma-separated `<label>=<path>` or bare `<path>`
 #                           mirror skills roots. Default: the configured
-#                           codex / agents / cursor render homes + `/skills`.
-#                           Hermes is NOT in the default set: its skills are
-#                           deliberate per-harness variants. Add it explicitly
-#                           to include it.
+#                           codex / agents / cursor / hermes render homes +
+#                           `/skills` when their homes are configured.
 #   SKILL_PARITY_ALLOWLIST  comma-separated `<label>/<skill>` deliberate variants.
+#   SKILL_PARITY_CAPABILITY_MAP
+#                           Capability Map path. Default:
+#                           <OBSIDIAN_VAULT_PATH>/90-Indexes/Capability Map.md.
+#                           Required when a Hermes mirror is configured.
+#   SKILL_PARITY_VARIANTS   comma-separated explicit
+#                           `<target-label>/<skill>=<source-label>/<skill>` pairs.
+#                           Targets are case-sensitive and unique. A variant
+#                           must match its declared, distinct source.
 #
 # Managed (spine) skills are excluded automatically, derived from the canonical
 # render's `.build-manifest.json`. With no manifest the script prints a NOTE and
@@ -103,6 +112,29 @@ function Add-SpMirrors {
     }
 }
 
+# Get-SpHermesExpected -MapPath — derive the expected Hermes subset from the
+# Capability Map schema. This avoids a second hand-maintained Hermes roster.
+function Get-SpHermesExpected {
+    param([string]$MapPath)
+    $out = [System.Collections.Generic.HashSet[string]]::new()
+    $mode = $false
+    foreach ($line in [System.IO.File]::ReadAllLines($MapPath)) {
+        if (-not $line.TrimStart().StartsWith('|', [StringComparison]::Ordinal)) { $mode = $false; continue }
+        $cells = @($line.Trim().Trim('|').Split('|') | ForEach-Object { $_.Trim() })
+        if ($cells.Count -lt 2) { $mode = $false; continue }
+        if ($cells[0].Equals('Skill', [StringComparison]::OrdinalIgnoreCase) -and $cells[$cells.Count - 1].Equals('Where', [StringComparison]::OrdinalIgnoreCase)) { $mode = $true; continue }
+        if ($cells[0] -match '^:?-{3,}:?$') { continue }
+        if (-not $mode) { continue }
+        if ($cells[0] -notmatch '^`([^`]+)`$') { continue }
+        $name = $matches[1]
+        foreach ($token in $cells[$cells.Count - 1].Split(',')) {
+            $trimmed = $token.Trim()
+            if ($trimmed.Equals('all', [StringComparison]::OrdinalIgnoreCase) -or $trimmed.Equals('hermes', [StringComparison]::OrdinalIgnoreCase)) { [void]$out.Add($name); break }
+        }
+    }
+    return @($out | Sort-Object)
+}
+
 # --- canonical root --------------------------------------------------------
 $canonical = Get-SpConfig 'SKILL_PARITY_CANONICAL'
 if ([string]::IsNullOrEmpty($canonical)) {
@@ -123,9 +155,9 @@ $mirrorsCfg = Get-SpConfig 'SKILL_PARITY_MIRRORS'
 if (-not [string]::IsNullOrEmpty($mirrorsCfg)) {
     Add-SpMirrors $mirrorsCfg
 } else {
-    # Default: the configured render homes other than claude (the canonical) and
-    # hermes (deliberate per-harness variants — see the header).
-    $defaults = [ordered]@{ codex = 'CODEX_HOME'; agents = 'AGENTS_DIR'; cursor = 'CURSOR_CONFIG_DIR' }
+    # Default: the configured render homes other than Claude (the canonical),
+    # including Hermes. Hermes's expected subset comes from the Capability Map.
+    $defaults = [ordered]@{ codex = 'CODEX_HOME'; agents = 'AGENTS_DIR'; cursor = 'CURSOR_CONFIG_DIR'; hermes = 'HERMES_HOME' }
     foreach ($lbl in $defaults.Keys) {
         $dir = Get-SpConfig $defaults[$lbl]
         if ([string]::IsNullOrEmpty($dir)) { continue }
@@ -138,6 +170,26 @@ if ($mirrorLabels.Count -eq 0) {
     exit 1
 }
 
+# --- Hermes map-backed subset ----------------------------------------------
+$hermesExpected = [System.Collections.Generic.List[string]]::new()
+if ($mirrorLabels.Contains('hermes')) {
+    $hermesMap = Get-SpConfig 'SKILL_PARITY_CAPABILITY_MAP'
+    if ([string]::IsNullOrEmpty($hermesMap)) {
+        $vaultDir = Get-SpConfig 'OBSIDIAN_VAULT_PATH'
+        if (-not [string]::IsNullOrEmpty($vaultDir)) { $hermesMap = Join-Path $vaultDir '90-Indexes/Capability Map.md' }
+    }
+    if ([string]::IsNullOrEmpty($hermesMap) -or -not (Test-Path -LiteralPath $hermesMap -PathType Leaf)) {
+        [Console]::Error.WriteLine('FAIL Hermes Capability Map missing: set SKILL_PARITY_CAPABILITY_MAP (or OBSIDIAN_VAULT_PATH)')
+        exit 1
+    }
+    foreach ($skill in (Get-SpHermesExpected $hermesMap)) { $hermesExpected.Add($skill) }
+    if ($hermesExpected.Count -eq 0) {
+        [Console]::Error.WriteLine("FAIL Hermes Capability Map has no expected skills: $hermesMap")
+        exit 1
+    }
+    Write-Host ("NOTE   Hermes expected subset: {0} skill(s) from {1}" -f $hermesExpected.Count, $hermesMap)
+}
+
 # --- allowlist -------------------------------------------------------------
 $allow = [System.Collections.Generic.HashSet[string]]::new()
 $allowCfg = Get-SpConfig 'SKILL_PARITY_ALLOWLIST'
@@ -145,6 +197,72 @@ if (-not [string]::IsNullOrEmpty($allowCfg)) {
     foreach ($raw in $allowCfg.Split(',')) {
         $item = $raw.Trim()
         if ($item.Length -gt 0) { [void]$allow.Add($item) }
+    }
+}
+
+# --- explicit variant pairs -------------------------------------------------
+# Use Ordinal keys so the mapping has the same case-sensitive contract as Bash.
+$variants = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+$variantCfg = Get-SpConfig 'SKILL_PARITY_VARIANTS'
+if (-not [string]::IsNullOrEmpty($variantCfg)) {
+    foreach ($raw in $variantCfg.Split(',')) {
+        $item = $raw.Trim()
+        if ($item.Length -eq 0) { continue }
+        $eq = $item.IndexOf('=')
+        if ($eq -lt 0) { [Console]::Error.WriteLine("FAIL invalid SKILL_PARITY_VARIANTS entry: $item"); exit 1 }
+        $target = $item.Substring(0, $eq).Trim()
+        $source = $item.Substring($eq + 1).Trim()
+        if ($target -notmatch '^[^/]+/[^/]+$') { [Console]::Error.WriteLine("FAIL invalid variant target: $target"); exit 1 }
+        if ($source -notmatch '^[^/]+/[^/]+$') { [Console]::Error.WriteLine("FAIL invalid variant source: $source"); exit 1 }
+        if ($target.Equals($source, [StringComparison]::Ordinal)) { [Console]::Error.WriteLine("FAIL variant source matches target: $target"); exit 1 }
+        if ($variants.ContainsKey($target)) { [Console]::Error.WriteLine("FAIL duplicate variant target: $target"); exit 1 }
+        $variants.Add($target, $source)
+    }
+}
+
+function Get-SpVariantSourceDir {
+    param([string]$Source)
+    $parts = $Source.Split('/', 2)
+    $sourceLabel = $parts[0]
+    $sourceSkill = $parts[1]
+    if ($sourceLabel -ceq 'canonical') { return (Join-Path $canonical $sourceSkill) }
+    for ($i = 0; $i -lt $mirrorLabels.Count; $i++) {
+        if ($mirrorLabels[$i] -ceq $sourceLabel) { return (Join-Path $mirrorPaths[$i] $sourceSkill) }
+    }
+    return $null
+}
+
+# Get-SpPhysicalDir resolves every path component before a variant compare.
+# It uses FileSystemInfo.Target, which is available for the declared PowerShell
+# 7 baseline; ResolveLinkTarget would require PowerShell 7.2 / .NET 6.
+function Get-SpPhysicalDir {
+    param([string]$Path, [int]$Depth = 0)
+    try {
+        if ($Depth -ge 40) { throw 'symbolic-link depth exceeded' }
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $root = [System.IO.Path]::GetPathRoot($full)
+        $relative = $full.Substring($root.Length)
+        $segments = $relative.Split([System.IO.Path]::DirectorySeparatorChar, [System.StringSplitOptions]::RemoveEmptyEntries)
+        $current = $root
+        foreach ($segment in $segments) {
+            $item = Get-Item -LiteralPath (Join-Path $current $segment) -Force -ErrorAction Stop
+            if ($null -ne $item.Target -and $item.Target.Count -gt 0) {
+                $target = @($item.Target)[0]
+                $targetPath = if ([System.IO.Path]::IsPathRooted($target)) {
+                    $target
+                } else {
+                    $parent = Split-Path $item.FullName -Parent
+                    if ([string]::IsNullOrEmpty($parent)) { $parent = [System.IO.Path]::GetPathRoot($item.FullName) }
+                    Join-Path $parent $target
+                }
+                $current = Get-SpPhysicalDir -Path $targetPath -Depth ($Depth + 1)
+            } else {
+                $current = $item.FullName
+            }
+        }
+        return $current
+    } catch {
+        return $null
     }
 }
 
@@ -205,20 +323,60 @@ for ($i = 0; $i -lt $mirrorLabels.Count; $i++) {
     $root  = $mirrorPaths[$i]
     if (-not (Test-Path -LiteralPath $root -PathType Container)) {
         Write-Host ("SKIP   {0,-8} root not present ({1})" -f $label, $root)
+        if ($label -ceq 'hermes') {
+            [Console]::Error.WriteLine("FAIL Hermes skill root missing: $root")
+            $rc = 1
+        }
         continue
     }
     $rootsCompared++
-    foreach ($d in (Get-ChildItem -LiteralPath $canonical -Directory -Force -ErrorAction SilentlyContinue | Sort-Object Name)) {
-        $skill = $d.Name
+    if ($label -ceq 'hermes') {
+        $compareSkills = @($hermesExpected)
+    } else {
+        $compareSkills = @(Get-ChildItem -LiteralPath $canonical -Directory -Force -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object { $_.Name })
+    }
+    foreach ($skill in $compareSkills) {
         if ($managed.Contains($skill)) { continue }
         $checked++
+        $d = Join-Path $canonical $skill
+        if (-not (Test-Path -LiteralPath $d -PathType Container)) {
+            Write-Host ("MISSING canonical {0}" -f $skill)
+            $rc = 1
+            continue
+        }
         $mirrorSkill = Join-Path $root $skill
         if (-not (Test-Path -LiteralPath $mirrorSkill -PathType Container)) {
             Write-Host ("MISSING {0,-8} {1}" -f $label, $skill)
             $rc = 1
             continue
         }
-        if (Test-SpTreeEqual $d.FullName $mirrorSkill) { continue }
+        $target = "$label/$skill"
+        if ($variants.ContainsKey($target)) {
+            $source = $variants[$target]
+            $sourceDir = Get-SpVariantSourceDir $source
+            if ([string]::IsNullOrEmpty($sourceDir) -or -not (Test-Path -LiteralPath $sourceDir -PathType Container)) {
+                [Console]::Error.WriteLine("FAIL variant source missing: $source")
+                $rc = 1
+                continue
+            }
+            $sourcePhysical = Get-SpPhysicalDir $sourceDir
+            $targetPhysical = Get-SpPhysicalDir $mirrorSkill
+            $pathComparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+            if ([string]::IsNullOrEmpty($sourcePhysical) -or [string]::IsNullOrEmpty($targetPhysical) -or
+                $sourcePhysical.Equals($targetPhysical, $pathComparison)) {
+                [Console]::Error.WriteLine("FAIL variant source aliases target: $target = $source")
+                $rc = 1
+                continue
+            }
+            if (Test-SpTreeEqual $sourceDir $mirrorSkill) {
+                Write-Host ("VARIANT {0,-8} {1} (matched {2})" -f $label, $skill, $source)
+            } else {
+                Write-Host ("DRIFT   {0,-8} {1} (expected {2})" -f $label, $skill, $source)
+                $rc = 1
+            }
+            continue
+        }
+        if (Test-SpTreeEqual $d $mirrorSkill) { continue }
         if ($allow.Contains("$label/$skill")) {
             Write-Host ("VARIANT {0,-8} {1} (allowlisted)" -f $label, $skill)
         } else {
@@ -234,7 +392,7 @@ if ($rootsCompared -eq 0) {
 }
 if ($checked -eq 0) {
     Write-Host 'SKIP   no unmanaged skills to compare'
-    exit 0
+    exit $rc
 }
 
 if ($rc -eq 0) {

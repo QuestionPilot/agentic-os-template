@@ -12,9 +12,11 @@
 # canonical render home against each mirror render home.
 #
 # Contract: compare every unmanaged skill dir under the canonical skills root
-# against the same-named dir in each configured mirror skills root. A deliberate
-# per-harness variant is ALLOWLISTED and reported as VARIANT, never as drift —
-# the check biases to under-reporting so it stays worth reading.
+# against the same-named dir in each configured mirror skills root. Hermes is
+# different: its expected operator-skill subset comes from the Capability Map's
+# machine-readable `Skill` / `Where` rows, so a skill the map intentionally
+# omits is not treated as missing. A declared variant is compared to its named
+# source pair, never merely excused by an allowlist.
 #
 # Output tokens (byte-parity with the PowerShell twin):
 #   SKIP    a configured mirror root is not present on this machine
@@ -30,17 +32,22 @@
 #   SKILL_PARITY_MIRRORS    comma-separated mirror skills roots. Each entry is
 #                           either `<label>=<path>` or a bare `<path>` (the label
 #                           is then the parent dir name, minus a leading dot).
-#                           Default: the codex / agents / cursor render homes
-#                           that are configured, each + `/skills`; unset homes
-#                           are simply not in the default list.
-#                           Hermes is NOT in the default set: its skills are
-#                           deliberate per-harness variants, so comparing them
-#                           would report drift for content that is correct. Add
-#                           `hermes=<HERMES_HOME>/skills` here to include it.
+#                           Default: the configured codex / agents / cursor /
+#                           hermes render homes, each + `/skills`; unset homes
+#                           are simply not in the default list. Hermes uses the
+#                           Capability Map subset and declared variant pairs.
 #   SKILL_PARITY_ALLOWLIST  comma-separated `<label>/<skill>` entries for
 #                           deliberate per-harness variants. Default: empty.
 #                           Verify each entry by reading the diff, and re-verify
 #                           when a listed skill is rewritten.
+#   SKILL_PARITY_CAPABILITY_MAP
+#                           Capability Map Markdown path. Default:
+#                           <OBSIDIAN_VAULT_PATH>/90-Indexes/Capability Map.md.
+#                           Required whenever a Hermes mirror is configured.
+#   SKILL_PARITY_VARIANTS   comma-separated explicit
+#                           `<target-label>/<skill>=<source-label>/<skill>`
+#                           pairs. Targets are case-sensitive and unique. A
+#                           variant must match its declared, distinct source.
 #
 # Managed (spine) skills are EXCLUDED automatically: they are per-harness
 # renders, never copies, so comparing them would always report drift. The
@@ -143,6 +150,33 @@ _sp_add_mirrors() {
   done
 }
 
+# _sp_hermes_expected <map> — emit every map skill whose Where column includes
+# `hermes` or `all`. This reuses the Capability Map schema that its own checker
+# consumes; no second Hermes roster lives here.
+_sp_hermes_expected() {
+  awk '
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    /^[[:space:]]*\|/ {
+      n = split($0, c, "|")
+      if (n < 4) { mode = 0; next }
+      first = trim(c[2]); last = trim(c[n - 1])
+      if (tolower(first) == "skill" && tolower(last) == "where") { mode = 1; next }
+      if (first ~ /^-+$/) next
+      if (!mode) next
+      if (match(first, /^`[^`]+`$/)) {
+        name = substr(first, 2, length(first) - 2)
+        split(last, where, ",")
+        for (i in where) {
+          token = tolower(trim(where[i]))
+          if (token == "all" || token == "hermes") { print name; break }
+        }
+      }
+      next
+    }
+    { mode = 0 }
+  ' "$1" | LC_ALL=C sort -u
+}
+
 # --- canonical root --------------------------------------------------------
 canonical="$(_sp_cfg SKILL_PARITY_CANONICAL)"
 if [ -z "$canonical" ]; then
@@ -163,9 +197,9 @@ mirrors_cfg="$(_sp_cfg SKILL_PARITY_MIRRORS)"
 if [ -n "$mirrors_cfg" ]; then
   _sp_add_mirrors "$mirrors_cfg"
 else
-  # Default: the configured render homes other than claude (the canonical) and
-  # hermes (deliberate per-harness variants — see the header).
-  for sp_pair in "codex:CODEX_HOME" "agents:AGENTS_DIR" "cursor:CURSOR_CONFIG_DIR"; do
+  # Default: the configured render homes other than Claude (the canonical),
+  # including Hermes. Hermes's expected subset comes from the Capability Map.
+  for sp_pair in "codex:CODEX_HOME" "agents:AGENTS_DIR" "cursor:CURSOR_CONFIG_DIR" "hermes:HERMES_HOME"; do
     sp_label="${sp_pair%%:*}"; sp_var="${sp_pair#*:}"
     sp_dir="$(_sp_cfg "$sp_var")"
     [ -n "$sp_dir" ] || continue
@@ -177,6 +211,31 @@ if [ "${#MIRROR_LABELS[@]}" -eq 0 ]; then
   printf 'FAIL no mirror skill root configured — the check would compare nothing\n' >&2
   exit 1
 fi
+
+# --- Hermes map-backed subset ----------------------------------------------
+HERMES_EXPECTED=()
+hermes_map=""
+for sp_label in "${MIRROR_LABELS[@]}"; do
+  [ "$sp_label" = "hermes" ] || continue
+  hermes_map="$(_sp_cfg SKILL_PARITY_CAPABILITY_MAP)"
+  if [ -z "$hermes_map" ]; then
+    vault_dir="$(_sp_cfg OBSIDIAN_VAULT_PATH)"
+    [ -n "$vault_dir" ] && hermes_map="$vault_dir/90-Indexes/Capability Map.md"
+  fi
+  if [ -z "$hermes_map" ] || [ ! -f "$hermes_map" ]; then
+    printf 'FAIL Hermes Capability Map missing: set SKILL_PARITY_CAPABILITY_MAP (or OBSIDIAN_VAULT_PATH)\n' >&2
+    exit 1
+  fi
+  while IFS= read -r sp_skill; do
+    [ -n "$sp_skill" ] && HERMES_EXPECTED+=("$sp_skill")
+  done < <(_sp_hermes_expected "$hermes_map")
+  if [ "${#HERMES_EXPECTED[@]}" -eq 0 ]; then
+    printf 'FAIL Hermes Capability Map has no expected skills: %s\n' "$hermes_map" >&2
+    exit 1
+  fi
+  printf 'NOTE   Hermes expected subset: %d skill(s) from %s\n' "${#HERMES_EXPECTED[@]}" "$hermes_map"
+  break
+done
 
 # --- allowlist -------------------------------------------------------------
 # Normalized to a space-delimited string for the substring membership test.
@@ -193,6 +252,72 @@ while [ -n "$allow_rest" ]; do
   [ -n "$allow_item" ] || continue
   ALLOWLIST="$ALLOWLIST $allow_item"
 done
+
+# --- explicit variant pairs -------------------------------------------------
+# Parallel arrays retain the literal pair for output and source resolution.
+VARIANT_TARGETS=()
+VARIANT_SOURCES=()
+variant_cfg="$(_sp_cfg SKILL_PARITY_VARIANTS)"
+variant_rest="$variant_cfg"
+while [ -n "$variant_rest" ]; do
+  case "$variant_rest" in
+    *,*) variant_item="${variant_rest%%,*}"; variant_rest="${variant_rest#*,}" ;;
+    *)   variant_item="$variant_rest"; variant_rest="" ;;
+  esac
+  variant_item="$(_sp_trim "$variant_item")"
+  [ -n "$variant_item" ] || continue
+  case "$variant_item" in
+    *=*) variant_target="$(_sp_trim "${variant_item%%=*}")"; variant_source="$(_sp_trim "${variant_item#*=}")" ;;
+    *) printf 'FAIL invalid SKILL_PARITY_VARIANTS entry: %s\n' "$variant_item" >&2; exit 1 ;;
+  esac
+  if ! [[ "$variant_target" =~ ^[^/]+/[^/]+$ ]]; then
+    printf 'FAIL invalid variant target: %s\n' "$variant_target" >&2
+    exit 1
+  fi
+  if ! [[ "$variant_source" =~ ^[^/]+/[^/]+$ ]]; then
+    printf 'FAIL invalid variant source: %s\n' "$variant_source" >&2
+    exit 1
+  fi
+  if [ "$variant_target" = "$variant_source" ]; then
+    printf 'FAIL variant source matches target: %s\n' "$variant_target" >&2
+    exit 1
+  fi
+  variant_i=0
+  while [ "$variant_i" -lt "${#VARIANT_TARGETS[@]}" ]; do
+    if [ "${VARIANT_TARGETS[$variant_i]}" = "$variant_target" ]; then
+      printf 'FAIL duplicate variant target: %s\n' "$variant_target" >&2
+      exit 1
+    fi
+    variant_i=$((variant_i + 1))
+  done
+  VARIANT_TARGETS+=("$variant_target")
+  VARIANT_SOURCES+=("$variant_source")
+done
+
+_sp_variant_source_dir() {
+  local source="$1" source_label source_skill idx
+  source_label="${source%%/*}"
+  source_skill="${source#*/}"
+  if [ "$source_label" = "canonical" ]; then
+    printf '%s' "$canonical/$source_skill"
+    return 0
+  fi
+  idx=0
+  while [ "$idx" -lt "${#MIRROR_LABELS[@]}" ]; do
+    if [ "${MIRROR_LABELS[$idx]}" = "$source_label" ]; then
+      printf '%s' "${MIRROR_PATHS[$idx]}/$source_skill"
+      return 0
+    fi
+    idx=$((idx + 1))
+  done
+  return 1
+}
+
+# _sp_physical_dir <path> — resolve a directory through symlinks before a
+# variant comparison. `cd -P` works on the Bash versions supported by macOS.
+_sp_physical_dir() {
+  (cd -P "$1" 2>/dev/null && pwd -P)
+}
 
 # --- managed (spine) skills, derived from the canonical render's manifest ----
 MANAGED=""
@@ -217,17 +342,71 @@ while [ "$i" -lt "${#MIRROR_LABELS[@]}" ]; do
   i=$((i + 1))
   if [ ! -d "$root" ]; then
     printf 'SKIP   %-8s root not present (%s)\n' "$label" "$root"
+    if [ "$label" = "hermes" ]; then
+      printf 'FAIL Hermes skill root missing: %s\n' "$root" >&2
+      rc=1
+    fi
     continue
   fi
   roots_compared=$((roots_compared + 1))
-  for d in "$canonical"/*/; do
-    [ -d "$d" ] || continue
-    skill="$(basename "$d")"
+  # Bash 3.2 with nounset treats an empty array expansion as unbound. Seed the
+  # list, then skip the sentinel, so an empty canonical root reaches the normal
+  # `no unmanaged skills` result instead of aborting before it.
+  if [ "$label" = "hermes" ]; then
+    compare_skills=("${HERMES_EXPECTED[@]}")
+  else
+    compare_skills=("")
+    for d in "$canonical"/*/; do
+      [ -d "$d" ] || continue
+      compare_skills+=("$(basename "$d")")
+    done
+  fi
+  for skill in "${compare_skills[@]}"; do
+    [ -n "$skill" ] || continue
     case " $MANAGED " in *" $skill "*) continue ;; esac
     checked=$((checked + 1))
+    d="$canonical/$skill"
+    if [ ! -d "$d" ]; then
+      printf 'MISSING canonical %s\n' "$skill"
+      rc=1
+      continue
+    fi
     if [ ! -d "$root/$skill" ]; then
       printf 'MISSING %-8s %s\n' "$label" "$skill"
       rc=1
+      continue
+    fi
+    variant_source=""
+    variant_i=0
+    while [ "$variant_i" -lt "${#VARIANT_TARGETS[@]}" ]; do
+      if [ "${VARIANT_TARGETS[$variant_i]}" = "$label/$skill" ]; then
+        variant_source="${VARIANT_SOURCES[$variant_i]}"
+        break
+      fi
+      variant_i=$((variant_i + 1))
+    done
+    if [ -n "$variant_source" ]; then
+      variant_dir="$(_sp_variant_source_dir "$variant_source")" || variant_dir=""
+      if [ -z "$variant_dir" ] || [ ! -d "$variant_dir" ]; then
+        printf 'FAIL variant source missing: %s\n' "$variant_source" >&2
+        rc=1
+        continue
+      fi
+      variant_physical="$(_sp_physical_dir "$variant_dir")" || variant_physical=""
+      target_physical="$(_sp_physical_dir "$root/$skill")" || target_physical=""
+      if [ -z "$variant_physical" ] || [ -z "$target_physical" ] || \
+          [ "$variant_physical" = "$target_physical" ]; then
+        printf 'FAIL variant source aliases target: %s = %s\n' "$label/$skill" "$variant_source" >&2
+        rc=1
+        continue
+      fi
+      if diff -r -q --exclude='.DS_Store' --exclude='__pycache__' \
+          "$variant_dir" "$root/$skill" >/dev/null 2>&1; then
+        printf 'VARIANT %-8s %s (matched %s)\n' "$label" "$skill" "$variant_source"
+      else
+        printf 'DRIFT   %-8s %s (expected %s)\n' "$label" "$skill" "$variant_source"
+        rc=1
+      fi
       continue
     fi
     if diff -r -q --exclude='.DS_Store' --exclude='__pycache__' \
@@ -247,7 +426,7 @@ if [ "$roots_compared" -eq 0 ]; then
 fi
 if [ "$checked" -eq 0 ]; then
   printf 'SKIP   no unmanaged skills to compare\n'
-  exit 0
+  exit "$rc"
 fi
 
 if [ "$rc" -eq 0 ]; then

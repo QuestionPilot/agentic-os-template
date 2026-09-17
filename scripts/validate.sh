@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve the physical root so `find` receives a directory, not a symlink
+# starting point. `find <symlink>` does not descend by default and otherwise
+# makes a symlink-invoked validator falsely report the repository as clean.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 printf 'agentic-os-template validation\n'
 printf 'Repo: %s\n\n' "$repo_root"
