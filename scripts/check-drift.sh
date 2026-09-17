@@ -124,6 +124,23 @@ if [ "${1:-}" = "--manifest" ]; then
     printf 'FAIL jq unavailable; cannot verify build manifest\n' >&2
     exit 1
   fi
+  # A manifest is evidence only when it names at least one safe, hashable
+  # generated file. Process substitution below hides jq's exit status, so
+  # validate this denominator before enumerating it.
+  manifest_coverage_query='def safe_rel:
+    type == "string" and length > 0 and
+    (startswith("/") | not) and
+    (contains("\\") | not) and
+    (split("/") | all(.[]; length > 0 and . != "." and . != ".." and (test("[[:cntrl:]]") | not)));
+  def sha256: type == "string" and length == 64 and test("^[0-9a-f]{64}$");
+  (length == 1) and
+  (.[0] | .generated | type == "object" and length > 0 and
+    all(to_entries[]; (.key | safe_rel) and (.value | sha256)))'
+  if ! jq -e --slurp "$manifest_coverage_query" "$manifest" >/dev/null 2>&1; then
+    printf 'FAIL manifest has no generated-file coverage: .generated must be a non-empty safe-path SHA-256 inventory\n' >&2
+    exit 1
+  fi
+  generated_count="$(jqr --slurp 'if length == 1 then .[0].generated | length else empty end' "$manifest")"
   # Hash via stdin: a filename containing backslashes (Windows-style target
   # dirs) flips GNU coreutils into escaped-filename mode, prefixing the output
   # line with '\' and corrupting the extracted hash.
@@ -539,7 +556,7 @@ with open(sys.argv[1]) as f:
     fi
     exit 1
   fi
-  printf 'PASS no manifest drift in %s\n' "$target"
+  printf 'PASS no manifest drift in %s (%s generated files checked)\n' "$target" "$generated_count"
   exit 0
 fi
 

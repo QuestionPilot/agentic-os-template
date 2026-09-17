@@ -356,6 +356,31 @@ if (-not [string]::IsNullOrEmpty($Manifest)) {
         exit 1
     }
 
+    # A manifest is evidence only when it names at least one safe, hashable
+    # generated file. Validate this denominator before enumeration so malformed
+    # jq output cannot become a zero-item clean result.
+    $manifestCoverageQuery = @'
+def safe_rel:
+  type == "string" and length > 0 and
+  (startswith("/") | not) and
+  (contains("\\") | not) and
+  (split("/") | all(.[]; length > 0 and . != "." and . != ".." and (test("[[:cntrl:]]") | not)));
+def sha256: type == "string" and length == 64 and test("^[0-9a-f]{64}$");
+(length == 1) and
+(.[0] | .generated | type == "object" and length > 0 and
+  all(to_entries[]; (.key | safe_rel) and (.value | sha256)))
+'@
+    $null = & jq -e --slurp $manifestCoverageQuery $manifestPath 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail 'manifest has no generated-file coverage: .generated must be a non-empty safe-path SHA-256 inventory'
+        exit 1
+    }
+    $generatedCount = & jq -r --slurp 'if length == 1 then .[0].generated | length else empty end' $manifestPath 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($generatedCount)) {
+        Write-Fail 'manifest has no generated-file coverage: unable to count validated entries'
+        exit 1
+    }
+
     # Walk manifest entries: for each generated.<rel> = <wanted-sha256>, hash
     # the target file and compare. Track drifted files for <TEAM>-106 envelope.
     $drift = $false
@@ -782,7 +807,7 @@ with open(sys.argv[1]) as f:
         exit 1
     }
 
-    Write-Host "PASS no manifest drift in $target"
+    Write-Host "PASS no manifest drift in $target ($generatedCount generated files checked)"
     exit 0
 }
 

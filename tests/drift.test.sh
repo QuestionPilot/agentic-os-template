@@ -5,6 +5,32 @@
 declare -F assert_exit >/dev/null 2>&1 || { printf 'ERROR: run via tests/run.sh (e.g. bash tests/run.sh <stem>), not standalone\n' >&2; exit 1; }
 # tests/drift.test.sh — manifest-drift detection for check-drift.sh.
 
+# --- malformed or empty manifests must never read as clean ------------------
+DR0_ROOT="$(mktemp -d)"; DR0_OUT="$DR0_ROOT/target"; mkdir -p "$DR0_OUT"
+DR0_HASH="$(printf '%s%s%s%s' '0123456789abcdef' '0123456789abcdef' '0123456789abcdef' '0123456789abcdef')"
+assert_no_manifest_coverage() {
+  local label="$1" body="$2" output rc
+  printf '%s\n' "$body" > "$DR0_OUT/.build-manifest.json"
+  output="$(bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR0_OUT" 2>&1)"; rc=$?
+  assert_eq "$label exits non-zero" "1" "$rc"
+  assert_contains "$label names the coverage failure" "$output" "no generated-file coverage"
+}
+assert_no_manifest_coverage "empty generated inventory" '{"generated":{}}'
+assert_no_manifest_coverage "missing generated inventory" '{"harness":"claude"}'
+assert_no_manifest_coverage "null generated inventory" '{"generated":null}'
+assert_no_manifest_coverage "array generated inventory" '{"generated":[]}'
+assert_no_manifest_coverage "scalar generated inventory" '{"generated":"not-an-object"}'
+assert_no_manifest_coverage "malformed manifest JSON" 'not valid json {{{'
+assert_no_manifest_coverage "multiple JSON documents" '{"generated":{}}
+{"generated":{"skills/example/SKILL.md":"'"$DR0_HASH"'"}}'
+assert_no_manifest_coverage "invalid generated hash" '{"generated":{"skills/example/SKILL.md":"not-a-sha256"}}'
+assert_no_manifest_coverage "trailing-newline generated hash" '{"generated":{"skills/example/SKILL.md":"'"$DR0_HASH"'\n"}}'
+assert_no_manifest_coverage "unsafe generated path" '{"generated":{"../outside":"'"$DR0_HASH"'"}}'
+assert_no_manifest_coverage "control-character generated path" '{"generated":{"skills/\u0001bad/SKILL.md":"'"$DR0_HASH"'"}}'
+rm -rf "$DR0_ROOT"
+unset DR0_ROOT DR0_OUT DR0_HASH
+unset -f assert_no_manifest_coverage
+
 # Build a clean target.
 DR_OUT="$(mktemp -d)/target"; mkdir -p "$DR_OUT"
 DR_ENV="$(mktemp -d)/local.env"
@@ -14,6 +40,10 @@ AI_CONFIG_LOCAL_ENV="$DR_ENV" bash "$REPO_ROOT/scripts/install.sh" >/dev/null 2>
 # Clean target: drift check passes.
 assert_exit "drift check passes on a clean build" 0 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_OUT"
+dr_clean_out="$(bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_OUT" 2>&1)"; dr_clean_rc=$?
+dr_generated_count="$(jq -r '.generated | length' "$DR_OUT/.build-manifest.json")"
+assert_eq "clean build denominator command exits 0" "0" "$dr_clean_rc"
+assert_contains "clean build reports the exact generated-file denominator" "$dr_clean_out" "($dr_generated_count generated files checked)"
 
 # Hand-edit a generated skill file: drift check must fail.
 printf '\nHAND EDIT\n' >> "$DR_OUT/skills/session-agent/SKILL.md"
@@ -21,6 +51,7 @@ assert_exit "drift check fails after a generated file is hand-edited" 1 -- \
   bash "$REPO_ROOT/scripts/check-drift.sh" --manifest "$DR_OUT"
 
 rm -rf "$DR_OUT"
+unset dr_clean_out dr_clean_rc dr_generated_count
 
 # --- --manifest flags an untracked file in the generated tree ---
 DR2_OUT="$(mktemp -d)/target"; mkdir -p "$DR2_OUT"
