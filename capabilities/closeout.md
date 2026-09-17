@@ -92,9 +92,9 @@ From `$AI_CONFIG_DIR/core/self-improvement.md` — answer each in 1–2 sentence
 
    **Q3a — skill-candidate capture.** Did this session repeat a multi-step procedure
    worth capturing as a skill, but not (yet) worth the full seven-step promotion?
-   Route it as a CANDIDATE row in the harness's skill catalog — name, one-line
+   Route it as a CANDIDATE row in the shared candidate table — name, one-line
    trigger, where the procedure ran — for manual triage. Write the row at the
-   catalog's SOURCE, which each harness realization names — a hand edit to a
+   table's SOURCE, which each harness realization names — a hand edit to a
    build-managed rendered catalog trips the drift gate. No autonomous skill
    creation: the candidate row is the entire write.
 

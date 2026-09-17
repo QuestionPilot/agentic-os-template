@@ -16,6 +16,16 @@ lifecycle: shipped
   `<CURSOR_CONFIG_DIR>/skills/<name>/SKILL.md` (agentskills.io shape — the same
   file drops into any harness). A project-scoped variant belongs in the
   repository's own skills dir instead, where Cursor scopes it to that tree.
+- **Q3a skill-candidate destination:** write the CANDIDATE row into the
+  operator-local skills overlay named by `SKILLS_OVERLAY_PATH` in
+  `<AI_CONFIG_DIR>/local.env` (add a "Skill candidates" section if absent), then
+  re-render the Claude harness via
+  `<AI_CONFIG_DIR>/scripts/install.sh --harness claude` — the overlay is the one
+  shared candidate table, and it renders only into the Claude harness's
+  `SKILLS.md`. If no overlay is configured, create one and set
+  `SKILLS_OVERLAY_PATH`. This harness's own rendered catalog (the capability
+  catalog inside `<CURSOR_CONFIG_DIR>/AGENTS.md`) is build-manifest-managed and
+  never carries candidate rows — a hand-added row trips the drift gate.
 - **Session-log drain identity:** `<machine>` = `hostname`; the vault path = the
   rendered `<OBSIDIAN_VAULT_PATH>`; generate `closeout_id` with
   `openssl rand -hex 4`. Record the Cursor `conversation_id` in `session_id`
