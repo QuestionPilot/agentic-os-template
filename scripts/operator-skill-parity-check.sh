@@ -17,8 +17,14 @@
 # machine-readable `Skill` / `Where` rows, so a skill the map intentionally
 # omits is not treated as missing. A declared variant is compared to its named
 # source pair, never merely excused by an allowlist.
+# Capability Map tables need only `Skill` and `Where` columns. Rows may include
+# or omit their final `|`, with standard or alignment-marked separator rows.
+# Header and `Where` tokens are case-insensitive, while skill names keep their
+# literal case. Individual diagnostic-line order is not contractual; labels,
+# exit status, and reported comparison counts are.
 #
-# Output tokens (byte-parity with the PowerShell twin):
+# Output tokens (shared semantics with the PowerShell twin; whole-output byte
+# order is not contractual):
 #   SKIP    a configured mirror root is not present on this machine
 #   MISSING a canonical skill has no counterpart in a mirror root
 #   DRIFT   contents differ and the pair is NOT allowlisted
@@ -157,11 +163,14 @@ _sp_hermes_expected() {
   awk '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
     /^[[:space:]]*\|/ {
-      n = split($0, c, "|")
-      if (n < 4) { mode = 0; next }
-      first = trim(c[2]); last = trim(c[n - 1])
+      row = $0
+      sub(/^[[:space:]]*\|[[:space:]]*/, "", row)
+      sub(/[[:space:]]*\|[[:space:]]*$/, "", row)
+      n = split(row, c, "|")
+      if (n < 2) { mode = 0; next }
+      first = trim(c[1]); last = trim(c[n])
       if (tolower(first) == "skill" && tolower(last) == "where") { mode = 1; next }
-      if (first ~ /^-+$/) next
+      if (first ~ /^:?-+:?$/) next
       if (!mode) next
       if (match(first, /^`[^`]+`$/)) {
         name = substr(first, 2, length(first) - 2)

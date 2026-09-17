@@ -71,6 +71,27 @@ osp_case_map() {
     > "$d/Capability Map.md"
 }
 
+# osp_two_column_map <dir> <with-final-pipe> — the minimum accepted Skill /
+# Where schema, with either trailing-pipe form.
+osp_two_column_map() {
+  local d="$1" final_pipe="$2"
+  if [ "$final_pipe" = "yes" ]; then
+    printf '%s\n' \
+      '| Skill | Where |' \
+      '| :--- | :--- |' \
+      '| `alpha` | all |' \
+      '| `session-agent` | all |' \
+      > "$d/Capability Map.md"
+  else
+    printf '%s\n' \
+      '| Skill | Where' \
+      '| :--- | :---' \
+      '| `alpha` | all' \
+      '| `session-agent` | all' \
+      > "$d/Capability Map.md"
+  fi
+}
+
 # osp_run <dir> [ALLOWLIST] [MIRRORS-override] [MAP] [VARIANTS] — run against a fixture.
 # AI_CONFIG_LOCAL_ENV points at a nonexistent file so the operator's real
 # local.env can never leak into a fixture run.
@@ -351,3 +372,80 @@ o="$(env AI_CONFIG_LOCAL_ENV="$D21/no-such-local.env" \
 assert_eq       "operator-skill-parity: missing Hermes plus no-work exits 1" 1 "$rc"
 assert_contains "operator-skill-parity: missing Hermes plus no-work FAILs" "$o" "FAIL Hermes skill root missing: $D21/absent-hermes/skills"
 rm -rf "$D21"
+
+# The Capability Map is required for the exact lowercase Hermes label. A
+# missing map must fail, while a real map and in-sync subset pass.
+D22="$(mktemp -d)"; osp_fixture "$D22"
+mkdir -p "$D22/hermes/skills/alpha"
+printf 'alpha body\n' > "$D22/hermes/skills/alpha/SKILL.md"
+o="$(osp_run "$D22" "" "m1=$D22/m1/skills,hermes=$D22/hermes/skills" "$D22/missing-map.md")"; rc=$?
+assert_eq       "operator-skill-parity: missing Hermes map exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: missing Hermes map fails loudly" "$o" "FAIL Hermes Capability Map missing"
+osp_map "$D22"
+o="$(osp_run "$D22" "" "m1=$D22/m1/skills,hermes=$D22/hermes/skills" "$D22/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: present Hermes map positive control exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: present Hermes map reports subset count" "$o" "NOTE   Hermes expected subset: 2 skill(s)"
+rm -rf "$D22"
+
+# A readable table with no Hermes/all skill rows is also a failure. A populated
+# table is the paired control above, so this cannot pass by skipping the parser.
+D23="$(mktemp -d)"; osp_fixture "$D23"
+mkdir -p "$D23/hermes/skills"
+printf '%s\n' '| Skill | What | Where |' '| --- | --- | --- |' '| `beta` | other harnesses | codex |' > "$D23/Capability Map.md"
+o="$(osp_run "$D23" "" "m1=$D23/m1/skills,hermes=$D23/hermes/skills" "$D23/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: empty Hermes expected subset exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: empty Hermes expected subset fails loudly" "$o" "FAIL Hermes Capability Map has no expected skills"
+rm -rf "$D23"
+
+# Variant labels must resolve to canonical or an exact configured mirror label.
+D24="$(mktemp -d)"; osp_fixture "$D24"
+o="$(osp_run "$D24" "" "m1=$D24/m1/skills" "" "m1/alpha=unknown/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: unknown variant source label exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: unknown variant source label fails loudly" "$o" "FAIL variant source missing: unknown/alpha"
+o="$(osp_run "$D24" "" "m1=$D24/m1/skills" "" "m1/alpha=canonical/alpha")"; rc=$?
+assert_eq       "operator-skill-parity: known variant source positive control exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: known variant source is compared" "$o" "VARIANT m1       alpha (matched canonical/alpha)"
+rm -rf "$D24"
+
+# Every map skill must have a canonical source before Hermes can compare it.
+D25="$(mktemp -d)"; osp_fixture "$D25"
+mkdir -p "$D25/hermes/skills/gamma"
+printf 'gamma body\n' > "$D25/hermes/skills/gamma/SKILL.md"
+printf '%s\n' '| Skill | What | Where |' '| --- | --- | --- |' '| `gamma` | missing canonical source | hermes |' > "$D25/Capability Map.md"
+o="$(osp_run "$D25" "" "m1=$D25/m1/skills,hermes=$D25/hermes/skills" "$D25/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: map skill absent from canonical exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: map skill absent from canonical is reported" "$o" "MISSING canonical gamma"
+for root in "$D25/home a/skills" "$D25/m1/skills" "$D25/m2/skills"; do
+  mkdir -p "$root/gamma"
+  printf 'gamma body\n' > "$root/gamma/SKILL.md"
+done
+o="$(osp_run "$D25" "" "m1=$D25/m1/skills,m2=$D25/m2/skills,hermes=$D25/hermes/skills" "$D25/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: canonical map skill recovery exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: canonical map skill recovery preserves count" "$o" "7 comparison(s) across 3 of 3 mirror root(s)"
+rm -rf "$D25"
+
+# A two-column map with an omitted final pipe and aligned separator accepts the
+# minimum schema in both twins. Literal mixed-case/punctuated names also work.
+# The report count is contractual; diagnostic-line order is not.
+D26="$(mktemp -d)"; osp_fixture "$D26"; osp_two_column_map "$D26" no
+mkdir -p "$D26/hermes/skills/alpha"
+printf 'alpha body\n' > "$D26/hermes/skills/alpha/SKILL.md"
+for skill in 'Alpha-1' 'zeta_2'; do
+  for root in "$D26/home a/skills" "$D26/m1/skills" "$D26/m2/skills"; do
+    mkdir -p "$root/$skill"
+    printf '%s body\n' "$skill" > "$root/$skill/SKILL.md"
+  done
+done
+o="$(osp_run "$D26" "" "m1=$D26/m1/skills,m2=$D26/m2/skills,hermes=$D26/hermes/skills" "$D26/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: mixed-case punctuated skills exit 0" 0 "$rc"
+assert_contains "operator-skill-parity: two-column omitted final pipe loads Hermes subset" "$o" "NOTE   Hermes expected subset: 2 skill(s)"
+assert_contains "operator-skill-parity: mixed-case punctuated skills preserve count" "$o" "9 comparison(s) across 3 of 3 mirror root(s)"
+osp_two_column_map "$D26" yes
+o="$(osp_run "$D26" "" "m1=$D26/m1/skills,m2=$D26/m2/skills,hermes=$D26/hermes/skills" "$D26/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: two-column final pipe exits 0" 0 "$rc"
+assert_contains "operator-skill-parity: two-column final pipe preserves count" "$o" "9 comparison(s) across 3 of 3 mirror root(s)"
+printf 'Alpha-1 changed\n' > "$D26/m2/skills/Alpha-1/SKILL.md"
+o="$(osp_run "$D26" "" "m1=$D26/m1/skills,m2=$D26/m2/skills,hermes=$D26/hermes/skills" "$D26/Capability Map.md")"; rc=$?
+assert_eq       "operator-skill-parity: mixed-case punctuated drift exits 1" 1 "$rc"
+assert_contains "operator-skill-parity: mixed-case punctuated drift names literal skill" "$o" "DRIFT   m2       Alpha-1"
+rm -rf "$D26"
