@@ -432,6 +432,67 @@ New-Item -ItemType Directory -Path $BUILD -Force | Out-Null
 # Cleanup trap — runs on script exit. PS's `try/finally` is the closest analog
 # to bash `trap ... EXIT`. Wrap main() in try/finally below.
 $Script:KeepBuild = $false
+$Script:InstallLockDirs = New-Object System.Collections.Generic.List[string]
+$Script:InstallLockMarkers = New-Object System.Collections.Generic.List[string]
+
+# Each normal installer run owns its physical target before recovery or swap.
+# FileMode.CreateNew is the atomic acquisition step. A leftover lock causes a
+# loud refusal because this process cannot prove the recorded writer is dead.
+# The unique token lets cleanup remove only a matching lock file.
+function Enter-InstallerLock {
+    param(
+        [Parameter(Mandatory)][string]$LockTarget,
+        [string]$LockContext = ''
+    )
+    $lockDir = Join-Path $LockTarget '.install-lock'
+    # A directory, symlink (including dangling), FIFO, or other existing object
+    # is already a lock-shaped state. Refuse it before opening so the lock path
+    # cannot redirect or block this installer.
+    if (Get-Item -LiteralPath $lockDir -Force -ErrorAction SilentlyContinue) {
+        Die "another installer owns physical target $LockTarget; lock exists at $lockDir — wait for it to finish or inspect and remove a confirmed-stale lock manually$LockContext"
+    }
+    try {
+        $stream = [System.IO.File]::Open($lockDir, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    } catch {
+        Die "another installer owns physical target $LockTarget; lock exists at $lockDir — wait for it to finish or inspect and remove a confirmed-stale lock manually$LockContext"
+    }
+    $token = "$PID.$([Guid]::NewGuid().Guid)"
+    try {
+        $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($token + "`n")
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Dispose()
+    } catch {
+        if ($stream) { $stream.Dispose() }
+        Die "could not record ownership for installer lock $lockDir; it was left in place for manual inspection"
+    }
+    [void]$Script:InstallLockDirs.Add($lockDir)
+    [void]$Script:InstallLockMarkers.Add($token)
+}
+function Exit-InstallerLocks {
+    for ($i = $Script:InstallLockDirs.Count - 1; $i -ge 0; $i--) {
+        $lockDir = $Script:InstallLockDirs[$i]
+        $token = $Script:InstallLockMarkers[$i]
+        try {
+            $owner = if (Test-Path -LiteralPath $lockDir -PathType Leaf) { [System.IO.File]::ReadAllText($lockDir).TrimEnd("`r", "`n") } else { '' }
+        } catch {
+            Warn "left installer lock $lockDir because its owner token could not be read"
+            continue
+        }
+        if ($owner -ceq $token) {
+            try {
+                Remove-Item -LiteralPath $lockDir -Force -ErrorAction Stop
+            } catch {
+                Warn "could not remove owned installer lock ${lockDir}: $($_.Exception.Message)"
+                continue
+            }
+            if (Get-Item -LiteralPath $lockDir -Force -ErrorAction SilentlyContinue) {
+                Warn "could not remove owned installer lock $lockDir; lock remains after removal"
+            }
+        } else {
+            Warn "left installer lock $lockDir because its owner token changed"
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Compilers — compile_native + compile_vendored
@@ -1257,6 +1318,11 @@ function Invoke-AgentsCorender {
         return
     }
 
+    # The .agents mirror is also a physical mutation target. Lock it before
+    # staging or replacing mirror content, using the same ownership rule as the
+    # harness home.
+    New-Item -ItemType Directory -Path $adir -Force -ErrorAction Stop | Out-Null
+    Enter-InstallerLock -LockTarget $adir -LockContext "; codex target $TARGET is already updated; .agents mirror was not touched"
     $adirSkills = Join-Path $adir 'skills'
     New-Item -ItemType Directory -Path $adirSkills -Force -ErrorAction Stop | Out-Null
 
@@ -1966,6 +2032,12 @@ switch ($Harness) {
 }
 
 try {
+    # A normal install can read live settings while compiling (for preference
+    # preservation), so own the target before compilation as well as recovery
+    # and swap. Read-only and inspect-only modes intentionally take no lock.
+    if ((-not $DryRun) -and (-not $BuildOnly)) {
+        Enter-InstallerLock -LockTarget $TARGET
+    }
     # Compile every capability that targets this harness.
     $capDir = Join-Path $repoRoot 'capabilities'
     $caps = Get-ChildItem -LiteralPath $capDir -Filter '*.md' -File -ErrorAction Stop
@@ -2182,6 +2254,7 @@ try {
         [Console]::Error.WriteLine('            register config.yaml shell hooks natively).')
     }
 } finally {
+    Exit-InstallerLocks
     if (-not $Script:KeepBuild) {
         if ($BUILD -and (Test-Path -LiteralPath $BUILD)) {
             Remove-Item -LiteralPath $BUILD -Recurse -Force -ErrorAction SilentlyContinue

@@ -64,6 +64,11 @@ projects/
 #
 self-audit-history.jsonl
 
+# Per-target installer ownership lock. It is runtime state next to a harness
+# home and must never be staged after an interrupted install.
+.install-lock
+.session-index.lock
+
 node_modules/
 dist/
 build/
