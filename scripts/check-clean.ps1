@@ -560,5 +560,5 @@ if ($script:fail -ne 0) {
     [Console]::Error.WriteLine("FAIL check-clean: leaks found in $Target")
     exit 1
 }
-Write-Output "PASS check-clean: $Target is clean (no issue IDs / home paths / emails / operator tokens)$identityNote$msgNote"
+Write-Output "PASS check-clean: $Target is clean (no issue IDs / home paths / emails / operator tokens; repository scope only; does not attest user-owned harness configs: CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME, CURSOR_CONFIG_DIR, AGENTS_DIR)$identityNote$msgNote"
 exit 0

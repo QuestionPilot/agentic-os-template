@@ -125,7 +125,7 @@ try {
         $hasStop = ($cx_hj -ne $null) -and ($null -ne $cx_hj.hooks.Stop)
         Assert-Eq 'codex.test: codex hooks.json does NOT wire a Stop hook' 'False' "$hasStop"
         $cx_matcher = if ($cx_hj) { $cx_hj.hooks.PreToolUse[0].matcher } else { '' }
-        Assert-Eq 'codex.test: codex PreToolUse matcher is apply_patch' 'apply_patch' "$cx_matcher"
+        Assert-Eq 'codex.test: codex PreToolUse matcher covers Bash and native edit names' 'Bash|apply_patch|Edit|Write' "$cx_matcher"
         # PS twin: command is 'pwsh', the hook path is the LAST element of args.
         $cx_cmdpath = if ($cx_hj) { @($cx_hj.hooks.PreToolUse[0].hooks[0].args)[-1] } else { '' }
         Assert-Contains 'codex.test: codex PreToolUse command points at target hooks dir' (ConvertTo-Slash $cx_cmdpath) ((ConvertTo-Slash $CX_OUT) + '/hooks/session-agent.ps1')
@@ -161,7 +161,7 @@ try {
             'codex.test: codex hooks.json wires PreToolUse',
             'codex.test: codex hooks.json wires SessionStart',
             'codex.test: codex hooks.json does NOT wire a Stop hook',
-            'codex.test: codex PreToolUse matcher is apply_patch',
+            'codex.test: codex PreToolUse matcher covers Bash and native edit names',
             'codex.test: codex PreToolUse command points at target hooks dir',
             'codex.test: codex SessionStart matcher is startup|clear|compact',
             'codex.test: codex SessionStart command points at framework-surface.ps1',
@@ -296,6 +296,31 @@ try {
     }
     Remove-Item -LiteralPath $CXR_WORK -Recurse -Force -ErrorAction SilentlyContinue
 
+    # Codex's Windows shape carries the hook path as an argv entry. Exercise
+    # that emitted command plus args with a target that contains both a space
+    # and an apostrophe, so no future flattening can silently split the path.
+    $CXS_ROOT = Join-Path ([IO.Path]::GetTempPath()) ("t296-codex-spaced-" + [Guid]::NewGuid().Guid.Substring(0,8))
+    $CXS_OUT = Join-Path $CXS_ROOT "target with space's quote"
+    $CXS_ENV = Join-Path $CXS_ROOT 'local.env'
+    New-Item -ItemType Directory -Path $CXS_OUT -Force | Out-Null
+    Write-CodexEnvFixture -EnvFile $CXS_ENV -CodexHome $CXS_OUT -VaultDir $CX_VAULT
+    $env:AI_CONFIG_LOCAL_ENV = $CXS_ENV
+    & pwsh -NoProfile -File $INSTALL_PS1 --harness codex 1>$null 2>$null
+    $cxs_hooks = Join-Path $CXS_OUT 'hooks.json'
+    Assert-File 'codex.test: codex spaced target produces hooks.json' $cxs_hooks
+    if (Test-Path -LiteralPath $cxs_hooks -PathType Leaf) {
+        $cxs_hj = Get-Content -Raw -LiteralPath $cxs_hooks | ConvertFrom-Json
+        $cxs_hook = $cxs_hj.hooks.PreToolUse[0].hooks[0]
+        $cxs_out = '{"tool_name":"Bash","tool_input":{"command":""}}' | & $cxs_hook.command @($cxs_hook.args) 2>$null
+        $cxs_status = $LASTEXITCODE
+        Assert-Eq 'codex.test: codex spaced-target hook launcher exits 0' '0' "$cxs_status"
+        Assert-Eq 'codex.test: codex spaced-target hook launcher is silent for a safe read' '' "$($cxs_out -join "`n")"
+    } else {
+        _Skip 'codex.test: codex spaced-target hook launcher exits 0' 'hooks.json not built'
+        _Skip 'codex.test: codex spaced-target hook launcher is silent for a safe read' 'hooks.json not built'
+    }
+    Remove-Item -LiteralPath $CXS_ROOT -Recurse -Force -ErrorAction SilentlyContinue
+
     # === Full install: swap into the target + drift gate ====================
     $CXB_ROOT = Join-Path ([IO.Path]::GetTempPath()) ("t296-codex-full-" + [Guid]::NewGuid().Guid.Substring(0,8))
     New-Item -ItemType Directory -Path $CXB_ROOT -Force | Out-Null
@@ -317,6 +342,8 @@ try {
     # must surface that manual step (adapter.md Fact 2 documents it as surfaced).
     $cxb_errtext = if (Test-Path -LiteralPath $cxb_err) { Get-Content -Raw -LiteralPath $cxb_err } else { '' }
     Assert-Contains 'codex.test: codex install surfaces the /hooks trust step' $cxb_errtext '/hooks'
+    Assert-Contains 'codex.test: codex install reports the gate as unverified' $cxb_errtext 'Gate status: UNVERIFIED'
+    Assert-NotContains 'codex.test: codex install does not report the gate armed from file presence' $cxb_errtext 'Gate status: ARMED'
     Assert-File 'codex.test: codex full install swaps session-agent SKILL.md' (Join-Path $CXB_OUT 'skills/session-agent/SKILL.md')
     Assert-File 'codex.test: codex full install swaps hooks.json'             (Join-Path $CXB_OUT 'hooks.json')
     Assert-File 'codex.test: codex full install swaps AGENTS.md'              (Join-Path $CXB_OUT 'AGENTS.md')

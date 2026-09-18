@@ -85,7 +85,7 @@ fully-generated `<config>/hooks.json`. Each entry has this shape:
       {
         "matcher": "<tool-name regex, or empty/'*' for all>",
         "hooks": [
-          { "type": "command", "command": "<absolute path to script>", "timeout": 10 }
+          { "type": "command", "command": "'<absolute path to script>'", "timeout": 10 }
         ]
       }
     ]
@@ -93,7 +93,11 @@ fully-generated `<config>/hooks.json`. Each entry has this shape:
 }
 ```
 
-This is structurally identical to Claude Code's `settings.json` `hooks` object —
+The command value shown here is the POSIX-shell-quoted output from `install.sh`.
+Codex invokes it through a shell, so this preserves one path argument when the
+config home contains spaces or apostrophes. The PowerShell installer retains
+the native `pwsh` command plus argument form; its native Windows runtime is
+unverified. This is structurally identical to Claude Code's `settings.json` `hooks` object —
 the compiler emits the same block, written to a standalone `hooks.json` instead
 of merged into a settings file. Codex auto-loads `$CODEX_HOME/hooks.json`.
 `config.toml` is **user-owned** (personality, trust, projects) and is *not*
@@ -106,7 +110,7 @@ script in `harnesses/codex/hooks/`:
 
 | Enforcement class | Hook event | `matcher` | Hook script | Behavior |
 | --- | --- | --- | --- | --- |
-| `pre-edit-gate` | `PreToolUse` | `apply_patch` | `hooks/session-agent.sh` | Blocks the first file-modifying tool use until the session-agent capability has run and both declaration lines — `Linear gate:` and `Lessons:` — were declared. Codex file edits report `tool_name: "apply_patch"`. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
+| `pre-edit-gate` | `PreToolUse` | `Bash\|apply_patch\|Edit\|Write` | `hooks/session-agent.sh` | Native edit names always enter the declaration check. `Bash` passes read-only commands and gates direct common mutations plus file redirection. Safety net; primary auto-fire is the SessionStart directive in `framework-surface.sh`. |
 
 (The `session-end-gate` class — a `Stop` hook for `closeout` — was removed;
 `closeout` is now manual-fire. `pre-edit-gate` is the only
@@ -114,6 +118,26 @@ capability-declared enforcement class today.)
 
 The build copies the named hook script into place and merges its `hooks.json`
 block. Enforcement is **never code-generated** — the scripts are real files.
+
+**Bash boundary.** Codex reports a shell-wrapped `apply_patch` as `Bash`, so an
+`apply_patch`-only matcher misses the main local-model edit path. The gate does
+not try to parse Bash. It recognizes direct command-segment `apply_patch`,
+`tee`, `touch`, `mkdir`, `rm`, `mv`, `cp`, `install`, `truncate`, and `dd`
+commands (including absolute paths) plus unquoted file redirection. A command
+over 8,192 UTF-8 bytes conservatively enters the declaration check before quote
+stripping. For shorter commands, it strips simple quoted and escaped characters
+so an orient read with a literal `>` stays usable. The text check exempts only
+an exact `/dev/null` redirect target, while still gating another redirect in the
+same command; it can mistake an unquoted comparison `>` for redirection. Grouped
+or control-flow commands, `bash -c`, command substitutions, aliases, prefix
+wrappers (`env`, `sudo`, or `command`), variable or assignment-prefixed commands,
+quoted executables, and unlisted writers can escape this procedural check. This
+is a discipline gate, not a shell security boundary.
+
+**Runtime boundary.** A render or trusted file is **UNVERIFIED**, not runtime
+proof. Runtime proof requires a fired-hook receipt with a resulting deny or
+other observable effect. The native `apply_patch` custom-tool path remains
+unverified until a local receipt proves it fires and its deny is enforced.
 
 **Hook decision formats.** A `PreToolUse` block uses
 `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny",
@@ -194,12 +218,13 @@ historical evidence only: a minimal marker-writing hook did not
 run across repeated invocations, including with `--enable hooks` and
 `--dangerously-bypass-hook-trust`.
 
-**`codex exec` fires hooks on v0.153.4 under the tested trust configuration.**
-On 2026-09-10, v0.153.4 in a fresh `CODEX_HOME`, invoked with
-`--dangerously-bypass-hook-trust`, fired both `SessionStart` and `PreToolUse` from
-`hooks.json`; Codex honored the `PreToolUse` deny and created no file. Behavior
-with persisted hook trust and without the bypass flag is unverified. In those
-v0.153.4 probes, a hook-blocked or sandbox-denied action left no
+**`codex exec` fires the Bash gate on v0.153.4 under the tested trust configuration.**
+On 2026-09-10, v0.153.4 in a fresh, space-free `CODEX_HOME`, invoked with
+`--dangerously-bypass-hook-trust`, fired `SessionStart` and a `Bash` `PreToolUse`
+hook from `hooks.json`; Codex honored the deny and created no file. This does not
+prove a native `apply_patch` custom-tool deny, persisted hook trust, or every
+rendered command path. In those v0.153.4 probes, a hook-blocked or sandbox-denied
+action left no
 `CommandExecution` item in the `--json` stream or rollout; its failure text was
 in `custom_tool_call_output`. Post-hoc audits of those sessions must therefore
 parse tool outputs as well as item events.
@@ -216,8 +241,8 @@ session verifies it. Reproduction recipe:
 2. Launch `codex` against a scratch git repo with `CODEX_HOME=/tmp/codex-verify`.
 3. Run the interactive `/hooks` command once to review and **trust** the
    generated `hooks.json`.
-4. `pre-edit-gate` — attempt an `apply_patch` edit before invoking `session-agent` →
-   expect a `PreToolUse` **deny**.
+4. `pre-edit-gate` — attempt a shell-wrapped `apply_patch` edit before invoking
+   `session-agent` → expect a `PreToolUse` **deny**.
 
 This is pending verification. Once verified, replace this note with the confirmed
 result.
@@ -282,6 +307,39 @@ generated entrypoint must never carry an empty path.
 
 `hooks.json` is fully generated and never hand-edited. `config.toml` is
 user-owned and is not touched by the build.
+
+## Trust latch observation and check
+
+On Codex CLI v0.153.4, a `codex exec` run whose effective sandbox is more
+permissive than `read-only` wrote this exact user-owned row into
+`$CODEX_HOME/config.toml` for the git repository root:
+
+```toml
+[projects."<git repository root>"]
+trust_level = "trusted"
+```
+
+A later unpinned run in that repository resolved to the widened authority in the
+controlled probe when that repository configuration also requested it. A
+`read-only` first run did not add the row.
+This is an observed Codex CLI behavior, not a framework feature. The framework
+does not edit `config.toml` and the detector below does not prevent the latch.
+
+Run `bash scripts/check-codex-trust.sh` or
+`pwsh -NoProfile -File scripts/check-codex-trust.ps1` with `CODEX_HOME` set, or
+pass `--config /path/to/config.toml`, before claiming a clean footprint. An
+unset `CODEX_HOME` without `--config` fails closed. It reports only the number
+of `trust_level = "trusted"` project rows and their TOML project keys. It uses
+Python 3.11+ `tomllib`; an unavailable parser, unavailable config, malformed
+TOML, or unsupported project schema exits nonzero instead of reporting zero.
+For per-run evidence, compare inventories from before and after the run; one
+inventory cannot attribute a row to that run. A clean git tree, `check-clean`,
+and the drift gate do not inspect this gitignored, user-owned config file.
+
+For a fresh run, pin the sandbox: `codex exec -s read-only …`. The installed
+`codex exec resume` command does not accept `-s`; pin a resume with
+`-c 'sandbox_mode="read-only"'`. Do not rely on a saved per-project trust row
+to select the intended sandbox.
 
 **Drift gate.** After any build, `scripts/check-drift.sh --manifest "$CODEX_HOME"`
 verifies the live output against `.build-manifest.json`. A hand-edit to any

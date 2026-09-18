@@ -600,8 +600,9 @@ function Resolve-HookForClass {
     param([Parameter(Mandatory)][string]$Class)
     # claude + codex on Windows. Each row mirrors install.sh hook_for_class.
     # Hook script names are .ps1 — the <TEAM>-100 Windows-native fix to the
-    # generated hook command shape. The codex matcher is `apply_patch` (codex
-    # file edits report tool_name "apply_patch"), event PreToolUse — mirrors
+    # generated hook command shape. The codex matcher includes Bash plus native
+    # edit names; the hook narrows Bash to bounded mutation patterns, event
+    # PreToolUse — mirrors
     # install.sh:493 (codex:pre-edit-gate). The hermes matcher is
     # `write_file|patch|terminal` on event `pre_tool_call` (terminal is in the set
     # because the shell can write files) — mirrors install.sh:494 (hermes:pre-edit-gate).
@@ -609,7 +610,7 @@ function Resolve-HookForClass {
     # closeout is now manual-fire) — no row, mirroring install.sh.
     $rows = @{
         'claude:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'Write|Edit|NotebookEdit' }
-        'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'apply_patch' }
+        'codex:pre-edit-gate'     = @{ script = 'session-agent.ps1'; event = 'PreToolUse'; matcher = 'Bash|apply_patch|Edit|Write' }
         'hermes:pre-edit-gate'    = @{ script = 'session-agent.ps1'; event = 'pre_tool_call'; matcher = 'write_file|patch|terminal' }
         # cursor: preToolUse matchers filter by TOOL TYPE. A file edit reports
         # tool_name "Write" and a deletion reports tool_name "Delete" — both
@@ -2224,11 +2225,13 @@ try {
     # Codex does not run a non-managed hooks.json until trusted via the interactive
     # `/hooks` command. install.ps1 cannot trust hooks on the user's behalf, so it
     # surfaces the step (codex adapter.md Fact 2 documents it as surfaced). Mirrors
-    # install.sh:1200-1204.
+    # install.sh Codex status output.
     if ($Harness -eq 'codex') {
         [Console]::Error.WriteLine('install.ps1: NEXT STEP — run the interactive `/hooks` command in codex once')
         [Console]::Error.WriteLine("            to review and trust $TARGET\hooks.json; this interactive step")
-        [Console]::Error.WriteLine('            remains required. (v0.153.4 observation: codex exec fired hooks with --dangerously-bypass-hook-trust in a fresh CODEX_HOME; persisted trust is unverified.)')
+        [Console]::Error.WriteLine('            remains required. Gate status: UNVERIFIED — this install only writes wiring.')
+        [Console]::Error.WriteLine('            Runtime proof requires a fired-hook receipt from the intended runtime.')
+        [Console]::Error.WriteLine('            (v0.153.4 observation: codex exec fired hooks with --dangerously-bypass-hook-trust in a fresh CODEX_HOME; persisted trust is unverified.)')
     }
 
     # The hermes build is inert until the operator merges the generated wiring into

@@ -138,6 +138,93 @@ try {
             "got non-empty output: $out"
     }
 
+    # 3b1 — Bash is the shell-wrapped patch path. Read-only commands stay
+    # usable, including writer-looking arguments and quoted or escaped `>`.
+    # Direct writers, absolute-path writers, pipe writers, and redirection
+    # enter the existing declaration gate. This pins bounded behavior only.
+    $gateTrans = Join-Path $hkps_tmpdir 'trans-sa-gate.jsonl'
+    Write-LfFile $gateTrans '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"no routing declaration"}]}}'
+    $gatePath = $gateTrans -replace '\\', '/'
+    function Invoke-CodexBashGate {
+        param([string]$Command, [string]$Transcript = $gatePath)
+        $payloadObj = @{ transcript_path = $Transcript; tool_name = 'Bash'; tool_input = @{ command = $Command } }
+        return Invoke-CodexHook -HookPath $hkps_codex_sa -Payload ($payloadObj | ConvertTo-Json -Compress)
+    }
+    foreach ($readCase in @(
+        'rg -n "Linear gate:" README.md',
+        'rg -n touch README.md',
+        'printf "%s" touch',
+        'rg --files | rg install',
+        'printf ''%s\n'' ''>''',
+        'printf %s \>',
+        'command -v jq >/dev/null',
+        'rg foo 2>/dev/null',
+        'rg foo >>/dev/null; printf ok',
+        'rg foo >>/dev/null 2>&1'
+    )) {
+        $out = Invoke-CodexBashGate $readCase
+        if (-not $out) { _Pass "hooks-ps-parity.test: codex session-agent.ps1 ALLOWS Bash read $readCase" }
+        else { _Fail "hooks-ps-parity.test: codex session-agent.ps1 should ALLOW Bash read $readCase" "got: $out" }
+    }
+    $out = Invoke-CodexBashGate ''
+    if (-not $out) { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 ALLOWS empty Bash command' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should ALLOW empty Bash command' "got: $out" }
+    foreach ($writeCase in @(
+        "apply_patch <<'PATCH'`n*** Begin Patch`nPATCH",
+        "apply_patch<<'PATCH'`n*** Begin Patch`nPATCH",
+        '/usr/local/bin/apply_patch <<''PATCH''',
+        '/bin/touch evidence.txt',
+        'printf x | tee evidence.txt',
+        'printf x & touch evidence.txt',
+        "printf x`ntouch evidence.txt",
+        'printf x > evidence.txt'
+    )) {
+        $out = Invoke-CodexBashGate $writeCase
+        if ($out -match '"deny"|"block"') { _Pass "hooks-ps-parity.test: codex session-agent.ps1 DENIES Bash writer $writeCase" }
+        else { _Fail "hooks-ps-parity.test: codex session-agent.ps1 should DENY Bash writer $writeCase" "got: $(if ($out) { $out } else { '<empty = allow>' })" }
+    }
+    $out = Invoke-CodexBashGate 'rg foo >/dev/null > evidence.txt'
+    if ($out -match '"deny"|"block"') { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 DENIES mixed /dev/null and file redirects' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should DENY mixed /dev/null and file redirects' "got: $(if ($out) { $out } else { '<empty = allow>' })" }
+    foreach ($lookalikeCase in @(
+        'foo >/dev/null >/dev/null2',
+        'foo >/dev/null2; bar >/dev/null'
+    )) {
+        $out = Invoke-CodexBashGate $lookalikeCase
+        if ($out -match '"deny"|"block"') { _Pass "hooks-ps-parity.test: codex session-agent.ps1 DENIES /dev/null lookalike redirect $lookalikeCase" }
+        else { _Fail "hooks-ps-parity.test: codex session-agent.ps1 should DENY /dev/null lookalike redirect $lookalikeCase" "got: $(if ($out) { $out } else { '<empty = allow>' })" }
+    }
+    $largeCommand = 'x' * 200000
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $out = Invoke-CodexBashGate $largeCommand
+    $watch.Stop()
+    if ($out -match '"deny"|"block"') { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 DENIES oversized Bash command' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should DENY oversized Bash command' "got: $(if ($out) { $out } else { '<empty = allow>' })" }
+    if ($watch.Elapsed.TotalSeconds -lt 10) { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 bounds oversized Bash command under 10 seconds' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 oversized Bash command took too long' "elapsed: $($watch.Elapsed.TotalSeconds)s" }
+    $out = Invoke-CodexBashGate -Command $largeCommand -Transcript $trans
+    if (-not $out) { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 ALLOWS declared oversized Bash command' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should ALLOW declared oversized Bash command' "got: $out" }
+    foreach ($thresholdCase in @(
+        @{ Label = '8192-byte ASCII'; Command = 'x' * 8192; Expected = 'allow' },
+        @{ Label = '8193-byte ASCII'; Command = 'x' * 8193; Expected = 'deny' },
+        @{ Label = '2048-emoji UTF-8'; Command = '😀' * 2048; Expected = 'allow' },
+        @{ Label = '2049-emoji UTF-8'; Command = '😀' * 2049; Expected = 'deny' }
+    )) {
+        $out = Invoke-CodexBashGate $thresholdCase.Command
+        $actual = if ($out -match '"deny"|"block"') { 'deny' } else { 'allow' }
+        if ($actual -ceq $thresholdCase.Expected) { _Pass "hooks-ps-parity.test: codex session-agent.ps1 $($thresholdCase.Label) has the expected byte threshold" }
+        else { _Fail "hooks-ps-parity.test: codex session-agent.ps1 $($thresholdCase.Label) byte threshold mismatch" "expected: $($thresholdCase.Expected); got: $actual" }
+    }
+    $multibyteCommand = '😀' * 8191
+    $out = Invoke-CodexBashGate $multibyteCommand
+    if ($out -match '"deny"|"block"') { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 DENIES UTF-8-byte oversized Bash command' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should DENY UTF-8-byte oversized Bash command' "got: $(if ($out) { $out } else { '<empty = allow>' })" }
+    $malformedPayload = @{ transcript_path = $gatePath; tool_name = 'Bash'; tool_input = @{} } | ConvertTo-Json -Compress
+    $out = Invoke-CodexHook -HookPath $hkps_codex_sa -Payload $malformedPayload
+    if ($out -match '"deny"|"block"') { _Pass 'hooks-ps-parity.test: codex session-agent.ps1 DENIES malformed Bash command' }
+    else { _Fail 'hooks-ps-parity.test: codex session-agent.ps1 should DENY malformed Bash command' "got: $(if ($out) { $out } else { '<empty = allow>' })" }
+
     # 3b2 — codex session-agent.ps1, lowercase declaration DENIES (<TEAM>-360
     # cross-model panel): PS -match is case-insensitive by default, so a plain
     # -match would open the gate on `linear gate:` on Windows only. The hook

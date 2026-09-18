@@ -11,10 +11,11 @@ lifecycle: shipped
   injects a directive into `additionalContext` telling the model to invoke
   `$session-agent` as its first action (Mode 1). One trigger per session.
 - **Enforcement:** class `pre-edit-gate` → the `PreToolUse` hook
-  `hooks/session-agent.sh`, matcher `apply_patch` (Codex file edits report
-  `tool_name: "apply_patch"`). Blocks the first file-modifying tool use unless a
-  `session-agent` declaration including both the `Linear gate:` and `Lessons:`
-  lines appears in the transcript. Safety net only. Kill switch: env
+  `hooks/session-agent.sh`, matcher `Bash|apply_patch|Edit|Write`. Native edit
+  names enter the declaration check. Read-only Bash commands pass; bounded direct
+  shell writes and redirection enter the check. This procedural gate does not
+  cover arbitrary shell writes. A `session-agent` declaration including both the
+  `Linear gate:` and `Lessons:` lines is required. Safety net only. Kill switch: env
   `CLAUDE_SKIP_SESSION_AGENT=1` — same name on every harness.
 - **Mode marker:** Codex has no `Skill` tool — capabilities are
   context-injected. The hook + the Mode-1-vs-Mode-2 logic detect prior
