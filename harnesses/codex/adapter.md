@@ -136,8 +136,10 @@ is a discipline gate, not a shell security boundary.
 
 **Runtime boundary.** A render or trusted file is **UNVERIFIED**, not runtime
 proof. Runtime proof requires a fired-hook receipt with a resulting deny or
-other observable effect. The native `apply_patch` custom-tool path remains
-unverified until a local receipt proves it fires and its deny is enforced.
+other observable effect. One Codex CLI v0.153.4 `codex exec` code-mode launch,
+with `--dangerously-bypass-hook-trust`, recorded a native `apply_patch`
+`PreToolUse` event and an enforced deny. That result does not establish other
+launch modes, trust states, native writers, or shell syntax.
 
 **Hook decision formats.** A `PreToolUse` block uses
 `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny",
@@ -201,10 +203,12 @@ still bypass the gate before the `jq` check is reached.
 to review and trust the generated hooks; the trust decision is persisted. The
 build cannot trust hooks on the user's behalf — `install.sh` surfaces this as a
 manual step, and the bootstrap smoke test calls it out. For `codex exec`,
-v0.153.4 fired hooks in a fresh `CODEX_HOME` when invoked with
-`--dangerously-bypass-hook-trust`; behavior with persisted trust and without that
-flag is unverified. See the enforcement-parity note below for the version-scoped
-evidence and audit limitation.
+v0.153.4 fired hooks when invoked with `--dangerously-bypass-hook-trust`. In one
+otherwise controlled v0.153.4 `codex exec` launch without that flag, a shell
+write succeeded with no hook deny. That observation does not establish the
+interactive trust history or the cause of the no-flag result. See the
+enforcement-parity note below for the version-scoped evidence and audit
+limitation.
 
 **Enforcement parity — version- and trust-mode-specific.** The framework's
 design anticipates a harness with *no* lifecycle interception, on which a hard
@@ -218,16 +222,22 @@ historical evidence only: a minimal marker-writing hook did not
 run across repeated invocations, including with `--enable hooks` and
 `--dangerously-bypass-hook-trust`.
 
-**`codex exec` fires the Bash gate on v0.153.4 under the tested trust configuration.**
-On 2026-09-10, v0.153.4 in a fresh, space-free `CODEX_HOME`, invoked with
-`--dangerously-bypass-hook-trust`, fired `SessionStart` and a `Bash` `PreToolUse`
-hook from `hooks.json`; Codex honored the deny and created no file. This does not
-prove a native `apply_patch` custom-tool deny, persisted hook trust, or every
-rendered command path. In those v0.153.4 probes, a hook-blocked or sandbox-denied
-action left no
+**`codex exec` hook behavior on v0.153.4 is limited to the tested launch.**
+In controlled macOS code-mode `codex exec` launches with
+`--dangerously-bypass-hook-trust`, native `apply_patch` and `Bash` `PreToolUse`
+events were recorded. Missing routing declarations produced enforced denies, a
+Bash read was allowed, and matching native and shell write controls succeeded.
+One otherwise controlled no-flag launch completed a shell write with no hook
+deny. These observations do not prove interactive or persisted hook trust,
+desktop or TUI behavior, Windows behavior, a separate top-level patch surface,
+other native writers, or every shell syntax. In the flagged v0.153.4 probes, a
+hook-blocked or sandbox-denied action left no
 `CommandExecution` item in the `--json` stream or rollout; its failure text was
 in `custom_tool_call_output`. Post-hoc audits of those sessions must therefore
-parse tool outputs as well as item events.
+parse tool outputs as well as item events. In Codex CLI v0.153.4 on the observed
+local Gemma 4 `codex exec` surface, a `PostToolUse` response can be plain output
+with no exit-status field; treat missing status as unknown and do not infer an
+actual syscall denial from denial-shaped text in task content.
 
 **Interactive `codex` TUI hook firing — UNVERIFIED (documented gap).** The
 v0.132 docs and config schema state hooks block in the interactive TUI, and the
