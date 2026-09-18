@@ -153,7 +153,8 @@ pair in `$HERMES_HOME/shell-hooks-allowlist.json`. Hermes Agent v0.21.3 stores
 `script_mtime_at_approval` with that record but matches consent by event and
 command; mtime is not compared by that lookup. After a re-render, use `hermes
 hooks list` to inspect the configured and consented hooks instead of inferring
-state from script mtime.
+state from script mtime. Re-render and consent-persistence behavior on the
+verified v0.18.2 runtime baseline remains unverified.
 
 **Desktop-app gap + the bridge plugin (verified v0.16.0).** Shell-hook
 *registration* happens only in the CLI entrypoints and the messaging gateway —

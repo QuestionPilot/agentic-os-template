@@ -138,8 +138,9 @@ is a discipline gate, not a shell security boundary.
 proof. Runtime proof requires a fired-hook receipt with a resulting deny or
 other observable effect. One Codex CLI v0.153.4 `codex exec` code-mode launch,
 with `--dangerously-bypass-hook-trust`, recorded a native `apply_patch`
-`PreToolUse` event and an enforced deny. That result does not establish other
-launch modes, trust states, native writers, or shell syntax.
+`PreToolUse` event and an enforced deny for a missing session-agent routing
+declaration. That result does not establish other launch modes, trust states,
+native writers, or shell syntax.
 
 **Hook decision formats.** A `PreToolUse` block uses
 `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny",
@@ -226,11 +227,12 @@ run across repeated invocations, including with `--enable hooks` and
 In controlled macOS code-mode `codex exec` launches with
 `--dangerously-bypass-hook-trust`, native `apply_patch` and `Bash` `PreToolUse`
 events were recorded. Missing routing declarations produced enforced denies, a
-Bash read was allowed, and matching native and shell write controls succeeded.
-One otherwise controlled no-flag launch completed a shell write with no hook
-deny. These observations do not prove interactive or persisted hook trust,
+Bash read was allowed, and matching native and shell write controls with the
+gate skipped succeeded. One otherwise controlled no-flag launch completed a
+shell write with no hook deny. These observations do not prove interactive or
+persisted hook trust,
 desktop or TUI behavior, Windows behavior, a separate top-level patch surface,
-other native writers, or every shell syntax. In the flagged v0.153.4 probes, a
+other native writers, or every shell syntax. In the earlier flagged v0.153.4 probes, a
 hook-blocked or sandbox-denied action left no
 `CommandExecution` item in the `--json` stream or rollout; its failure text was
 in `custom_tool_call_output`. Post-hoc audits of those sessions must therefore
