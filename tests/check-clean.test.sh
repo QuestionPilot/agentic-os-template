@@ -78,6 +78,8 @@ else
   printf 'a perfectly ordinary sentence with nothing to hide\n' > "$cc_clean/readme.md"
 
   assert_exit "check-clean PASSES on a clean tree (placeholders + allowed domains)" 0 -- bash "$CC_SUT" "$cc_clean"
+  cc_clean_out="$(bash "$CC_SUT" "$cc_clean" 2>&1)"
+  assert_contains "clean PASS states the user-owned harness-config boundary" "$cc_clean_out" "repository scope only; does not attest user-owned harness configs: CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME, CURSOR_CONFIG_DIR, AGENTS_DIR"
 
   # --- Operator-token layer (component-split aware) -------------------------
   # A tree whose only marker is a fake operator token: passes when no tokens are

@@ -75,6 +75,8 @@ Set-Content -LiteralPath (Join-Path $ccClean 'contact.md') -Value "example conta
 Set-Content -LiteralPath (Join-Path $ccClean 'readme.md')  -Value "a perfectly ordinary sentence with nothing to hide"
 
 Assert-Exit 'check-clean PASSES on a clean tree (placeholders + allowed domains)' 0 -- pwsh -NoProfile -File $CC_SUT $ccClean
+$ccCleanOut = (& pwsh -NoProfile -File $CC_SUT $ccClean 2>&1 | Out-String)
+Assert-Contains 'clean PASS states the user-owned harness-config boundary' $ccCleanOut 'repository scope only; does not attest user-owned harness configs: CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME, CURSOR_CONFIG_DIR, AGENTS_DIR'
 
 # --- Operator-token layer (component-split aware) -----------------------------
 $ccTok = Join-Path $CC_TMP 'tok'; New-Item -ItemType Directory -Path $ccTok -Force | Out-Null

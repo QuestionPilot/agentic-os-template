@@ -64,10 +64,11 @@ if [ -f "$cx_build/hooks.json" ]; then
   # negative guard: the closeout Stop hook must NOT be wired.
   assert_eq "codex hooks.json does NOT wire a Stop hook" "true" \
     "$(jq -r '.hooks.Stop == null' "$cx_build/hooks.json")"
-  assert_eq "codex PreToolUse matcher is apply_patch" "apply_patch" \
+  assert_eq "codex PreToolUse matcher covers Bash and native edit names" "Bash|apply_patch|Edit|Write" \
     "$(jq -r '.hooks.PreToolUse[0].matcher' "$cx_build/hooks.json")"
   cx_cmd="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$cx_build/hooks.json")"
   assert_contains "codex PreToolUse command points at target hooks dir" "$cx_cmd" "$CX_OUT/hooks/session-agent.sh"
+  assert_eq "codex PreToolUse command shell-quotes its absolute path" "'$CX_OUT/hooks/session-agent.sh'" "$cx_cmd"
 fi
 
 # Build manifest tracks the codex generated files and sources.
@@ -144,10 +145,22 @@ make_codex_env "$CXR_ENV" "$CXR_WORK/unused"   # CODEX_HOME unused — --out dri
 cxr_hooks="$CXR_WORK/reltgt/hooks.json"
 assert_file "codex: relative --out still produces hooks.json" "$cxr_hooks"
 if [ -f "$cxr_hooks" ]; then
-  cxr_rel="$(jq -r '[.hooks[][].hooks[].command] | map(select(startswith("/") | not)) | length' "$cxr_hooks")"
+  cxr_rel="$(jq -r '[.hooks[][].hooks[].command | gsub("^'"'"'|'"'"'$"; "")] | map(select(startswith("/") | not)) | length' "$cxr_hooks")"
   assert_eq "codex: every hooks.json command path is absolute" "0" "$cxr_rel"
 fi
 rm -rf "$CXR_WORK"
+
+# The hook command is executed by a shell. A path containing spaces therefore
+# needs its own shell quotes, not only JSON escaping. Exercise the exact emitted
+# command with a benign hook payload to prevent the runtime wiring from regressing.
+CXS_OUT="$CX_DIR/target with space's quote"; mkdir -p "$CXS_OUT"
+CXS_ENV="$CX_DIR/spaced-local.env"
+make_codex_env "$CXS_ENV" "$CXS_OUT" "$CX_VAULT"
+AI_CONFIG_LOCAL_ENV="$CXS_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness codex >/dev/null 2>&1
+cxs_cmd="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$CXS_OUT/hooks.json")"
+cxs_result="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":""}}' | bash -c "$cxs_cmd" 2>&1)"; cxs_status=$?
+assert_eq "codex: quoted hook command with a spaced target exits 0" "0" "$cxs_status"
+assert_eq "codex: quoted hook command with a spaced target is silent for a safe read" "" "$cxs_result"
 
 # === Full install: swap into the target + drift gate ========================
 CXB_OUT="$(mktemp -d)/target"; mkdir -p "$CXB_OUT"
@@ -160,6 +173,8 @@ assert_eq "codex full install exits 0" "0" "$cxb_status"
 # The codex build is inert until the user trusts its hooks.json — install.sh
 # must surface that manual step (adapter.md Fact 2 documents it as surfaced).
 assert_contains "codex install surfaces the /hooks trust step" "$(cat "$cxb_err")" "/hooks"
+assert_contains "codex install reports the gate as unverified" "$(cat "$cxb_err")" "Gate status: UNVERIFIED"
+assert_not_contains "codex install does not report the gate armed from file presence" "$(cat "$cxb_err")" "Gate status: ARMED"
 assert_file "codex full install swaps session-agent SKILL.md" "$CXB_OUT/skills/session-agent/SKILL.md"
 assert_file "codex full install swaps hooks.json"             "$CXB_OUT/hooks.json"
 assert_file "codex full install swaps AGENTS.md"              "$CXB_OUT/AGENTS.md"
@@ -227,8 +242,16 @@ cx_classify_directive() {
   case "${1#*|}" in *"$2"*) echo "directive";; *) echo "silent";; esac
 }
 
-# session-agent.sh (PreToolUse / apply_patch)
+# session-agent.sh (PreToolUse / Bash + native edit paths)
 cx_session_agent_payload() { printf '{"transcript_path":"%s","tool_name":"apply_patch"}' "$1"; }
+cx_bash_payload() {
+  local command_file payload
+  command_file="$(mktemp)"
+  printf '%s' "$2" > "$command_file"
+  payload="$(jq -n --arg transcript "$1" --rawfile command "$command_file" '{transcript_path:$transcript,tool_name:"Bash",tool_input:{command:$command}}')"
+  rm -f "$command_file"
+  printf '%s\n' "$payload"
+}
 
 cr1="$(cx_run_hook "$CXH/session-agent.sh" '{"tool_name":"apply_patch"}')"
 assert_eq "codex session-agent: no transcript exits 0" "0" "${cr1%%|*}"
@@ -247,6 +270,81 @@ assert_eq "codex session-agent: invoked+Linear w/o Lessons blocks" "block" "$(cx
 
 cr4="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_session_agent_payload "$fix/codex-transcript-session-agent-no-linear.jsonl")")"
 assert_eq "codex session-agent: invoked w/o Linear blocks" "block" "$(cx_classify_block "$cr4")"
+
+# Codex reports shell-wrapped patches as Bash. The gate must leave orient reads
+# usable, including literal writer words and a literal `>` argument, while
+# feeding direct mutations into the existing declaration check. This is bounded
+# coverage, not a shell parser.
+cr_bash_read="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg -n "Linear gate:" README.md')")"
+assert_eq "codex session-agent: Bash read bypasses the declaration gate" "allow" "$(cx_classify_block "$cr_bash_read")"
+cr_bash_writer_arg="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg -n touch README.md')")"
+assert_eq "codex session-agent: Bash writer word as rg argument stays a read" "allow" "$(cx_classify_block "$cr_bash_writer_arg")"
+cr_bash_printf_arg="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'printf "%s" touch')")"
+assert_eq "codex session-agent: Bash writer word as printf argument stays a read" "allow" "$(cx_classify_block "$cr_bash_printf_arg")"
+cr_bash_pipe_read="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg --files | rg install')")"
+assert_eq "codex session-agent: Bash pipe read stays a read" "allow" "$(cx_classify_block "$cr_bash_pipe_read")"
+cr_bash_literal="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "printf '%s\\n' '>'")")"
+assert_eq "codex session-agent: Bash quoted greater-than is not treated as redirection" "allow" "$(cx_classify_block "$cr_bash_literal")"
+cr_bash_escaped="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'printf %s \>')")"
+assert_eq "codex session-agent: Bash escaped greater-than is not treated as redirection" "allow" "$(cx_classify_block "$cr_bash_escaped")"
+cr_bash_dev_null="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'command -v jq >/dev/null')")"
+assert_eq "codex session-agent: Bash exact /dev/null redirect stays a read" "allow" "$(cx_classify_block "$cr_bash_dev_null")"
+cr_bash_fd_dev_null="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg foo 2>/dev/null')")"
+assert_eq "codex session-agent: Bash fd /dev/null redirect stays a read" "allow" "$(cx_classify_block "$cr_bash_fd_dev_null")"
+cr_bash_append_dev_null="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg foo >>/dev/null; printf ok')")"
+assert_eq "codex session-agent: Bash append /dev/null redirect stays a read" "allow" "$(cx_classify_block "$cr_bash_append_dev_null")"
+cr_bash_append_dev_null_fd="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg foo >>/dev/null 2>&1')")"
+assert_eq "codex session-agent: Bash append /dev/null redirect with fd duplication stays a read" "allow" "$(cx_classify_block "$cr_bash_append_dev_null_fd")"
+cr_bash_null_then_lookalike="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'foo >/dev/null >/dev/null2')")"
+assert_eq "codex session-agent: Bash /dev/null before lookalike redirect enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_null_then_lookalike")"
+cr_bash_lookalike_then_null="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'foo >/dev/null2; bar >/dev/null')")"
+assert_eq "codex session-agent: Bash lookalike before /dev/null redirect enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_lookalike_then_null")"
+cr_bash_mixed_redirect="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'rg foo >/dev/null > evidence.txt')")"
+assert_eq "codex session-agent: Bash mixed /dev/null and file redirects enter the declaration gate" "block" "$(cx_classify_block "$cr_bash_mixed_redirect")"
+cr_bash_empty="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" '')")"
+assert_eq "codex session-agent: empty Bash command passes without a parser error" "allow" "$(cx_classify_block "$cr_bash_empty")"
+cr_bash_patch="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "apply_patch <<'PATCH'\n*** Begin Patch\nPATCH")")"
+assert_eq "codex session-agent: Bash apply_patch enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_patch")"
+cr_bash_compact_patch="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" $'apply_patch<<\'PATCH\'\n*** Begin Patch\nPATCH')")"
+assert_eq "codex session-agent: Bash compact heredoc apply_patch enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_compact_patch")"
+cr_bash_path_patch="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" '/usr/local/bin/apply_patch <<'"'"'PATCH'"'"'\n*** Begin Patch\nPATCH')")"
+assert_eq "codex session-agent: absolute-path Bash apply_patch enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_path_patch")"
+cr_bash_path_touch="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" '/bin/touch evidence.txt')")"
+assert_eq "codex session-agent: absolute-path Bash touch enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_path_touch")"
+cr_bash_tee="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'printf x | tee evidence.txt')")"
+assert_eq "codex session-agent: Bash pipe writer enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_tee")"
+cr_bash_background="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'printf x & touch evidence.txt')")"
+assert_eq "codex session-agent: Bash background-segment writer enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_background")"
+cr_bash_newline="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" $'printf x\ntouch evidence.txt')")"
+assert_eq "codex session-agent: Bash newline-segment writer enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_newline")"
+cr_bash_redirect="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" 'printf x > evidence.txt')")"
+assert_eq "codex session-agent: Bash file redirection enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_redirect")"
+cx_bash_ascii_8192="$(printf 'x%.0s' {1..8192})"
+cr_bash_ascii_8192="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "$cx_bash_ascii_8192")")"
+assert_eq "codex session-agent: 8192-byte ASCII Bash command stays a read" "allow" "$(cx_classify_block "$cr_bash_ascii_8192")"
+cx_bash_ascii_8193="${cx_bash_ascii_8192}x"
+cr_bash_ascii_8193="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "$cx_bash_ascii_8193")")"
+assert_eq "codex session-agent: 8193-byte ASCII Bash command enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_ascii_8193")"
+cx_bash_emoji_2048="$(printf '😀%.0s' {1..2048})"
+cr_bash_emoji_2048="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "$cx_bash_emoji_2048")")"
+assert_eq "codex session-agent: 2048-emoji Bash command stays a read at 8192 UTF-8 bytes" "allow" "$(cx_classify_block "$cr_bash_emoji_2048")"
+cx_bash_emoji_2049="${cx_bash_emoji_2048}😀"
+cr_bash_emoji_2049="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "$cx_bash_emoji_2049")")"
+assert_eq "codex session-agent: 2049-emoji Bash command enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_emoji_2049")"
+cx_bash_long_command="$(printf 'x%.0s' {1..200000})"
+cx_bash_long_start=$SECONDS
+cr_bash_long_block="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "$cx_bash_long_command")")"
+cx_bash_long_elapsed=$((SECONDS - cx_bash_long_start))
+assert_eq "codex session-agent: oversized Bash command enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_long_block")"
+if ((cx_bash_long_elapsed < 10)); then _pass "codex session-agent: oversized Bash command completes under 10 seconds"
+else _fail "codex session-agent: oversized Bash command completes under 10 seconds" "elapsed: ${cx_bash_long_elapsed}s"; fi
+cr_bash_long_allow="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-session-agent-ok.jsonl" "$cx_bash_long_command")")"
+assert_eq "codex session-agent: declared oversized Bash command allows" "allow" "$(cx_classify_block "$cr_bash_long_allow")"
+cx_bash_multibyte="$(printf '😀%.0s' {1..8191})"
+cr_bash_multibyte="$(cx_run_hook "$CXH/session-agent.sh" "$(cx_bash_payload "$fix/codex-transcript-empty.jsonl" "$cx_bash_multibyte")")"
+assert_eq "codex session-agent: UTF-8-byte oversized Bash command enters the declaration gate" "block" "$(cx_classify_block "$cr_bash_multibyte")"
+cr_bash_malformed="$(cx_run_hook "$CXH/session-agent.sh" '{"transcript_path":"'"$fix/codex-transcript-empty.jsonl"'","tool_name":"Bash","tool_input":{}}')"
+assert_eq "codex session-agent: malformed Bash command fails closed" "block" "$(cx_classify_block "$cr_bash_malformed")"
 
 # <TEAM>-360 vacuousness regressions. Codex injects a skills CATALOG (a developer
 # message listing every skill's `(file: …/SKILL.md)` path) into EVERY session's

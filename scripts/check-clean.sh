@@ -594,5 +594,5 @@ if [ "$fail" -ne 0 ]; then
   printf 'FAIL check-clean: leaks found in %s\n' "$target" >&2
   exit 1
 fi
-printf 'PASS check-clean: %s is clean (no issue IDs / home paths / emails / operator tokens)%s%s\n' "$target" "$identity_note" "$msg_note"
+printf 'PASS check-clean: %s is clean (no issue IDs / home paths / emails / operator tokens; repository scope only; does not attest user-owned harness configs: CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME, CURSOR_CONFIG_DIR, AGENTS_DIR)%s%s\n' "$target" "$identity_note" "$msg_note"
 exit 0

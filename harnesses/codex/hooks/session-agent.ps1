@@ -2,13 +2,14 @@
 <#
 .SYNOPSIS
     Session-agent enforcement hook (Codex PreToolUse event, matcher
-    apply_patch) — PowerShell port.
+    Bash|apply_patch|Edit|Write) — PowerShell port.
 
 .DESCRIPTION
     <TEAM>-113 Windows-native port of harnesses/codex/hooks/session-agent.sh.
 
-    Blocks the file edit if the session-agent capability was not invoked
-    earlier in the session. SAFETY NET — primary auto-fire is via the
+    Blocks bounded file-mutation paths if the session-agent capability was not
+    invoked earlier in the session. Read-only Bash commands pass without
+    inspecting the session. SAFETY NET — primary auto-fire is via the
     SessionStart directive emitted by framework-surface.ps1.
 
     Enforcement class: pre-edit-gate (see harnesses/codex/adapter.md).
@@ -49,6 +50,52 @@ function Deny {
     exit 0
 }
 
+# Return a simplified view of a Bash command. Quoted content becomes a benign
+# placeholder and escaped characters are ignored. This is deliberately NOT a
+# shell parser. It prevents a literal `>` in an orient command from looking like
+# redirection while recognizing the bounded mutation forms below. Commands
+# hidden in `bash -c '...'`, command substitutions, aliases, or a non-listed
+# executable are outside this procedural gate's coverage.
+function Test-BashCommandMayWrite {
+    param([AllowEmptyString()][string]$Command)
+
+    # A UTF-8 byte-count guard bounds the deliberately simple quote-stripper.
+    # Oversized Bash commands take the existing declaration-check path.
+    if ([Text.Encoding]::UTF8.GetByteCount($Command) -gt 8192) { return $true }
+
+    $out = New-Object System.Text.StringBuilder
+    $state = 'plain'
+    for ($i = 0; $i -lt $Command.Length; $i++) {
+        $ch = $Command[$i]
+        switch ($state) {
+            'plain' {
+                if ($ch -eq '\') { $i++; continue }
+                if ($ch -eq "'") { $state = 'single'; [void]$out.Append('q'); continue }
+                if ($ch -eq '"') { $state = 'double'; [void]$out.Append('q'); continue }
+                [void]$out.Append($ch)
+            }
+            'single' {
+                if ($ch -eq "'") { $state = 'plain' }
+            }
+            'double' {
+                if ($ch -eq '\') { $i++; continue }
+                if ($ch -eq '"') { $state = 'plain' }
+            }
+        }
+    }
+
+    $bare = $out.ToString() -replace "`n", ';'
+    # Keep ordinary read controls usable only for the exact /dev/null target.
+    # Removing that token first still catches another redirection in this command.
+    $redirectCheck = $bare
+    $nullRedirect = [regex]::new('[0-9]*>>?[ \t]*/dev/null(?=[\s;|&]|$)')
+    while (($nullMatch = $nullRedirect.Match($redirectCheck)).Success) {
+        $redirectCheck = $redirectCheck.Remove($nullMatch.Index, $nullMatch.Length)
+    }
+    return (($bare -cmatch '(^|[;|&]|&&|\|\|)\s*([^\s;|&]*/)?(apply_patch|tee|touch|mkdir|rm|mv|cp|install|truncate|dd)(?=[\s;|&<]|$)') -or
+        ($redirectCheck -cmatch '(^|[^>])>[ \t]*[^&\s]'))
+}
+
 if ($env:CLAUDE_SKIP_SESSION_AGENT -eq '1') {
     exit 0
 }
@@ -67,6 +114,23 @@ if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
 # Drain stdin. [Console]::In.ReadToEnd() is the cleanest path.
 $INPUT_JSON = [Console]::In.ReadToEnd()
 if (-not $INPUT_JSON) { exit 0 }
+
+# A shell-wrapped `apply_patch` reaches Codex hooks as tool_name `Bash`.
+# Pass ordinary reads before the transcript check; gate only the bounded common
+# mutation patterns in Test-BashCommandMayWrite. Native edit tool names always
+# continue to the declaration check below.
+$toolName = $INPUT_JSON | & jq -r '.tool_name // empty'
+if ($toolName -ceq 'Bash') {
+    $commandKind = $INPUT_JSON | & jq -r 'if (.tool_input? | type) == "object" and (.tool_input.command? | type) == "string" then "string" else "invalid" end'
+    if ($commandKind -cne 'string') {
+        Deny 'Bash pre-edit candidate has no string tool_input.command; the bounded mutation check cannot inspect it, so the gate fails closed.'
+    }
+    # Native command output becomes one PowerShell pipeline item per newline.
+    # Rejoin it so a newline-separated shell command reaches the same bounded
+    # segment check as the Bash twin.
+    $command = @($INPUT_JSON | & jq -r '.tool_input.command') -join "`n"
+    if (-not (Test-BashCommandMayWrite -Command $command)) { exit 0 }
+}
 
 # Extract transcript_path via jq (matches bash hook's contract).
 $TRANSCRIPT = $INPUT_JSON | & jq -r '.transcript_path // empty'

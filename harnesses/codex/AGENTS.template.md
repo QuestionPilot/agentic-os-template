@@ -32,8 +32,8 @@ to invoke `$session-agent` as the first action of every session — Mode 1
 (kickoff orient: memory + Linear + vault + reconciliation) then route the user's
 first prompt. On every subsequent non-trivial prompt, re-invoke `$session-agent`
 (Mode 2: route only — orient is already live in context). One capability, two
-modes; the body teaches both. A `PreToolUse` hook on `apply_patch` enforces the
-gate before file edits as a safety net.
+modes; the body teaches both. A `PreToolUse` hook on bounded write-capable paths
+enforces the gate as a safety net.
 
 ### OS capability catalog
 
@@ -97,7 +97,7 @@ an inline tracker identifier — framework files carry no private tracker IDs.
   agentic-os-template.
 - The framework SessionStart hook directs `$session-agent` invocation as the
   first action of every session (Mode 1: orient + route). A `PreToolUse` hook
-  on `apply_patch` enforces this as a safety net before any file edit.
+  on bounded write-capable paths enforces this as a safety net.
 - Multi-step or multi-session work goes into Linear before execution (routing
   protocol step 4); session todos track only the steps *within* an issue being
   actively executed.

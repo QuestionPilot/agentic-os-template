@@ -640,7 +640,8 @@ install_hook_script_only() {
 
 # enforcement-class -> "script event matcher"  (mirrors each harness adapter's
 # Fact 2). Only the pre-edit matcher differs — claude intercepts
-# Write|Edit|NotebookEdit, codex apply_patch.
+# Write|Edit|NotebookEdit, codex Bash|apply_patch|Edit|Write. The Codex hook
+# itself narrows Bash to the bounded mutation patterns it can inspect.
 # Two enforcement classes were removed and intentionally have no rows here:
 #   - `prompt-scan` — the cross-model-review capability moved out of
 #     agentic-os-template to Shape C; no capability declares it.
@@ -652,7 +653,7 @@ install_hook_script_only() {
 hook_for_class() {
   case "$HARNESS:$1" in
     claude:pre-edit-gate)    echo "session-agent.sh PreToolUse Write|Edit|NotebookEdit" ;;
-    codex:pre-edit-gate)     echo "session-agent.sh PreToolUse apply_patch" ;;
+    codex:pre-edit-gate)     echo "session-agent.sh PreToolUse Bash|apply_patch|Edit|Write" ;;
     hermes:pre-edit-gate)    echo "session-agent.sh pre_tool_call write_file|patch|terminal" ;;
     # Cursor preToolUse matchers filter by TOOL TYPE. A file edit reports
     # tool_name "Write" and a deletion reports tool_name "Delete" — both
@@ -744,16 +745,25 @@ generate_settings() {
 # generate_codex_hooks — emits a fully-generated $BUILD/hooks.json from the
 # HOOK_BLOCKS accumulator. The event->matcher->handler shape mirrors Codex's
 # native hooks.json (Codex auto-loads $CODEX_HOME/hooks.json). The hook `command`
-# is the absolute path of the script in the FINAL target, so it is correct
-# post-swap. Codex hooks.json entries carry no `args` array (that is Claude's
-# settings.json shape).
+# is a POSIX-shell-quoted absolute path of the script in the FINAL target, so it
+# is correct post-swap even when the target contains spaces or apostrophes. Codex hooks.json
+# entries carry no `args` array (that is Claude's settings.json shape).
+codex_hook_command() {
+  local p="$1" idiom
+  # Codex executes the field through /bin/sh. Wrap the complete path in POSIX
+  # single quotes, and rewrite an embedded apostrophe as close-quote, literal
+  # apostrophe, reopen-quote. This makes exactly one argv path after sh parsing.
+  idiom=$(printf '\47\134\47\47')
+  printf "'%s'" "${p//\'/$idiom}"
+}
+
 generate_codex_hooks() {
   local hooks_json='{}' event matcher script entry
   while IFS="$HOOK_REC_SEP" read -r event matcher script; do
     [ -n "$event" ] || continue
     entry="$(jq -n \
       --arg matcher "$matcher" \
-      --arg command "$TARGET/hooks/$script" \
+      --arg command "$(codex_hook_command "$TARGET/hooks/$script")" \
       '{matcher: $matcher, hooks: [{type: "command", command: $command, timeout: 10}]}')"
     # Append the entry to the event's array (creating the array if absent).
     hooks_json="$(printf '%s' "$hooks_json" | jq \
@@ -1815,7 +1825,9 @@ main() {
   if [ "$HARNESS" = codex ]; then
     printf 'install.sh: NEXT STEP — run the interactive `/hooks` command in codex once\n' >&2
     printf '            to review and trust %s/hooks.json; this interactive step\n' "$TARGET" >&2
-    printf '            remains required. (v0.153.4 observation: codex exec fired hooks with --dangerously-bypass-hook-trust in a fresh CODEX_HOME; persisted trust is unverified.)\n' >&2
+    printf '            remains required. Gate status: UNVERIFIED — this install only writes wiring.\n' >&2
+    printf '            Runtime proof requires a fired-hook receipt from the intended runtime.\n' >&2
+    printf '            (v0.153.4 observation: codex exec fired hooks with --dangerously-bypass-hook-trust in a fresh CODEX_HOME; persisted trust is unverified.)\n' >&2
   fi
 
   # Cursor hot-reloads hooks.json, so there is no trust/merge step like codex or
