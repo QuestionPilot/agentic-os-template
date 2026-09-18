@@ -12,7 +12,8 @@ expected here and nowhere else (`scripts/check-drift.sh` denies the Hermes
 token set in shared dirs).
 
 Verified against **Hermes Agent v0.18.2** (2026-07-12) — hook wire shapes via
-`hermes hooks doctor` synthetic-payload checks plus live spine sessions;
+`hermes hooks doctor` synthetic-payload checks plus live spine sessions. Hermes
+Agent v0.21.3 source was also inspected for consent matching;
 desktop-entrypoint behavior and the bridge plugin were verified on v0.16.0
 (2026-06-10, live desktop session + source inspection) and dated in-body
 citations record that baseline; edit-tool surface via a live CLI session. The build target
@@ -147,10 +148,13 @@ cannot write `config.yaml` (it carries operator model/provider/platform
 config). Instead it generates `<config>/hooks/hooks.yaml` — the exact `hooks:`
 + `plugins.enabled` block to merge — and prints the step. Consent is also
 Hermes-native: shell hooks require first-use approval (TTY prompt,
-`--accept-hooks`, or `hooks_auto_accept: true`), recorded mtime-pinned in
-`$HERMES_HOME/shell-hooks-allowlist.json`. **Re-running install.sh rewrites the
-hook scripts and therefore invalidates prior consent** — re-approve on the
-next CLI run.
+`--accept-hooks`, or `hooks_auto_accept: true`) and records an event-and-command
+pair in `$HERMES_HOME/shell-hooks-allowlist.json`. Hermes Agent v0.21.3 stores
+`script_mtime_at_approval` with that record but matches consent by event and
+command; mtime is not compared by that lookup. After a re-render, use `hermes
+hooks list` to inspect the configured and consented hooks instead of inferring
+state from script mtime. Re-render and consent-persistence behavior on the
+verified v0.18.2 runtime baseline remains unverified.
 
 **Desktop-app gap + the bridge plugin (verified v0.16.0).** Shell-hook
 *registration* happens only in the CLI entrypoints and the messaging gateway —
@@ -226,8 +230,10 @@ updating the matching hook script.
 1. Merge the generated `hooks/hooks.yaml` block into `$HERMES_HOME/config.yaml`
    (`hooks:` + `plugins.enabled`).
 2. Approve the hooks on first use (`hermes --accept-hooks` once, or answer the
-   TTY consent prompt; `hermes hooks list` shows consent state). Re-runs of
-   install.sh re-render the scripts and require re-approval.
+   TTY consent prompt). Source inspection of Hermes Agent v0.21.3 shows consent
+   lookup matches event and command. Use `hermes hooks list` to inspect state.
+   Dispatch after body replacement under prior consent is not runtime-tested;
+   consent is not a safety guarantee.
 
 **Drift gate.** After any build,
 `scripts/check-drift.sh --manifest "$HERMES_HOME"` verifies the live output
