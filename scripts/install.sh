@@ -435,15 +435,25 @@ generate_capability_catalog() {
 
 # compile_entrypoint <template> <out-name> <catalog>
 # Resolves @@VAR@@ path placeholders against the environment and replaces the
-# @@CAPABILITY_CATALOG@@ marker with the generated catalog, writing <build>/<out>.
+# content-injection markers with their canonical sources, writing <build>/<out>.
 # A path placeholder whose variable is unset/empty fails the build — a generated
 # entrypoint must never carry an empty path.
 compile_entrypoint() {
   local tmpl="$1" out="$2" catalog="$3"
   [ -f "$tmpl" ] || die "entrypoint template not found: $tmpl"
 
-  local content token var val overlay
+  local content token var val overlay communication_style
   content="$(cat "$tmpl")"
+
+  # The default report style has one canonical, harness-neutral source. Every
+  # entrypoint template carries the marker once so all rendered harnesses use
+  # the same rule without hand-copied prose.
+  case "$content" in
+    *@@COMMUNICATION_STYLE@@*)
+      communication_style="$repo_root/core/communication-style.md"
+      [ -f "$communication_style" ] || die "communication style source not found: $communication_style"
+      content="${content//@@COMMUNICATION_STYLE@@/$(cat "$communication_style")}" ;;
+  esac
 
   # Operator skills overlay. The shipped SKILLS template carries only
   # the spine (routing method + spine routing table + capability catalog +
