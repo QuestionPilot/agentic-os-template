@@ -31,7 +31,18 @@ lifecycle: shipped
   repo-root `MEMORY.md`, and a filesystem search times out). Hermes has no
   `<config>/projects/<slug>/memory/` project notes — durable project memory lives in
   the vault, so satisfy O1's project-body reads inside the O4 vault orient (the
-  relevant `01-Projects/` notes). Run `$AI_CONFIG_DIR/scripts/orient.sh` without `--memory-dir`.
+  relevant `01-Projects/` notes). Run the orientation helper without `--memory-dir`.
+  Before the gate opens, use a **literal absolute path** from the framework root
+  named in your entrypoint, not a shell variable or relative path:
+  `bash '/absolute/framework root/scripts/orient.sh'` on POSIX, or
+  `pwsh -NoProfile -File 'C:\absolute\framework root\scripts\orient.ps1'` on Windows.
+  Replace the example root; single-quote the path (escape an embedded apostrophe
+  as `'\''`: Hermes terminal uses Bash, including Git Bash on Windows).
+  A directly invoked quoted POSIX path
+  and a correctly escaped double-quoted POSIX path also work. Use a standalone
+  command: no extra arguments, redirects, pipelines, or chained commands.
+  This narrow bootstrap exception permits orientation only; subsequent edits
+  and other terminal commands still require the routing declaration.
 - **O4 operator-identity read — Hermes-specific.** The operator-identity master
   ("Operator Soul") is ALREADY in your context: `install.sh --harness hermes`
   splices a lean projection (`SOUL_IDENTITY_PATH`) into `SOUL.md`, injected as

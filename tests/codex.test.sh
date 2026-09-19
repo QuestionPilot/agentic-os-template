@@ -211,6 +211,20 @@ assert_contains "live-overlay refusal names the guard" \
   "$cxa_out" "refusing the .agents co-render into the live overlay"
 rm -rf "$CXA_WORK"
 
+# A later Codex co-render must not create a trusted Hermes project shadow.
+CXH_WORK="$(mktemp -d)"; CXH_PROJECT="$CXH_WORK/project"; CXH_CODEX="$CXH_WORK/codex"; CXH_HERMES="$CXH_WORK/hermes"; CXH_BIN="$CXH_WORK/bin"; CXH_ENV="$CXH_WORK/local.env"
+make_tracked_git_fixture "$CXH_PROJECT"
+mkdir -p "$CXH_PROJECT/.agents" "$CXH_CODEX" "$CXH_HERMES/skills/session-agent" "$CXH_BIN"
+ln -s "$CXH_PROJECT" "$CXH_WORK/project-link"
+printf 'divergent Hermes profile skill\n' > "$CXH_HERMES/skills/session-agent/SKILL.md"
+printf '%s\n' '#!/usr/bin/env bash' 'case "$*" in' '*skills.project_discovery*) printf true ;;' '*skills.trusted_project_dirs*) printf "[\\\"%s\\\"]" "$CXH_TRUSTED" ;;' '*) exit 2 ;;' 'esac' > "$CXH_BIN/hermes"; chmod +x "$CXH_BIN/hermes"
+printf 'CODEX_HOME=%q\nHERMES_HOME=%q\nAGENTS_DIR=%q\nAI_CONFIG_DIR=%q\nOBSIDIAN_VAULT_PATH=%q\n' "$CXH_CODEX" "$CXH_HERMES" "$CXH_PROJECT/.agents" "$CXH_PROJECT" "/tmp/test-vault" > "$CXH_ENV"
+cxh_out="$(PATH="$CXH_BIN:$PATH" CXH_TRUSTED="$CXH_WORK/project-link/" AI_CONFIG_LOCAL_ENV="$CXH_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness codex 2>&1)"; cxh_rc=$?
+assert_eq "codex prospective Hermes shadow refuses before co-render" "1" "$cxh_rc"
+assert_contains "codex prospective Hermes shadow names the guard" "$cxh_out" "Hermes project-skill shadow"
+assert_exit "codex prospective Hermes shadow leaves .agents untouched" 1 -- test -e "$CXH_PROJECT/.agents/skills/session-agent"
+rm -rf "$CXH_WORK"
+
 # === Codex hook behaviour ===================================================
 # Feed each compiled Codex hook a mock Codex event payload, assert exit code +
 # the deny/continue/inject side effect. Helpers are defined locally because

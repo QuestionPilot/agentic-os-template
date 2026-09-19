@@ -384,6 +384,20 @@ try {
     Assert-Contains 'codex.test: live-overlay refusal names the guard' $cxa_out 'refusing the .agents co-render into the live overlay'
     Remove-Item -LiteralPath $CXA_ROOT -Recurse -Force -ErrorAction SilentlyContinue
 
+    # A prospective Codex mirror must refuse before it writes a trusted Hermes
+    # project overlay. The stub is the profile-scoped resolver only.
+    $CXH_ROOT=Join-Path ([IO.Path]::GetTempPath()) ('codex-hermes-shadow-' + [Guid]::NewGuid().Guid.Substring(0,8)); $CXH_PROJECT=New-TrackedGitFixture -Dest (Join-Path $CXH_ROOT 'project'); $CXH_CODEX=Join-Path $CXH_ROOT 'codex'; $CXH_HERMES=Join-Path $CXH_ROOT 'hermes'; $CXH_BIN=Join-Path $CXH_ROOT 'bin'; $CXH_ENV=Join-Path $CXH_ROOT 'local.env'
+    New-Item -ItemType Directory -Path (Join-Path $CXH_PROJECT '.agents'),$CXH_CODEX,(Join-Path $CXH_HERMES 'skills/session-agent'),$CXH_BIN -Force | Out-Null
+    $CXH_LINK = Join-Path $CXH_ROOT 'project-link'; New-Item -ItemType SymbolicLink -Path $CXH_LINK -Target $CXH_PROJECT -ErrorAction Stop | Out-Null
+    [IO.File]::WriteAllText((Join-Path $CXH_HERMES 'skills/session-agent/SKILL.md'),'divergent Hermes profile skill',[Text.UTF8Encoding]::new($false))
+    $stub=@('#!/usr/bin/env bash','case "$*" in','*skills.project_discovery*) printf true ;;','*skills.trusted_project_dirs*) printf "[\\\"%s\\\"]" "$CXH_TRUSTED" ;;','*) exit 2 ;;','esac') -join "`n"; [IO.File]::WriteAllText((Join-Path $CXH_BIN 'hermes'),($stub+"`n"),[Text.UTF8Encoding]::new($false)); & chmod +x (Join-Path $CXH_BIN 'hermes')
+    [IO.File]::WriteAllText($CXH_ENV,("CODEX_HOME=`"$CXH_CODEX`"`nHERMES_HOME=`"$CXH_HERMES`"`nAGENTS_DIR=`"$(Join-Path $CXH_PROJECT '.agents')`"`nAI_CONFIG_DIR=`"$CXH_PROJECT`"`nOBSIDIAN_VAULT_PATH=`"$CX_VAULT`"`n"),[Text.UTF8Encoding]::new($false))
+    $oldPath=$env:PATH; $oldTrust=$env:CXH_TRUSTED; $env:PATH=$CXH_BIN+[IO.Path]::PathSeparator+$oldPath; $env:CXH_TRUSTED=$CXH_LINK+[IO.Path]::DirectorySeparatorChar; $env:AI_CONFIG_LOCAL_ENV=$CXH_ENV; $cxhOut=(& pwsh -NoProfile -File $INSTALL_PS1 --harness codex 2>&1) -join "`n"; $cxhRc=$LASTEXITCODE; $env:PATH=$oldPath; $env:CXH_TRUSTED=$oldTrust; $env:AI_CONFIG_LOCAL_ENV=$CXB_ENV
+    Assert-Eq 'codex.test: prospective Hermes shadow refuses before co-render' '1' "$cxhRc"
+    Assert-Contains 'codex.test: prospective Hermes shadow names the guard' $cxhOut 'Hermes project-skill shadow'
+    if (Test-Path -LiteralPath (Join-Path $CXH_PROJECT '.agents/skills/session-agent')) { _Fail 'codex.test: prospective Hermes shadow leaves .agents untouched' 'session-agent was written' } else { _Pass 'codex.test: prospective Hermes shadow leaves .agents untouched' }
+    Remove-Item -LiteralPath $CXH_ROOT -Recurse -Force -ErrorAction SilentlyContinue
+
     # === Codex hook behaviour — _Skip on the Windows lane ====================
     # Per [[feedback_port_parity_vs_regression_split]]: the .ps1 codex hooks'
     # run-time behavior (marker recognition + fail-closed/open) is covered in
