@@ -291,7 +291,7 @@ release_install_locks() {
     fi
   done
 }
-trap 'release_install_locks; rm -rf "$BUILD"' EXIT
+trap 'release_install_locks; [ -z "${OPERATOR_SKILL_STAGE:-}" ] || rm -rf "$OPERATOR_SKILL_STAGE"; rm -rf "$BUILD"' EXIT
 mkdir -p "$BUILD/skills" "$BUILD/hooks"
 
 # Accumulators filled by compile_* and emitted by generate_settings.
@@ -595,6 +595,10 @@ install_hook() {
     # path may contain any character (#, &, \ are all safe here).
     local content
     content="$(cat "$src")"
+    # Replace the complete quoted token with a shell-quoted DATA literal.
+    local orient_root_literal
+    orient_root_literal="$(jq -nr --arg root "$AI_CONFIG_DIR" '$root | @sh')"
+    content="${content//\'@@ORIENT_ROOT@@\'/$orient_root_literal}"
     content="${content//@@AI_CONFIG_DIR@@/$AI_CONFIG_DIR}"
     # @@RESCUE_INVOCATION@@ (stuck-detector): the rescue capability is
     # operator-local (Shape C), so the framework hook text is generic and the
@@ -1548,6 +1552,249 @@ validate_build() {
   fi
 }
 
+# Hermes project skills take precedence over profile skills. The framework
+# checkout's .agents tree is a shared project surface with Codex/Gemini bodies,
+# so consult Hermes's selected profile before a render can silently preserve a
+# divergent shadow. No resolver means no positive finding: warn and continue.
+hermes_normalize_project_path() {
+  local path="$1" resolved
+  resolved="$(CDPATH= cd "$path" 2>/dev/null && pwd -P)" || return 1
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) printf '%s' "$resolved" | tr '[:upper:]' '[:lower:]' ;; *) printf '%s' "$resolved" ;; esac
+}
+
+hermes_effective_skill_name() {
+  local skill="$1" raw
+  raw="$(awk 'NR == 1 { if ($0 != "---") exit; next } /^---[[:space:]]*$/ { exit } /^name:[[:space:]]*/ { sub(/^name:[[:space:]]*/, ""); sub(/[[:space:]]+$/, ""); print; exit }' "$skill")"
+  case "$raw" in \"*\") raw="${raw#\"}"; raw="${raw%\"}" ;; \'*\') raw="${raw#\'}"; raw="${raw%\'}" ;; esac
+  [ -n "$raw" ] || raw="$(basename "$(dirname "$skill")")"
+  printf '%s' "$raw"
+}
+
+# Returns 0 when discovery is enabled and this resolved project is trusted.
+# Resolver output is intentionally strict: Hermes currently returns bare true
+# and a JSON array.  A changed or invalid shape is a loud degraded check, not a
+# false assurance.
+hermes_project_is_trusted() {
+  local profile="$1" project="$2" discovery trusted entry normalized
+  if ! command -v hermes >/dev/null 2>&1; then warn "Hermes project-skill shadow guard skipped: hermes CLI is unavailable, so selected-profile trust could not be inspected"; return 1; fi
+  discovery="$(HERMES_HOME="$profile" hermes config get --json skills.project_discovery 2>/dev/null)" || { warn "Hermes project-skill shadow guard skipped: could not read skills.project_discovery from selected profile $profile"; return 1; }
+  if [ "$discovery" != true ]; then
+    [ "$discovery" = false ] || warn "Hermes project-skill shadow guard skipped: invalid skills.project_discovery JSON from selected profile $profile (expected bare true or false)"
+    return 1
+  fi
+  trusted="$(HERMES_HOME="$profile" hermes config get --json skills.trusted_project_dirs 2>/dev/null)" || { warn "Hermes project-skill shadow guard skipped: could not read skills.trusted_project_dirs from selected profile $profile"; return 1; }
+  if ! printf '%s' "$trusted" | jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1; then
+    warn "Hermes project-skill shadow guard skipped: invalid trusted-project JSON from selected profile $profile (expected an array of paths)"
+    return 1
+  fi
+  while IFS= read -r entry; do
+    normalized="$(hermes_normalize_project_path "$entry" 2>/dev/null)" || continue
+    [ "$normalized" = "$project" ] && return 0
+  done < <(printf '%s' "$trusted" | jq -r '.[]')
+  return 1
+}
+
+# Compare each complete skill bundle, not merely SKILL.md: helpers, sidecars,
+# and nested files participate in the effective behavior Hermes loads.
+hermes_shadow_names() {
+  local project_skills="$1" profile_skills="$2" project_skill candidate name candidate_name existing
+  local -a names=()
+  while IFS= read -r -d '' project_skill; do
+    name="$(hermes_effective_skill_name "$project_skill")"
+    while IFS= read -r -d '' candidate; do
+      candidate_name="$(hermes_effective_skill_name "$candidate")"; [ "$candidate_name" = "$name" ] || continue
+      diff -qr "$(dirname "$project_skill")" "$(dirname "$candidate")" >/dev/null 2>&1 && continue
+      for existing in ${names[@]+"${names[@]}"}; do [ "$existing" = "$name" ] && continue 2; done
+      names+=("$name")
+    done < <(find "$profile_skills" -type f -name SKILL.md -print0 2>/dev/null)
+  done < <(find "$project_skills" -type f -name SKILL.md -print0 2>/dev/null)
+  :
+  printf '%s\n' "${names[@]+"${names[*]}"}"
+}
+
+guard_hermes_shadow() {
+  local profile="$1" project_root="$2" project_skills="$3" profile_skills="$4" names surface
+  [ -d "$project_skills" ] && [ -d "$profile_skills" ] || return 0
+  hermes_project_is_trusted "$profile" "$project_root" || return 0
+  names="$(hermes_shadow_names "$project_skills" "$profile_skills")"; [ -n "$names" ] || return 0
+  surface="${project_skills#"$project_root"/}"
+  local message="Hermes project-skill shadow: selected profile $profile trusts $project_root, so its $surface overrides divergent profile skills: $names. No files or trust settings were changed. Run 'hermes skills untrust' from that project (or remove/align the conflicting project skills), then re-run the install."
+  if [ "$DRY_RUN" -eq 1 ]; then warn "$message (dry-run: classification continues)"; return 0; fi
+  die "$message"
+}
+
+guard_hermes_project_skill_shadow() {
+  [ "$HARNESS" = hermes ] || return 0
+  local framework_root project_root
+  framework_root="$(hermes_normalize_project_path "$AI_CONFIG_DIR" 2>/dev/null)" || return 0
+  project_root="$(git -C "$framework_root" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  project_root="$(hermes_normalize_project_path "$project_root" 2>/dev/null)" || return 0
+  guard_hermes_shadow "$TARGET" "$project_root" "$project_root/.agents/skills" "$TARGET/skills"
+  guard_hermes_shadow "$TARGET" "$project_root" "$project_root/.hermes/skills" "$TARGET/skills"
+  [ -z "${OPERATOR_SKILL_STAGE:-}" ] || guard_hermes_shadow "$TARGET" "$project_root" "$project_root/.agents/skills" "$OPERATOR_SKILL_STAGE"
+  [ -z "${OPERATOR_SKILL_STAGE:-}" ] || guard_hermes_shadow "$TARGET" "$project_root" "$project_root/.hermes/skills" "$OPERATOR_SKILL_STAGE"
+  guard_hermes_shadow "$TARGET" "$project_root" "$project_root/.agents/skills" "$BUILD/skills"
+  guard_hermes_shadow "$TARGET" "$project_root" "$project_root/.hermes/skills" "$BUILD/skills"
+}
+
+# A Codex render can create the same project .agents overlay after Hermes was
+# installed. Preflight the prospective Codex build before any swap or overlay
+# write, but only when AGENTS_DIR is exactly this checkout's .agents surface.
+guard_hermes_prospective_codex_corender() {
+  [ "$HARNESS" = codex ] && [ -n "${AGENTS_DIR:-}" ] || return 0
+  if [ -z "${HERMES_HOME:-}" ]; then
+    warn "Hermes project-skill shadow guard skipped for the prospective .agents co-render: HERMES_HOME is unset, so selected-profile trust could not be inspected"
+    return 0
+  fi
+  local framework_root project_root overlay expected
+  framework_root="$(hermes_normalize_project_path "$AI_CONFIG_DIR" 2>/dev/null)" || return 0
+  project_root="$(git -C "$framework_root" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  project_root="$(hermes_normalize_project_path "$project_root" 2>/dev/null)" || return 0
+  overlay="$(hermes_normalize_project_path "$AGENTS_DIR" 2>/dev/null)" || return 0
+  expected="$(hermes_normalize_project_path "$project_root/.agents" 2>/dev/null)" || return 0
+  [ "$overlay" = "$expected" ] || return 0
+  guard_hermes_shadow "$HERMES_HOME" "$project_root" "$BUILD/skills" "$HERMES_HOME/skills"
+}
+
+# --- explicit operator-skill mirror ---------------------------------------
+# Shape C skills are operator-owned and never enter the public build manifest.
+# An operator can nevertheless opt into mirroring named portable skill dirs from
+# one local root into every selected harness. This keeps an intentionally shared
+# local skill current after a re-render without publishing its body or teaching
+# the framework any private skill name.
+#
+# OPERATOR_SKILL_SOURCE_DIR is the canonical local skills root and
+# OPERATOR_SKILL_SYNC is a comma-separated list of portable directory names.
+# Both are deliberately inert when unset. Source validation and staging happen
+# before the framework swap; activation happens only after the managed render
+# succeeds, and only touches the explicitly named Shape C directories.
+OPERATOR_SKILL_NAMES=()
+OPERATOR_SKILL_STAGE=""
+
+trim_operator_skill_value() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+prepare_operator_skill_sync() {
+  local rest="${OPERATOR_SKILL_SYNC:-}" item name seen source destination nested_skill
+  [ -n "$rest" ] || return 0
+  case "$rest" in *,) die "OPERATOR_SKILL_SYNC contains an empty skill name" ;; esac
+  source="${OPERATOR_SKILL_SOURCE_DIR:-}"
+  [ -n "$source" ] || die "OPERATOR_SKILL_SYNC is set but OPERATOR_SKILL_SOURCE_DIR is empty"
+  [ -d "$source" ] || die "OPERATOR_SKILL_SOURCE_DIR is not a directory: $source"
+
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *,*) item="${rest%%,*}"; rest="${rest#*,}" ;;
+      *) item="$rest"; rest="" ;;
+    esac
+    name="$(trim_operator_skill_value "$item")"
+    [ -n "$name" ] || die "OPERATOR_SKILL_SYNC contains an empty skill name"
+    if ! [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+      die "OPERATOR_SKILL_SYNC has unsafe skill name '$name' (allowed: letters, digits, . _ -; no leading punctuation)"
+    fi
+    for seen in "${OPERATOR_SKILL_NAMES[@]+"${OPERATOR_SKILL_NAMES[@]}"}"; do
+      [ "$seen" != "$name" ] || die "OPERATOR_SKILL_SYNC repeats skill '$name'"
+    done
+    [ ! -e "$BUILD/skills/$name" ] && [ ! -L "$BUILD/skills/$name" ] || die "operator skill '$name' collides with a framework-managed capability"
+    [ -d "$source/$name" ] && [ -f "$source/$name/SKILL.md" ] || die "operator skill source is incomplete: $source/$name/SKILL.md"
+    destination="$TARGET/skills/$name"
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+      [ ! -L "$destination" ] && [ -d "$destination" ] || die "operator skill destination is not a real directory: $destination"
+      # A top-level directory with no own SKILL.md but nested skill bundles is
+      # an app-managed category/pack, not a portable single skill. Replacing it
+      # would silently erase unrelated children (for example creative/humanizer).
+      # A normal pre-existing root SKILL.md remains explicitly adoptable.
+      if [ ! -f "$destination/SKILL.md" ]; then
+        nested_skill="$(find "$destination" -mindepth 2 -type f -name SKILL.md -print -quit 2>/dev/null)"
+        [ -z "$nested_skill" ] || die "operator skill destination is an app-managed category with nested SKILL.md files, not a portable skill: $destination"
+      fi
+    fi
+    OPERATOR_SKILL_NAMES+=("$name")
+  done
+
+  # Inspection modes must never alter a live target. They still validate the
+  # declared source, so a bad future mirror declaration is not hidden.
+  [ "$DRY_RUN" -eq 0 ] && [ "$BUILD_ONLY" -eq 0 ] || return 0
+  OPERATOR_SKILL_STAGE="$(mktemp -d "$TARGET/.operator-skill-stage.XXXXXX")" \
+    || die "could not stage operator skills under $TARGET"
+  for name in "${OPERATOR_SKILL_NAMES[@]}"; do
+    cp -R "$source/$name" "$OPERATOR_SKILL_STAGE/$name" \
+      || die "could not stage operator skill '$name' from $source"
+  done
+}
+
+sync_operator_skills() {
+  [ -n "$OPERATOR_SKILL_STAGE" ] || return 0
+  local backup name live staged had_old failure restore_ok i
+  local -a touched=() prior=()
+  backup="$(mktemp -d "$TARGET/.operator-skill-backup.XXXXXX")" \
+    || die "could not prepare operator-skill backup under $TARGET"
+
+  for name in "${OPERATOR_SKILL_NAMES[@]}"; do
+    live="$TARGET/skills/$name"; staged="$OPERATOR_SKILL_STAGE/$name"; had_old=0
+    if [ -e "$live" ]; then
+      if ! mv "$live" "$backup/$name"; then
+        failure="could not back up operator skill '$name'"
+        break
+      fi
+      had_old=1
+    fi
+    touched+=("$name"); prior+=("$had_old")
+    # Test seam: force a named LATER activation to fail after its existing
+    # destination is safely backed up, exercising the real rollback path.
+    if [ "${AI_CONFIG_OPERATOR_SKILL_TEST_FAIL_ACTIVATE:-}" = "$name" ]; then
+      failure="test-induced activation failure for operator skill '$name'"
+      break
+    fi
+    if ! mv "$staged" "$live"; then
+      failure="could not activate operator skill '$name'"
+      break
+    fi
+  done
+
+  if [ -n "${failure:-}" ]; then
+    restore_ok=1
+    # Roll back every touched name in reverse. A newly created target is ours to
+    # remove; an old target is restored only after its replacement is removed.
+    # If that restore fails, keep the backup root intact for manual recovery.
+    for ((i=${#touched[@]} - 1; i>=0; i--)); do
+      name="${touched[$i]}"; live="$TARGET/skills/$name"
+      if [ "${prior[$i]}" -eq 1 ]; then
+        if [ -e "$live" ] || [ -L "$live" ]; then
+          if ! rm -rf "$live"; then
+            warn "operator-skill rollback could not remove new $live; backup retained at $backup/$name"
+            restore_ok=0
+            continue
+          fi
+        fi
+        if ! mv "$backup/$name" "$live"; then
+          warn "operator-skill rollback could not restore $live; backup retained at $backup/$name"
+          restore_ok=0
+        fi
+      elif [ -e "$live" ] || [ -L "$live" ]; then
+        if ! rm -rf "$live"; then
+          warn "operator-skill rollback could not remove newly-created $live"
+          restore_ok=0
+        fi
+      fi
+    done
+    if [ "$restore_ok" -eq 1 ]; then
+      rm -rf "$backup"
+    else
+      warn "operator-skill activation failed; retained recovery backup at $backup"
+    fi
+    die "$failure; no partial operator-skill activation remains when rollback succeeds"
+  fi
+  rm -rf "$backup" "$OPERATOR_SKILL_STAGE"
+  OPERATOR_SKILL_STAGE=""
+  printf 'install.sh: mirrored %d explicit operator skill(s) into %s/skills (Shape C; excluded from the framework manifest)\n' \
+    "${#OPERATOR_SKILL_NAMES[@]}" "$TARGET" >&2
+}
+
 # --- classify_state — read-only --dry-run reporter -----------------------
 # Compares the LIVE target against the NEW build manifest ($BUILD, just written)
 # and the OLD installed manifest ($TARGET/.build-manifest.json from a prior
@@ -1724,6 +1971,9 @@ main() {
   esac
   write_manifest
   validate_build
+  prepare_operator_skill_sync
+  guard_hermes_project_skill_shadow
+  guard_hermes_prospective_codex_corender
 
   # --dry-run: classify the live target against the just-built NEW manifest and
   # report, then stop. The EXIT trap removes $BUILD; the live target is never
@@ -1789,6 +2039,7 @@ main() {
     rm -rf "$TARGET/.install-bak.$name"
   done
   rm -rf "$TARGET/.install-bak.d"
+  sync_operator_skills
   printf 'install.sh: built %s harness into %s\n' "$HARNESS" "$TARGET" >&2
 
   # Gemini/.agents co-render (codex-only; see corender_agents for the full

@@ -49,12 +49,107 @@ New-Item -ItemType Directory -Path $IH_ROOT -Force | Out-Null
 $IH_OUT   = Join-Path $IH_ROOT 'hermes-home'
 $IH_VAULT = Join-Path $IH_ROOT 'vault'
 $IH_ENV   = Join-Path $IH_ROOT 'local.env'
+$IH_OPERATOR_SOURCE = Join-Path $IH_ROOT 'operator-skills'
 New-Item -ItemType Directory -Path $IH_OUT, $IH_VAULT -Force | Out-Null
 Write-HermesEnvFixture -EnvFile $IH_ENV -HermesHome $IH_OUT -VaultDir $IH_VAULT
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+New-Item -ItemType Directory -Path (Join-Path $IH_OPERATOR_SOURCE 'local-ship-skill') -Force | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $IH_OPERATOR_SOURCE 'local-ship-skill/SKILL.md'), "---`nname: local-ship-skill`ndescription: operator-local test skill`n---`nversion one`n", $utf8NoBom)
+[System.IO.File]::AppendAllText($IH_ENV, "OPERATOR_SKILL_SOURCE_DIR=`"$IH_OPERATOR_SOURCE`"`nOPERATOR_SKILL_SYNC=`"local-ship-skill`"`n", $utf8NoBom)
 
 try {
     $r = Invoke-HermesInstall -EnvFile $IH_ENV
     Assert-Eq 'install-hermes.test: install.ps1 --harness hermes builds clean' '0' "$($r.exit)"
+
+    # A trusted framework checkout with a divergent shared .agents skill must
+    # fail before swap. This stub represents Hermes's profile-scoped config
+    # resolver and makes no trust mutation.
+    $IH_SHADOW_ROOT = Join-Path ([IO.Path]::GetTempPath()) ('t-hermes-shadow-' + [Guid]::NewGuid().Guid.Substring(0,8))
+    $IH_SHADOW_PROJECT = New-TrackedGitFixture -Dest (Join-Path $IH_SHADOW_ROOT 'framework')
+    $IH_SHADOW_HOME = Join-Path $IH_SHADOW_ROOT 'hermes-home'
+    $IH_SHADOW_ENV = Join-Path $IH_SHADOW_ROOT 'local.env'
+    $IH_SHADOW_BIN = Join-Path $IH_SHADOW_ROOT 'bin'
+    New-Item -ItemType Directory -Path (Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent'), $IH_SHADOW_HOME, $IH_SHADOW_BIN -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent/SKILL.md'), "divergent shared project skill`n", $utf8NoBom)
+    if ($IsWindows) {
+        $stubPs = @'
+if ($env:IH_SHADOW_RESOLVER_FAIL -eq '1') { exit 2 }
+$key = if ($args.Count -gt 0) { $args[-1] } else { '' }
+switch ($key) {
+    'skills.project_discovery' {
+        if ($env:IH_SHADOW_DISCOVERY_JSON) { $env:IH_SHADOW_DISCOVERY_JSON } else { 'true' }
+    }
+    'skills.trusted_project_dirs' {
+        if ($env:IH_SHADOW_TRUST_JSON) { $env:IH_SHADOW_TRUST_JSON }
+        else { ConvertTo-Json -Compress -InputObject @("$env:IH_SHADOW_TRUSTED") }
+    }
+    default { exit 2 }
+}
+'@
+        [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes-stub.ps1'), ($stubPs + "`n"), $utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes.cmd'), "@echo off`r`npwsh -NoProfile -File `"%~dp0hermes-stub.ps1`" %*`r`nexit /b %ERRORLEVEL%`r`n", $utf8NoBom)
+    } else {
+        $stub = @('#!/usr/bin/env bash', '[ "${IH_SHADOW_RESOLVER_FAIL:-}" = 1 ] && exit 2', 'case "$*" in', '*skills.project_discovery*) printf "%s" "${IH_SHADOW_DISCOVERY_JSON:-true}" ;;', '*skills.trusted_project_dirs*) if [ -n "${IH_SHADOW_TRUST_JSON:-}" ]; then printf "%s" "$IH_SHADOW_TRUST_JSON"; else printf "[\\\"%s\\\"]" "${IH_SHADOW_TRUSTED:-}"; fi ;;', '*) exit 2 ;;', 'esac') -join "`n"
+        [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes'), ($stub + "`n"), $utf8NoBom)
+        & chmod +x (Join-Path $IH_SHADOW_BIN 'hermes')
+    }
+    Write-HermesEnvFixture -EnvFile $IH_SHADOW_ENV -HermesHome $IH_SHADOW_HOME -VaultDir $IH_VAULT
+    [IO.File]::AppendAllText($IH_SHADOW_ENV, "AI_CONFIG_DIR=`"$IH_SHADOW_PROJECT`"`n", $utf8NoBom)
+    $shadowPath = $IH_SHADOW_BIN + [IO.Path]::PathSeparator + $env:PATH
+    $rShadow = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_TRUSTED = $IH_SHADOW_PROJECT }
+    Assert-Eq 'install-hermes.test: trusted framework .agents shadow refuses before swap' '1' "$($rShadow.exit)"
+    Assert-Contains 'install-hermes.test: trusted framework .agents shadow names the guard' $rShadow.err 'Hermes project-skill shadow'
+    if (Test-Path -LiteralPath (Join-Path $IH_SHADOW_HOME 'SOUL.md')) { _Fail 'install-hermes.test: trusted framework .agents shadow leaves target unswapped' 'SOUL.md exists' } else { _Pass 'install-hermes.test: trusted framework .agents shadow leaves target unswapped' }
+    $errDry = [IO.Path]::GetTempFileName(); $outDry = [IO.Path]::GetTempFileName(); $env:AI_CONFIG_LOCAL_ENV=$IH_SHADOW_ENV; $env:PATH=$shadowPath; $env:IH_SHADOW_TRUSTED=$IH_SHADOW_PROJECT
+    & pwsh -NoProfile -File $INSTALL_PS1 --harness hermes --dry-run 1>$outDry 2>$errDry; $dryCode=$LASTEXITCODE; $dryText=(Get-Content -Raw $errDry) + (Get-Content -Raw $outDry); Remove-Item $errDry,$outDry -Force
+    Assert-Eq 'install-hermes.test: trusted shadow dry-run remains an inspection' '0' "$dryCode"
+    Assert-Contains 'install-hermes.test: trusted shadow dry-run stays actionable' $dryText 'Hermes project-skill shadow'
+    Assert-Contains 'install-hermes.test: trusted shadow dry-run still reports classification' $dryText 'no changes written (dry-run)'
+    $rInvalid = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH=$shadowPath; IH_SHADOW_TRUST_JSON='{}' }
+    Assert-Eq 'install-hermes.test: invalid trusted-project JSON degrades without a false refusal' '0' "$($rInvalid.exit)"
+    Assert-Contains 'install-hermes.test: invalid trusted-project JSON warns explicitly' $rInvalid.err 'invalid trusted-project JSON'
+    $IH_SHADOW_LINK=Join-Path $IH_SHADOW_ROOT 'framework-link'; New-Item -ItemType SymbolicLink -Path $IH_SHADOW_LINK -Target $IH_SHADOW_PROJECT -ErrorAction Stop | Out-Null
+    $rLink = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH=$shadowPath; IH_SHADOW_TRUSTED=($IH_SHADOW_LINK + [IO.Path]::DirectorySeparatorChar) }
+    Assert-Eq 'install-hermes.test: trusted project symlink and trailing slash normalize' '1' "$($rLink.exit)"
+    $rUntrusted = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_TRUSTED = '' }
+    Assert-Eq 'install-hermes.test: untrusted framework project remains supported' '0' "$($rUntrusted.exit)"
+    $IH_SHADOW_OTHER = Join-Path $IH_SHADOW_ROOT 'ordinary-project'; New-Item -ItemType Directory -Path $IH_SHADOW_OTHER -Force | Out-Null
+    $rOther = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_TRUSTED = $IH_SHADOW_OTHER }
+    Assert-Eq 'install-hermes.test: ordinary trusted repository does not trip the framework guard' '0' "$($rOther.exit)"
+    Remove-Item -LiteralPath (Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent') -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $IH_SHADOW_HOME 'skills/session-agent') -Destination (Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent') -Recurse -Force
+    New-Item -ItemType Directory -Path (Join-Path $IH_SHADOW_PROJECT '.agents/skills/humanizer') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_PROJECT '.agents/skills/humanizer/SKILL.md'), "---`nname: humanizer`ndescription: shared copy`n---`nshared body`n", $utf8NoBom)
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_PROJECT '.agents/skills/humanizer/helper.md'), "project sidecar`n", $utf8NoBom)
+    Remove-Item -LiteralPath (Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent') -Recurse -Force
+    $IH_SHADOW_STAGE_HOME = Join-Path $IH_SHADOW_ROOT 'staged-home'
+    $IH_SHADOW_STAGE_ENV = Join-Path $IH_SHADOW_ROOT 'staged.env'
+    $IH_SHADOW_STAGE_SOURCE = Join-Path $IH_SHADOW_ROOT 'staged-source'
+    New-Item -ItemType Directory -Path $IH_SHADOW_STAGE_HOME, (Join-Path $IH_SHADOW_STAGE_SOURCE 'humanizer') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_STAGE_SOURCE 'humanizer/SKILL.md'), "---`nname: humanizer`ndescription: shared copy`n---`nshared body`n", $utf8NoBom)
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_STAGE_SOURCE 'humanizer/helper.md'), "profile sidecar`n", $utf8NoBom)
+    Write-HermesEnvFixture -EnvFile $IH_SHADOW_STAGE_ENV -HermesHome $IH_SHADOW_STAGE_HOME -VaultDir $IH_VAULT
+    [IO.File]::AppendAllText($IH_SHADOW_STAGE_ENV, "AI_CONFIG_DIR=`"$IH_SHADOW_PROJECT`"`nOPERATOR_SKILL_SOURCE_DIR=`"$IH_SHADOW_STAGE_SOURCE`"`nOPERATOR_SKILL_SYNC=`"humanizer`"`n", $utf8NoBom)
+    $rStaged = Invoke-HermesInstall -EnvFile $IH_SHADOW_STAGE_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_TRUSTED = $IH_SHADOW_PROJECT }
+    Assert-Eq 'install-hermes.test: first-install staged humanizer shadow refuses before swap' '1' "$($rStaged.exit)"
+    Assert-Contains 'install-hermes.test: first-install staged humanizer shadow names the effective skill' $rStaged.err 'humanizer'
+    if (Test-Path -LiteralPath (Join-Path $IH_SHADOW_STAGE_HOME 'SOUL.md')) { _Fail 'install-hermes.test: first-install staged humanizer shadow leaves target unswapped' 'SOUL.md exists' } else { _Pass 'install-hermes.test: first-install staged humanizer shadow leaves target unswapped' }
+    New-Item -ItemType Directory -Path (Join-Path $IH_SHADOW_HOME 'skills/creative/humanizer') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_HOME 'skills/creative/humanizer/SKILL.md'), "---`nname: humanizer`ndescription: profile copy`n---`nnested profile body`n", $utf8NoBom)
+    $rNested = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_TRUSTED = $IH_SHADOW_PROJECT }
+    Assert-Eq 'install-hermes.test: nested creative/humanizer shadow refuses before swap' '1' "$($rNested.exit)"
+    Assert-Contains 'install-hermes.test: nested creative/humanizer shadow names the effective skill' $rNested.err 'humanizer'
+    Assert-Contains 'install-hermes.test: nested creative/humanizer shadow preserves the pre-swap target' (Get-Content -Raw -LiteralPath (Join-Path $IH_SHADOW_HOME 'skills/creative/humanizer/SKILL.md')) 'nested profile body'
+    Remove-Item -LiteralPath (Join-Path $IH_SHADOW_PROJECT '.agents/skills/humanizer') -Recurse -Force
+    New-Item -ItemType Directory -Path (Join-Path $IH_SHADOW_PROJECT '.hermes/skills/closeout') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $IH_SHADOW_PROJECT '.hermes/skills/closeout/SKILL.md'), "---`nname: closeout`ndescription: divergent project Hermes skill`n---`nproject Hermes body`n", $utf8NoBom)
+    $rProjectHermes = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_TRUSTED = $IH_SHADOW_PROJECT }
+    Assert-Eq 'install-hermes.test: trusted project .hermes skill shadow refuses before swap' '1' "$($rProjectHermes.exit)"
+    Assert-Contains 'install-hermes.test: trusted project .hermes shadow names the guard' $rProjectHermes.err 'Hermes project-skill shadow'
+    $rDegraded = Invoke-HermesInstall -EnvFile $IH_SHADOW_ENV -ExtraEnv @{ PATH = $shadowPath; IH_SHADOW_RESOLVER_FAIL = '1' }
+    Assert-Eq 'install-hermes.test: unavailable Hermes resolver degrades without a new installer dependency' '0' "$($rDegraded.exit)"
+    Assert-Contains 'install-hermes.test: unavailable Hermes resolver emits an explicit warning' $rDegraded.err 'shadow guard skipped'
+    Remove-Item -LiteralPath $IH_SHADOW_ROOT -Recurse -Force -ErrorAction SilentlyContinue
 
     # --- T1: build output map (.ps1 hooks on the Windows lane) ---------------
     foreach ($f in @(
@@ -65,6 +160,71 @@ try {
         'SOUL.md', '.build-manifest.json')) {
         Assert-File "install-hermes.test: hermes build produced $f" (Join-Path $IH_OUT $f)
     }
+    $operatorSkill = if (Test-Path -LiteralPath (Join-Path $IH_OUT 'skills/local-ship-skill/SKILL.md')) { Get-Content -Raw -LiteralPath (Join-Path $IH_OUT 'skills/local-ship-skill/SKILL.md') } else { '' }
+    Assert-Contains 'install-hermes.test: explicit operator skill mirrors into the Hermes build' $operatorSkill 'version one'
+    # A re-render takes the current declared source. This proves a local skill
+    # remains outside public framework source while Hermes stays current.
+    [System.IO.File]::WriteAllText((Join-Path $IH_OPERATOR_SOURCE 'local-ship-skill/SKILL.md'), "---`nname: local-ship-skill`ndescription: operator-local test skill`n---`nversion two`n", $utf8NoBom)
+    $rMirror = Invoke-HermesInstall -EnvFile $IH_ENV
+    Assert-Eq 'install-hermes.test: re-render mirrors the current explicit operator skill' '0' "$($rMirror.exit)"
+    $operatorSkill = if (Test-Path -LiteralPath (Join-Path $IH_OUT 'skills/local-ship-skill/SKILL.md')) { Get-Content -Raw -LiteralPath (Join-Path $IH_OUT 'skills/local-ship-skill/SKILL.md') } else { '' }
+    Assert-Contains 'install-hermes.test: re-render updates the Hermes operator skill from its declared source' $operatorSkill 'version two'
+
+    # An app-managed category has nested bundles but no root SKILL.md. It must
+    # be rejected before staging or swapping, while the root skill above remains
+    # adoptable on re-render.
+    New-Item -ItemType Directory -Path (Join-Path $IH_OUT 'skills/creative/humanizer'), (Join-Path $IH_OPERATOR_SOURCE 'creative') -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $IH_OUT 'skills/creative/humanizer/SKILL.md'), "preserve this app-managed bundle`n", $utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $IH_OPERATOR_SOURCE 'creative/SKILL.md'), "---`nname: creative`ndescription: source fixture`n---`nsource body`n", $utf8NoBom)
+    [System.IO.File]::AppendAllText($IH_ENV, "OPERATOR_SKILL_SYNC=`"creative`"`n", $utf8NoBom)
+    $rCategory = Invoke-HermesInstall -EnvFile $IH_ENV
+    Assert-Eq 'install-hermes.test: operator sync refuses an app-managed category pack' '1' "$($rCategory.exit)"
+    Assert-Eq 'install-hermes.test: app-managed category pack remains untouched after refusal' "preserve this app-managed bundle`n" (Get-Content -Raw -LiteralPath (Join-Path $IH_OUT 'skills/creative/humanizer/SKILL.md'))
+    Remove-Item -LiteralPath (Join-Path $IH_OUT 'skills/creative') -Recurse -Force
+    [System.IO.File]::AppendAllText($IH_ENV, "OPERATOR_SKILL_SYNC=`"local-ship-skill`"`n", $utf8NoBom)
+    $ihCsvEnv=Join-Path $IH_ROOT 'trailing-comma.env'; Copy-Item $IH_ENV $ihCsvEnv
+    [System.IO.File]::AppendAllText($ihCsvEnv, "OPERATOR_SKILL_SYNC=`"local-ship-skill,`"`n", $utf8NoBom)
+    $rCsv=Invoke-HermesInstall -EnvFile $ihCsvEnv
+    Assert-Eq 'install-hermes.test: operator sync trailing comma fails closed' '1' "$($rCsv.exit)"
+
+    # A failed later activation must restore the pre-existing target tree,
+    # including the first mirrored skill, and remove the newly-created first
+    # skill. This exercises the transaction rollback rather than happy path.
+    $IH_TX_ROOT = Join-Path $IH_ROOT 'operator-skill-transaction'
+    $IH_TX_OUT = Join-Path $IH_TX_ROOT 'hermes-home'
+    $IH_TX_ENV = Join-Path $IH_TX_ROOT 'local.env'
+    $IH_TX_SOURCE = Join-Path $IH_TX_ROOT 'operator-skills'
+    New-Item -ItemType Directory -Path $IH_TX_OUT -Force | Out-Null
+    Write-HermesEnvFixture -EnvFile $IH_TX_ENV -HermesHome $IH_TX_OUT -VaultDir $IH_VAULT
+    $rTxBase = Invoke-HermesInstall -EnvFile $IH_TX_ENV
+    Assert-Eq 'install-hermes.test: transaction fixture baseline build succeeds' '0' "$($rTxBase.exit)"
+    New-Item -ItemType Directory -Path (Join-Path $IH_TX_OUT 'skills/txn-existing-skill'), (Join-Path $IH_TX_SOURCE 'txn-existing-skill'), (Join-Path $IH_TX_SOURCE 'txn-new-skill') -Force | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $IH_TX_OUT 'skills/txn-existing-skill/SKILL.md'), "original target body`n", $utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $IH_TX_OUT 'skills/txn-existing-skill/sidecar.txt'), "original target sidecar`n", $utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $IH_TX_SOURCE 'txn-existing-skill/SKILL.md'), "source replacement`n", $utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $IH_TX_SOURCE 'txn-new-skill/SKILL.md'), "source new skill`n", $utf8NoBom)
+    [System.IO.File]::AppendAllText($IH_TX_ENV, "OPERATOR_SKILL_SOURCE_DIR=`"$IH_TX_SOURCE`"`nOPERATOR_SKILL_SYNC=`"txn-existing-skill,txn-new-skill`"`n", $utf8NoBom)
+    function Get-IhTxnDigest {
+        param([string]$Root)
+        $full = (Resolve-Path -LiteralPath $Root).Path
+        return ((Get-ChildItem -LiteralPath $full -Recurse -File | Sort-Object FullName | ForEach-Object {
+            $rel = $_.FullName.Substring($full.Length).TrimStart('/', '\').Replace('\', '/')
+            "$rel $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)"
+        }) -join "`n")
+    }
+    $txBefore = Get-IhTxnDigest -Root $IH_TX_OUT
+    $rTxFail = Invoke-HermesInstall -EnvFile $IH_TX_ENV -ExtraEnv @{ AI_CONFIG_OPERATOR_SKILL_TEST_FAIL_ACTIVATE = 'txn-new-skill' }
+    Assert-Eq 'install-hermes.test: later operator-skill activation failure exits nonzero' '1' "$($rTxFail.exit)"
+    Assert-Eq 'install-hermes.test: transaction rollback restores the target tree byte-for-byte' $txBefore (Get-IhTxnDigest -Root $IH_TX_OUT)
+    $txExisting = Get-Content -Raw -LiteralPath (Join-Path $IH_TX_OUT 'skills/txn-existing-skill/SKILL.md')
+    Assert-Eq 'install-hermes.test: transaction rollback restores the original first skill body' "original target body`n" $txExisting
+    if (Test-Path -LiteralPath (Join-Path $IH_TX_OUT 'skills/txn-new-skill')) {
+        _Fail 'install-hermes.test: transaction rollback removes the partial newly-created skill' 'txn-new-skill remains after rollback'
+    } else {
+        _Pass 'install-hermes.test: transaction rollback removes the partial newly-created skill'
+    }
+    Remove-Item -LiteralPath Function:Get-IhTxnDigest -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $IH_TX_ROOT -Recurse -Force -ErrorAction SilentlyContinue
 
     # --- T2: hooks.yaml snippet carries the edit-gate matcher + the bridge ----
     $ih_yaml = if (Test-Path -LiteralPath (Join-Path $IH_OUT 'hooks/hooks.yaml')) { Get-Content -Raw -LiteralPath (Join-Path $IH_OUT 'hooks/hooks.yaml') } else { '' }
@@ -126,6 +286,9 @@ try {
     $IH_OUT2  = Join-Path $IH_ROOT "hermes home2'apos"
     $IH_ENV2  = Join-Path $IH_ROOT 'local2.env'
     $IH_IDENT = Join-Path $IH_ROOT 'local.soul-identity.md'
+    $quotedRoot = Join-Path $IH_ROOT 'root O''brien $literal'
+    New-Item -ItemType Directory -Path (Join-Path $quotedRoot 'scripts') -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $env:REPO_ROOT 'scripts/orient.ps1') -Destination (Join-Path $quotedRoot 'scripts/orient.ps1')
     New-Item -ItemType Directory -Path $IH_OUT2 -Force | Out-Null
     $identLines = @(
         '## Who I am',
@@ -137,6 +300,7 @@ try {
     [System.IO.File]::WriteAllText($IH_IDENT, (($identLines -join "`n") + "`n"), $utf8NoBom)
     [System.IO.File]::WriteAllText($IH_ENV2, ((@(
         "HERMES_HOME=`"$IH_OUT2`"",
+        "AI_CONFIG_DIR=`"$quotedRoot`"",
         "OBSIDIAN_VAULT_PATH=`"$IH_VAULT`"",
         "SOUL_IDENTITY_PATH=`"$IH_IDENT`""
     ) -join "`n") + "`n"), $utf8NoBom)
@@ -203,7 +367,44 @@ try {
     } else {
         _Skip $ih2ShlexLabel 'no runnable python interpreter on PATH'
     }
+    $quotedFile = Join-Path (Join-Path $quotedRoot 'scripts') 'orient.ps1'
+    $quotedCommand = "pwsh -File '" + $quotedFile.Replace("'", "'\''") + "'"
+    $payload = @{ session_id='quoted-root'; tool_name='terminal'; tool_input=@{ command=$quotedCommand } } | ConvertTo-Json -Compress
+    $out = ($payload | & pwsh -NoProfile -File (Join-Path $IH_OUT2 'hooks/session-agent.ps1')) -join "`n"
+    Assert-Eq 'bootstrap root with spaces apostrophe and dollar stays literal' '' $out
+    Assert-Eq 'quoted-root hook exits successfully' '0' "$LASTEXITCODE"
+    if (Get-Command bash -ErrorAction SilentlyContinue) {
+        $argvProof = (& bash -c ('set -- ' + $quotedCommand + '; printf ''%s|%s|%s|%s'' "$#" "$1" "$2" "$3"')) -join "`n"
+        Assert-Eq 'bootstrap Windows launcher preserves the literal path through Bash' ('3|pwsh|-File|' + $quotedFile) $argvProof
+    } else {
+        _Skip 'bootstrap Windows launcher preserves the literal path through Bash' 'Git Bash unavailable'
+    }
+    $payload = @{ session_id='quoted-root'; tool_name='terminal'; tool_input=@{ command=("pwsh -File '" + (Join-Path $env:REPO_ROOT 'scripts/orient.ps1') + "'") } } | ConvertTo-Json -Compress
+    $out = ($payload | & pwsh -NoProfile -File (Join-Path $IH_OUT2 'hooks/session-agent.ps1')) -join "`n"
+    Assert-Contains 'bootstrap refuses a real orient helper outside the pinned root' $out '"decision":"block"'
     Remove-Item -LiteralPath $IH_OUT2, $IH_ENV2, $IH_IDENT -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Cold-session bootstrap exercises the installed PS hook on every PS host.
+    $orientHook = Join-Path $IH_OUT 'hooks/session-agent.ps1'
+    $orientFile = Join-Path (Join-Path $env:REPO_ROOT 'scripts') 'orient.ps1'
+    $orientQuoted = "'" + $orientFile.Replace("'", "'\''") + "'"
+    $orientCommand = 'pwsh -NoProfile -File ' + $orientQuoted
+    foreach ($cmd in @($orientCommand, ('pwsh -File ' + $orientQuoted))) {
+        $payload = @{ session_id='orient-cold'; tool_name='terminal'; tool_input=@{ command=$cmd } } | ConvertTo-Json -Compress
+        $out = ($payload | & pwsh -NoProfile -File $orientHook) -join "`n"
+        Assert-Eq "canonical pre-gate orientation passes: $cmd" '' $out
+        Assert-Eq 'bootstrap hook exits successfully' '0' "$LASTEXITCODE"
+    }
+    foreach ($cmd in @('echo hi', $orientQuoted, ('& ' + $orientQuoted), ('pwsh -File "' + $orientFile + '"'), "$orientCommand; echo hi", "$orientCommand && echo hi", "$orientCommand | Out-File x", "$orientCommand > x", "$orientCommand -MemoryDir x", "$orientCommand`n", "pwsh -File 'C:\wrong\scripts\orient.ps1'", 'pwsh -File "$env:AI_CONFIG_DIR/scripts/orient.ps1"', ('$('+ $orientCommand + ')'))) {
+        $payload = @{ session_id='orient-cold'; tool_name='terminal'; tool_input=@{ command=$cmd } } | ConvertTo-Json -Compress
+        $out = ($payload | & pwsh -NoProfile -File $orientHook) -join "`n"
+        Assert-Contains "noncanonical pre-gate command stays blocked: $cmd" $out '"decision":"block"'
+    }
+    Assert-Eq 'orientation admission creates no gate marker' 'False' "$(Test-Path -LiteralPath (Join-Path $IH_OUT 'agentic-os/gate-orient-cold'))"
+    $payload = @{ session_id='orient-cold'; tool_name='terminal'; tool_input=@{ command=@('pwsh') } } | ConvertTo-Json -Compress
+    $out = ($payload | & pwsh -NoProfile -File $orientHook) -join "`n"
+    Assert-Contains 'non-string bootstrap command stays blocked' $out '"decision":"block"'
+    Assert-Contains 'cold terminal denial supplies the literal bootstrap command' (($out | ConvertFrom-Json).reason) $orientCommand
 
     # --- T5/T6/T7: hermes hook behaviour — _Skip on the Windows lane ----------
     # Per [[feedback_port_parity_vs_regression_split]]: the .ps1 hooks' run-time

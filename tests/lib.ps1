@@ -273,6 +273,10 @@ function Write-HermesEnvFixture {
     )
     $lines = @(
         "HERMES_HOME=`"$HermesHome`"",
+        # The Hermes pre-edit bootstrap pins orientation to AI_CONFIG_DIR. Set
+        # the fixture root explicitly so an exported operator value cannot
+        # change the installed hook that this test is meant to exercise.
+        "AI_CONFIG_DIR=`"$env:REPO_ROOT`"",
         "OBSIDIAN_VAULT_PATH=`"$VaultDir`""
     )
     $content = ($lines -join "`n") + "`n"

@@ -42,11 +42,101 @@ fi
 IH_OUT="$(mktemp -d)/hermes-home"; mkdir -p "$IH_OUT"
 IH_ENV="$(mktemp -d)/local.env"
 IH_VAULT="$(mktemp -d)/vault"
+IH_OPERATOR_SOURCE="$(mktemp -d)/operator-skills"
 cp -R "$REPO_ROOT/obsidian/vault-scaffolding" "$IH_VAULT"
 make_hermes_env "$IH_ENV" "$IH_OUT" "$IH_VAULT"
+mkdir -p "$IH_OPERATOR_SOURCE/local-ship-skill"
+printf -- '---\nname: local-ship-skill\ndescription: operator-local test skill\n---\nversion one\n' > "$IH_OPERATOR_SOURCE/local-ship-skill/SKILL.md"
+printf 'OPERATOR_SKILL_SOURCE_DIR=%q\nOPERATOR_SKILL_SYNC=%q\n' \
+  "$IH_OPERATOR_SOURCE" "local-ship-skill" >> "$IH_ENV"
 
 assert_exit "install.sh --harness hermes builds clean" 0 -- \
   env AI_CONFIG_LOCAL_ENV="$IH_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+
+# A trusted framework checkout with a divergent shared .agents skill must fail
+# before swapping a Hermes render. The stub is the profile-scoped Hermes config
+# resolver; it never mutates the fixture's trust state.
+IH_SHADOW_ROOT="$(mktemp -d)"
+IH_SHADOW_PROJECT="$IH_SHADOW_ROOT/framework"
+IH_SHADOW_HOME="$IH_SHADOW_ROOT/hermes-home"
+IH_SHADOW_ENV="$IH_SHADOW_ROOT/local.env"
+IH_SHADOW_BIN="$IH_SHADOW_ROOT/bin"
+make_tracked_git_fixture "$IH_SHADOW_PROJECT"
+mkdir -p "$IH_SHADOW_PROJECT/.agents/skills/session-agent" "$IH_SHADOW_HOME" "$IH_SHADOW_BIN"
+printf 'divergent shared project skill\n' > "$IH_SHADOW_PROJECT/.agents/skills/session-agent/SKILL.md"
+printf '%s\n' '#!/usr/bin/env bash' '[ "${IH_SHADOW_RESOLVER_FAIL:-}" = 1 ] && exit 2' 'case "$*" in' '*skills.project_discovery*) printf "%s" "${IH_SHADOW_DISCOVERY_JSON:-true}" ;;' '*skills.trusted_project_dirs*) if [ -n "${IH_SHADOW_TRUST_JSON:-}" ]; then printf "%s" "$IH_SHADOW_TRUST_JSON"; else printf "[\\\"%s\\\"]" "${IH_SHADOW_TRUSTED:-}"; fi ;;' '*) exit 2 ;;' 'esac' > "$IH_SHADOW_BIN/hermes"
+chmod +x "$IH_SHADOW_BIN/hermes"
+make_hermes_env "$IH_SHADOW_ENV" "$IH_SHADOW_HOME" "$IH_VAULT"
+printf 'AI_CONFIG_DIR=%q\n' "$IH_SHADOW_PROJECT" >> "$IH_SHADOW_ENV"
+ih_shadow_rc=0
+IH_SHADOW_TRUSTED="$(CDPATH= cd "$IH_SHADOW_PROJECT" && pwd -P)"
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_TRUSTED" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/err" || ih_shadow_rc=$?
+assert_eq "trusted framework .agents shadow refuses before swap" "1" "$ih_shadow_rc"
+assert_contains "trusted framework .agents shadow names the guard" "$(cat "$IH_SHADOW_ROOT/err")" "Hermes project-skill shadow"
+assert_exit "trusted framework .agents shadow leaves target unswapped" 1 -- test -e "$IH_SHADOW_HOME/SOUL.md"
+ih_shadow_dry=0
+ih_shadow_dry_out="$(env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_TRUSTED" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes --dry-run 2>&1)" || ih_shadow_dry=$?
+assert_eq "trusted shadow dry-run remains an inspection" "0" "$ih_shadow_dry"
+assert_contains "trusted shadow dry-run stays actionable" "$ih_shadow_dry_out" "Hermes project-skill shadow"
+assert_contains "trusted shadow dry-run still reports classification" "$ih_shadow_dry_out" "no changes written (dry-run)"
+ih_invalid_rc=0
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUST_JSON='{}' AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/invalid-err" || ih_invalid_rc=$?
+assert_eq "invalid trusted-project JSON degrades without a false refusal" "0" "$ih_invalid_rc"
+assert_contains "invalid trusted-project JSON warns explicitly" "$(cat "$IH_SHADOW_ROOT/invalid-err")" "invalid trusted-project JSON"
+IH_SHADOW_LINK="$IH_SHADOW_ROOT/framework-link"; ln -s "$IH_SHADOW_PROJECT" "$IH_SHADOW_LINK"
+ih_link_rc=0
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_LINK/" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/link-err" || ih_link_rc=$?
+assert_eq "trusted project symlink and trailing slash normalize" "1" "$ih_link_rc"
+assert_exit "untrusted framework project remains supported" 0 -- \
+  env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED='' AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+IH_SHADOW_OTHER="$IH_SHADOW_ROOT/ordinary-project"; mkdir -p "$IH_SHADOW_OTHER"
+assert_exit "ordinary trusted repository does not trip the framework guard" 0 -- \
+  env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_OTHER" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+rm -rf "$IH_SHADOW_PROJECT/.agents/skills/session-agent"
+cp -R "$IH_SHADOW_HOME/skills/session-agent" "$IH_SHADOW_PROJECT/.agents/skills/session-agent"
+mkdir -p "$IH_SHADOW_PROJECT/.agents/skills/humanizer"
+printf '%s\n' '---' 'name: humanizer' 'description: shared copy' '---' 'shared body' > "$IH_SHADOW_PROJECT/.agents/skills/humanizer/SKILL.md"
+printf 'project sidecar\n' > "$IH_SHADOW_PROJECT/.agents/skills/humanizer/helper.md"
+rm -rf "$IH_SHADOW_PROJECT/.agents/skills/session-agent"
+IH_SHADOW_STAGE_HOME="$IH_SHADOW_ROOT/staged-home"
+IH_SHADOW_STAGE_ENV="$IH_SHADOW_ROOT/staged.env"
+IH_SHADOW_STAGE_SOURCE="$IH_SHADOW_ROOT/staged-source"
+mkdir -p "$IH_SHADOW_STAGE_HOME" "$IH_SHADOW_STAGE_SOURCE/humanizer"
+printf '%s\n' '---' 'name: humanizer' 'description: shared copy' '---' 'shared body' > "$IH_SHADOW_STAGE_SOURCE/humanizer/SKILL.md"
+printf 'profile sidecar\n' > "$IH_SHADOW_STAGE_SOURCE/humanizer/helper.md"
+make_hermes_env "$IH_SHADOW_STAGE_ENV" "$IH_SHADOW_STAGE_HOME" "$IH_VAULT"
+printf 'AI_CONFIG_DIR=%q\nOPERATOR_SKILL_SOURCE_DIR=%q\nOPERATOR_SKILL_SYNC=%q\n' \
+  "$IH_SHADOW_PROJECT" "$IH_SHADOW_STAGE_SOURCE" humanizer >> "$IH_SHADOW_STAGE_ENV"
+ih_staged_rc=0
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_TRUSTED" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_STAGE_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/staged-err" || ih_staged_rc=$?
+assert_eq "first-install staged humanizer shadow refuses before swap" "1" "$ih_staged_rc"
+assert_contains "first-install staged humanizer shadow names the effective skill" "$(cat "$IH_SHADOW_ROOT/staged-err")" "humanizer"
+assert_exit "first-install staged humanizer shadow leaves target unswapped" 1 -- test -e "$IH_SHADOW_STAGE_HOME/SOUL.md"
+mkdir -p "$IH_SHADOW_HOME/skills/creative/humanizer"
+printf '%s\n' '---' 'name: humanizer' 'description: profile copy' '---' 'nested profile body' > "$IH_SHADOW_HOME/skills/creative/humanizer/SKILL.md"
+ih_nested_rc=0
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_TRUSTED" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/nested-err" || ih_nested_rc=$?
+assert_eq "nested creative/humanizer shadow refuses before swap" "1" "$ih_nested_rc"
+assert_contains "nested creative/humanizer shadow names the effective skill" "$(cat "$IH_SHADOW_ROOT/nested-err")" "humanizer"
+assert_contains "nested creative/humanizer shadow preserves the pre-swap target" "$(cat "$IH_SHADOW_HOME/skills/creative/humanizer/SKILL.md")" "nested profile body"
+rm -rf "$IH_SHADOW_PROJECT/.agents/skills/humanizer"
+mkdir -p "$IH_SHADOW_PROJECT/.hermes/skills/closeout"
+printf '%s\n' '---' 'name: closeout' 'description: divergent project Hermes skill' '---' 'project Hermes body' > "$IH_SHADOW_PROJECT/.hermes/skills/closeout/SKILL.md"
+ih_project_hermes_rc=0
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_TRUSTED="$IH_SHADOW_TRUSTED" AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/project-hermes-err" || ih_project_hermes_rc=$?
+assert_eq "trusted project .hermes skill shadow refuses before swap" "1" "$ih_project_hermes_rc"
+assert_contains "trusted project .hermes shadow names its surface" "$(cat "$IH_SHADOW_ROOT/project-hermes-err")" ".hermes/skills"
+ih_degrade_rc=0
+env PATH="$IH_SHADOW_BIN:$PATH" IH_SHADOW_RESOLVER_FAIL=1 AI_CONFIG_LOCAL_ENV="$IH_SHADOW_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes >/dev/null 2>"$IH_SHADOW_ROOT/degrade-err" || ih_degrade_rc=$?
+assert_eq "unavailable Hermes resolver degrades without a new installer dependency" "0" "$ih_degrade_rc"
+assert_contains "unavailable Hermes resolver emits an explicit warning" "$(cat "$IH_SHADOW_ROOT/degrade-err")" "shadow guard skipped"
+rm -rf "$IH_SHADOW_ROOT"
+unset IH_SHADOW_ROOT IH_SHADOW_PROJECT IH_SHADOW_HOME IH_SHADOW_ENV IH_SHADOW_BIN IH_SHADOW_OTHER IH_SHADOW_TRUSTED IH_SHADOW_STAGE_HOME IH_SHADOW_STAGE_ENV IH_SHADOW_STAGE_SOURCE ih_shadow_rc ih_staged_rc ih_nested_rc ih_project_hermes_rc ih_degrade_rc
 
 # --- T1: build output map ---
 for f in \
@@ -66,6 +156,65 @@ for f in \
   ".build-manifest.json"; do
   assert_file "hermes build produced $f" "$IH_OUT/$f"
 done
+assert_contains "explicit operator skill mirrors into the Hermes build" \
+  "$(cat "$IH_OUT/skills/local-ship-skill/SKILL.md" 2>/dev/null || printf '')" "version one"
+
+# A re-render takes the current declared source. This keeps a selected local
+# skill current without adding its body or name to the public framework.
+printf -- '---\nname: local-ship-skill\ndescription: operator-local test skill\n---\nversion two\n' > "$IH_OPERATOR_SOURCE/local-ship-skill/SKILL.md"
+assert_exit "re-render mirrors the current explicit operator skill" 0 -- \
+  env AI_CONFIG_LOCAL_ENV="$IH_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+assert_contains "re-render updates the Hermes operator skill from its declared source" \
+  "$(cat "$IH_OUT/skills/local-ship-skill/SKILL.md" 2>/dev/null || printf '')" "version two"
+
+# An app-managed category has nested bundles but no root SKILL.md. It must be
+# rejected before staging or swapping, while a normal root skill above remains
+# adoptable on re-render.
+mkdir -p "$IH_OUT/skills/creative/humanizer" "$IH_OPERATOR_SOURCE/creative"
+printf 'preserve this app-managed bundle\n' > "$IH_OUT/skills/creative/humanizer/SKILL.md"
+printf -- '---\nname: creative\ndescription: source fixture\n---\nsource body\n' > "$IH_OPERATOR_SOURCE/creative/SKILL.md"
+printf 'OPERATOR_SKILL_SYNC=%q\n' "creative" >> "$IH_ENV"
+assert_exit "operator sync refuses an app-managed category pack" 1 -- \
+  env AI_CONFIG_LOCAL_ENV="$IH_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+assert_eq "app-managed category pack remains untouched after refusal" \
+  "preserve this app-managed bundle" "$(cat "$IH_OUT/skills/creative/humanizer/SKILL.md")"
+rm -rf "$IH_OUT/skills/creative"
+printf 'OPERATOR_SKILL_SYNC=%q\n' "local-ship-skill" >> "$IH_ENV"
+IH_CSV_ENV="$(mktemp -d)/local.env"; cp "$IH_ENV" "$IH_CSV_ENV"
+printf 'OPERATOR_SKILL_SYNC=%q\n' "local-ship-skill," >> "$IH_CSV_ENV"
+assert_exit "operator sync trailing comma fails closed" 1 -- env AI_CONFIG_LOCAL_ENV="$IH_CSV_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+rm -rf "$(dirname "$IH_CSV_ENV")"
+
+# A failed later activation must restore the whole pre-existing target tree,
+# including the first mirrored skill, and remove the newly-created first skill.
+# This exercises the transaction rollback rather than merely its happy path.
+IH_TX_ROOT="$(mktemp -d)"
+IH_TX_OUT="$IH_TX_ROOT/hermes-home"; mkdir -p "$IH_TX_OUT"
+IH_TX_ENV="$IH_TX_ROOT/local.env"
+IH_TX_SOURCE="$IH_TX_ROOT/operator-skills"
+make_hermes_env "$IH_TX_ENV" "$IH_TX_OUT" "$IH_VAULT"
+assert_exit "transaction fixture baseline build succeeds" 0 -- \
+  env AI_CONFIG_LOCAL_ENV="$IH_TX_ENV" bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+mkdir -p "$IH_TX_OUT/skills/txn-existing-skill" \
+  "$IH_TX_SOURCE/txn-existing-skill" "$IH_TX_SOURCE/txn-new-skill"
+printf 'original target body\n' > "$IH_TX_OUT/skills/txn-existing-skill/SKILL.md"
+printf 'original target sidecar\n' > "$IH_TX_OUT/skills/txn-existing-skill/sidecar.txt"
+printf 'source replacement\n' > "$IH_TX_SOURCE/txn-existing-skill/SKILL.md"
+printf 'source new skill\n' > "$IH_TX_SOURCE/txn-new-skill/SKILL.md"
+printf 'OPERATOR_SKILL_SOURCE_DIR=%q\nOPERATOR_SKILL_SYNC=%q\n' \
+  "$IH_TX_SOURCE" "txn-existing-skill,txn-new-skill" >> "$IH_TX_ENV"
+ih_tx_digest() { (cd "$1" && find . -type f -print | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done); }
+ih_tx_before="$(ih_tx_digest "$IH_TX_OUT")"
+assert_exit "later operator-skill activation failure exits nonzero" 1 -- \
+  env AI_CONFIG_OPERATOR_SKILL_TEST_FAIL_ACTIVATE=txn-new-skill AI_CONFIG_LOCAL_ENV="$IH_TX_ENV" \
+  bash "$REPO_ROOT/scripts/install.sh" --harness hermes
+assert_eq "transaction rollback restores the target tree byte-for-byte" "$ih_tx_before" "$(ih_tx_digest "$IH_TX_OUT")"
+assert_eq "transaction rollback restores the original first skill body" "original target body" \
+  "$(cat "$IH_TX_OUT/skills/txn-existing-skill/SKILL.md")"
+assert_exit "transaction rollback removes the partial newly-created skill" 1 -- \
+  test -e "$IH_TX_OUT/skills/txn-new-skill"
+unset -f ih_tx_digest
+rm -rf "$IH_TX_ROOT"
 
 # --- T2: hooks.yaml snippet carries the edit-gate matcher + the bridge ---
 ih_yaml="$(cat "$IH_OUT/hooks/hooks.yaml" 2>/dev/null || printf '')"
@@ -194,6 +343,10 @@ IH_ENV2="$(mktemp -d)/local.env"
 IH_IDENT="$(mktemp -d)/local.soul-identity.md"
 make_hermes_env "$IH_ENV2" "$IH_OUT2" "$IH_VAULT"
 printf 'SOUL_IDENTITY_PATH=%q\n' "$IH_IDENT" >> "$IH_ENV2"
+ih_root2="${IH_OUT2%/hermes-home}/root O'brien \$literal"
+mkdir -p "$ih_root2/scripts"
+cp "$REPO_ROOT/scripts/orient.sh" "$ih_root2/scripts/orient.sh"
+printf 'AI_CONFIG_DIR=%q\n' "$ih_root2/" >> "$IH_ENV2"
 printf '## Who I am\n- Catalog token @@CAPABILITY_CATALOG@@ inline.\n- Overlay marker @@OPERATOR_SKILLS_OVERLAY@@ inline.\n- Metachars & $HOME `tick` $(echo SUBSHELL) verbatim.\n' > "$IH_IDENT"
 
 assert_exit "install.sh --harness hermes builds clean with a soul-identity overlay" 0 -- \
@@ -211,12 +364,37 @@ assert_contains "shell metacharacters in the identity render verbatim (not execu
   "$ih_soul2" 'echo SUBSHELL) verbatim.'
 assert_contains "the operating-section spine directive still renders" \
   "$ih_soul2" "/session-agent"
+ih_root2_cmd="bash $(jq -nr --arg path "$ih_root2/scripts/orient.sh" '$path | @sh')"
+ih_out="$(jq -nc --arg c "$ih_root2_cmd" '{session_id:"quoted-root",tool_name:"terminal",tool_input:{command:$c}}' | bash "$IH_OUT2/hooks/session-agent.sh")"
+assert_eq "quoted-root hook exits successfully" "0" "$?"
+assert_eq "bootstrap root with spaces apostrophe and dollar stays literal" "" "$ih_out"
+ih_root2_dq="bash \"${IH_OUT2%/hermes-home}/root O'brien \\\$literal/scripts/orient.sh\""
+ih_out="$(jq -nc --arg c "$ih_root2_dq" '{session_id:"quoted-root",tool_name:"terminal",tool_input:{command:$c}}' | bash "$IH_OUT2/hooks/session-agent.sh")"
+assert_eq "escaped double-quoted bootstrap root passes" "" "$ih_out"
+ih_argv="$(bash -c "set -- $ih_root2_dq; printf '%s|%s|%s' \"\$#\" \"\$1\" \"\$2\"")"
+assert_eq "double-quoted bootstrap preserves literal argv through Bash" "2|bash|$ih_root2/scripts/orient.sh" "$ih_argv"
+ih_out="$(jq -nc --arg c "bash '$REPO_ROOT/scripts/orient.sh'" '{session_id:"quoted-root",tool_name:"terminal",tool_input:{command:$c}}' | bash "$IH_OUT2/hooks/session-agent.sh")"
+assert_contains "bootstrap refuses a real orient helper outside the pinned root" "$ih_out" '"decision":"block"'
 rm -rf "${IH_OUT2%/hermes-home}" "${IH_ENV2%/local.env}" "${IH_IDENT%/local.soul-identity.md}"
 
 # --- T5: edit-gate hook behavior against synthetic payloads ---
 if command -v jq >/dev/null 2>&1; then
   IH_GATE="$IH_OUT/hooks/session-agent.sh"
   IH_SID="testsession01"
+
+  # Cold-session bootstrap: whole-command allowlist, never a general unlock.
+  ih_orient="'$REPO_ROOT/scripts/orient.sh'"
+  for ih_cmd in "$ih_orient" "bash $ih_orient" "\"$REPO_ROOT/scripts/orient.sh\"" "bash \"$REPO_ROOT/scripts/orient.sh\""; do
+    ih_out="$(jq -nc --arg c "$ih_cmd" '{session_id:"orient-cold",tool_name:"terminal",tool_input:{command:$c}}' | bash "$IH_GATE")"
+    assert_eq "canonical pre-gate orientation passes: $ih_cmd" "" "$ih_out"
+  done
+  for ih_cmd in "echo hi" "$ih_orient; echo hi" "$ih_orient && echo hi" "$ih_orient | tee /tmp/x" "$ih_orient > /tmp/x" "$ih_orient --memory-dir /tmp" "$ih_orient"$'\n' "bash '/tmp/scripts/orient.sh'" 'bash "$AI_CONFIG_DIR/scripts/orient.sh"' "\$(echo $ih_orient)"; do
+    ih_out="$(jq -nc --arg c "$ih_cmd" '{session_id:"orient-cold",tool_name:"terminal",tool_input:{command:$c}}' | bash "$IH_GATE")"
+    assert_contains "noncanonical pre-gate command stays blocked: $ih_cmd" "$ih_out" '"decision":"block"'
+  done
+  assert_exit "orientation admission creates no gate marker" 1 -- test -f "$IH_OUT/agentic-os/gate-orient-cold"
+  ih_out="$(printf '%s' '{"session_id":"orient-cold","tool_name":"terminal","tool_input":{"command":["bash"]}}' | bash "$IH_GATE")"
+  assert_contains "non-string bootstrap command stays blocked" "$ih_out" '"decision":"block"'
 
   # 5a. write_file with no open gate → block.
   ih_out="$(printf '%s' \
@@ -231,6 +409,7 @@ if command -v jq >/dev/null 2>&1; then
     | bash "$IH_GATE")"
   assert_contains "gate blocks a terminal call before the gate is open" \
     "$ih_out" '"decision":"block"'
+  assert_contains "cold terminal denial supplies the literal bootstrap command" "$(printf '%s' "$ih_out" | jq -r .reason)" "bash $ih_orient"
 
   # 5c. the gate-declaration write itself is allowed through (exact per-session
   # path + both the Lessons: and Linear gate: lines in the content) and silent.
@@ -583,4 +762,4 @@ else
 fi
 rm -rf "${RB%/hermes-home}" "${RB_ENV%/local.env}"
 
-rm -rf "${IH_OUT%/hermes-home}" "${IH_ENV%/local.env}" "${IH_VAULT%/vault}"
+rm -rf "${IH_OUT%/hermes-home}" "${IH_ENV%/local.env}" "${IH_VAULT%/vault}" "${IH_OPERATOR_SOURCE%/operator-skills}"

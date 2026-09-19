@@ -47,6 +47,25 @@ if (-not $hhome) {
 $stateDir = Join-Path $hhome 'agentic-os'
 $gateFile = Join-Path $stateDir "gate-$sessionId"
 
+# Exact literal bootstrap command only; never execute or parse the caller's
+# command. The installer quotes this root as data, not interpolated PS source.
+# Admission does not create a marker or open the gate for any later call.
+$bootstrapHint = ''
+if ($tool -ceq 'terminal') {
+    $orientRoot = '@@ORIENT_ROOT@@'
+    $orientPath = Join-Path (Join-Path $orientRoot 'scripts') 'orient.ps1'
+    if ([IO.Path]::IsPathFullyQualified($orientPath) -and (Test-Path -LiteralPath $orientPath -PathType Leaf)) {
+        # Hermes terminal uses Git Bash on Windows too. Quote its argv for
+        # that shell, not PowerShell source (the hook itself is PowerShell).
+        $quoted = "'" + $orientPath.Replace("'", "'\''") + "'"
+        $bootstrapHint = " For kickoff orientation before declaring, run exactly: pwsh -NoProfile -File $quoted. No extra arguments or shell operators."
+        $command = $evt.tool_input.command
+        if ($command -is [string] -and (
+            $command -ceq ("pwsh -File " + $quoted) -or
+            $command -ceq ("pwsh -NoProfile -File " + $quoted))) { exit 0 }
+    }
+}
+
 # Reap stale gate markers (old sessions); never fails the hook.
 if (Test-Path -LiteralPath $stateDir) {
     Get-ChildItem -LiteralPath $stateDir -Filter 'gate-*' |
@@ -121,4 +140,4 @@ if ($sqlite -and (Test-Path -LiteralPath $db)) {
     if ("$hit" -eq '1') { exit 0 }
 }
 
-Block "First file-modifying tool use detected but the session-agent gate is not open for this session. A delegate_task child (the delegated-child directive is in your context) declares by writing the file $gateFile via the write_file tool with the routing declaration its brief gives it — Mode 2 only, never the kickoff orient. Any other session invokes /session-agent to walk the kickoff orient (Mode 1) then route the request (R1-R5, including the R1a lesson recall), and declares the gate by writing the same file with the full routing declaration. Either way the content must include the ``Linear gate:`` and ``Lessons:`` lines. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
+Block "First file-modifying tool use detected but the session-agent gate is not open for this session. A delegate_task child (the delegated-child directive is in your context) declares by writing the file $gateFile via the write_file tool with the routing declaration its brief gives it — Mode 2 only, never the kickoff orient. Any other session invokes /session-agent to walk the kickoff orient (Mode 1) then route the request (R1-R5, including the R1a lesson recall), and declares the gate by writing the same file with the full routing declaration. Either way the content must include the ``Linear gate:`` and ``Lessons:`` lines.$bootstrapHint Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."

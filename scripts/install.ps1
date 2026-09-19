@@ -434,6 +434,8 @@ New-Item -ItemType Directory -Path $BUILD -Force | Out-Null
 $Script:KeepBuild = $false
 $Script:InstallLockDirs = New-Object System.Collections.Generic.List[string]
 $Script:InstallLockMarkers = New-Object System.Collections.Generic.List[string]
+$Script:OperatorSkillNames = New-Object System.Collections.Generic.List[string]
+$Script:OperatorSkillStage = ''
 
 # Each normal installer run owns its physical target before recovery or swap.
 # FileMode.CreateNew is the atomic acquisition step. A leftover lock causes a
@@ -528,6 +530,8 @@ function Add-Hook {
         $content = Get-RawText -Path $src
         # Literal substitution — Replace, NOT regex Replace, so '$' etc. in
         # $env:AI_CONFIG_DIR don't get pattern-interpreted.
+        # This token sits inside single quotes in hook source: embed DATA safely.
+        $content = $content.Replace('@@ORIENT_ROOT@@', $env:AI_CONFIG_DIR.Replace("'", "''"))
         $resolved = $content.Replace('@@AI_CONFIG_DIR@@', $env:AI_CONFIG_DIR)
         # @@RESCUE_INVOCATION@@ (stuck-detector): the rescue capability is
         # operator-local (Shape C) — generic phrasing unless local.env names
@@ -1438,6 +1442,322 @@ function Test-Build {
     }
 }
 
+# Resolve physical paths on Unix even when a parent component is a symlink.
+# On Windows, normalize the resolved path and compare case-insensitively.
+function Resolve-HermesProjectPath([string]$Path) {
+    if ($env:OS -ne 'Windows_NT') {
+        $realpath = Get-Command realpath -ErrorAction SilentlyContinue
+        if ($null -ne $realpath) {
+            $resolved = (& $realpath.Source -- $Path 2>$null | Select-Object -First 1)
+            if ($LASTEXITCODE -eq 0 -and $resolved) { return "$resolved".TrimEnd('/', '\') }
+        }
+    }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $item.ResolveLinkTarget($true).FullName.TrimEnd('/', '\') }
+    return $item.FullName.TrimEnd('/', '\')
+}
+
+# Hermes project skills take precedence over profile skills. This framework
+# checkout's .agents tree is a shared project surface with Codex/Gemini bodies,
+# so inspect Hermes's selected profile before a render can silently preserve a
+# divergent shadow. No resolver means no positive finding: warn and continue.
+function Test-HermesProjectSkillShadow {
+    if ($Harness -ne 'hermes') { return }
+    try {
+        $frameworkRoot = (Resolve-Path -LiteralPath $env:AI_CONFIG_DIR -ErrorAction Stop).Path
+        $projectRoot = (& git -C $frameworkRoot rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or -not $projectRoot) { return }
+        $projectRoot = (Resolve-Path -LiteralPath $projectRoot -ErrorAction Stop).Path
+    } catch { return }
+    $projectSkillRoots = @(
+        @((Join-Path $projectRoot '.agents/skills'), (Join-Path $projectRoot '.hermes/skills')) |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+    )
+    if ($projectSkillRoots.Count -eq 0) { return }
+    if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
+        Warn 'Hermes project-skill shadow guard skipped: hermes CLI is unavailable, so selected-profile trust could not be inspected'
+        return
+    }
+    $previousHermesHome = $env:HERMES_HOME
+    try {
+        $env:HERMES_HOME = $TARGET
+        $discovery = & hermes config get --json skills.project_discovery 2>$null
+        if ($LASTEXITCODE -ne 0) { Warn "Hermes project-skill shadow guard skipped: could not read skills.project_discovery from selected profile $TARGET"; return }
+        $discoveryText = (@($discovery) -join "`n").Trim()
+        if ($discoveryText -ne 'true') {
+            if ($discoveryText -ne 'false') { Warn "Hermes project-skill shadow guard skipped: invalid skills.project_discovery JSON from selected profile $TARGET (expected bare true or false)" }
+            return
+        }
+        $trustedJson = & hermes config get --json skills.trusted_project_dirs 2>$null
+        if ($LASTEXITCODE -ne 0) { Warn "Hermes project-skill shadow guard skipped: could not read skills.trusted_project_dirs from selected profile $TARGET"; return }
+    } finally {
+        $env:HERMES_HOME = $previousHermesHome
+    }
+    $trustedText = (@($trustedJson) -join "`n")
+    try { $null = $trustedText | & $script:JqBin -e 'type == "array" and all(.[]; type == "string")'; if ($LASTEXITCODE -ne 0) { throw 'not an array of strings' }; $trusted = @($trustedText | ConvertFrom-Json -ErrorAction Stop) }
+    catch { Warn "Hermes project-skill shadow guard skipped: invalid trusted-project JSON from selected profile $TARGET"; return }
+    if ((@($trusted | Where-Object { $_ -isnot [string] }).Count -ne 0)) {
+        Warn "Hermes project-skill shadow guard skipped: invalid trusted-project JSON from selected profile $TARGET (expected an array of paths)"; return
+    }
+    $pathCompare = if ($env:OS -eq 'Windows_NT') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $projectRoot = Resolve-HermesProjectPath $projectRoot
+    $trustedMatch = $false
+    foreach ($trustedPath in @($trusted)) {
+        try { $trustedResolved = Resolve-HermesProjectPath $trustedPath } catch { continue }
+        if ([string]::Equals($trustedResolved, $projectRoot, $pathCompare)) { $trustedMatch = $true; break }
+    }
+    if (-not $trustedMatch) { return }
+
+    # Hermes indexes recursively and resolves a skill by frontmatter `name`,
+    # falling back to its directory name. Compare that effective name, not a
+    # top-level path: skills/creative/humanizer can shadow .agents/humanizer.
+    function Get-HermesEffectiveSkillName {
+        param([Parameter(Mandatory)][string]$SkillPath)
+        $lines = @(Get-Content -LiteralPath $SkillPath -ErrorAction SilentlyContinue)
+        $name = ''
+        if ($lines.Count -gt 0 -and $lines[0] -eq '---') {
+            for ($index = 1; $index -lt $lines.Count; $index++) {
+                if ($lines[$index] -match '^---\s*$') { break }
+                if ($lines[$index] -match '^name:\s*(.*?)\s*$') { $name = $matches[1]; break }
+            }
+        }
+        if (($name.Length -ge 2) -and (($name.StartsWith('"') -and $name.EndsWith('"')) -or ($name.StartsWith("'") -and $name.EndsWith("'")))) {
+            $name = $name.Substring(1, $name.Length - 2)
+        }
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = Split-Path -Leaf (Split-Path -Parent $SkillPath) }
+        return $name
+    }
+    $names = [System.Collections.Generic.List[string]]::new()
+    $candidateRoots = @((Join-Path $TARGET 'skills'), (Join-Path $BUILD 'skills'))
+    if (-not [string]::IsNullOrEmpty($Script:OperatorSkillStage)) { $candidateRoots += $Script:OperatorSkillStage }
+    $profileSkills = @($candidateRoots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -Filter 'SKILL.md' -ErrorAction SilentlyContinue })
+    $projectSkills = @($projectSkillRoots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -Filter 'SKILL.md' -ErrorAction SilentlyContinue } | Sort-Object FullName)
+    foreach ($projectSkill in $projectSkills) {
+        $name = Get-HermesEffectiveSkillName -SkillPath $projectSkill.FullName
+        foreach ($candidate in $profileSkills) {
+            if ((Get-HermesEffectiveSkillName -SkillPath $candidate.FullName) -cne $name) { continue }
+            $projectBundle = Split-Path -Parent $projectSkill.FullName
+            $profileBundle = Split-Path -Parent $candidate.FullName
+            $projectFiles = @(Get-ChildItem -LiteralPath $projectBundle -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName.Substring($projectBundle.Length).TrimStart('/', '\')):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" } | Sort-Object)
+            $profileFiles = @(Get-ChildItem -LiteralPath $profileBundle -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName.Substring($profileBundle.Length).TrimStart('/', '\')):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" } | Sort-Object)
+            if ((Compare-Object -ReferenceObject $projectFiles -DifferenceObject $profileFiles -SyncWindow 0).Count -ne 0) {
+                if (-not $names.Contains($name)) { [void]$names.Add($name) }
+                break
+            }
+        }
+    }
+    if ($names.Count -eq 0) { return }
+    $message = "Hermes project-skill shadow: selected profile $TARGET trusts $projectRoot, so its project skill surfaces override divergent profile skills: $($names -join ' '). No files or trust settings were changed. Run 'hermes skills untrust' from that project (or remove/align the conflicting project skills), then re-run the install."
+    if ($DryRun) { Warn "$message (dry-run: classification continues)"; return }
+    Die $message
+}
+
+# Codex can create the project .agents overlay after Hermes has been rendered.
+# Check the prospective Codex bundle before either target is swapped or the
+# overlay is touched.  This deliberately only applies when AGENTS_DIR is this
+# checkout's project surface; a separate overlay cannot shadow Hermes.
+function Test-HermesProspectiveCodexCorenderShadow {
+    if ($Harness -ne 'codex' -or [string]::IsNullOrEmpty($env:AGENTS_DIR)) { return }
+    if ([string]::IsNullOrEmpty($env:HERMES_HOME)) {
+        Warn 'Hermes project-skill shadow guard skipped for the prospective .agents co-render: HERMES_HOME is unset, so selected-profile trust could not be inspected'
+        return
+    }
+    try {
+        $frameworkRoot = (Resolve-Path -LiteralPath $env:AI_CONFIG_DIR -ErrorAction Stop).Path
+        $projectRoot = (& git -C $frameworkRoot rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or -not $projectRoot) { return }
+        $projectRoot = Resolve-HermesProjectPath $projectRoot
+        $overlay = Resolve-HermesProjectPath $env:AGENTS_DIR
+        $expected = Resolve-HermesProjectPath (Join-Path $projectRoot '.agents')
+    } catch { return }
+    $pathCompare = if ($env:OS -eq 'Windows_NT') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if (-not [string]::Equals($overlay, $expected, $pathCompare)) { return }
+    if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) { Warn 'Hermes project-skill shadow guard skipped: hermes CLI is unavailable, so selected-profile trust could not be inspected'; return }
+    $oldHome = $env:HERMES_HOME
+    try {
+        $env:HERMES_HOME = $oldHome
+        $discovery = ((& hermes config get --json skills.project_discovery 2>$null) -join "`n").Trim()
+        if ($LASTEXITCODE -ne 0) { Warn "Hermes project-skill shadow guard skipped: could not read skills.project_discovery from selected profile $oldHome"; return }
+        if ($discovery -ne 'true') { if ($discovery -ne 'false') { Warn "Hermes project-skill shadow guard skipped: invalid skills.project_discovery JSON from selected profile $oldHome (expected bare true or false)" }; return }
+        $trustedText = ((& hermes config get --json skills.trusted_project_dirs 2>$null) -join "`n")
+        if ($LASTEXITCODE -ne 0) { throw 'trusted-project resolver failed' }
+        $null = $trustedText | & $script:JqBin -e 'type == "array" and all(.[]; type == "string")'
+        if ($LASTEXITCODE -ne 0) { throw 'not an array of strings' }
+        $trusted = @($trustedText | ConvertFrom-Json -ErrorAction Stop)
+    } catch { Warn "Hermes project-skill shadow guard skipped: invalid trusted-project JSON from selected profile $oldHome (expected an array of paths)"; return }
+    $trustedProject = $false
+    foreach ($item in @($trusted)) { if ($item -is [string]) { try { if ([string]::Equals((Resolve-HermesProjectPath $item), $projectRoot, $pathCompare)) { $trustedProject=$true; break } } catch {} } }
+    if (-not $trustedProject) { return }
+    function Get-ProspectiveName([string]$p) {
+        $first = @(Get-Content -LiteralPath $p -ErrorAction SilentlyContinue)
+        $n = ''
+        if ($first.Count -gt 1 -and $first[0] -eq '---') {
+            foreach ($line in $first[1..($first.Count-1)]) {
+                if ($line -match '^---\s*$') { break }
+                if ($line -match '^name:\s*(.*?)\s*$') { $n = $matches[1]; break }
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($n)) { $n = Split-Path -Leaf (Split-Path -Parent $p) }
+        $n = $n.Trim()
+        if (($n.Length -ge 2) -and (($n.StartsWith('"') -and $n.EndsWith('"')) -or ($n.StartsWith("'") -and $n.EndsWith("'")))) {
+            $n = $n.Substring(1, $n.Length - 2)
+        }
+        return $n
+    }
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($projectSkill in @(Get-ChildItem -LiteralPath (Join-Path $BUILD 'skills') -Recurse -File -Force -Filter SKILL.md -ErrorAction SilentlyContinue)) {
+        $name=Get-ProspectiveName $projectSkill.FullName
+        foreach ($profileSkill in @(Get-ChildItem -LiteralPath (Join-Path $oldHome 'skills') -Recurse -File -Force -Filter SKILL.md -ErrorAction SilentlyContinue)) {
+            if ((Get-ProspectiveName $profileSkill.FullName) -cne $name) { continue }
+            $projectBundle = Split-Path -Parent $projectSkill.FullName
+            $profileBundle = Split-Path -Parent $profileSkill.FullName
+            $projectFiles = @(Get-ChildItem -LiteralPath $projectBundle -Recurse -File -Force | ForEach-Object { "$($_.FullName.Substring($projectBundle.Length).TrimStart('/', '\')):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" } | Sort-Object)
+            $profileFiles = @(Get-ChildItem -LiteralPath $profileBundle -Recurse -File -Force | ForEach-Object { "$($_.FullName.Substring($profileBundle.Length).TrimStart('/', '\')):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" } | Sort-Object)
+            if ((Compare-Object -ReferenceObject $projectFiles -DifferenceObject $profileFiles -SyncWindow 0).Count -ne 0) {
+                if (-not $names.Contains($name)) { [void]$names.Add($name) }
+                break
+            }
+        }
+    }
+    if ($names.Count -eq 0) { return }
+    $message="Hermes project-skill shadow: selected profile $oldHome trusts $projectRoot, so prospective .agents/skills overrides divergent profile skills: $($names -join ' '). No files or trust settings were changed."
+    if ($DryRun) { Warn "$message (dry-run: classification continues)"; return }; Die $message
+}
+
+# ---------------------------------------------------------------------------
+# Explicit operator-skill mirror
+#
+# Shape C skills stay operator-owned and outside the public manifest. Operators
+# may opt into mirroring named portable skill directories from one local source
+# root into every harness they render. This copies local data only; neither a
+# private skill body nor its name becomes framework source.
+# ---------------------------------------------------------------------------
+function Prepare-OperatorSkillSync {
+    $csv = $env:OPERATOR_SKILL_SYNC
+    if ([string]::IsNullOrWhiteSpace($csv)) { return }
+    if ($csv.TrimEnd().EndsWith(',')) { Die 'OPERATOR_SKILL_SYNC contains an empty skill name' }
+    $source = $env:OPERATOR_SKILL_SOURCE_DIR
+    if ([string]::IsNullOrWhiteSpace($source)) {
+        Die 'OPERATOR_SKILL_SYNC is set but OPERATOR_SKILL_SOURCE_DIR is empty'
+    }
+    if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+        Die "OPERATOR_SKILL_SOURCE_DIR is not a directory: $source"
+    }
+    foreach ($raw in $csv.Split(',')) {
+        $name = $raw.Trim()
+        if ([string]::IsNullOrEmpty($name)) { Die 'OPERATOR_SKILL_SYNC contains an empty skill name' }
+        if ($name -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+            Die "OPERATOR_SKILL_SYNC has unsafe skill name '$name' (allowed: letters, digits, . _ -; no leading punctuation)"
+        }
+        if ($Script:OperatorSkillNames.Contains($name)) { Die "OPERATOR_SKILL_SYNC repeats skill '$name'" }
+        if (Test-Path -LiteralPath (Join-Path $BUILD (Join-Path 'skills' $name))) {
+            Die "operator skill '$name' collides with a framework-managed capability"
+        }
+        $sourceSkill = Join-Path $source $name
+        if (-not (Test-Path -LiteralPath $sourceSkill -PathType Container) -or
+            -not (Test-Path -LiteralPath (Join-Path $sourceSkill 'SKILL.md') -PathType Leaf)) {
+            Die "operator skill source is incomplete: $(Join-Path $sourceSkill 'SKILL.md')"
+        }
+        $destination = Join-Path (Join-Path $TARGET 'skills') $name
+        $destinationItem = Get-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+        if ($null -ne $destinationItem -and (($destinationItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $destinationItem.PSIsContainer)) {
+            Die "operator skill destination is not a real directory: $destination"
+        }
+        # A top-level directory with no own SKILL.md but nested skill bundles is
+        # an app-managed category/pack, not a portable single skill. Replacing it
+        # would silently erase unrelated children (for example creative/humanizer).
+        # A normal pre-existing root SKILL.md remains explicitly adoptable.
+        if ($null -ne $destinationItem -and -not (Test-Path -LiteralPath (Join-Path $destination 'SKILL.md') -PathType Leaf)) {
+            $nestedSkill = Get-ChildItem -LiteralPath $destination -Recurse -File -Force -Filter 'SKILL.md' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($null -ne $nestedSkill) {
+                Die "operator skill destination is an app-managed category with nested SKILL.md files, not a portable skill: $destination"
+            }
+        }
+        [void]$Script:OperatorSkillNames.Add($name)
+    }
+    # Inspection modes validate the declaration but never change a live target.
+    if ($DryRun -or $BuildOnly) { return }
+    $Script:OperatorSkillStage = Join-Path $TARGET ('.operator-skill-stage.' + [IO.Path]::GetRandomFileName())
+    try {
+        New-Item -ItemType Directory -Path $Script:OperatorSkillStage -Force -ErrorAction Stop | Out-Null
+        foreach ($name in $Script:OperatorSkillNames) {
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $Script:OperatorSkillStage $name) -Recurse -ErrorAction Stop
+        }
+    } catch {
+        Die "could not stage explicit operator skills from ${source}: $($_.Exception.Message)"
+    }
+}
+
+function Sync-StagedOperatorSkills {
+    if ([string]::IsNullOrEmpty($Script:OperatorSkillStage)) { return }
+    $backup = Join-Path $TARGET ('.operator-skill-backup.' + [IO.Path]::GetRandomFileName())
+    $touched = New-Object System.Collections.Generic.List[object]
+    $activationError = ''
+    $keepBackup = $false
+    try {
+        New-Item -ItemType Directory -Path $backup -Force -ErrorAction Stop | Out-Null
+        foreach ($name in $Script:OperatorSkillNames) {
+            $live = Join-Path (Join-Path $TARGET 'skills') $name
+            $hadPrior = $false
+            if (Test-Path -LiteralPath $live) {
+                Move-Item -LiteralPath $live -Destination (Join-Path $backup $name) -Force -ErrorAction Stop
+                $hadPrior = $true
+            }
+            [void]$touched.Add([pscustomobject]@{ name = $name; hadPrior = $hadPrior })
+            # Test seam: force a named LATER activation to fail after its
+            # existing target is backed up, exercising the real rollback path.
+            if ($env:AI_CONFIG_OPERATOR_SKILL_TEST_FAIL_ACTIVATE -ceq $name) {
+                throw "test-induced activation failure for operator skill '$name'"
+            }
+            Move-Item -LiteralPath (Join-Path $Script:OperatorSkillStage $name) -Destination $live -Force -ErrorAction Stop
+        }
+    } catch {
+        $activationError = $_.Exception.Message
+        $restoreOk = $true
+        # Reverse every touch. Remove only staged replacements we created; for
+        # a prior target, keep its backup if either removal or restore fails.
+        for ($i = $touched.Count - 1; $i -ge 0; $i--) {
+            $touch = $touched[$i]
+            $live = Join-Path (Join-Path $TARGET 'skills') $touch.name
+            if ($touch.hadPrior) {
+                if (Test-Path -LiteralPath $live) {
+                    try { Remove-Item -LiteralPath $live -Recurse -Force -ErrorAction Stop }
+                    catch {
+                        Warn "operator-skill rollback could not remove new $live; backup retained at $(Join-Path $backup $touch.name)"
+                        $restoreOk = $false
+                        continue
+                    }
+                }
+                try { Move-Item -LiteralPath (Join-Path $backup $touch.name) -Destination $live -Force -ErrorAction Stop }
+                catch {
+                    Warn "operator-skill rollback could not restore $live; backup retained at $(Join-Path $backup $touch.name)"
+                    $restoreOk = $false
+                }
+            } elseif (Test-Path -LiteralPath $live) {
+                try { Remove-Item -LiteralPath $live -Recurse -Force -ErrorAction Stop }
+                catch {
+                    Warn "operator-skill rollback could not remove newly-created $live"
+                    $restoreOk = $false
+                }
+            }
+        }
+        if (-not $restoreOk) {
+            $keepBackup = $true
+            Warn "operator-skill activation failed; retained recovery backup at $backup"
+        }
+    } finally {
+        if (-not $keepBackup) {
+            Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $Script:OperatorSkillStage -Recurse -Force -ErrorAction SilentlyContinue
+        $Script:OperatorSkillStage = ''
+    }
+    if ($activationError) {
+        Die "$activationError; no partial operator-skill activation remains when rollback succeeds"
+    }
+    [Console]::Error.WriteLine("install.ps1: mirrored $($Script:OperatorSkillNames.Count) explicit operator skill(s) into $TARGET\skills (Shape C; excluded from the framework manifest)")
+}
+
 # ---------------------------------------------------------------------------
 # swap_in / rollback / cleanup
 #
@@ -2124,6 +2444,9 @@ try {
 
     Write-Manifest
     Test-Build
+    Prepare-OperatorSkillSync
+    Test-HermesProjectSkillShadow
+    Test-HermesProspectiveCodexCorenderShadow
 
     # --dry-run: classify the live target against the just-built NEW manifest and
     # report, then stop. The finally block removes $BUILD; the live target is never
@@ -2197,6 +2520,7 @@ try {
         }
     }
     Remove-Item -LiteralPath (Join-Path $TARGET '.install-bak.d') -Recurse -Force -ErrorAction SilentlyContinue
+    Sync-StagedOperatorSkills
 
     [Console]::Error.WriteLine("install.ps1: built $Harness harness into $TARGET")
 
@@ -2272,6 +2596,9 @@ try {
     }
 } finally {
     Exit-InstallerLocks
+    if ($Script:OperatorSkillStage -and (Test-Path -LiteralPath $Script:OperatorSkillStage)) {
+        Remove-Item -LiteralPath $Script:OperatorSkillStage -Recurse -Force -ErrorAction SilentlyContinue
+    }
     if (-not $Script:KeepBuild) {
         if ($BUILD -and (Test-Path -LiteralPath $BUILD)) {
             Remove-Item -LiteralPath $BUILD -Recurse -Force -ErrorAction SilentlyContinue

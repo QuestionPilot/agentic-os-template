@@ -53,6 +53,13 @@ description: <trigger-rich one-paragraph description>
   realization.
 - The skill body is the capability's harness-neutral body followed by the
   per-harness realization (`harnesses/hermes/capabilities/<name>.md`).
+- `.agents/skills/` is a **shared project skill surface**, not a Gemini-only
+  directory. In Hermes v0.21.3, a trusted project loads its `.hermes/skills/`
+  and `.agents/skills/` ahead of `$HERMES_HOME/skills/`. The installer checks
+  this framework checkout against the selected profile and refuses a confirmed
+  divergent same-name shadow; it never changes project trust. An unavailable
+  Hermes config resolver produces a warning, not a claim that the project is
+  safe.
 
 ## Fact 2 — Hook events, enforcement classes, and config.yaml wiring
 

@@ -121,6 +121,10 @@ make_codex_env() {
 # build fails on the empty-placeholder gate.
 make_hermes_env() {
   { printf 'HERMES_HOME=%q\n' "$2"
+    # The Hermes pre-edit bootstrap pins orientation to AI_CONFIG_DIR.  Set the
+    # fixture root explicitly so an exported operator value cannot change the
+    # installed hook that this test is meant to exercise.
+    printf 'AI_CONFIG_DIR=%q\n' "$REPO_ROOT"
     printf 'OBSIDIAN_VAULT_PATH=%q\n' "${3:-/tmp/test-vault}"
   } > "$1"
 }
@@ -299,4 +303,3 @@ _tier_should_run() {
     *)    return 0 ;;
   esac
 }
-

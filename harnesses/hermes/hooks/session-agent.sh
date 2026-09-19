@@ -69,6 +69,32 @@ HHOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)"
 STATE_DIR="$HHOME/agentic-os"
 GATE_FILE="$STATE_DIR/gate-$SESSION_ID"
 
+# Bootstrap exception: only a literal invocation of the installed framework's
+# orient helper, not an arbitrary path from the event or ambient environment.
+# Exact JSON-string equality preserves trailing newlines and rejects compounds,
+# redirections, substitutions and extra arguments. This does NOT open the gate.
+BOOTSTRAP_HINT=""
+if [[ "$TOOL" == "terminal" ]]; then
+  ORIENT_ROOT='@@ORIENT_ROOT@@'
+  ORIENT_ROOT="${ORIENT_ROOT%/}"
+  ORIENT_PATH="$ORIENT_ROOT/scripts/orient.sh"
+  if [[ "$ORIENT_PATH" == /* && -f "$ORIENT_PATH" ]]; then
+    ORIENT_SQ="$(jq -nr --arg path "$ORIENT_PATH" '$path | @sh')"
+    BOOTSTRAP_HINT=" For kickoff orientation before declaring, run exactly: bash $ORIENT_SQ. No extra arguments or shell operators."
+    ORIENT_DQ="${ORIENT_PATH//\\/\\\\}"
+    ORIENT_DQ="${ORIENT_DQ//\"/\\\"}"
+    ORIENT_DQ="${ORIENT_DQ//\$/\\\$}"
+    ORIENT_DQ="${ORIENT_DQ//\`/\\\`}"
+    ORIENT_DQ="\"$ORIENT_DQ\""
+    if printf '%s' "$INPUT" | jq -e --arg sq "$ORIENT_SQ" --arg dq "$ORIENT_DQ" '
+      .tool_input.command as $c | ($c | type) == "string" and
+      ($c == $sq or $c == $dq or $c == ("bash " + $sq) or $c == ("bash " + $dq))
+    ' >/dev/null 2>&1; then
+      exit 0
+    fi
+  fi
+fi
+
 # Reap stale gate markers (old sessions); never fails the hook.
 find "$STATE_DIR" -name 'gate-*' -mtime +7 -delete 2>/dev/null || true
 
@@ -121,4 +147,4 @@ if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB" ]]; then
   fi
 fi
 
-block "First file-modifying tool use detected but the session-agent gate is not open for this session. A delegate_task child (the delegated-child directive is in your context) declares by writing the file $GATE_FILE via the write_file tool with the routing declaration its brief gives it — Mode 2 only, never the kickoff orient. Any other session invokes /session-agent to walk the kickoff orient (Mode 1) then route the request (R1-R5, including the R1a lesson recall), and declares the gate by writing the same file with the full routing declaration. Either way the content must include the \`Linear gate:\` and \`Lessons:\` lines. Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
+block "First file-modifying tool use detected but the session-agent gate is not open for this session. A delegate_task child (the delegated-child directive is in your context) declares by writing the file $GATE_FILE via the write_file tool with the routing declaration its brief gives it — Mode 2 only, never the kickoff orient. Any other session invokes /session-agent to walk the kickoff orient (Mode 1) then route the request (R1-R5, including the R1a lesson recall), and declares the gate by writing the same file with the full routing declaration. Either way the content must include the \`Linear gate:\` and \`Lessons:\` lines.$BOOTSTRAP_HINT Kill switch: set env CLAUDE_SKIP_SESSION_AGENT=1."
