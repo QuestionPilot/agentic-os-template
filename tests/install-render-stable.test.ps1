@@ -24,11 +24,11 @@ $IRS_CI_FIXTURE = Join-Path $env:REPO_ROOT 'tests' 'fixtures' 'ci.local.env'
 New-Item -ItemType Directory -Path $IRS_DIR -Force | Out-Null
 
 # --- Assertion 0: fixture is provably complete vs active templates ----------
-# OPERATOR_SKILLS_OVERLAY + OPERATOR_CODEX_RULES_OVERLAY are injection markers
-# consumed before the @@VAR@@ loop (install.{sh,ps1} splice the operator overlay
-# at each, or empty for a spine-only render) — not env-sourced path vars, so they
-# skip the fixture completeness check like CAPABILITY_CATALOG. See the.sh twin.
-$irs_special_tokens = @('CAPABILITY_CATALOG', 'OPERATOR_SKILLS_OVERLAY', 'OPERATOR_CODEX_RULES_OVERLAY')
+# CAPABILITY_CATALOG and COMMUNICATION_STYLE are compiler-owned content sources.
+# OPERATOR_SKILLS_OVERLAY + OPERATOR_CODEX_RULES_OVERLAY are compiler-owned
+# injection markers. None are environment variables, so they do not need
+# local.env fixture values. Every other token remains fixture-checked.
+$irs_special_tokens = @('CAPABILITY_CATALOG', 'COMMUNICATION_STYLE', 'OPERATOR_SKILLS_OVERLAY', 'OPERATOR_CODEX_RULES_OVERLAY')
 $irs_active_surfaces = @(
     (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'CLAUDE.template.md'),
     (Join-Path $env:REPO_ROOT 'harnesses' 'claude' 'SKILLS.template.md'),

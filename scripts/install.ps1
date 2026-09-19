@@ -727,7 +727,7 @@ function New-CapabilityCatalog {
 }
 
 # ---------------------------------------------------------------------------
-# compile_entrypoint — substitute @@VAR@@ + @@CAPABILITY_CATALOG@@ tokens.
+# compile_entrypoint — substitute @@VAR@@ and canonical content markers.
 # ---------------------------------------------------------------------------
 
 function Compile-Entrypoint {
@@ -740,6 +740,20 @@ function Compile-Entrypoint {
         Die "entrypoint template not found: $TemplatePath"
     }
     $content = Get-RawText -Path $TemplatePath
+
+    # The default report style has one canonical, harness-neutral source. Every
+    # entrypoint template carries the marker once so all rendered harnesses use
+    # the same rule without hand-copied prose.
+    if ($content.Contains('@@COMMUNICATION_STYLE@@')) {
+        $stylePath = Join-Path $repoRoot 'core' 'communication-style.md'
+        if (-not (Test-Path -LiteralPath $stylePath -PathType Leaf)) {
+            Die "communication style source not found: $stylePath"
+        }
+        # Bash's command substitution removes trailing newlines. Trim the same
+        # bytes here so the rendered style block is identical across twins.
+        $style = (Get-RawText -Path $stylePath) -replace '(\r?\n)+\z', ''
+        $content = $content.Replace('@@COMMUNICATION_STYLE@@', $style)
+    }
 
     # Operator skills overlay — twin of install.sh compile_entrypoint.
     # Splice the local overlay file (named by SKILLS_OVERLAY_PATH) at the

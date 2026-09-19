@@ -6,6 +6,8 @@ This file is the canonical, harness-neutral operating standard for AI agents usi
 
 Operate from the smallest useful context, verify claims before closeout, and improve the system when work exposes a reusable lesson.
 
+The default communication rule is [`core/communication-style.md`](communication-style.md). It sets the report style only. It does not change machine formats or requested artifacts.
+
 ## Golden Rule
 
 Choose the most efficient path to the most effective outcome. Prefer approaches that reduce token use, time, cost, repeated manual work, or operational friction when they do not reduce correctness, coverage, security, or user-visible quality.

@@ -2,6 +2,8 @@
 
 Every session starts here. Read in order, load only what is relevant to the task.
 
+@@COMMUNICATION_STYLE@@
+
 ## Layer 1 — Operating Framework (always read first)
 
 The agentic OS lives at:
