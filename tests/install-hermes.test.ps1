@@ -72,7 +72,22 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent'), $IH_SHADOW_HOME, $IH_SHADOW_BIN -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $IH_SHADOW_PROJECT '.agents/skills/session-agent/SKILL.md'), "divergent shared project skill`n", $utf8NoBom)
     if ($IsWindows) {
-        [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes.cmd'), "@echo off`r`nif `"%IH_SHADOW_RESOLVER_FAIL%`"==`"1`" exit /b 2`r`nif x%*==xconfig get --json skills.project_discovery echo true`r`nif x%*==xconfig get --json skills.trusted_project_dirs echo [`"%IH_SHADOW_TRUSTED%`"]`r`n", $utf8NoBom)
+        $stubPs = @'
+if ($env:IH_SHADOW_RESOLVER_FAIL -eq '1') { exit 2 }
+$key = if ($args.Count -gt 0) { $args[-1] } else { '' }
+switch ($key) {
+    'skills.project_discovery' {
+        if ($env:IH_SHADOW_DISCOVERY_JSON) { $env:IH_SHADOW_DISCOVERY_JSON } else { 'true' }
+    }
+    'skills.trusted_project_dirs' {
+        if ($env:IH_SHADOW_TRUST_JSON) { $env:IH_SHADOW_TRUST_JSON }
+        else { ConvertTo-Json -Compress -InputObject @("$env:IH_SHADOW_TRUSTED") }
+    }
+    default { exit 2 }
+}
+'@
+        [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes-stub.ps1'), ($stubPs + "`n"), $utf8NoBom)
+        [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes.cmd'), "@echo off`r`npwsh -NoProfile -File `"%~dp0hermes-stub.ps1`" %*`r`nexit /b %ERRORLEVEL%`r`n", $utf8NoBom)
     } else {
         $stub = @('#!/usr/bin/env bash', '[ "${IH_SHADOW_RESOLVER_FAIL:-}" = 1 ] && exit 2', 'case "$*" in', '*skills.project_discovery*) printf "%s" "${IH_SHADOW_DISCOVERY_JSON:-true}" ;;', '*skills.trusted_project_dirs*) if [ -n "${IH_SHADOW_TRUST_JSON:-}" ]; then printf "%s" "$IH_SHADOW_TRUST_JSON"; else printf "[\\\"%s\\\"]" "${IH_SHADOW_TRUSTED:-}"; fi ;;', '*) exit 2 ;;', 'esac') -join "`n"
         [IO.File]::WriteAllText((Join-Path $IH_SHADOW_BIN 'hermes'), ($stub + "`n"), $utf8NoBom)
